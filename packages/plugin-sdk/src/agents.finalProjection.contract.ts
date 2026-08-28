@@ -4,6 +4,7 @@ import type {
   AgentModelDescriptor,
   AgentModelOption,
   AgentProfile,
+  AgentSessionRuntimeCapabilities,
   AgentSurfaceOperationCatalogV1,
   EnvironmentVariable,
   PluginAgentCapabilitiesV1Schema,
@@ -74,18 +75,47 @@ import type {
   AgentCliSessionCommandDeclarationV1,
   AgentCliSessionCommandOptionsV1,
   AgentCliSessionCommandParsedArgsV1,
+  AgentConnectedAccountContinuityV1,
+  AgentConnectedAccountCredentialRevisionV1,
+  AgentConnectedAccountEnvironmentUseV1,
+  AgentConnectedAccountFileEnvironmentUseV1,
   AgentConnectedAccountLaunchContributionV1,
+  AgentConnectedAccountNativeAuthCodecInspectInputV1,
+  AgentConnectedAccountNativeAuthCodecMaterializeInputV1,
+  AgentConnectedAccountNativeAuthCodecV1,
+  AgentConnectedAccountNativeHomeV1,
+  AgentConnectedAccountProviderOutcomeInputV1,
+  AgentConnectedAccountProviderOutcomeSelectionV1,
+  AgentConnectedAccountProviderOutcomeTargetV1,
+  AgentConnectedAccountProviderOutcomeVerificationResultV1,
   AgentConnectedAccountRequestAuthUseV1,
+  AgentConnectedAccountResumeFileCandidateV1,
+  AgentConnectedAccountResumeFileLookupV1,
+  AgentConnectedAccountResumeReachabilityInputV1,
+  AgentConnectedAccountResumeReachabilityResultV1,
+  AgentConnectedAccountRuntimeAuthAdapterResultV1,
+  AgentConnectedAccountRuntimeAuthAdapterV1,
+  AgentConnectedAccountRuntimeAuthFailureKind,
+  AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+  AgentConnectedAccountRuntimeAuthSelectionV1,
+  AgentConnectedAccountRuntimeAuthTargetV1,
+  AgentConnectedAccountRuntimeAuthUsageInputV1,
+  AgentConnectedAccountRuntimeAuthVerificationInputV1,
+  AgentConnectedAccountRuntimeFailureClassificationV1,
+  AgentConnectedAccountRuntimeFailureInputV1,
   AgentConnectedAccountStateSharingDescriptorEntryV1,
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDescriptorV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentConnectedAccountTransitionVerificationResultV1,
   AgentDeferredStartupEligibilityInputV1,
   AgentExecutionRunEvent,
+  AgentFiniteExecutionRunHostOptions,
+  AgentFiniteExecutionRunProgressEvent,
+  AgentFiniteExecutionRunResult,
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
-  AgentExecutionRunSessionAdapterOptions,
   AgentExecutionRunSendResult,
   AgentExecutionRunStopResult,
   AgentExperimentalVendorResumeSupportContributionV1,
@@ -180,6 +210,7 @@ import type {
   AgentSessionModelsService,
   AgentSessionModelsSnapshot,
   AgentSessionModelsSource,
+  AgentSessionNativeHomeService,
   AgentSessionNativeToolBridgeConfig,
   AgentSessionNativeToolDescriptor,
   AgentSessionOpenRequest,
@@ -204,6 +235,7 @@ import type {
   AgentSessionRealtimeStopResult,
   AgentSessionRunnerFactoryLocatorV1,
   AgentSessionRuntime,
+  AgentSessionRuntimeCapabilities as AgentAuthoredSessionRuntimeCapabilities,
   AgentSessionRuntimeAuthApplyRequest,
   AgentSessionRuntimeAuthApplyResult,
   AgentSessionRuntimeAuthControl,
@@ -213,6 +245,7 @@ import type {
   AgentSessionRuntimeEvent,
   AgentSessionRuntimeEventSchema,
   AgentSessionRuntimeFactory,
+  AgentSessionRuntimeCapabilitySupportLevel,
   AgentSessionSendRequest,
   AgentSessionSendResult,
   AgentSessionSkillCatalogItem,
@@ -332,6 +365,7 @@ import type {
   UsageObservationTokensSchema,
   VendorPluginCatalogItemV1,
   VendorPluginCatalogV1,
+  AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS,
   assertAgentSessionRealtimeRuntime,
   buildAgentAccountUsageRecordId,
   buildShellCommand,
@@ -348,8 +382,10 @@ import type {
 } from './agentRuntime/index.js';
 import type {
   AttachSessionMetadataV1,
+  AgentSessionCapabilitySupportLevel,
   ForkSessionMetadataV1,
   HandoffExportSessionMetadataV1,
+  RuntimeCapabilities,
   TerminalHostLivenessV1,
 } from '@happier-dev/agents';
 import type {
@@ -421,6 +457,12 @@ type _AgentSessionRealtimeRuntimeIdentity = AssertTrue<
 >;
 type _AgentSessionProviderBindingUpstreamIdentity = AssertTrue<
   Equal<AgentSessionProviderBinding['upstream'], AgentSessionProviderBindingUpstream>
+>;
+type _AgentSessionRuntimeCapabilitiesIdentity = AssertTrue<
+  Equal<AgentSessionRuntimeCapabilities, RuntimeCapabilities>
+>;
+type _AgentSessionRuntimeCapabilitySupportLevelIdentity = AssertTrue<
+  Equal<AgentSessionRuntimeCapabilitySupportLevel, AgentSessionCapabilitySupportLevel>
 >;
 
 // Binding-plan negatives: these names belong to another domain or are replaced by

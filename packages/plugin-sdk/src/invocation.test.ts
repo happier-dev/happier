@@ -1,7 +1,9 @@
+import type { AutomationRunCause as ProtocolAutomationRunCause } from '@happier-dev/protocol';
 import { describe, expectTypeOf, it } from 'vitest';
 
 import type {
     MessageActionAvailableSnapshotV1,
+    PluginAutomationRunCause,
     PluginInvocationCaller,
     PluginInvocationContext,
     PluginInvocationSurface,
@@ -38,7 +40,11 @@ type ExpectedMessageActionAvailableSnapshotV1 = Readonly<{
 describe('Plugin invocation context', () => {
     it('makes the executing surface and host-stamped caller explicit', () => {
         const surfaceIsRequired: IsRequired<PluginInvocationContext, 'surface'> = true;
+        const invokedAtMsIsRequired: IsRequired<PluginInvocationContext, 'invokedAtMs'> = true;
         void surfaceIsRequired;
+        void invokedAtMsIsRequired;
+
+        expectTypeOf<PluginInvocationContext['invokedAtMs']>().toEqualTypeOf<number>();
 
         expectTypeOf<PluginInvocationSurface>().toEqualTypeOf<
             'cli' | 'mcp' | 'agent' | 'ui' | 'voice' | 'background' | 'api' | 'plugin'
@@ -61,11 +67,13 @@ describe('Plugin invocation context', () => {
                 kind: 'automationRun';
                 runId: string;
                 automationId: string;
-                origin: 'schedule' | 'manual' | 'event' | 'conversation';
+                cause: PluginAutomationRunCause;
             }>
         >();
         expectTypeOf<PluginInvocationContext['caller']>()
             .toEqualTypeOf<PluginInvocationCaller | undefined>();
+        expectTypeOf<PluginAutomationRunCause>()
+            .toEqualTypeOf<ProtocolAutomationRunCause>();
         expectTypeOf<PluginInvocationContext['ui']>()
             .toEqualTypeOf<import('./interactions.js').PresentationService | undefined>();
         expectTypeOf<MessageActionAvailableSnapshotV1>()

@@ -1,15 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
-  createExecutionRunHostBackendFromSessionRuntime,
+  createExecutionRunHostBackendFromSessionRuntime as createSessionRunAdapter,
   type AgentExecutionRunEvent,
   type AgentExecutionRunOpenRequest,
+  type AgentExecutionRunSessionAdapterOptions,
 } from './executionRun.js';
 import type { AgentSessionRuntime, AgentSessionRuntimeEvent } from './session.js';
 
 type SessionSend = AgentSessionRuntime['send'];
 type SessionCancel = NonNullable<AgentSessionRuntime['cancel']>;
 type SessionWatch = AgentSessionRuntime['watch'];
+
+function createExecutionRunHostBackendFromSessionRuntime(
+  options: Omit<AgentExecutionRunSessionAdapterOptions, 'sessionId'>,
+) {
+  return createSessionRunAdapter({ ...options, sessionId: 'session-1' });
+}
 
 function createRequest(runId = 'run-1'): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   return {
@@ -18,6 +25,16 @@ function createRequest(runId = 'run-1'): Extract<AgentExecutionRunOpenRequest, {
     cwd: '/repo',
     profile: { pluginId: 'happier.agent.test', localId: 'default' },
     input: { text: 'Start the run.' },
+  };
+}
+
+function createResumeRequest(runId = 'run-resume'): Extract<AgentExecutionRunOpenRequest, { kind: 'resume' }> {
+  return {
+    kind: 'resume',
+    runId,
+    cwd: '/repo',
+    profile: { pluginId: 'happier.agent.test', localId: 'default' },
+    checkpointId: 'provider-checkpoint-1',
   };
 }
 
@@ -165,7 +182,10 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
 
     const execution = await createExecutionRunHostBackendFromSessionRuntime({
       request: createRequest('run-synchronous-replay'),
-      openSession: async () => session,
+      openSession: async (request) => {
+        expect(request.sessionId).toBe('session-1');
+        return session;
+      },
       readCheckpointId: (event) => event.kind === 'provider-session-id'
         ? event.providerSessionId
         : null,
@@ -250,6 +270,67 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     expect(harness.sessionDisposeCalls).toBe(1);
   });
 
+  it('terminalizes and disposes a resumed Run if its first send throws', async () => {
+    const harness = createSessionHarness();
+    harness.setSend(async () => {
+      throw new Error('resumed send failed');
+    });
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createResumeRequest('run-resumed-send-failure'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    await expect(execution.send({ text: 'Continue the run.' })).rejects.toThrow('resumed send failed');
+
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-failed']);
+    expect(harness.subscriptionDisposeCalls).toBe(1);
+    expect(harness.sessionDisposeCalls).toBe(1);
+  });
+
+  it('isolates a throwing Run subscriber so later listeners receive terminal truth and cleanup settles', async () => {
+    const harness = createSessionHarness();
+    harness.setSend(async (request) => {
+      harness.publish(completeEvent(request.delivery.turnId));
+      return { status: 'admitted' };
+    });
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createResumeRequest('run-listener-isolation'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => {
+      if (event.kind === 'run-complete') throw new Error('subscriber failed');
+    });
+    execution.watch((event) => events.push(event));
+
+    await expect(execution.send({ text: 'Continue.' })).resolves.toEqual({ status: 'admitted' });
+    await vi.waitFor(() => expect(harness.sessionDisposeCalls).toBe(1));
+
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-complete']);
+    expect(events.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(harness.subscriptionDisposeCalls).toBe(1);
+  });
+
+  it('keeps one finite active turn and refuses a second send without losing terminal correlation', async () => {
+    const harness = createSessionHarness();
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createRequest('run-one-turn'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    await expect(execution.send({ text: 'Second turn must not start.' })).resolves.toEqual({
+      status: 'unavailable',
+    });
+    harness.publish(completeEvent('run-one-turn-turn-1'));
+
+    expect(harness.sendCalls).toHaveLength(1);
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-complete']);
+  });
+
   it('routes stop through Session cancellation and cleans the subscription and Session once', async () => {
     const harness = createSessionHarness();
     const execution = await createExecutionRunHostBackendFromSessionRuntime({
@@ -280,7 +361,7 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     expect(harness.sessionDisposeCalls).toBe(1);
   });
 
-  it('terminalizes and disposes an admitted Run when a requested Session cancellation emits no terminal', async () => {
+  it('does not terminalize an admitted Run until requested Session cancellation emits terminal truth', async () => {
     const harness = createSessionHarness();
     const execution = await createExecutionRunHostBackendFromSessionRuntime({
       request: createRequest('run-silent-cancel'),
@@ -290,6 +371,96 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     execution.watch((event) => events.push(event));
 
     await expect(execution.stop()).resolves.toEqual({ status: 'requested' });
+
+    expect(events.map((event) => event.kind)).toEqual(['run-start']);
+    expect(harness.subscriptionDisposeCalls).toBe(0);
+    expect(harness.sessionDisposeCalls).toBe(0);
+    harness.publish({
+      sequence: 3,
+      sessionId: 'session-1',
+      emittedAtMs: 12,
+      turnId: 'run-silent-cancel-turn-1',
+      kind: 'turn-cancelled',
+      cause: 'user',
+    });
+    await vi.waitFor(() => expect(harness.sessionDisposeCalls).toBe(1));
+    expect(events.filter((event) => event.kind === 'run-cancelled')).toHaveLength(1);
+  });
+
+  it.each([
+    ['input-rejected', { diagnostic: { code: 'async_rejected', severity: 'error' as const }, retryable: false }],
+    ['input-custody-unknown', { issue: { code: 'custody_unknown', severity: 'error' as const } }],
+    ['input-delivery-failed', {
+      delivery: { kind: 'newTurn' as const, turnId: 'run-input-failure-turn-1' },
+      issue: { code: 'delivery_failed', severity: 'error' as const },
+      duplicateRisk: 'unknown' as const,
+    }],
+  ] as const)('maps correlated asynchronous %s to one failed Run and releases the Session', async (kind, details) => {
+    const harness = createSessionHarness();
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createRequest('run-input-failure'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    harness.publish({
+      sequence: 4,
+      sessionId: 'session-1',
+      emittedAtMs: 13,
+      kind,
+      inputIds: ['run-input-failure-input-1'],
+      ...details,
+    } as AgentSessionRuntimeEvent);
+
+    await vi.waitFor(() => expect(harness.sessionDisposeCalls).toBe(1));
+    const expectedDiagnostic = 'diagnostic' in details
+      ? details.diagnostic
+      : details.issue;
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-failed']);
+    expect(events.at(-1)).toMatchObject({
+      kind: 'run-failed',
+      diagnostic: expectedDiagnostic,
+    });
+    expect(harness.subscriptionDisposeCalls).toBe(1);
+  });
+
+  it('maps a pre-terminal runtime-ended event to one failed Run and releases the Session', async () => {
+    const harness = createSessionHarness();
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createRequest('run-runtime-ended'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    harness.publish({
+      sequence: 4,
+      sessionId: 'session-1',
+      emittedAtMs: 13,
+      kind: 'runtime-ended',
+      cause: 'processExited',
+      retryable: false,
+      diagnostic: { code: 'provider_exited', severity: 'error' },
+    });
+
+    await vi.waitFor(() => expect(harness.sessionDisposeCalls).toBe(1));
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-failed']);
+    expect(events.at(-1)).toMatchObject({ diagnostic: { code: 'provider_exited' } });
+    expect(harness.subscriptionDisposeCalls).toBe(1);
+  });
+
+  it('terminalizes and disposes when Session cancellation reports the active turn is no longer running', async () => {
+    const harness = createSessionHarness();
+    harness.setCancel(async () => ({ status: 'notRunning' }));
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createRequest('run-already-stopped'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    await expect(execution.stop()).resolves.toEqual({ status: 'notRunning' });
 
     expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-cancelled']);
     expect(harness.subscriptionDisposeCalls).toBe(1);
@@ -306,6 +477,25 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     });
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
+
+    await execution.dispose();
+
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-cancelled']);
+    expect(harness.subscriptionDisposeCalls).toBe(1);
+    expect(harness.sessionDisposeCalls).toBe(1);
+  });
+
+  it('terminalizes a resumed Run disposed before its first send and keeps reentrant cleanup idempotent', async () => {
+    const harness = createSessionHarness();
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createResumeRequest('run-resume-dispose'),
+      openSession: async () => harness.session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => {
+      events.push(event);
+      if (event.kind === 'run-cancelled') void execution.dispose();
+    });
 
     await execution.dispose();
 

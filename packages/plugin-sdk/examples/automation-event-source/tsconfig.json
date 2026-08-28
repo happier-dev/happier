@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "ui/**/*.ts", "pluginUiBuild.ts"],
+  "exclude": ["node_modules", "dist"]
+}

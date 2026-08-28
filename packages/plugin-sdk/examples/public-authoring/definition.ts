@@ -247,8 +247,8 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             actions: ['open-review-status'],
         },
     },
-    // Deferred — not supported or advertised for ordinary author use. Do not
-    // rely on this illustrative declaration; its matrix row owns the unblock condition.
+    // Available in Developer Preview source. The capability matrix separately
+    // records loaded-platform proof and publication state.
     composer: {
         references: {
             'review-references': defineComposerReference({
@@ -346,7 +346,8 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             action: 'review-summary',
         },
     },
-    // Deferred — not supported or advertised for ordinary author use. Do not rely on it.
+    // Available in Developer Preview source. The capability matrix separately
+    // records loaded-platform proof and publication state.
     sessionHeaderActions: {
         'open-project-companion-dashboard': {
             title: 'Open Project Companion',
@@ -398,6 +399,29 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                         open: ['create'],
                         delivery: ['newTurn'],
                         cancel: true,
+                    },
+                },
+                ui: {
+                    components: {
+                        slots: [
+                            {
+                                id: 'review-agent.subagentLaunchCards',
+                                slot: 'sessionSubagents.launchCards',
+                                surfaceId: 'review-subagent-launch',
+                            },
+                            {
+                                id: 'review-agent.teammateDetailsTab',
+                                slot: 'sessionSubagents.teammateDetailsTab',
+                                surfaceId: 'review-subagent-details',
+                                resourceKind: 'reviewSubagentLauncher',
+                                iconName: 'people',
+                                tab: {
+                                    keyPrefix: 'review-subagent-launcher',
+                                    titleKey: 'review.subagents.launch.title',
+                                    subtitleKey: 'review.subagents.launch.subtitle',
+                                },
+                            },
+                        ],
                     },
                 },
             },
@@ -479,6 +503,22 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 title: 'Selected review file',
                 instancePolicy: 'singleton',
             },
+            {
+                id: 'review-subagent-launch',
+                container: 'sessionSubagentLaunch',
+                target: { kind: 'session' },
+                renderer: 'review-native',
+                fallbackRenderers: ['review-web'],
+                title: 'Review teammate launcher',
+            },
+            {
+                id: 'review-subagent-details',
+                container: 'sessionSubagentDetails',
+                target: { kind: 'session' },
+                renderer: 'review-native',
+                fallbackRenderers: ['review-web'],
+                title: 'Review teammate details',
+            },
         ],
         renderers: [
             {
@@ -546,7 +586,13 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 ],
             },
         ],
-        translations: [],
+        translations: [{
+            locale: 'en',
+            messages: {
+                'review.subagents.launch.title': 'Launch review teammate',
+                'review.subagents.launch.subtitle': 'Start a focused teammate in this review Session.',
+            },
+        }],
     },
     voiceModelPacks: {
         'english-small': {

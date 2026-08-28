@@ -78,51 +78,69 @@ describe('Agent External Sessions registration staging', () => {
         }
     });
 
-    it('rejects public callback members outside the approved contribution operations', () => {
-        const unrelatedOperation = vi.fn();
+    it('allows unrelated enumerable extension data while rejecting unknown enumerable callbacks', () => {
         const registrationScope = scope();
         registrationScope.api.agents.registerExternalSessions(
             'assistant',
             {
                 ...externalSessions,
-                notAnOperation: unrelatedOperation,
+                authorState: 'ready',
             } as unknown as AgentExternalSessionsContribution,
         );
 
-        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/iu);
-        expect(unrelatedOperation).not.toHaveBeenCalled();
+        expect(() => registrationScope.commit()).not.toThrow();
     });
 
-    it.each([
-        ['data', (value: Record<PropertyKey, unknown>) => {
-            value.notAnOperation = true;
-        }],
-        ['symbol', (value: Record<PropertyKey, unknown>) => {
-            value[Symbol('unknown')] = true;
-        }],
-        ['accessor', (value: Record<PropertyKey, unknown>) => {
-            Object.defineProperty(value, 'notAnOperation', {
-                configurable: true,
-                get: () => true,
-            });
-        }],
-        ['non-enumerable', (value: Record<PropertyKey, unknown>) => {
-            Object.defineProperty(value, 'notAnOperation', {
-                configurable: true,
-                enumerable: false,
-                value: true,
-            });
-        }],
-    ] as const)('rejects every unknown own %s member', (_kind, addUnknown) => {
+    it('rejects an unknown own enumerable callback through the attributable registration diagnostic', () => {
+        const contribution = {
+            ...externalSessions,
+            notAnOperation: vi.fn(),
+        } as unknown as AgentExternalSessionsContribution;
+        const diagnostic = vi.fn();
+        const registrationScope = createPluginRegistrationScope({
+            pluginId: 'acme.external',
+            target: { realm: 'daemon' },
+            rights: [{
+                family: 'agents',
+                localId: 'assistant',
+                target: { realm: 'daemon' },
+                requiredFields: ['externalSessions'],
+            }],
+            onFailure: diagnostic,
+        });
+        registrationScope.api.agents.registerExternalSessions('assistant', contribution);
+
+        expect(() => registrationScope.commit()).toThrow(
+            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
+        );
+        expect(diagnostic).toHaveBeenCalledOnce();
+        expect(diagnostic).toHaveBeenCalledWith(
+            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
+        );
+    });
+
+    it('does not inspect receiver state, symbols, non-enumerable members, or unknown accessors', () => {
         const contribution = { ...externalSessions } as Record<PropertyKey, unknown>;
-        addUnknown(contribution);
+        const unknownAccessor = vi.fn(() => true);
+        contribution.authorState = true;
+        contribution[Symbol('unknown')] = true;
+        Object.defineProperty(contribution, 'hidden', {
+            configurable: true,
+            enumerable: false,
+            value: true,
+        });
+        Object.defineProperty(contribution, 'unknownAccessor', {
+            configurable: true,
+            get: unknownAccessor,
+        });
         const registrationScope = scope();
         registrationScope.api.agents.registerExternalSessions(
             'assistant',
             contribution as unknown as AgentExternalSessionsContribution,
         );
 
-        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/iu);
+        expect(() => registrationScope.commit()).not.toThrow();
+        expect(unknownAccessor).not.toHaveBeenCalled();
     });
 
     it('captures current callbacks at commit and freezes their facades', async () => {
@@ -299,7 +317,7 @@ describe('Agent External Sessions registration staging', () => {
             .toThrow(/duplicate Agent External Sessions/u);
     });
 
-    it('rejects retired follow coordination beyond the External Sessions callback contract', () => {
+    it('rejects retired follow coordination beyond the closed External Sessions callback contract', () => {
         const registrationScope = scope();
         const withFollowPath = {
             ...externalSessions,
@@ -313,7 +331,9 @@ describe('Agent External Sessions registration staging', () => {
             'assistant',
             withFollowPath,
         );
-        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/iu);
+        expect(() => registrationScope.commit()).toThrow(
+            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
+        );
     });
 
     it('requires every Agent subfield declared by the manifest', () => {

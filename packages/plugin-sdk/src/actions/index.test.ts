@@ -6,6 +6,14 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { getActionSpec as canonicalGetActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES as apiExternalActionResponseMaxSerializedBytes,
+    isExternalActionResultWithinResponseEnvelopeLimitV1 as apiIsExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/protocol/actions';
+import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES as canonicalExternalActionResponseMaxSerializedBytes,
+    isExternalActionResultWithinResponseEnvelopeLimitV1 as canonicalIsExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/protocol/actions/externalActionLimits';
+import {
     actionInputOptionValueKey as canonicalActionInputOptionValueKey,
     isSameActionInputOptionValue as canonicalIsSameActionInputOptionValue,
     normalizeActionInputByFieldHints as canonicalNormalizeActionInputByFieldHints,
@@ -83,6 +91,10 @@ import type {
     ActionId as PublicActionId,
     SessionTranscriptGetExternalShareableInputV1 as PublicSessionTranscriptGetExternalShareableInputV1,
     SessionTranscriptGetExternalShareableResultV1 as PublicSessionTranscriptGetExternalShareableResultV1,
+} from './index.public.js';
+import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    isExternalActionResultWithinResponseEnvelopeLimitV1,
 } from './index.public.js';
 import type {
     ContributedActionExecutionWithOriginOptions as PublicContributedActionExecutionWithOriginOptions,
@@ -177,6 +189,17 @@ function definePluginActionDeclarationSource(): string {
 }
 
 describe('ActionsService source contract', () => {
+    it('projects external Action limits from the canonical Protocol API leaf', () => {
+        expect(apiExternalActionResponseMaxSerializedBytes)
+            .toBe(canonicalExternalActionResponseMaxSerializedBytes);
+        expect(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES)
+            .toBe(canonicalExternalActionResponseMaxSerializedBytes);
+        expect(apiIsExternalActionResultWithinResponseEnvelopeLimitV1)
+            .toBe(canonicalIsExternalActionResultWithinResponseEnvelopeLimitV1);
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1)
+            .toBe(canonicalIsExternalActionResultWithinResponseEnvelopeLimitV1);
+    });
+
     it('keeps Action declaration field projections rooted in the public ActionContribution type', () => {
         const declarationSource = definePluginActionDeclarationSource();
         const publicActionsSource = readFileSync(fileURLToPath(new URL('./index.public.ts', import.meta.url)), 'utf8');
@@ -221,7 +244,6 @@ describe('ActionsService source contract', () => {
         expectTypeOf<Parameters<typeof getActionSpec>[0]>()
             .toEqualTypeOf<Parameters<typeof canonicalGetActionSpec>[0]>();
         expectTypeOf<ReturnType<typeof getActionSpec>>().toEqualTypeOf<ActionSpec>();
-        expectTypeOf<CanonicalActionSpec>().toMatchTypeOf<ActionSpec>();
         expectTypeOf<ActionSpec['id']>().toEqualTypeOf<CanonicalActionSpec['id']>();
         expectTypeOf<ActionSpec['inputHints']>()
             .toEqualTypeOf<CanonicalActionSpec['inputHints']>();

@@ -9,6 +9,7 @@ import type {
     PluginSettingFieldSchemaV2 as ProtocolSettingFieldSchema,
     PluginSettingsContribution as ProtocolSettingsContribution,
 } from '@happier-dev/protocol';
+import { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 as canonicalPluginAccountSettingsLimitsV1 } from '@happier-dev/protocol/plugins/settings/accountSettingsLimits';
 
 import type {
     PluginSettingsActionDeclaration as SourceSettingsActionDeclaration,
@@ -42,8 +43,10 @@ import type {
     SettingsSnapshot,
     SettingsService,
 } from './projections.js';
+import { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from './projections.js';
 
 const SETTINGS_EXPORTS = [
+    'PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1',
     'PluginSettingFieldIdV2',
     'PluginSettingFieldSchemaV2',
     'PluginSettingsActionDeclaration',
@@ -113,6 +116,8 @@ describe('Settings package-local projection', () => {
         expectTypeOf<SettingsScopeRef>().toEqualTypeOf<SourceSettingsScopeRef>();
         expectTypeOf<SettingsSnapshot>().toEqualTypeOf<SourceSettingsSnapshot>();
         expectTypeOf<SettingsService>().toEqualTypeOf<SourceSettingsService>();
+        expect(PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1)
+            .toBe(canonicalPluginAccountSettingsLimitsV1);
     }, 120_000);
 
     it('keeps Protocol-only setting field schemas out of the public author export inventory', () => {

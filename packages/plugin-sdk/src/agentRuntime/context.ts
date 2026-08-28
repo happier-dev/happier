@@ -241,9 +241,6 @@ export type AgentSessionAuthRefreshRequest = Readonly<{
   targetId?: string | null;
   selection?: AgentSessionAuthRefreshSelection;
   planType?: string | null;
-  env?: Readonly<Record<string, string>> | null;
-  materializedEnv?: Readonly<Record<string, string>> | null;
-  targetMaterializedEnv?: Readonly<Record<string, string>> | null;
   classification?: AgentSessionAuthRefreshClassification;
   failingAccessTokenFingerprint?: string | null;
   expectedCredentialRevision?: string | null;
@@ -508,6 +505,14 @@ export type AgentSessionHappierToolsService = Readonly<{
 }>;
 
 /**
+ * Read-only view of the Agent's host-resolved native home. The host owns path
+ * resolution and filesystem access; the Agent owns the declared file codecs.
+ */
+export type AgentSessionNativeHomeService = Readonly<{
+  readFiles(fileIds: readonly string[]): Promise<Readonly<Record<string, Uint8Array>>>;
+}>;
+
+/**
  * Host capabilities bound to one live native Agent session. The host creates
  * this bag once for that session and retires it with the session or its
  * generation. It complements the operation-scoped `AgentRuntimeContext.services`
@@ -526,6 +531,7 @@ export type AgentSessionHostServices = Readonly<{
   mcp: AgentSessionMcpService;
   workflowActivity: AgentSessionWorkflowActivityService;
   toolExecution: AgentToolExecutionService;
+  nativeHome?: AgentSessionNativeHomeService;
   happierTools?: AgentSessionHappierToolsService;
 }>;
 

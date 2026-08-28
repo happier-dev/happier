@@ -89,7 +89,10 @@ function expectTriageSourcePointSemantics(
     expect(semantics.descriptor.safeParse(descriptor).success).toBe(true);
     expect(semantics.descriptor.safeParse({ kind: 'issue' }).success).toBe(false);
     expect(semantics.operations.map(({ role }) => role)).toEqual(Object.keys(protocol.operations).sort());
-    expect(semantics.surfaces).toEqual([{ role: 'detail', presentation: 'content' }]);
+    expect(semantics.surfaces.map(({ role, presentation }) => ({ role, presentation })))
+        .toEqual([{ role: 'detail', presentation: 'content' }]);
+    expect(semantics.surfaces[0]?.inputSchema.jsonSchema)
+        .toEqual(admittedProtocol.data.surfaces?.detail?.inputSchema);
 }
 
 describe('cross-plugin contribution public authoring example', () => {
@@ -97,10 +100,12 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(JSON.parse(readFileSync(authoringSupportMetadataPath, 'utf8'))).toEqual({
             purpose: 'Example and fixture support guidance only; this does not define SDK capability availability.',
             assets: {
-                'examples/action-contract-producer': 'first-party-preview',
-                'examples/action-contract-consumer': 'first-party-preview',
-                'examples/triage-source-target': 'first-party-preview',
-                'examples/triage-source-contributor': 'first-party-preview',
+                'examples/action-contract-producer': 'external-author-supported',
+                'examples/action-contract-consumer': 'external-author-supported',
+                'examples/automation-event-source': 'external-author-supported',
+                'examples/operation-only-channel-provider': 'external-author-supported',
+                'examples/triage-source-target': 'external-author-supported',
+                'examples/triage-source-contributor': 'external-author-supported',
                 'fixtures/authoring-inference': 'SDK-inference-fixture',
                 'fixtures/external-targeted-packages': 'SDK-inference-fixture',
                 'fixtures/feature-protocols/triage-sources-protocol': 'future-protocol-fixture',

@@ -42,7 +42,12 @@ import {
 import type {
     AgentCliAuthContributionV1,
     AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountEnvironmentUseV1,
+    AgentConnectedAccountFileEnvironmentUseV1,
+    AgentConnectedAccountContinuityV1,
     AgentConnectedAccountLaunchContributionV1,
+    AgentConnectedAccountSwitchContinuityV1,
+    AgentConnectedAccountSwitchTransitionV1,
     AgentConnectedAccountStateSharingDescriptorV1,
     AgentExperimentalVendorResumeSupportContributionV1,
     AgentPreflightSessionControlsCommandV1,
@@ -90,6 +95,7 @@ import {
 type PluginRegistrationRequiredField =
     | 'factory'
     | 'sessionRunnerFactory'
+    | 'cliAuth'
     | 'externalSessions'
     | ComposerAttachmentRuntimeRegistrationFieldV1;
 
@@ -544,10 +550,57 @@ function snapshotAgentCliAuthContribution(
 function snapshotAgentConnectedAccountStateSharingDescriptor(
     value: AgentConnectedAccountStateSharingDescriptorV1,
 ): AgentConnectedAccountStateSharingDescriptorV1 {
-    return snapshotStaticRegistrationData(
+    const snapshot = snapshotStaticRegistrationData(
         value,
         'Agent connected-account launch state-sharing descriptor',
     ) as AgentConnectedAccountStateSharingDescriptorV1;
+    if (snapshot.nativeHome === undefined) return snapshot;
+    const { environmentKey, defaultRelativePath } = snapshot.nativeHome;
+    if (typeof environmentKey !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(environmentKey)) {
+        throw new TypeError('Agent connected-account launch state-sharing descriptor.nativeHome.environmentKey must be a canonical environment key');
+    }
+    if (
+        typeof defaultRelativePath !== 'string'
+        || defaultRelativePath.length === 0
+        || defaultRelativePath !== defaultRelativePath.trim()
+        || defaultRelativePath.includes('\\')
+        || defaultRelativePath.startsWith('/')
+        || /^[A-Za-z]:/u.test(defaultRelativePath)
+        || defaultRelativePath.split('/').some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+    ) {
+        throw new TypeError('Agent connected-account launch state-sharing descriptor.nativeHome.defaultRelativePath must be a safe canonical relative path');
+    }
+    return snapshot;
+}
+
+function snapshotAgentConnectedAccountLaunchUses<T extends 'fileEnvironmentUses' | 'environmentUses'>(
+    value: unknown,
+    field: T,
+): T extends 'fileEnvironmentUses'
+    ? readonly AgentConnectedAccountFileEnvironmentUseV1[]
+    : readonly AgentConnectedAccountEnvironmentUseV1[] {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new TypeError(`Agent connected-account launch ${field} must be a non-empty array`);
+    }
+    return Object.freeze(value.map((entry, index) => {
+        const receiver = readAgentRegistrationObject(entry, `Agent connected-account launch ${field}[${index}]`);
+        const purpose = receiver.purpose;
+        const environmentKey = receiver.environmentKey;
+        if (typeof purpose !== 'string' || purpose.length === 0) {
+            throw new TypeError(`Agent connected-account launch ${field}[${index}].purpose must be a non-empty string`);
+        }
+        if (typeof environmentKey !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(environmentKey)) {
+            throw new TypeError(`Agent connected-account launch ${field}[${index}].environmentKey must be a canonical environment key`);
+        }
+        if (field === 'fileEnvironmentUses') {
+            const fileId = receiver.fileId;
+            if (typeof fileId !== 'string' || fileId.length === 0) {
+                throw new TypeError(`Agent connected-account launch ${field}[${index}].fileId must be a non-empty string`);
+            }
+            return Object.freeze({ purpose, fileId, environmentKey });
+        }
+        return Object.freeze({ purpose, environmentKey });
+    })) as never;
 }
 
 function snapshotAgentConnectedAccountLaunchContribution(
@@ -560,17 +613,193 @@ function snapshotAgentConnectedAccountLaunchContribution(
             ConnectedAccountRequestAuthUsesV1Schema.parse(receiver.requestAuthUses),
             'Agent connected-account launch request-auth uses',
         ) as readonly ConnectedAccountRequestAuthUse[];
+    const fileEnvironmentUses = receiver.fileEnvironmentUses === undefined
+        ? undefined
+        : snapshotAgentConnectedAccountLaunchUses(receiver.fileEnvironmentUses, 'fileEnvironmentUses');
+    const environmentUses = receiver.environmentUses === undefined
+        ? undefined
+        : snapshotAgentConnectedAccountLaunchUses(receiver.environmentUses, 'environmentUses');
+    const switchContinuity = receiver.switchContinuity === undefined
+        ? undefined
+        : snapshotAgentConnectedAccountSwitchContinuity(receiver.switchContinuity);
     const stateSharingDescriptor = receiver.stateSharingDescriptor === undefined
         ? undefined
         : snapshotAgentConnectedAccountStateSharingDescriptor(
             receiver.stateSharingDescriptor as AgentConnectedAccountStateSharingDescriptorV1,
         );
-    if (requestAuthUses === undefined && stateSharingDescriptor === undefined) {
+    const continuity = receiver.continuity === undefined
+        ? undefined
+        : (() => {
+            const source = readAgentRegistrationObject(
+                receiver.continuity,
+                'Agent connected-account launch continuity',
+            );
+            const nativeAuthCodec = source.nativeAuthCodec;
+            let capturedNativeAuthCodec: AgentConnectedAccountContinuityV1['nativeAuthCodec'];
+            if (nativeAuthCodec !== undefined) {
+                const codec = readAgentRegistrationObject(
+                    nativeAuthCodec,
+                    'Agent connected-account launch continuity.nativeAuthCodec',
+                );
+                const materialize = codec.materialize;
+                if (typeof materialize !== 'function') {
+                    throw new TypeError('Agent connected-account launch continuity.nativeAuthCodec.materialize must be a function');
+                }
+                const inspect = codec.inspect;
+                if (typeof inspect !== 'function') {
+                    throw new TypeError('Agent connected-account launch continuity.nativeAuthCodec.inspect must be a function');
+                }
+                capturedNativeAuthCodec = Object.freeze({
+                    materialize: bindAgentRegistrationCallback<NonNullable<AgentConnectedAccountContinuityV1['nativeAuthCodec']>['materialize']>(
+                        codec,
+                        materialize,
+                        'Agent connected-account launch continuity.nativeAuthCodec.materialize',
+                    ),
+                    inspect: bindAgentRegistrationCallback<NonNullable<AgentConnectedAccountContinuityV1['nativeAuthCodec']>['inspect']>(
+                        codec,
+                        inspect,
+                        'Agent connected-account launch continuity.nativeAuthCodec.inspect',
+                    ),
+                });
+            }
+            const runtimeAuthAdapter = source.runtimeAuthAdapter;
+            if (runtimeAuthAdapter !== undefined) {
+                const adapter = readAgentRegistrationObject(
+                    runtimeAuthAdapter,
+                    'Agent connected-account launch continuity.runtimeAuthAdapter',
+                );
+                for (const method of [
+                    'classifyRuntimeAuthFailure',
+                    'materializeActiveProfile',
+                    'canHotApply',
+                    'hotApply',
+                    'probeQuota',
+                    'refreshActiveProfile',
+                ] as const) {
+                    if (typeof adapter[method] !== 'function') {
+                        throw new TypeError(`Agent connected-account launch continuity.runtimeAuthAdapter.${method} must be a function`);
+                    }
+                }
+            }
+            for (const callback of ['verifyResumeReachable'] as const) {
+                if (source[callback] !== undefined && typeof source[callback] !== 'function') {
+                    throw new TypeError(`Agent connected-account launch continuity.${callback} must be a function`);
+                }
+            }
+            if (
+                nativeAuthCodec === undefined
+                &&
+                runtimeAuthAdapter === undefined
+                && source.verifyResumeReachable === undefined
+            ) {
+                throw new TypeError('Agent connected-account launch continuity must declare at least one callback');
+            }
+            return Object.freeze({
+                ...(capturedNativeAuthCodec === undefined ? {} : { nativeAuthCodec: capturedNativeAuthCodec }),
+                ...(runtimeAuthAdapter === undefined ? {} : { runtimeAuthAdapter }),
+                ...(source.verifyResumeReachable === undefined
+                    ? {}
+                    : { verifyResumeReachable: source.verifyResumeReachable }),
+            });
+        })() as AgentConnectedAccountContinuityV1;
+    if (
+        continuity?.verifyResumeReachable !== undefined
+        && (
+            stateSharingDescriptor?.state.supported !== true
+            || stateSharingDescriptor.state.entries.length === 0
+        )
+    ) {
+        throw new TypeError('Agent connected-account launch continuity.verifyResumeReachable requires a supported stateSharingDescriptor with declared state entries');
+    }
+    if (requestAuthUses === undefined && fileEnvironmentUses === undefined && environmentUses === undefined && switchContinuity === undefined && stateSharingDescriptor === undefined && continuity === undefined) {
         throw new TypeError('Agent connected-account launch contribution must declare at least one launch fact');
     }
     return Object.freeze({
         ...(requestAuthUses === undefined ? {} : { requestAuthUses }),
+        ...(fileEnvironmentUses === undefined ? {} : { fileEnvironmentUses }),
+        ...(environmentUses === undefined ? {} : { environmentUses }),
+        ...(switchContinuity === undefined ? {} : { switchContinuity }),
         ...(stateSharingDescriptor === undefined ? {} : { stateSharingDescriptor }),
+        ...(continuity === undefined ? {} : { continuity }),
+    });
+}
+
+const AGENT_CONNECTED_ACCOUNT_SWITCH_TRANSITIONS = new Set<AgentConnectedAccountSwitchTransitionV1>([
+    'native_to_connected',
+    'connected_to_native',
+    'connected_to_connected',
+    'same_connected_group',
+]);
+
+function snapshotAgentConnectedAccountSwitchContinuity(
+    value: unknown,
+): AgentConnectedAccountSwitchContinuityV1 {
+    const receiver = readAgentRegistrationObject(
+        value,
+        'Agent connected-account launch switch continuity',
+    );
+    const snapshotStrings = (candidate: unknown, subject: string): readonly string[] => {
+        if (
+            !Array.isArray(candidate)
+            || candidate.length === 0
+            || candidate.some((entry) => typeof entry !== 'string' || entry.length === 0)
+        ) {
+            throw new TypeError(`${subject} must be a non-empty array of non-empty strings`);
+        }
+        return Object.freeze([...candidate]);
+    };
+    const snapshotTransitions = (
+        candidate: unknown,
+        subject: string,
+    ): readonly AgentConnectedAccountSwitchTransitionV1[] => {
+        const values = snapshotStrings(candidate, subject);
+        if (values.some((entry) => !AGENT_CONNECTED_ACCOUNT_SWITCH_TRANSITIONS.has(
+            entry as AgentConnectedAccountSwitchTransitionV1,
+        ))) {
+            throw new TypeError(`${subject} contains an unsupported transition`);
+        }
+        return values as readonly AgentConnectedAccountSwitchTransitionV1[];
+    };
+    const continuityMode = receiver.continuityMode;
+    if (
+        continuityMode !== 'hot_apply'
+        && continuityMode !== 'restart_same_home'
+        && continuityMode !== 'restart_shared_state_required'
+    ) {
+        throw new TypeError('Agent connected-account launch switch continuity.continuityMode is unsupported');
+    }
+    const supportedTransitions = receiver.supportedTransitions === undefined
+        ? undefined
+        : snapshotTransitions(
+            receiver.supportedTransitions,
+            'Agent connected-account launch switch continuity.supportedTransitions',
+        );
+    const providerStateSharingRequired = receiver.providerStateSharingRequired === undefined
+        ? undefined
+        : (() => {
+            const sharing = readAgentRegistrationObject(
+                receiver.providerStateSharingRequired,
+                'Agent connected-account launch switch continuity.providerStateSharingRequired',
+            );
+            return Object.freeze({
+                ...(sharing.serviceIds === undefined
+                    ? {}
+                    : {
+                        serviceIds: snapshotStrings(
+                            sharing.serviceIds,
+                            'Agent connected-account launch switch continuity.providerStateSharingRequired.serviceIds',
+                        ),
+                    }),
+                supportedTransitions: snapshotTransitions(
+                    sharing.supportedTransitions,
+                    'Agent connected-account launch switch continuity.providerStateSharingRequired.supportedTransitions',
+                ),
+            });
+        })();
+    return Object.freeze({
+        continuityMode,
+        ...(supportedTransitions === undefined ? {} : { supportedTransitions }),
+        ...(providerStateSharingRequired === undefined ? {} : { providerStateSharingRequired }),
     });
 }
 
@@ -619,15 +848,6 @@ function snapshotAgentPreflightSessionControlsCommand(
     subject: string,
 ): AgentPreflightSessionControlsCommandV1 {
     const receiver = readAgentRegistrationObject(value, subject);
-    if (Reflect.ownKeys(receiver).some((key) => (
-        key !== 'toolId'
-        && key !== 'args'
-        && key !== 'environmentKeys'
-        && key !== 'environmentExcludeKeys'
-        && key !== 'ci'
-    ))) {
-        throw new TypeError(`${subject} contains unknown fields`);
-    }
     if (receiver.environmentKeys !== undefined && receiver.environmentExcludeKeys !== undefined) {
         throw new TypeError(`${subject} cannot set both environmentKeys and environmentExcludeKeys`);
     }
@@ -661,22 +881,12 @@ function snapshotAgentPreflightSessionControlsModels(
     value: AgentPreflightSessionControlsModelsV1,
 ): AgentPreflightSessionControlsModelsV1 {
     const receiver = readAgentRegistrationObject(value, 'Agent preflight models declaration');
-    if (Reflect.ownKeys(receiver).some((key) => (
-        key !== 'command' && key !== 'parseOutput' && key !== 'fallback'
-    ))) {
-        throw new TypeError('Agent preflight models declaration contains unknown fields');
-    }
     const fallback = receiver.fallback === undefined
         ? undefined
         : readAgentRegistrationObject(
             receiver.fallback,
             'Agent preflight models declaration.fallback',
         );
-    if (fallback && Reflect.ownKeys(fallback).some((key) => (
-        key !== 'command' && key !== 'parseOutput'
-    ))) {
-        throw new TypeError('Agent preflight models declaration.fallback contains unknown fields');
-    }
     return Object.freeze({
         command: snapshotAgentPreflightSessionControlsCommand(
             receiver.command as AgentPreflightSessionControlsCommandV1,
@@ -723,17 +933,6 @@ function snapshotAgentPreflightSessionControlsContribution(
     value: AgentPreflightSessionControlsContributionV1,
 ): AgentPreflightSessionControlsContributionV1 {
     const receiver = readAgentRegistrationObject(value, 'Agent preflight Session controls contribution');
-    if (Reflect.ownKeys(receiver).some((key) => (
-        key !== 'resolveProbeVariant'
-        && key !== 'models'
-        && key !== 'jsonRpcCommand'
-        && key !== 'probeModels'
-        && key !== 'probeModes'
-        && key !== 'probeConfigOptions'
-        && key !== 'probePassiveRealtimeSetup'
-    ))) {
-        throw new TypeError('Agent preflight Session controls contribution contains unknown fields');
-    }
     if (receiver.models !== undefined && receiver.probeModels !== undefined) {
         throw new TypeError('Agent preflight Session controls contribution cannot declare both models and probeModels');
     }
@@ -792,13 +991,6 @@ function snapshotAgentTerminalPromptSubmitVerificationPolicy(
         value,
         'Agent terminal prompt-submit verification policy',
     );
-    if (Reflect.ownKeys(receiver).some((key) => (
-        key !== 'shouldVerifyAfterSubmit'
-        && key !== 'verifyBeforeSubmitStaging'
-        && key !== 'verifyAfterSubmit'
-    ))) {
-        throw new TypeError('Agent terminal prompt-submit verification policy contains unknown fields');
-    }
     return Object.freeze({
         shouldVerifyAfterSubmit: bindAgentRegistrationCallback<
             AgentTerminalPromptSubmitVerificationPolicyV1['shouldVerifyAfterSubmit']
@@ -832,9 +1024,6 @@ function snapshotAgentSessionStartupContribution(
     value: AgentSessionStartupContributionV1,
 ): AgentSessionStartupContributionV1 {
     const receiver = readAgentRegistrationObject(value, 'Agent Session startup contribution');
-    if (Reflect.ownKeys(receiver).some((key) => key !== 'shouldUseDeferredBootstrap')) {
-        throw new TypeError('Agent Session startup contribution contains unknown fields');
-    }
     return Object.freeze({
         shouldUseDeferredBootstrap: bindAgentRegistrationCallback<
             AgentSessionStartupContributionV1['shouldUseDeferredBootstrap']
@@ -853,9 +1042,6 @@ function snapshotAgentExperimentalVendorResumeSupportContribution(
         value,
         'Agent experimental vendor-resume support contribution',
     );
-    if (Reflect.ownKeys(receiver).some((key) => key !== 'supportsVendorResume')) {
-        throw new TypeError('Agent experimental vendor-resume support contribution contains unknown fields');
-    }
     return Object.freeze({
         supportsVendorResume: bindAgentRegistrationCallback<
             AgentExperimentalVendorResumeSupportContributionV1['supportsVendorResume']
@@ -906,14 +1092,6 @@ function snapshotAgentRuntimeRegistrationOptions(
             sessionRunnerFactory,
             'Agent session runner factory locator',
         );
-        if (Reflect.ownKeys(locator).some((key) => (
-            key !== 'module'
-            && key !== 'export'
-            && key !== 'runtimeApiVersion'
-            && key !== 'externalSessionsExport'
-        ))) {
-            throw new TypeError('Agent session runner factory locator contains unknown fields');
-        }
         const module = locator.module;
         const exportName = locator.export;
         const runtimeApiVersion = locator.runtimeApiVersion;
@@ -999,6 +1177,17 @@ function snapshotAgentExternalSessionsContribution(
         contribution,
         'Agent External Sessions contribution',
     );
+    const approvedCallbacks = new Set<string>([
+        ...AGENT_EXTERNAL_SESSIONS_KEYS,
+        ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
+    ]);
+    for (const [key, value] of Object.entries(receiver)) {
+        if (!approvedCallbacks.has(key) && typeof value === 'function') {
+            throw new TypeError(
+                `Agent External Sessions contribution.${key} is not an approved callback`,
+            );
+        }
+    }
     const snapshot: Record<string, unknown> = {};
     for (const key of AGENT_EXTERNAL_SESSIONS_KEYS) {
         snapshot[key] = bindAgentRegistrationCallback(
@@ -1796,6 +1985,12 @@ export function createPluginRegistrationScope(
                     fail(
                         `Plugin '${params.pluginId}' cannot register a Session runner factory locator for non-Session Agent '${right.localId}'`,
                     );
+                }
+                if (right.requiredFields.includes('cliAuth') && value?.cliAuth === undefined) {
+                    fail(`Plugin '${params.pluginId}' activation is missing Agent CLI auth contribution for 'agents/${right.localId}'`);
+                }
+                if (!right.requiredFields.includes('cliAuth') && value?.cliAuth !== undefined) {
+                    fail(`Plugin '${params.pluginId}' registered an undeclared Agent CLI auth contribution for 'agents/${right.localId}'`);
                 }
                 if (right.requiredFields.includes('externalSessions') && value?.externalSessions === undefined) {
                     fail(`Plugin '${params.pluginId}' activation is missing Agent External Sessions contribution for 'agents/${right.localId}'`);

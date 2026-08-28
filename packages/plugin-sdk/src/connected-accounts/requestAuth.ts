@@ -1,6 +1,7 @@
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1,
   CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH,
@@ -65,6 +66,7 @@ const CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH = ${js(CONNECTED_ACCOUNT
 const CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS = ${requestTimeoutMs};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_RECOVERY_TIMEOUT_MS = ${authFailureRequestTimeoutMs};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_RESPONSE_MAX_BYTES = 256 * 1024;
+const CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS = Object.freeze(${js(CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1)});
 const CONNECTED_ACCOUNT_REQUEST_AUTH_PINNED_TERMINAL_FRONTIER = Object.freeze({
   producerVersions: Object.freeze(${js(PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1)}),
   signatures: Object.freeze(${js(PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1)}),
@@ -417,9 +419,6 @@ async function requestAuthCall(path, body, signal, timeoutMs = CONNECTED_ACCOUNT
     throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);
   }
   const decoded = await requestAuthReadBoundedResponse(response);
-  if (response.status === 401) {
-    throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);
-  }
   if (decoded.kind === "too_large") {
     throw new ConnectedAccountRequestAuthTransportError(
       "happier_request_auth_response_too_large",
@@ -433,19 +432,28 @@ async function requestAuthCall(path, body, signal, timeoutMs = CONNECTED_ACCOUNT
     );
   }
   const envelope = decoded.envelope;
-  if (!response.ok) {
-    const code = requestAuthHasExactKeys(envelope, ["ok", "error"])
-      && envelope.ok === false
-      && requestAuthHasExactKeys(envelope.error, ["code"])
-      && requestAuthIsBoundedString(envelope.error.code, 1, 128)
-      ? envelope.error.code
-      : "happier_request_auth_status_" + response.status;
-    throw new ConnectedAccountRequestAuthTransportError(code, response.status);
+  if (response.status === 200) {
+    if (!requestAuthHasExactKeys(envelope, ["ok", "value"]) || envelope.ok !== true) {
+      throw new ConnectedAccountRequestAuthTransportError("happier_request_auth_response_invalid", response.status);
+    }
+    return envelope.value;
   }
-  if (!requestAuthHasExactKeys(envelope, ["ok", "value"]) || envelope.ok !== true) {
+  const code = requestAuthHasExactKeys(envelope, ["ok", "error"])
+    && envelope.ok === false
+    && requestAuthHasExactKeys(envelope.error, ["code"])
+    && requestAuthIsBoundedString(envelope.error.code, 1, 128)
+    ? envelope.error.code
+    : null;
+  if (code === null || CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS[code] !== response.status) {
     throw new ConnectedAccountRequestAuthTransportError("happier_request_auth_response_invalid", response.status);
   }
-  return envelope.value;
+  if (code === "request_auth_unauthorized") {
+    // A valid 401 means this single capability tuple is no longer usable. Keep
+    // the provider-facing result retry-safe without rereading or replaying the
+    // request; the next explicit call will observe the atomically rotated tuple.
+    throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);
+  }
+  throw new ConnectedAccountRequestAuthTransportError(code, response.status);
 }
 
 async function lookupConnectedAccountRequestAuth(input) {

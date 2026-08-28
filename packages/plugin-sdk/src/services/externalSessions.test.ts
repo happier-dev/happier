@@ -154,6 +154,7 @@ describe('External Sessions contextual service contract', () => {
                 items: readonly ExternalSessionTranscriptItem[];
                 nextCursor: string;
                 boundary: string;
+                hasMore: boolean;
                 diagnostics?: readonly ExternalSessionReadAfterDiagnostic[];
             }>
             | Readonly<{
@@ -208,6 +209,7 @@ describe('External Sessions contextual service contract', () => {
         }>>();
         expectTypeOf<ExternalSessionReadAfterDiagnostic>().toEqualTypeOf<Readonly<{
             code: string;
+            severity: 'benign' | 'required';
             count: number;
             positions: readonly number[];
         }>>();

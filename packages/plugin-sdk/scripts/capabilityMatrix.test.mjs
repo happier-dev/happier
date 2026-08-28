@@ -348,7 +348,7 @@ test('declares session info sections with the maintained Channels resource autho
   });
 });
 
-test('derives operation-only targeted contribution availability through the maintained PostHog manifest', () => {
+test('derives targeted contribution availability through the maintained external-author consumer', () => {
   const targetedContributionCatalogEntry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
     (entry) => entry.manifestKey === 'targetedPluginContributions',
   );
@@ -367,9 +367,9 @@ test('derives operation-only targeted contribution availability through the main
     specialistOwner: 'packages/protocol/src/plugins/contributions/catalog.ts#targetedPluginContributions',
     predecessorRemoval: `catalog-disposition:${targetedContributionCatalogEntry.disposition}`,
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/posthog/src/manifest.ts',
+    provingConsumer: 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts',
     sourceApiAvailability: 'present',
-    sourceConsumer: 'packages/plugins/posthog/src/manifest.ts',
+    sourceConsumer: 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts',
     loadedPlatformProof: 'not-recorded',
     releaseAvailability: 'not-published',
   });

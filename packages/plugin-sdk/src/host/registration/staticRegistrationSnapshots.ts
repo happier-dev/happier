@@ -136,6 +136,24 @@ function snapshotMethodGroup(
     return Object.freeze(snapshot);
 }
 
+function snapshotRequiredMethodGroup(
+    value: unknown,
+    methodNames: readonly string[],
+    label: string,
+): Readonly<Record<string, unknown>> {
+    const receiver = requireObject(value, label);
+    const snapshot: Record<string, unknown> = {};
+    for (const methodName of methodNames) {
+        snapshot[methodName] = captureStaticRegistrationMethod(
+            receiver,
+            methodName,
+            `${label}.${methodName}`,
+            true,
+        );
+    }
+    return Object.freeze(snapshot);
+}
+
 export function captureVoiceProviderRuntimeKind(
     runtime: RegisteredVoiceProviderRuntime,
 ): RegisteredVoiceProviderRuntime['kind'] {
@@ -405,31 +423,31 @@ export function snapshotMcpServerRuntime(
     return Object.freeze(snapshot) as unknown as PluginMcpServerRuntime;
 }
 
-const SCM_HOSTING_METHODS = Object.freeze([
-    'detectRemote',
-    'buildCompareUrl',
-    'getPullRequestAuthProfileKey',
-    'listPullRequests',
-    'getPullRequest',
-    'createPullRequest',
-    'getDefaultBranch',
-    'resolvePullRequestCheckoutReference',
-    'describePublishTargets',
-    'createRepository',
-    'getRepository',
-    'describeCloneTargets',
-] as const);
+const SCM_HOSTING_CAPABILITY_METHODS = Object.freeze({
+    routing: ['detectRemote', 'buildCompareUrl'],
+    pullRequests: ['getPullRequestAuthProfileKey', 'listPullRequests', 'getPullRequest', 'createPullRequest'],
+    pullRequestCheckout: ['resolvePullRequestCheckoutReference'],
+    repositoryPublishing: ['describePublishTargets', 'createRepository', 'getRepository'],
+    repositoryClone: ['describeCloneTargets'],
+} as const);
 
 export function snapshotScmHostingProviderRuntime(
     runtime: HostingProviderRuntime,
 ): HostingProviderRuntime {
     const receiver = requireObject(runtime, 'SCM hosting Provider runtime');
+    const adapter = requireObject(readMember(receiver, 'adapter'), 'SCM hosting Provider adapter');
+    const capabilities: Record<string, unknown> = {};
+    for (const [capabilityName, methodNames] of Object.entries(SCM_HOSTING_CAPABILITY_METHODS)) {
+        const capability = readMember(adapter, capabilityName);
+        if (capability === undefined) continue;
+        capabilities[capabilityName] = snapshotRequiredMethodGroup(
+            capability,
+            methodNames,
+            `SCM hosting Provider adapter.${capabilityName}`,
+        );
+    }
     return Object.freeze({
-        adapter: snapshotMethodGroup(
-            readMember(receiver, 'adapter'),
-            SCM_HOSTING_METHODS,
-            'SCM hosting Provider adapter',
-        ),
+        adapter: Object.freeze(capabilities),
     }) as HostingProviderRuntime;
 }
 
@@ -457,6 +475,8 @@ const SCM_BACKEND_HANDLER_METHODS = Object.freeze({
     workspaceIntegration: [
         'inspectWorkspaceLocation',
         'reconcilePostMaterialization',
+        'prepareReviewWorkspace',
+        'verifyPreparedReviewWorkspace',
         'realizeWorkspaceCheckout',
         'createWorkspaceCheckout',
         'materializeWorkspaceCheckout',
@@ -607,24 +627,11 @@ export function snapshotComposerReferenceRuntime(
     });
 }
 
-/**
- * Attachment lifecycles are a closed public runtime object. Unlike legacy
- * reference providers, its declaration advertises an exact callback set, so
- * preserve no unrecognized runtime surface for a later host to misinterpret.
- */
+/** Captures only the callbacks declared by the attachment runtime family. */
 export function snapshotComposerAttachmentRuntime(
     runtime: ComposerAttachmentRuntime,
 ): ComposerAttachmentRuntime {
-    if (typeof runtime !== 'object' || runtime === null || Array.isArray(runtime)) {
-        throw new TypeError('Composer attachment runtime must be an object');
-    }
-    const ownKeys = Reflect.ownKeys(runtime);
-    if (ownKeys.some((key) => typeof key !== 'string'
-        || !COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1.includes(
-            key as typeof COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1[number],
-        ))) {
-        throw new TypeError('Composer attachment runtime contains unknown fields');
-    }
+    const receiver = requireObject(runtime, 'Composer attachment runtime');
     const snapshot: {
         prepareForSend?: ComposerAttachmentRuntime['prepareForSend'];
         resolveForDispatch?: ComposerAttachmentRuntime['resolveForDispatch'];
@@ -632,7 +639,7 @@ export function snapshotComposerAttachmentRuntime(
     } = {};
     for (const field of COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1) {
         const method = captureStaticRegistrationMethod(
-            runtime,
+            receiver,
             field,
             `Composer attachment runtime.${field}`,
             false,

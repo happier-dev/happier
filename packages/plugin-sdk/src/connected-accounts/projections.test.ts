@@ -5,6 +5,15 @@ import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
 const CONNECTED_ACCOUNTS_EXPORTS = [
+    'AuthCallbackCreateResult',
+    'AuthCallbackResult',
+    'AuthCallbackService',
+    'AuthCallbackSession',
+    'AuthLoopbackResult',
+    'AuthOpenBrowserResult',
+    'AuthPromptTextResult',
+    'ConnectedAccountAuthDiagnostic',
+    'ConnectedAccountAuthFailure',
     'ConnectedAccountPurposeDeclarations',
 ] as const;
 
@@ -87,7 +96,7 @@ function ownerSymbol(program: ts.Program, exportName: string): ts.Symbol {
 }
 
 describe('Connected Accounts package-local Provider facet projection', () => {
-    it('contains exactly the approved unsuffixed purpose-declarations alias', () => {
+    it('contains exactly the public Connected Account auth facets and purpose-declarations alias', () => {
         const program = readSdkProgram();
         expect(moduleExports(program, 'src/connected-accounts/projections.ts')
             .map((symbol) => symbol.name)
@@ -105,8 +114,7 @@ describe('Connected Accounts package-local Provider facet projection', () => {
             ts.ScriptKind.TS,
         );
 
-        expect(parsed.statements).toHaveLength(1);
-        const [statement] = parsed.statements;
+        const statement = parsed.statements.find((candidate) => ts.isExportDeclaration(candidate));
         expect(statement && ts.isExportDeclaration(statement)).toBe(true);
         if (!statement || !ts.isExportDeclaration(statement)) return;
         expect(statement.isTypeOnly).toBe(true);

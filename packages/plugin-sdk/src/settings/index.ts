@@ -1,3 +1,4 @@
+export { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from './projections.js';
 export type { PluginSettingFieldIdV2 } from './projections.js';
 export type { PluginSettingsActionDeclaration } from './projections.js';
 export type { PluginSettingsActionInput } from './projections.js';

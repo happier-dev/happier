@@ -27,7 +27,12 @@ import type {
     PluginUiTargetedContributionSurfaceV1 as ProtocolPluginUiTargetedContributionSurfaceV1,
     PluginUiTargetedContributionV1 as ProtocolPluginUiTargetedContributionV1,
     PluginUiTargetedContributionsV1 as ProtocolPluginUiTargetedContributionsV1,
+    PluginUiHostMethodV1 as ProtocolPluginUiHostMethodV1,
+    PluginUiPreparedReviewWorkspaceResultV1 as ProtocolPluginUiPreparedReviewWorkspaceResultV1,
 } from '@happier-dev/protocol/plugins/ui/client';
+import type {
+    PluginUiViewInlineBindingInputV2 as ProtocolPluginUiViewInlineBindingInputV2,
+} from '@happier-dev/protocol/plugins/contributions/ui';
 
 /** Type-only public projection; Host API payloads remain ordinary JSON values. */
 type DeepReadonly<T> = T extends readonly (infer TItem)[]
@@ -117,34 +122,8 @@ export type PluginUiIconTokenV1 =
     | 'more'
     | 'search';
 
-export type PluginUiHostMethodV1 =
-    | 'context'
-    | 'publishCurrentUiContext'
-    | 'watchContext'
-    | 'executeAction'
-    | 'readResource'
-    | 'statOpenableContent'
-    | 'readOpenableContent'
-    | 'watchResource'
-    | 'openSurface'
-    | 'replacePageLocation'
-    | 'notify'
-    | 'confirm'
-    | 'diagnostic'
-    | 'readClipboard'
-    | 'writeClipboard'
-    | 'openExternalLink'
-    | 'selectActionInput'
-    | 'activeComposer'
-    | 'readComposer'
-    | 'watchComposer'
-    | 'applyComposer'
-    | 'focusComposer'
-    | 'setComposerDecorations'
-    | 'acquireComposerInputLock'
-    | 'pickComposerMedia'
-    | 'inspectComposerContent'
-    | 'releaseComposerContent';
+/** Protocol's sole producer-backed Host API vocabulary; never copied here. */
+export type PluginUiHostMethodV1 = ProtocolPluginUiHostMethodV1;
 
 export type PluginUiContributionIdentityV1 = Readonly<{
     pluginId: string;
@@ -186,7 +165,12 @@ export type PluginUiMountContextV1 =
     | Readonly<{
         kind: 'destination';
         destination: PluginUiContributionIdentityV1;
-        container: PluginUiContainerV1;
+        container: Exclude<
+            PluginUiContainerV1,
+            | 'sessionSubagentLaunch'
+            | 'sessionSubagentDetails'
+            | 'sessionInfoSection'
+        >;
     }>
     | Readonly<{
         kind: 'embedded';
@@ -360,7 +344,6 @@ export type PluginUiSelectActionInputTargetedRequestV1 = {
 export type PluginUiSelectActionInputHostRequestV1 = {
     hostAction: { action: 'session.spawn_new'; projection: 'serverStartDraft' };
     draft?: PluginUiJsonObjectV1;
-    seed?: PluginUiNewSessionSeedV1;
 };
 
 /**
@@ -371,7 +354,7 @@ export type PluginUiSelectActionInputHostRequestV1 = {
  * the reader already chose.
  */
 export type PluginUiNewSessionSeedV1 = {
-    prompt?: { text: string; mode: 'replace' | 'append' };
+    prompt?: string;
     profileId?: string;
     /**
      * The resolved checkout question. It carries no worktree identity: the
@@ -396,6 +379,11 @@ export type PluginUiNewSessionSeedV1 = {
      */
     attachments?: { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
 };
+
+/** Input for the dedicated, navigation-owning `openNewSession` Host method. */
+export type PluginUiOpenNewSessionRequestV1 = PluginUiNewSessionSeedV1;
+export type PluginUiPreparedReviewWorkspaceResultV1 =
+    DeepReadonly<ProtocolPluginUiPreparedReviewWorkspaceResultV1>;
 
 /** The canonical host checkout-question vocabulary projected for UI authors. */
 export type PluginUiSessionCheckoutIntentV1 =
@@ -444,11 +432,15 @@ export type PluginUiSelectActionInputTargetedSubmittedV1 = {
         | { kind: 'selected'; fieldPath: string; ref: QualifiedConnectedAccountRef };
 };
 
-/** Exact result arms: targeted submitted, no-invoke Session draft, seeded New Session, or cancellation. */
+/** Exact result arms: targeted submitted, no-invoke Session draft, or cancellation. */
 export type PluginUiSelectActionInputResultV1 =
     | PluginUiSelectActionInputTargetedSubmittedV1
     | { kind: 'serverStartDraft'; draft: PluginUiSessionServerStartDraftV1 }
-    | { kind: 'newSessionSeeded' }
+    | { kind: 'cancelled' };
+
+/** Mount-scoped, non-durable input completion exposed only when the host installs it. */
+export type PluginUiEphemeralInputSettlementV1 =
+    | { kind: 'completed'; input: PluginUiJsonValueV1 }
     | { kind: 'cancelled' };
 
 /** Transient carrier whose currentness remains owned by the host. */
@@ -853,13 +845,10 @@ export type PluginUiViewDestinationBindingInputV2 =
         target: PluginUiViewTargetV2 & { kind: 'services' };
         instancePolicy?: 'singleton';
         headerActions?: [];
-    }
-    | {
-        container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
-        target: { kind: 'session'; sessionIdPath?: string };
-        instancePolicy?: 'singleton';
-        headerActions?: [];
     };
+
+/** Inline host roles share a renderer declaration, never destination chrome. */
+export type PluginUiViewInlineBindingInputV2 = ProtocolPluginUiViewInlineBindingInputV2;
 
 export type PluginUiPageHeaderActionV1 = {
     id: string;
@@ -871,16 +860,20 @@ export type PluginUiPageHeaderActionV1 = {
     command: string | PluginUiSemanticCommandV1;
 };
 
-export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
+export type PluginUiViewV2Input = {
     id: string;
     renderer: string;
     fallbackRenderers?: string[];
     title?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
-    badge?: { label: PluginLocalizedStringV2; tone?: PluginUiToneV1 };
-    groupHint?: 'navigation' | 'sessions';
-    rankHint?: number;
-};
+} & (
+    | (PluginUiViewDestinationBindingInputV2 & {
+        badge?: { label: PluginLocalizedStringV2; tone?: PluginUiToneV1 };
+        groupHint?: 'navigation' | 'sessions';
+        rankHint?: number;
+    })
+    | PluginUiViewInlineBindingInputV2
+);
 
 /**
  * The parsed view: the host resolves `instancePolicy` and `headerActions`
@@ -889,7 +882,7 @@ export type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
 export type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput
     ? TInput extends PluginUiViewDestinationBindingInputV2
         ? TInput & Required<Pick<TInput, 'instancePolicy' | 'headerActions'>>
-        : never
+        : TInput
     : never;
 
 export type PluginUiTranslationBundleV2 = {

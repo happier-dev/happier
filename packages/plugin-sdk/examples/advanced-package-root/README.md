@@ -32,3 +32,12 @@ feature QA.
 The provider's attach URL and Agent runtime are illustrative only; they do not
 contact or launch a real service. Copy the ownership pattern, then replace
 them with your declared, validated runtime behavior.
+
+This compact example intentionally consumes another plugin's Connected Account
+service and does not demonstrate a credential producer, Provider-bound Agent,
+or request-auth child. The maintained packed external vertical in the Happier
+test workspace covers that full lifecycle: novel producer registration,
+manual connection, purpose materialization and revocation, Provider contribution
+and Agent binding, the public request-auth client source, pack/reviewed install,
+immutable-generation update, hard revocation, and uninstall. These are the same
+public contracts; bundled plugins receive no additional authoring capability.

@@ -360,8 +360,10 @@ describe('CORE-A curated package exports', () => {
 
         const registrationApi = await import('@happier-dev/plugin-sdk/host/registration');
         expect(Object.keys(registrationApi)).toEqual([
+            'createExecutionRunHostBackendFromSessionRuntime',
             'createPluginActionHandlerNotStartedError',
             'createPluginRegistrationScope',
+            'readPluginActionInputParser',
         ]);
         expectTypeOf<PackagePluginRuntimeRegistration>()
             .toEqualTypeOf<SourcePluginRuntimeRegistration>();
@@ -375,7 +377,7 @@ describe('CORE-A curated package exports', () => {
         expect(packageJson.exports['./experimental/executionRuns/singleShot']).toBeUndefined();
     });
 
-    it('keeps the curated SDK on prepublication hold', async () => {
+    it('publishes one coherent Developer Preview policy with release-dispatch approval', async () => {
         const packageJson = JSON.parse(
             await readFile(new URL('../package.json', import.meta.url), 'utf8'),
         ) as PluginSdkPackageJson;
@@ -386,7 +388,7 @@ describe('CORE-A curated package exports', () => {
         expect(packageJson.dependencies.zod).toBe('4.3.6');
         expect(packageJson.devDependencies.zod).toBeUndefined();
         expect(packageJson.happier.publicSdkRelease).toMatchObject({
-            posture: 'prepublish_hold',
+            posture: 'developer_preview',
             supportPolicy: 'README.md#public-sdk-release-posture',
             externalPublicationRequiresApproval: true,
         });
@@ -395,9 +397,8 @@ describe('CORE-A curated package exports', () => {
             'one package-level **Developer Preview** source contract',
         );
         expect(readme).toContain('Developer Preview is not a per-symbol stability tier.');
-        // `prepublish_hold` means no released version exists yet, so the
-        // posture must not name an approved first public version or a
-        // released-semver policy the source tree cannot honour.
+        // Developer Preview names the support contract without inventing a
+        // frozen candidate or released-semver promise the source cannot honour.
         expect(readme).not.toContain('approved first public version');
         expect(readme).not.toContain('0.x minor');
     });
@@ -718,6 +719,7 @@ describe('CORE-A curated package exports', () => {
             'PluginUiTestkitMountResult',
             'PluginUiTestkitOpenSurfaceInput',
             'PluginUiTestkitSelectActionInputInput',
+            'PluginUiTestkitSettleEphemeralInputInput',
             'PluginUiTestkitOptions',
             'PluginUiTestkitReadOpenableContentInput',
             'PluginUiTestkitReadResourceInput',

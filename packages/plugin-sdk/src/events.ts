@@ -9,6 +9,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import {
+    createPluginEventAutomationSetupResultV1JsonSchema as canonicalCreatePluginEventAutomationSetupResultV1JsonSchema,
     PluginEventAutomationSetupResultV1Schema as canonicalPluginEventAutomationSetupResultV1Schema,
 } from '@happier-dev/protocol/automations/event-setup-result';
 import type {
@@ -45,6 +46,11 @@ export const PluginEventAutomationSetupResultV1Schema: Readonly<{
         | Readonly<{ success: true; data: PluginEventAutomationSetupResultV1 }>
         | Readonly<{ success: false; error: unknown }>;
 }> = canonicalPluginEventAutomationSetupResultV1Schema;
+
+export const createPluginEventAutomationSetupResultV1JsonSchema: (
+    sourceContractVersion: number,
+    sourceConfigSchema: PluginJsonSchema,
+) => PluginJsonSchema = canonicalCreatePluginEventAutomationSetupResultV1JsonSchema;
 
 export const PluginEventAutomationHistoryGapResetActionInputV1Schema: Readonly<{
     parse(value: unknown): PluginEventAutomationHistoryGapResetActionInputV1;

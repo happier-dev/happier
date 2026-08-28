@@ -4,9 +4,6 @@
   "version": "0.1.0",
   "displayName": "Production Hosted Review Reference",
   "description": "Production-shaped hosted-web reference with lifecycle, offline, and error handling.",
-  "engines": {
-    "happier": "0.2.10"
-  },
   "runtime": {
     "apiVersion": 1
   },

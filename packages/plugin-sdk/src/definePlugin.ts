@@ -2,6 +2,7 @@ import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { ActionContract, ActionHandler } from './actions/contracts.js';
+import { attachPluginActionInputParser } from './host/registration/actionInputParser.js';
 import type {
     HookHandler,
     PluginEventHandler,
@@ -641,7 +642,7 @@ export type PluginComposerDefinition = Readonly<{
 /**
  * Author-owned executable callbacks for one manifest-declared daemon database.
  * The manifest carries only stable migration and fixture identities; the host
- * receives these callbacks as an exact candidate projection before activation.
+ * receives these callbacks as one validated registration projection before activation.
  */
 export type PluginDaemonDatabaseDefinition = Readonly<{
     migrations?: readonly DaemonDatabaseMigration[];
@@ -1069,15 +1070,23 @@ export type DefinedPluginContributes = Readonly<{
     >;
 }>;
 
-/**
- * Runtime Action reference projection. Handler inference remains owned by the
- * composable schemas on the source declaration; references carry only identity.
- */
+/** Runtime Action references retain schema-derived types only in declarations. */
 export type DefinedPluginActionContracts<
     TPluginId extends string = string,
     TActions extends Readonly<Record<string, PluginActionDeclaration>> = Readonly<Record<string, never>>,
 > = Readonly<{
-    [TLocalId in keyof TActions & string]: Readonly<{
+    [TLocalId in keyof TActions & string]: ActionContract<
+        ProtocolActionSchemaInput<
+            TActions[TLocalId] extends { inputSchema: infer TSchema }
+                ? TSchema
+                : undefined
+        >,
+        ProtocolActionSchemaOutput<
+            TActions[TLocalId] extends { resultSchema: infer TSchema }
+                ? TSchema
+                : undefined
+        >
+    > & Readonly<{
         pluginId: TPluginId;
         localId: TLocalId;
     }>;
@@ -1099,8 +1108,9 @@ export interface DefinedPlugin<
     readonly activate: (api: PluginApi) => void | PluginCleanup | Promise<void | PluginCleanup>;
     /**
      * Frozen qualified Action references derived from the same declaration map
-     * used for manifest projection and activation. Values carry no runtime
-     * schema, handler, or implementation data.
+     * used for manifest projection and activation. Their declarations retain
+     * input/result inference while runtime values carry no schema, parser,
+     * handler, or implementation data.
      */
     readonly actionContracts: TActionContracts;
     /**
@@ -1163,11 +1173,13 @@ function normalizeActionHandler(definition: DaemonPluginActionDefinition): Actio
     const resultSchema = readProtocolComposableSchema<JsonValue, JsonValue>(definition.resultSchema);
     if (inputSchema === undefined && resultSchema === undefined) return definition.run;
 
-    return async (input, context) => {
-        const normalizedInput = inputSchema === undefined ? input : inputSchema.parse(input);
-        const result = await definition.run(normalizedInput, context);
+    const handler: ActionHandler = async (input, context) => {
+        const result = await definition.run(input, context);
         return resultSchema === undefined ? result : resultSchema.parse(result);
     };
+    return inputSchema === undefined
+        ? handler
+        : attachPluginActionInputParser(handler, inputSchema);
 }
 
 /**
@@ -1221,9 +1233,10 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
 }
 
 /**
- * Projects only qualified Action identity. Input/result evidence is carried by
- * the declaration type on `DefinedPlugin.actionContracts`; no schema, handler,
- * activation module, or implementation value crosses this boundary.
+ * Projects only qualified Action identity. The declaration-only
+ * `typeProjection` on `DefinedPlugin.actionContracts` never becomes a runtime
+ * property, so no schema, parser, activation module, or implementation value
+ * crosses this boundary.
  */
 function projectActionContracts(
     pluginId: string,

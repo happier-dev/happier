@@ -294,6 +294,7 @@ export type AgentExternalSessionsReadAfterTranscriptRequest = AgentExternalSessi
 }>;
 export type AgentExternalSessionsReadAfterDiagnostic = Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     /**
      * Bounded source-local numeric positions (for example line numbers or byte
@@ -308,6 +309,7 @@ export type AgentExternalSessionsReadAfterTranscriptResult =
         items: readonly AgentExternalSessionTranscriptItem[];
         nextCursor: string;
         boundary: string;
+        hasMore: boolean;
         diagnostics?: readonly AgentExternalSessionsReadAfterDiagnostic[];
     }>
     | Readonly<{ outcome: 'gap_or_cursor_expired' }>

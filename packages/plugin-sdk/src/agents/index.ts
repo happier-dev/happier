@@ -12,6 +12,7 @@ export { AgentPassiveRealtimeSetupResultV1Schema } from '../agents.js';
 export type { AgentPassiveRealtimeSetupStatusV1 } from '../agents.js';
 export { AgentPassiveRealtimeSetupStatusV1Schema } from '../agents.js';
 export type { AgentProfile } from '../agents.js';
+export type { AgentSessionRuntimeCapabilities } from '../agents.js';
 export { AgentSurfaceOperationCatalogV1 } from '../agents.js';
 export type { AuthoredAgentCapabilitiesV2 } from '../agents.js';
 export type { AuthoredAgentCapabilitySurfaceV2 } from '../agents.js';

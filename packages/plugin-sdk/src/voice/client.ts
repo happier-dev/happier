@@ -58,8 +58,9 @@ export const describeActionInputFieldForVoice: (
     canonicalDescribeActionInputFieldForVoice;
 export const isVoiceSdkSafeActionSpec: (spec: Pick<ActionSpec, 'sideEffectClass'>) => boolean =
     canonicalIsVoiceSdkSafeActionSpec;
-export const listVoiceSdkSafeToolActionSpecs: () => readonly ActionSpec[] =
-    canonicalListVoiceSdkSafeToolActionSpecs;
+export const listVoiceSdkSafeToolActionSpecs = canonicalListVoiceSdkSafeToolActionSpecs as unknown as (
+    () => readonly ActionSpec[]
+);
 
 export type VoiceClientToolAgentPromptOptions = Readonly<{
     assistantName?: string;

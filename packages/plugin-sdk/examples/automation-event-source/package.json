@@ -1,0 +1,29 @@
+{
+  "name": "@example/happier-automation-event-source",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Copyable external Automation Event declaration and optional custom setup UI.",
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "happier plugins dev build .",
+    "build:ui": "happier-plugin-build-ui --project-root .",
+    "typecheck": "happier plugins dev typecheck .",
+    "test": "happier plugins test .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  }
+}

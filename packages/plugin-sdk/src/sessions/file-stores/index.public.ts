@@ -25,6 +25,7 @@ export { readJsonlAfterCursor } from '../fileStores/boundedJsonlScanner.js';
 export { readJsonlFileBackwardPage } from '../fileStores/boundedJsonlScanner.js';
 export { readJsonlFileForward } from '../fileStores/boundedJsonlScanner.js';
 export { readJsonlFileForwardLines } from '../fileStores/boundedJsonlScanner.js';
+export { readSessionIdFromFileHead } from '../fileStores/sessionFileNameCodec.js';
 export { resolveSessionFileStoreDirs } from '../fileStores/sessionDirResolver.js';
 export { resolveSessionFileStoreDirsSync } from '../fileStores/sessionDirResolver.js';
 export { resolveSessionFileStoreLaunchEnvironment } from '../fileStores/sessionDirResolver.js';

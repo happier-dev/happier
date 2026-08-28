@@ -1,5 +1,5 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertCoherentPublicToolchainCompatibilityV1 } from '../../protocol/dist/plugins/publicToolchainCompatibilityV1.js';
@@ -219,13 +219,23 @@ function sourceImportSpecifiers(source) {
     .map((match) => match[1]);
 }
 
-function managedAuthoringDependenciesForSources(sourcePaths) {
+function usesManagedPluginUiBuilder(manifest, imports) {
+  if (imports.includes('@happier-dev/plugin-sdk/ui/build')) return true;
+  const scripts = manifest.scripts;
+  if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) return false;
+  return Object.values(scripts).some((command) => (
+    typeof command === 'string'
+    && /(?:^|[\s;&|])happier-plugin-build-ui(?:\s|$)/u.test(command)
+  ));
+}
+
+function managedAuthoringDependenciesForSources(manifest, sourcePaths) {
   const source = sourcePaths.map(({ source: current }) => current).join('\n');
   const imports = sourceImportSpecifiers(source);
   const managedImports = MANAGED_AUTHORING_IMPORTS.filter(({ packageName }) => imports.some((specifier) => (
     specifier === packageName || specifier.startsWith(`${packageName}/`)
   )));
-  return sourcePaths.some(({ path }) => basename(path) === 'pluginUiBuild.ts')
+  return usesManagedPluginUiBuilder(manifest, imports)
     ? [...managedImports, Object.freeze({ group: 'devDependencies', packageName: 'typescript' })]
     : managedImports;
 }
@@ -259,7 +269,7 @@ function renderGeneratedConsumerPackageJson(manifest, packet, packagePath, sourc
     }
     generated[dependencyGroup] = nextDependencies;
   }
-  for (const { group, packageName } of managedAuthoringDependenciesForSources(sourcePaths)) {
+  for (const { group, packageName } of managedAuthoringDependenciesForSources(manifest, sourcePaths)) {
     const dependencyGroup = dependencyGroupFor(manifest, packageName, group);
     const dependencies = generated[dependencyGroup] ?? {};
     const dependencyRecord = asRecord(dependencies, `${packagePath} ${dependencyGroup}`);

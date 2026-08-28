@@ -12,6 +12,8 @@ export type {
     PluginSettingsContribution,
 } from '@happier-dev/protocol';
 
+export { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from '@happier-dev/protocol/plugins/settings/accountSettingsLimits';
+
 /** @realm daemon */
 export type {
     PluginSettingDescriptor as SettingDescriptor,

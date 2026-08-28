@@ -311,11 +311,15 @@ describe('plugin UI public surface', () => {
 
         expect(uiSource).toContain("from './ui/publicContract.js';");
         expect(uiSource).toContain('PluginUiViewDestinationBindingInputV2,');
+        expect(uiSource).toContain('PluginUiViewInlineBindingInputV2,');
         expect(uiSource).toContain('PluginUiViewV2,');
         expect(uiSource).toContain('PluginUiViewV2Input,');
         expect(uiSource).toContain('PluginUiSessionPlacementCandidateV1,');
         expect(uiSubpathSource).toContain(
             "export type { PluginUiViewDestinationBindingInputV2 } from '../ui.js';",
+        );
+        expect(uiSubpathSource).toContain(
+            "export type { PluginUiViewInlineBindingInputV2 } from '../ui.js';",
         );
         expect(uiSubpathSource).toContain(
             "export type { PluginUiViewV2 } from '../ui.js';",

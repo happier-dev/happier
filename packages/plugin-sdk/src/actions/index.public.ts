@@ -49,6 +49,13 @@ export type { SessionTranscriptGetExternalShareableResultV1 } from './service.js
 export type { ToolContribution } from './service.js';
 export { actionInputOptionValueKey } from './inputHints.js';
 export { getActionSpec } from './service.js';
+export {
+  EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH,
+  EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1,
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+} from './externalActionLimits.js';
 export { isPluginActionHandlerInvocationKnownNotStarted } from './service.js';
 export { isSameActionInputOptionValue } from './inputHints.js';
 export { normalizeActionInputByFieldHints } from './inputHints.js';

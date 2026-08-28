@@ -82,10 +82,7 @@ import type {
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { Disposable } from './lifecycle.js';
 
-/**
- * Public, nonsecret OAuth metadata used by the first-party Claude Subscription
- * connected-account author. Protocol remains the canonical fact owner.
- */
+/** Public, nonsecret OAuth metadata shared by Claude Subscription authors. */
 export const CLAUDE_SUBSCRIPTION_OAUTH_PROFILE: Readonly<{
     authorizeUrl: string;
     callbackUrl: string;
@@ -98,11 +95,6 @@ export const CLAUDE_SUBSCRIPTION_OAUTH_PROFILE: Readonly<{
     tokenUrl: CLAUDE_OAUTH_TOKEN_URL,
 });
 
-/**
- * Public structural view of the Protocol-owned Claude Subscription
- * materialization contract. The SDK preserves the canonical runtime identity
- * while keeping the emitted plugin declaration self-contained.
- */
 export type ClaudeSubscriptionMaterializationContractV1 = Readonly<{
     service: Readonly<{
         pluginId: string;
@@ -119,10 +111,6 @@ export type ClaudeSubscriptionMaterializationContractV1 = Readonly<{
     unsupportedEnvironmentRequestErrorCode: string;
 }>;
 
-/**
- * Public structural view of the setup-token environment request emitted by
- * the Protocol-owned Claude Subscription materialization contract.
- */
 export type ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = Readonly<{
     kind: 'environment';
     keys: readonly string[];
@@ -130,14 +118,10 @@ export type ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = Readonly<{
 
 export const CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1:
 ClaudeSubscriptionMaterializationContractV1 = canonicalClaudeSubscriptionMaterializationContractV1;
-
 export const CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1:
 ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1;
 
-/**
- * Public, nonsecret OAuth and device-flow metadata used by the first-party
- * OpenAI Codex connected-account author. Protocol remains the canonical fact owner.
- */
+/** Public, nonsecret OAuth and device-flow metadata shared by Codex authors. */
 export const OPENAI_CODEX_OAUTH_PROFILE: Readonly<{
     authBaseUrl: string;
     authorizeUrl: string;

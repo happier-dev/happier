@@ -460,7 +460,7 @@ test('keeps every generated example and external-fixture package dependency on t
   assert.equal(current.status, 0, current.stderr);
 });
 
-test('adds project-local TypeScript only for package-owned TypeScript UI build configs', async () => {
+test('adds project-local TypeScript for every package using the managed Plugin UI builder', async () => {
   const root = await createFixtureRoot();
   const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });
   const outputPath = join(root, 'packages', 'plugin-sdk', 'src', 'ui', 'build', 'publicToolchainCompatibility.generated.ts');
@@ -469,11 +469,12 @@ test('adds project-local TypeScript only for package-owned TypeScript UI build c
   await writeFile(outputPath, renderPublicToolchainCompatibilityModule(packet), 'utf8');
   await writeJson(uiBuildPackagePath, {
     name: '@example/typescript-ui-build',
+    scripts: { 'build:ui': 'happier-plugin-build-ui --project-root .' },
     devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
   });
   await writeSource(
     join(root, 'packages', 'plugin-sdk', 'examples', 'typescript-ui-build', 'pluginUiBuild.ts'),
-    'export default {};\n',
+    "import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';\nexport default defineBuildConfig({});\n",
   );
   await writeJson(nonUiPackagePath, {
     name: '@example/no-ui-build',
@@ -505,6 +506,49 @@ test('adds project-local TypeScript only for package-owned TypeScript UI build c
     encoding: 'utf8',
   });
   assert.equal(current.status, 0, current.stderr);
+});
+
+test('adds project-local TypeScript from managed Plugin UI config and build-script signals', async () => {
+  const root = await createFixtureRoot();
+  const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });
+  const outputPath = join(root, 'packages', 'plugin-sdk', 'src', 'ui', 'build', 'publicToolchainCompatibility.generated.ts');
+  const configPackagePath = join(root, 'packages', 'plugin-sdk', 'examples', 'javascript-ui-build', 'package.json');
+  const scriptPackagePath = join(root, 'packages', 'plugin-sdk', 'examples', 'scripted-ui-build', 'package.json');
+  await writeFile(outputPath, renderPublicToolchainCompatibilityModule(packet), 'utf8');
+  await writeJson(configPackagePath, {
+    name: '@example/javascript-ui-build',
+    devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
+  });
+  await writeSource(
+    join(root, 'packages', 'plugin-sdk', 'examples', 'javascript-ui-build', 'happier-plugin-ui.config.mjs'),
+    "import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';\nexport default defineBuildConfig({});\n",
+  );
+  await writeJson(scriptPackagePath, {
+    name: '@example/scripted-ui-build',
+    scripts: { 'build:ui': 'happier-plugin-build-ui --project-root .' },
+    devDependencies: { '@typescript/native': 'npm:typescript@7.0.2' },
+  });
+  await writeSource(
+    join(root, 'packages', 'plugin-sdk', 'examples', 'scripted-ui-build', 'src', 'index.mjs'),
+    'export {};\n',
+  );
+
+  const missingTypeScript = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(missingTypeScript.status, 0);
+  assert.match(missingTypeScript.stderr, /consumer package output is stale/i);
+
+  const write = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--write'], {
+    encoding: 'utf8',
+  });
+  assert.equal(write.status, 0, write.stderr);
+  const [configPackage, scriptPackage] = await Promise.all([
+    readFile(configPackagePath, 'utf8').then(JSON.parse),
+    readFile(scriptPackagePath, 'utf8').then(JSON.parse),
+  ]);
+  assert.equal(configPackage.devDependencies.typescript, packet.authoringDependencies.typescript.dependencySpec);
+  assert.equal(scriptPackage.devDependencies.typescript, packet.authoringDependencies.typescript.dependencySpec);
 });
 
 test('fails closed when a source consumer replaces its packet value with a literal', async () => {

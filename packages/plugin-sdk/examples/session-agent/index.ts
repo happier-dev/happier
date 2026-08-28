@@ -15,7 +15,7 @@ export const { manifest, activate } = definePlugin({
                 primary: 'sessions',
                 capabilities: {
                     sessions: {
-                        open: ['create'],
+                        open: ['create', 'resume'],
                         delivery: ['newTurn'],
                         cancel: true,
                     },

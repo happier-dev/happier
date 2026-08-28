@@ -212,6 +212,8 @@ const ROOT_TYPE_EXPORTS = [
     'ScmRepositoryInitResponse',
     'ScmRepositoryRemoveIndexLockRequest',
     'ScmRepositoryRemoveIndexLockResponse',
+    'ScmReviewWorkspaceCurrentness',
+    'ScmReviewWorkspaceSourceTip',
     'ScmSelectedMutationPath',
     'ScmStashApplyRequest',
     'ScmStashApplyResponse',

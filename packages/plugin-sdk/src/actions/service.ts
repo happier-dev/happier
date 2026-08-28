@@ -88,9 +88,9 @@ export type {
 export type ActionId = ActionSpec['id'];
 
 /** Looks up one canonical host ActionSpec without changing its runtime identity. */
-export const getActionSpec: (
+export const getActionSpec = canonicalGetActionSpec as unknown as (
   id: ActionId,
-) => ActionSpec = canonicalGetActionSpec;
+) => ActionSpec;
 export {
   actionInputOptionValueKey,
   isSameActionInputOptionValue,
@@ -104,8 +104,10 @@ export {
  * origin was freshly stamped by the host after the Action completed.
  * @realm daemon
  */
-export type ContributedActionExecutionWithOriginResult = Readonly<{
-  result: JsonValue | null;
+export type ContributedActionExecutionWithOriginResult<
+  TResult extends JsonValue | void = JsonValue | void,
+> = Readonly<{
+  result: TResult extends void ? null : TResult;
   executionOrigin: PluginMachineExecutionOriginV1;
 }>;
 
@@ -150,9 +152,13 @@ export interface ActionsService {
 
   execute<TRef extends PluginContributionRef>(
     action: TRef,
-    input: JsonValue,
+    input: NoInfer<
+      TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue
+    >,
     options?: PluginCancellationOptions,
-  ): Promise<JsonValue | void>;
+  ): Promise<
+    TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void
+  >;
 
   /**
    * Executes one original host-created admitted target operation. A copied
@@ -172,9 +178,13 @@ export interface ActionsService {
    */
   executeWithExecutionOrigin<TRef extends PluginContributionRef>(
     action: TRef,
-    input: JsonValue,
+    input: NoInfer<
+      TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue
+    >,
     options?: ContributedActionExecutionWithOriginOptions,
-  ): Promise<ContributedActionExecutionWithOriginResult>;
+  ): Promise<ContributedActionExecutionWithOriginResult<
+    TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void
+  >>;
 
   /**
    * Executes one original host-created admitted target operation and returns

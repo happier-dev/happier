@@ -175,16 +175,12 @@ describe('External Session hooks public contract', () => {
                 ...variant(),
                 variantId: '  session-lifecycle-v1  ',
             }],
-            planConfiguration: () => ({ ok: true as const, value: {} }),
-        } as AgentExternalSessionHooksContribution & Readonly<{
-            planConfiguration(): unknown;
-        }>;
+        };
         const snapshot = validateAgentExternalSessionHooksContribution(input);
 
         expect(snapshot.installationVariants[0]?.variantId).toBe('session-lifecycle-v1');
         expect(snapshot.resolveInstallation).not.toBe(hooks.resolveInstallation);
         expect(snapshot.mapHookEvent).not.toBe(hooks.mapHookEvent);
-        expect(snapshot).not.toHaveProperty('planConfiguration');
         expect(Object.isFrozen(snapshot)).toBe(true);
         expect(Object.isFrozen(snapshot.installationVariants)).toBe(true);
         expect(Object.isFrozen(snapshot.installationVariants[0]?.targets)).toBe(true);
@@ -195,7 +191,14 @@ describe('External Session hooks public contract', () => {
         expect(snapshot.installationVariants[0]?.events[0]?.command.matcher).toBe('identity');
     });
 
-    it('captures class, prototype, and accessor-backed contributions with the author receiver', async () => {
+    it('rejects the retired planConfiguration callback at the strict contribution boundary', () => {
+        rejected(() => validateAgentExternalSessionHooksContribution({
+            ...hooks,
+            planConfiguration: () => ({ ok: true as const, value: {} }),
+        } as never));
+    });
+
+    it('rejects class, prototype, and accessor-backed contribution DTOs', () => {
         class StructuralHooks {
             readonly ignoredByRegistration = true;
             readonly owner = 'structural-hooks';
@@ -227,20 +230,9 @@ describe('External Session hooks public contract', () => {
             }
         }
         const contribution = new StructuralHooks();
-        const snapshot = validateAgentExternalSessionHooksContribution(
+        rejected(() => validateAgentExternalSessionHooksContribution(
             contribution as unknown as AgentExternalSessionHooksContribution,
-        );
-
-        expect(snapshot).not.toBe(contribution);
-        expect(Object.isFrozen(snapshot)).toBe(true);
-        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
-        expect(snapshot.installationVariants).not.toBe(contribution.variants);
-        expect(snapshot.installationVariants[0]?.variantId).toBe('structural-hooks');
-        await expect(Reflect.apply(
-            snapshot.resolveInstallation,
-            { owner: 'foreign' },
-            [resolveRequest, {}],
-        )).resolves.toMatchObject({ value: { owner: 'structural-hooks' } });
+        ));
     });
 
     it('enforces inclusive variant, target, and event count limits', () => {
@@ -342,26 +334,20 @@ describe('External Session hooks public contract', () => {
         for (const retired of [
             { adapters: [] },
             { recipes: [] },
-            {
-                ...hooks,
-                installationVariants: [{
-                    ...variant(),
-                    adapterId: 'legacy-adapter',
-                }],
-            },
-            {
-                ...hooks,
-                installationVariants: [{
-                    ...variant(),
-                    events: [{
-                        ...variant().events[0]!,
-                        fields: [{ nativePath: ['session_id'] }],
-                    }],
-                }],
-            },
         ]) {
             rejected(() => validateAgentExternalSessionHooksContribution(retired));
         }
+        rejected(() => validateAgentExternalSessionHooksContribution({
+            ...hooks,
+            installationVariants: [{
+                ...variant(),
+                adapterId: 'legacy-adapter',
+                events: [{
+                    ...variant().events[0]!,
+                    fields: [{ nativePath: ['session_id'] }],
+                }],
+            }],
+        } as never));
 
         for (const command of [
             { kind: 'happier_observation_v1' },
@@ -798,7 +784,7 @@ describe('External Session hooks public contract', () => {
         }
     });
 
-    it('passes arbitrary bounded native JSON to mapHookEvent and rejects extracted fields', () => {
+    it('passes arbitrary bounded native JSON and rejects unrelated request fields', () => {
         expect(validateAgentExternalSessionHookMapEventRequest(mapRequest)).toEqual(mapRequest);
         rejected(() => validateAgentExternalSessionHookMapEventRequest({
             ...mapRequest,
@@ -1029,7 +1015,7 @@ describe('External Session hooks public contract', () => {
             .not.toHaveProperty('planConfiguration');
     });
 
-    it('rejects unknown request/result fields and oversized callback ceilings', () => {
+    it('rejects unrelated request/result fields and enforces callback ceilings', () => {
         rejected(() => validateAgentExternalSessionHookResolveInstallationRequest({
             ...resolveRequest,
             environment: { HOME: '/private' },

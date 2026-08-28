@@ -12,6 +12,13 @@ export type FsAtomicWriteTextInput = Readonly<{
     temporaryDirectory?: string | null;
 }>;
 
+export type FsAtomicWriteInput = Readonly<{
+    path: string;
+    contents: string | Uint8Array;
+    mode?: number;
+    temporaryDirectory?: string | null;
+}>;
+
 export type FsAtomicWriteJsonInput = Readonly<{
     path: string;
     value: unknown;
@@ -44,14 +51,14 @@ function resolveTemporaryFilePath(path: string, temporaryDirectory: string | nul
     return join(directory, `.happier-${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
 }
 
-export async function writeAtomicTextFile(input: FsAtomicWriteTextInput): Promise<void> {
+export async function writeAtomicFile(input: FsAtomicWriteInput): Promise<void> {
     await mkdir(dirname(input.path), { recursive: true });
     const temporaryPath = resolveTemporaryFilePath(input.path, input.temporaryDirectory);
     await mkdir(dirname(temporaryPath), { recursive: true });
     let published = false;
     try {
         await writeFile(temporaryPath, input.contents, {
-            encoding: 'utf8',
+            ...(typeof input.contents === 'string' ? { encoding: 'utf8' as const } : {}),
             ...(input.mode === undefined ? {} : { mode: input.mode }),
             flag: 'wx',
         });
@@ -62,6 +69,10 @@ export async function writeAtomicTextFile(input: FsAtomicWriteTextInput): Promis
             await unlink(temporaryPath).catch(() => undefined);
         }
     }
+}
+
+export async function writeAtomicTextFile(input: FsAtomicWriteTextInput): Promise<void> {
+    await writeAtomicFile(input);
 }
 
 export async function writeAtomicTextFileIfChanged(input: FsAtomicWriteTextInput): Promise<boolean> {

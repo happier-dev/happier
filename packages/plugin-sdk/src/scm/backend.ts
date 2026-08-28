@@ -1,15 +1,5 @@
 /** @moduleRealm daemon */
 import type {
-    ScmReviewWorkspaceMaterializePreparedRequest as ProtocolScmReviewWorkspaceMaterializePreparedRequest,
-    ScmReviewWorkspaceMaterializePreparedResponse as ProtocolScmReviewWorkspaceMaterializePreparedResponse,
-} from '@happier-dev/protocol';
-
-export type ScmReviewWorkspaceMaterializePreparedRequest =
-    ProtocolScmReviewWorkspaceMaterializePreparedRequest;
-export type ScmReviewWorkspaceMaterializePreparedResponse =
-    ProtocolScmReviewWorkspaceMaterializePreparedResponse;
-
-import type {
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -65,6 +55,8 @@ import type {
     ScmRepositoryInitResponse,
     ScmRepositoryRemoveIndexLockRequest,
     ScmRepositoryRemoveIndexLockResponse,
+    ScmReviewWorkspaceCurrentness,
+    ScmReviewWorkspaceSourceTip,
     ScmRepoMode,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
@@ -91,6 +83,34 @@ import type {
     ScmStatusSnapshotResponse,
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
+
+export type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{
+    cwd: string;
+    displayName: string;
+    sourceTip: ScmReviewWorkspaceSourceTip;
+    verification?: Readonly<{ targetPath: string }>;
+}>;
+
+export type ScmReviewWorkspaceMaterializePreparedResponse =
+    | Readonly<{
+        success: true;
+        targetPath: string;
+        branchName: string;
+        created: boolean;
+        currentness: ScmReviewWorkspaceCurrentness;
+    }>
+    | Readonly<{
+        success: true;
+        verification: Readonly<{
+            targetPath: string;
+            sourceHeadSha: string;
+        }>;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode: ScmOperationErrorCode;
+    }>;
 
 export type ScmBackendId = string;
 
@@ -391,6 +411,20 @@ export type WorkspaceIntegrationHandlers = Readonly<{
         input: Readonly<{
             context: BackendRuntimeContext;
             request: ScmReviewWorkspaceMaterializePreparedRequest;
+            /** Operation-scoped cancellation; forward it across external awaits. */
+            signal: AbortSignal;
+        }>
+    ) => Promise<ScmReviewWorkspaceMaterializePreparedResponse> | ScmReviewWorkspaceMaterializePreparedResponse;
+    /**
+     * Reads the current local HEAD of one already-prepared review workspace.
+     * This leaf must not fetch, repair, move, or rematerialize the checkout.
+     */
+    verifyPreparedReviewWorkspace?: (
+        input: Readonly<{
+            context: BackendRuntimeContext;
+            request: ScmReviewWorkspaceMaterializePreparedRequest & Readonly<{
+                verification: Readonly<{ targetPath: string }>;
+            }>;
             /** Operation-scoped cancellation; forward it across external awaits. */
             signal: AbortSignal;
         }>

@@ -70,7 +70,7 @@ describe('single-declaration Action contracts', () => {
         type Result = Readonly<{ accepted: true }>;
         type LocalHandle = AdmittedTargetedOperationExecutionHandle<Input, Result, 'inspect'>;
         type IndependentSdkCopy = Readonly<{
-            typeProjection?: Readonly<{ input: Input; result: Result }>;
+            typeProjection: Readonly<{ input: Input; result: Result }> | undefined;
             identity: LocalHandle['identity'];
         }>;
 
@@ -204,20 +204,37 @@ describe('single-declaration Action contracts', () => {
         expect(Object.keys(producer.actionContracts)).toEqual(['publish', 'archive']);
     });
 
-    it('keeps runtime Action refs structural while definePlugin owns handler inference', () => {
+    it('keeps runtime Action refs structural while preserving declaration-only input and result inference', () => {
         const contract = producer.actionContracts.publish;
-        expectTypeOf<typeof contract>().toEqualTypeOf<Readonly<{
+        type IndependentSdkCopy = Readonly<{
             pluginId: 'acme.action-contracts';
             localId: 'publish';
+            typeProjection: Readonly<{
+                input: Readonly<{ title: string }>;
+                result: Readonly<{ accepted: boolean }>;
+            }> | undefined;
+        }>;
+        expectTypeOf<typeof contract>().toMatchTypeOf<Readonly<{
+            pluginId: 'acme.action-contracts';
+            localId: 'publish';
+            typeProjection: Readonly<{
+                input: Readonly<{ title: string }>;
+                result: Readonly<{ accepted: boolean }>;
+            }> | undefined;
         }>>();
 
         if (false) {
+            const independent = null as unknown as IndependentSdkCopy;
+            const acceptsIndependentCopy: typeof contract = independent;
+            const acceptsLocalCopy: IndependentSdkCopy = contract;
             const actions = {} as ActionsService;
             const result = actions.execute(contract, { title: 'Release' });
-            expectTypeOf(result).toEqualTypeOf<Promise<JsonValue | void>>();
+            expectTypeOf(result).toEqualTypeOf<Promise<Readonly<{ accepted: boolean }>>>();
             const resultWithOrigin = actions.executeWithExecutionOrigin(contract, { title: 'Release' });
             expectTypeOf<Awaited<typeof resultWithOrigin>['result']>()
-                .toEqualTypeOf<JsonValue | null>();
+                .toEqualTypeOf<Readonly<{ accepted: boolean }>>();
+            // @ts-expect-error The contract's declaration requires a title string.
+            void actions.execute(contract, { id: 'release-1' });
             const raw: PluginContributionRef = {
                 pluginId: 'acme.action-contracts',
                 localId: 'publish',
@@ -226,7 +243,12 @@ describe('single-declaration Action contracts', () => {
             void dynamicResult;
 
             const archiveResult = actions.execute(producer.actionContracts.archive, { id: 'release-1' });
-            expectTypeOf(archiveResult).toEqualTypeOf<Promise<JsonValue | void>>();
+            expectTypeOf(archiveResult).toEqualTypeOf<Promise<Readonly<{
+                archived: boolean;
+                id: string;
+            }>>>();
+            void acceptsIndependentCopy;
+            void acceptsLocalCopy;
         }
     });
 

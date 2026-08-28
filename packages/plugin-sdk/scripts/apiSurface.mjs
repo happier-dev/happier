@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import {
   isExactCanonicalPublishedVersion,
   projectPublishedInventoryProvenance,
-  projectRetainedInventoryProvenance,
 } from '../../../scripts/api-governance/publicationProvenance.mjs';
 import { formatStructuredDeprecation } from '../../../scripts/api-governance/structuredDeprecation.mjs';
 
@@ -31,8 +30,10 @@ const VISIBILITIES = new Set(['author', 'host']);
 const SYMBOL_KINDS = new Set(['type', 'value']);
 const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
   ['./host/registration', new Map([
+    ['createExecutionRunHostBackendFromSessionRuntime', 'value'],
     ['createPluginActionHandlerNotStartedError', 'value'],
     ['createPluginRegistrationScope', 'value'],
+    ['readPluginActionInputParser', 'value'],
     ['PluginRegistrationRight', 'type'],
     ['PluginAgentRuntimeRegistration', 'type'],
     ['PluginRuntimeRegistration', 'type'],
@@ -41,10 +42,16 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
     ['reclaimJsonOwnerFileLockSnapshot', 'value'],
     ['withJsonOwnerFileLock', 'value'],
   ])],
+  ['./host/ui', new Map([
+    ['decodePluginUiClipboardReadResult', 'value'],
+    ['decodePluginUiResourceContent', 'value'],
+    ['PluginUiHostApiDecodeResult', 'type'],
+  ])],
 ]);
 const HOST_REALMS_BY_ENTRYPOINT = new Map([
   ['./host/registration', 'any'],
   ['./host/fs/json-owner-file-lock', 'daemon'],
+  ['./host/ui', 'any'],
 ]);
 const HOST_ENTRYPOINTS = new Set(HOST_EXPORTS_BY_ENTRYPOINT.keys());
 const HOST_ONLY_EXPORT_NAMES = new Set(
@@ -578,31 +585,6 @@ export function projectPublishedApiSurfaceInventory(input) {
     inventory: input.inventory,
     publishedVersion: input.publishedVersion,
     previousPublishedInventory: input.previousPublishedInventory,
-    validateInventory: validateApiSurfaceInventory,
-    symbols: (inventory) => inventory.symbols,
-    symbolKey,
-    createError: (diagnostic) => new ApiSurfaceValidationError([diagnostic]),
-  });
-}
-
-/**
- * Reapplies only publication-owned `@since` facts retained in the generated
- * inventory to the current source-owned surface. New source symbols remain
- * unstamped until the next actual publication, while removed symbols cannot
- * survive because this starts from the current source inventory.
- *
- * @param {{
- *   inventory: unknown,
- *   retainedPublishedInventory: unknown,
- * }} input
- */
-export function projectRetainedPublishedApiSurfaceInventory(input) {
-  if (!isRecord(input)) {
-    throw new ApiSurfaceValidationError(['retained published inventory input must be an object']);
-  }
-  return projectRetainedInventoryProvenance({
-    inventory: input.inventory,
-    retainedPublishedInventory: input.retainedPublishedInventory,
     validateInventory: validateApiSurfaceInventory,
     symbols: (inventory) => inventory.symbols,
     symbolKey,

@@ -116,6 +116,112 @@ function readRecord(
     return Object.freeze(output);
 }
 
+function snapshotRuntimeDescriptorValue(
+    value: unknown,
+    ancestors: ReadonlySet<object> = new Set(),
+): unknown {
+    if (value === null
+        || value === undefined
+        || typeof value === 'string'
+        || typeof value === 'boolean'
+        || typeof value === 'number') {
+        return value;
+    }
+    if (typeof value !== 'object') {
+        return invalid(
+            'launch plan runtimeDescriptorV1',
+            'must contain only data values',
+        );
+    }
+    if (ancestors.has(value)) {
+        return invalid(
+            'launch plan runtimeDescriptorV1',
+            'must not contain cycles',
+        );
+    }
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(value);
+
+    if (Array.isArray(value)) {
+        if (Object.getPrototypeOf(value) !== Array.prototype) {
+            return invalid(
+                'launch plan runtimeDescriptorV1',
+                'must contain only plain objects and arrays',
+            );
+        }
+        const ownKeys = Reflect.ownKeys(value);
+        if (ownKeys.some((key) => typeof key !== 'string')) {
+            return invalid(
+                'launch plan runtimeDescriptorV1',
+                'must not contain symbol properties',
+            );
+        }
+        const entryKeys = (ownKeys as string[]).filter((key) => key !== 'length');
+        if (entryKeys.length !== value.length || entryKeys.some((key) => {
+            const index = Number(key);
+            return !Number.isSafeInteger(index)
+                || index < 0
+                || index >= value.length
+                || String(index) !== key;
+        })) {
+            return invalid(
+                'launch plan runtimeDescriptorV1',
+                'arrays must be dense and contain no additional properties',
+            );
+        }
+        const output: unknown[] = [];
+        for (let index = 0; index < value.length; index += 1) {
+            const key = String(index);
+            const descriptor = Object.getOwnPropertyDescriptor(value, key);
+            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+                return invalid(
+                    'launch plan runtimeDescriptorV1',
+                    'array entries must be enumerable data properties',
+                );
+            }
+            output.push(snapshotRuntimeDescriptorValue(
+                descriptor.value,
+                nextAncestors,
+            ));
+        }
+        return Object.freeze(output);
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+        return invalid(
+            'launch plan runtimeDescriptorV1',
+            'must contain only plain objects and arrays',
+        );
+    }
+    const output: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(value)) {
+        if (typeof key !== 'string') {
+            return invalid(
+                'launch plan runtimeDescriptorV1',
+                'must not contain symbol properties',
+            );
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+            return invalid(
+                'launch plan runtimeDescriptorV1',
+                `'${key}' must be an enumerable data property`,
+            );
+        }
+        Object.defineProperty(output, key, {
+            configurable: false,
+            enumerable: true,
+            writable: false,
+            value: snapshotRuntimeDescriptorValue(
+                descriptor.value,
+                nextAncestors,
+            ),
+        });
+    }
+    return Object.freeze(output);
+}
+
 function boundedString(
     value: unknown,
     minimum: number,
@@ -337,7 +443,7 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
         ? undefined
         : (() => {
             const parsed = RuntimeDescriptorV1Schema.safeParse(
-                record.runtimeDescriptorV1,
+                snapshotRuntimeDescriptorValue(record.runtimeDescriptorV1),
             );
             if (!parsed.success) {
                 return invalid(

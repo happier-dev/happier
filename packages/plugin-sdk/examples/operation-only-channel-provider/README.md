@@ -8,10 +8,11 @@ It does not declare a target, descriptor, renderer, or UI. `happier.channels`
 and its `providers` contribution point are owned by Channels; the `acme`
 contribution id below is only this plugin's opaque local id.
 
-For a first-party Preview product that also needs a target-owned descriptor and
-embedded surface, see the advanced `action-contract-producer` and
-`action-contract-consumer` pair. Do not use that pair as a beginner external
-authoring template.
+For the advanced public target-owned descriptor and embedded-surface shape, see
+the `action-contract-producer` and `action-contract-consumer` pair. External and
+bundled plugins use the same public contracts; the capability matrix separately
+records source availability and loaded proof. Do not use that pair as the
+beginner template.
 
 Use the normal managed author loop from the generated scaffold:
 

@@ -39,6 +39,20 @@ const CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS = [
 
 const CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS = [
   {
+    sourcePath: join(pluginSourceRoot, 'claude', 'src', 'manifest.ts'),
+    symbols: ['CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'claude',
+      'src',
+      'connectedAccounts',
+      'claudeSubscriptionRuntime.ts',
+    ),
+    symbols: ['CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1'],
+  },
+  {
     sourcePath: join(
       pluginSourceRoot,
       'pi',
@@ -99,6 +113,12 @@ const CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS = [
   'pi',
   'opencode',
   'ohmypi',
+] as const;
+
+const TEST_ONLY_PRIVATE_AGENT_PACKAGE_PLUGIN_IDS = [
+  'claude',
+  'opencode',
+  'pi',
 ] as const;
 
 const AGENT_RUNTIME_EVENT_TEST_IMPORTS = {
@@ -332,13 +352,7 @@ async function readPublicSdkValueOwners(symbols: readonly string[]): Promise<Rea
  * this map is the work; a new reach is a C1 regression and fails the fence
  * below instead of landing silently.
  */
-const EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES: Readonly<Record<string, readonly string[]>> = {
-  // The host-recognised dialog-choice discriminant remains Protocol-owned:
-  // apps/cli's permission handler and apps/ui's AskUserQuestion renderer read
-  // that exact string. All generic helpers use the narrow public SDK domains,
-  // while Claude-specific model policy stays inside the Claude plugin.
-  claude: ['@happier-dev/protocol/agents/claude'],
-};
+const EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES: Readonly<Record<string, readonly string[]>> = {};
 
 /** The Happier packages the plugin scaffold actually installs for an author. */
 function readAuthorReachableHappierPackages(): ReadonlySet<string> {
@@ -483,25 +497,26 @@ describe('first-party plugin public SDK import fence', () => {
     }
   });
 
-  it('projects Claude Subscription setup-token materialization through the Connected Accounts SDK seam', async () => {
-    const expectedOwners = {
-      CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1:
-        './connected-accounts',
-      CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1:
-        './connected-accounts',
-    };
-    expect(await readPublicSdkValueOwners(Object.keys(expectedOwners)))
-      .toEqual(expectedOwners);
+  it('projects Claude materialization facts through the narrow public Connected Accounts owner', async () => {
+    const symbols = [
+      'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+      'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+    ];
+    const connectedAccountExports = await readNamedExports(join(
+      workspaceRoot,
+      'packages/plugin-sdk/src/connected-accounts/index.public.ts',
+    ));
+    expect(connectedAccountExports).toEqual(expect.arrayContaining(symbols));
 
     for (const { sourcePath, symbols } of CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS) {
       expect(await readNamedImports(
         sourcePath,
         '@happier-dev/plugin-sdk/connected-accounts',
       )).toEqual(expect.arrayContaining([...symbols]));
-      const forbiddenProtocolSymbols = new Set<string>(symbols);
-      expect((await readProtocolImports(sourcePath)).filter((symbol) => (
-        forbiddenProtocolSymbols.has(symbol)
-      ))).toEqual([]);
+      expect(await readNamedImports(
+        sourcePath,
+        '@happier-dev/protocol/connect/claude-subscription-materialization',
+      )).toEqual([]);
     }
 
     for (const pluginId of CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS) {
@@ -511,7 +526,7 @@ describe('first-party plugin public SDK import fence', () => {
       )) as Readonly<{
         dependencies?: Readonly<Record<string, string>>;
       }>;
-      expect(manifest.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+      expect(manifest.dependencies?.['@happier-dev/plugin-sdk']).toBe('0.0.0');
     }
   });
 
@@ -545,7 +560,27 @@ describe('first-party plugin public SDK import fence', () => {
     // observed), so retain a bounded allowance without weakening the fence.
   }, 20_000);
 
-  it('keeps Protocol out of first-party plugin runtime sources apart from the host-recognised Claude dialog source', async () => {
+  it('keeps the private Agent package test-only in plugins whose shipped source does not import it', async () => {
+    for (const pluginId of TEST_ONLY_PRIVATE_AGENT_PACKAGE_PLUGIN_IDS) {
+      const packageJson = JSON.parse(await readFile(
+        join(pluginSourceRoot, pluginId, 'package.json'),
+        'utf8',
+      )) as Readonly<{
+        dependencies?: Readonly<Record<string, string>>;
+        devDependencies?: Readonly<Record<string, string>>;
+      }>;
+      expect(packageJson.dependencies?.['@happier-dev/agents']).toBeUndefined();
+      expect(packageJson.devDependencies?.['@happier-dev/agents']).toBe('0.0.0');
+    }
+
+    const claudeTsconfig = JSON.parse(await readFile(
+      join(pluginSourceRoot, 'claude', 'tsconfig.json'),
+      'utf8',
+    )) as Readonly<{ exclude?: readonly string[] }>;
+    expect(claudeTsconfig.exclude).toContain('src/**/*.testkit.ts');
+  });
+
+  it('keeps Protocol out of every first-party plugin runtime source', async () => {
     const reaches = await readMeasuredPluginRuntimeHostPackageReaches();
     const protocolReaches = Object.fromEntries(
       Object.entries(reaches)
@@ -555,12 +590,6 @@ describe('first-party plugin public SDK import fence', () => {
         ] as const)
         .filter(([, specifiers]) => specifiers.length > 0),
     );
-    expect(Object.keys(protocolReaches)).toEqual(['claude']);
-
-    const symbols = await readProtocolImports(join(
-      pluginSourceRoot,
-      'claude/src/agent/runtime/terminal/unified/resumeChoice/startup.ts',
-    ));
-    expect(symbols).toEqual(['CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE']);
+    expect(protocolReaches).toEqual({});
   });
 });

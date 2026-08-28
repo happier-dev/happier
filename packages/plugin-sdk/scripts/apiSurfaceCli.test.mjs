@@ -246,6 +246,18 @@ const INVENTORY = Object.freeze({
         default: './dist/host/fs/json-owner-file-lock/index.js',
       }),
     }),
+    Object.freeze({
+      specifier: './host/ui',
+      sourceModule: 'src/host/ui/index.ts',
+      visibility: 'host',
+      realm: 'any',
+      conditions: Object.freeze({
+        types: './dist/host/ui/index.d.ts',
+        browser: './dist/host/ui/index.js',
+        'react-native': './dist/host/ui/index.js',
+        default: './dist/host/ui/index.js',
+      }),
+    }),
   ]),
   symbols: Object.freeze([
     Object.freeze({
@@ -258,10 +270,26 @@ const INVENTORY = Object.freeze({
     }),
     Object.freeze({
       specifier: './host/registration',
+      exportName: 'createExecutionRunHostBackendFromSessionRuntime',
+      kind: 'value',
+      sourceModule: 'src/agentRuntime/executionRun.ts',
+      sourceExport: 'createExecutionRunHostBackendFromSessionRuntime',
+      realm: 'any',
+    }),
+    Object.freeze({
+      specifier: './host/registration',
       exportName: 'createPluginActionHandlerNotStartedError',
       kind: 'value',
       sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
       sourceExport: 'createPluginActionHandlerNotStartedError',
+      realm: 'any',
+    }),
+    Object.freeze({
+      specifier: './host/registration',
+      exportName: 'readPluginActionInputParser',
+      kind: 'value',
+      sourceModule: 'src/host/registration/actionInputParser.ts',
+      sourceExport: 'readPluginActionInputParser',
       realm: 'any',
     }),
     Object.freeze({
@@ -292,6 +320,18 @@ const INVENTORY = Object.freeze({
       sourceExport: 'reclaimJsonOwnerFileLockSnapshot',
       realm: 'daemon',
     }),
+    ...[
+      ['decodePluginUiClipboardReadResult', 'value'],
+      ['decodePluginUiResourceContent', 'value'],
+      ['PluginUiHostApiDecodeResult', 'type'],
+    ].map(([exportName, kind]) => Object.freeze({
+      specifier: './host/ui',
+      exportName,
+      kind,
+      sourceModule: 'src/host/ui/hostApiCodecs.ts',
+      sourceExport: exportName,
+      realm: 'any',
+    })),
     Object.freeze({
       specifier: './host/fs/json-owner-file-lock',
       exportName: 'withJsonOwnerFileLock',
@@ -346,6 +386,12 @@ async function createPackageFixture(root = undefined) {
         types: './dist/host/fs/json-owner-file-lock/index.d.ts',
         default: './dist/host/fs/json-owner-file-lock/index.js',
       },
+      './host/ui': {
+        types: './dist/host/ui/index.d.ts',
+        browser: './dist/host/ui/index.js',
+        'react-native': './dist/host/ui/index.js',
+        default: './dist/host/ui/index.js',
+      },
     },
   };
   await writeFixtureFile(root, 'package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
@@ -359,14 +405,26 @@ async function createPackageFixture(root = undefined) {
     "export type { PluginAgentRuntimeRegistration } from './scope.js';",
     "export type { PluginRegistrationRight } from './scope.js';",
     "export type { PluginRuntimeRegistration } from './scope.js';",
+    "export { createExecutionRunHostBackendFromSessionRuntime } from '../../agentRuntime/executionRun.js';",
     "export { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';",
     "export { createPluginRegistrationScope } from './scope.js';",
+    "export { readPluginActionInputParser } from './actionInputParser.js';",
     '',
   ].join('\n'));
   await writeFixtureFile(
     root,
     'src/host/registration/actionHandlerInvocation.ts',
     'export function createPluginActionHandlerNotStartedError() { return new Error(); }\n',
+  );
+  await writeFixtureFile(
+    root,
+    'src/host/registration/actionInputParser.ts',
+    'export function readPluginActionInputParser() {}\n',
+  );
+  await writeFixtureFile(
+    root,
+    'src/agentRuntime/executionRun.ts',
+    'export function createExecutionRunHostBackendFromSessionRuntime() {}\n',
   );
   await writeFixtureFile(
     root,
@@ -394,6 +452,18 @@ async function createPackageFixture(root = undefined) {
       '',
       ].join('\n'),
   );
+  await writeFixtureFile(root, 'src/host/ui/index.ts', [
+    "export type { PluginUiHostApiDecodeResult } from './hostApiCodecs.js';",
+    "export { decodePluginUiClipboardReadResult } from './hostApiCodecs.js';",
+    "export { decodePluginUiResourceContent } from './hostApiCodecs.js';",
+    '',
+  ].join('\n'));
+  await writeFixtureFile(root, 'src/host/ui/hostApiCodecs.ts', [
+    'export type PluginUiHostApiDecodeResult<T> = Readonly<{ ok: true; value: T }>;',
+    'export function decodePluginUiClipboardReadResult(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
+    'export function decodePluginUiResourceContent(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
+    '',
+  ].join('\n'));
   await seedFixturePublicationSpecs(root);
   return root;
 }
@@ -1268,29 +1338,29 @@ test('publication mode stamps and retains @since from the immediately prior inve
   }
 });
 
-test('ordinary checks retain validated publication @since without writing it away', async () => {
+test('ordinary source checks do not retain publisher-owned @since', async () => {
   const root = await createPackageFixture();
   try {
     const published = runJsonCli(root, ['--write', '--published-version', '1.0.0']);
     assert.equal(published.status, 0, published.stderr);
-    const inventoryBefore = await readFile(join(root, 'api-surface.json'), 'utf8');
-    const barrelBefore = await readFile(join(root, 'src/actions/index.ts'), 'utf8');
-    const apiBefore = await readFile(join(root, 'API.md'), 'utf8');
-
     const ordinaryCheck = runJsonCli(root, ['--check']);
-    assert.equal(ordinaryCheck.status, 0, ordinaryCheck.stderr);
+    assert.equal(ordinaryCheck.status, 1, ordinaryCheck.stderr);
     const ordinaryReport = JSON.parse(ordinaryCheck.stdout);
-    assert.equal(ordinaryReport.status, 'current');
-    assert.equal(ordinaryReport.summary.changedFiles, 0);
-    assert.equal(await readFile(join(root, 'api-surface.json'), 'utf8'), inventoryBefore);
-    assert.equal(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), barrelBefore);
-    assert.equal(await readFile(join(root, 'API.md'), 'utf8'), apiBefore);
+    assert.equal(ordinaryReport.status, 'drift');
+    assert.ok(ordinaryReport.summary.changedFiles > 0);
+
+    const ordinaryWrite = runJsonCli(root, ['--write']);
+    assert.equal(ordinaryWrite.status, 0, ordinaryWrite.stderr);
+    const inventory = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'));
+    assert.equal(inventory.symbols.some((symbol) => Object.hasOwn(symbol, 'since')), false);
+    assert.doesNotMatch(await readFile(join(root, 'src/actions/index.ts'), 'utf8'), /@since/u);
+    assert.doesNotMatch(await readFile(join(root, 'API.md'), 'utf8'), /1\.0\.0/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('ordinary checks preserve prior @since while leaving newly added symbols unstamped', async () => {
+test('ordinary checks leave all source symbols unstamped after a publication-shaped write', async () => {
   const root = await createPackageFixture();
   try {
     const published = runJsonCli(root, ['--write', '--published-version', '1.0.0']);
@@ -1321,7 +1391,7 @@ test('ordinary checks preserve prior @since while leaving newly added symbols un
       .filter((symbol) => symbol.specifier === './actions')
       .map(({ exportName, since }) => ({ exportName, since }));
     assert.deepEqual(actionSymbols, [
-      { exportName: 'ActionsService', since: '1.0.0' },
+      { exportName: 'ActionsService', since: undefined },
       { exportName: 'UnpublishedActionsService', since: undefined },
     ]);
 
@@ -3970,6 +4040,8 @@ test('current Actions canonical source does not reach its generated entrypoint b
       'export type PluginAgentRuntimeRegistration = Readonly<{ localId: string }>;',
       'export type PluginRuntimeRegistration = Readonly<{ family: string }>;',
       'export function createPluginActionHandlerNotStartedError() { return new Error(\'not started\'); }',
+      'export function createExecutionRunHostBackendFromSessionRuntime() {}',
+      'export function readPluginActionInputParser() {}',
       'export function createPluginRegistrationScope() {}',
       '',
     ].join('\n'));
@@ -3980,10 +4052,12 @@ test('current Actions canonical source does not reach its generated entrypoint b
       '',
     ].join('\n'));
     await writeFixtureFile(root, 'src/host/registration/index.public.ts', [
+      "export { createExecutionRunHostBackendFromSessionRuntime } from '../../apiSurfaceReachabilityProbe.js';",
       "export type { PluginAgentRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
       "export type { PluginRegistrationRight } from '../../apiSurfaceReachabilityProbe.js';",
       "export type { PluginRuntimeRegistration } from '../../apiSurfaceReachabilityProbe.js';",
       "export { createPluginActionHandlerNotStartedError } from '../../apiSurfaceReachabilityProbe.js';",
+      "export { readPluginActionInputParser } from '../../apiSurfaceReachabilityProbe.js';",
       "export { createPluginRegistrationScope } from '../../apiSurfaceReachabilityProbe.js';",
       '',
     ].join('\n'));

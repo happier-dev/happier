@@ -2,7 +2,7 @@
 import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 
-import { parseDefaultSessionHeader, parseJsonLine } from './records.js';
+import { isRecord, parseDefaultSessionHeader, parseJsonLine, readString } from './records.js';
 
 const JSONL_EXTENSION = '.jsonl';
 const SESSION_FILE_HEAD_BYTES = 64 * 1024;
@@ -46,7 +46,9 @@ export async function readSessionIdFromFileHead(filePath: string): Promise<strin
     const buffer = Buffer.alloc(SESSION_FILE_HEAD_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const firstLine = buffer.subarray(0, bytesRead).toString('utf8').split('\n', 1)[0] ?? '';
-    return parseDefaultSessionHeader(parseJsonLine(firstLine))?.sessionId ?? null;
+    const record = parseJsonLine(firstLine);
+    return parseDefaultSessionHeader(record)?.sessionId
+      ?? (isRecord(record) ? readString(record.sessionId) : null);
   } catch {
     return null;
   } finally {

@@ -48,9 +48,23 @@ const HOST_FILE_LOCK_ENTRYPOINT = Object.freeze({
   }),
 });
 
+const HOST_UI_ENTRYPOINT = Object.freeze({
+  specifier: './host/ui',
+  sourceModule: 'src/host/ui/index.ts',
+  visibility: 'host',
+  realm: 'any',
+  conditions: Object.freeze({
+    types: './dist/host/ui/index.d.ts',
+    browser: './dist/host/ui/index.js',
+    'react-native': './dist/host/ui/index.js',
+    default: './dist/host/ui/index.js',
+  }),
+});
+
 const HOST_ENTRYPOINTS = Object.freeze([
   HOST_REGISTRATION_ENTRYPOINT,
   HOST_FILE_LOCK_ENTRYPOINT,
+  HOST_UI_ENTRYPOINT,
 ]);
 
 const AUTHOR_SYMBOL = Object.freeze({
@@ -76,6 +90,20 @@ const HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL = Object.freeze(
   exportName: 'createPluginActionHandlerNotStartedError',
   sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
   sourceExport: 'createPluginActionHandlerNotStartedError',
+});
+
+const HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL = Object.freeze({
+  ...HOST_REGISTRATION_SYMBOL,
+  exportName: 'readPluginActionInputParser',
+  sourceModule: 'src/host/registration/actionInputParser.ts',
+  sourceExport: 'readPluginActionInputParser',
+});
+
+const HOST_REGISTRATION_EXECUTION_RUN_SYMBOL = Object.freeze({
+  ...HOST_REGISTRATION_SYMBOL,
+  exportName: 'createExecutionRunHostBackendFromSessionRuntime',
+  sourceModule: 'src/agentRuntime/executionRun.ts',
+  sourceExport: 'createExecutionRunHostBackendFromSessionRuntime',
 });
 
 const HOST_REGISTRATION_TYPE_SYMBOLS = Object.freeze([
@@ -107,12 +135,28 @@ const HOST_FILE_LOCK_SYMBOL = Object.freeze({
   realm: 'daemon',
 });
 
+const HOST_UI_SYMBOLS = Object.freeze([
+  ['decodePluginUiClipboardReadResult', 'value'],
+  ['decodePluginUiResourceContent', 'value'],
+  ['PluginUiHostApiDecodeResult', 'type'],
+].map(([exportName, kind]) => Object.freeze({
+  specifier: './host/ui',
+  exportName,
+  kind,
+  sourceModule: 'src/host/ui/hostApiCodecs.ts',
+  sourceExport: exportName,
+  realm: 'any',
+})));
+
 const HOST_SYMBOLS = Object.freeze([
+  HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
   HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
+  HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL,
   HOST_REGISTRATION_SYMBOL,
   ...HOST_REGISTRATION_TYPE_SYMBOLS,
   HOST_FILE_LOCK_RECLAIM_SYMBOL,
   HOST_FILE_LOCK_SYMBOL,
+  ...HOST_UI_SYMBOLS,
 ]);
 
 function validInventory(overrides = {}) {
@@ -439,7 +483,9 @@ test('projects symbols without posture metadata while preserving structured depr
       {
         specifier: './host/registration',
         symbols: [
+          HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
           HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
+          HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL,
           {
             exportName: 'createPluginRegistrationScope',
             kind: 'value',
@@ -456,6 +502,10 @@ test('projects symbols without posture metadata while preserving structured depr
         specifier: './host/fs/json-owner-file-lock',
         symbols: HOST_SYMBOLS
           .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock'),
+      },
+      {
+        specifier: './host/ui',
+        symbols: HOST_UI_SYMBOLS,
       },
     ],
   });
@@ -506,12 +556,37 @@ test('projects symbols without posture metadata while preserving structured depr
       removalCondition: undefined,
     },
     {
+      exportName: 'createExecutionRunHostBackendFromSessionRuntime',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
       exportName: 'createPluginActionHandlerNotStartedError',
       replacement: undefined,
       removalCondition: undefined,
     },
     {
       exportName: 'createPluginRegistrationScope',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
+      exportName: 'readPluginActionInputParser',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
+      exportName: 'PluginUiHostApiDecodeResult',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
+      exportName: 'decodePluginUiClipboardReadResult',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
+      exportName: 'decodePluginUiResourceContent',
       replacement: undefined,
       removalCondition: undefined,
     },
@@ -713,7 +788,7 @@ test('host inventory requires the exact complete approved symbol and kind set pe
     })),
     (error) => error instanceof ApiSurfaceValidationError
       && error.diagnostics.includes(
-        'symbols[6] host export ./host/fs/json-owner-file-lock:reclaimJsonOwnerFileLockSnapshot must have value kind',
+        'symbols[8] host export ./host/fs/json-owner-file-lock:reclaimJsonOwnerFileLockSnapshot must have value kind',
       ),
   );
 });
@@ -778,6 +853,7 @@ test('one generation plan includes host package seams but excludes them from aut
     './actions',
     './host/fs/json-owner-file-lock',
     './host/registration',
+    './host/ui',
   ]);
   assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
   assert.match(
@@ -863,11 +939,7 @@ test('generation uses locale-independent code-point ordering for emitted symbols
         exportName: 'AService',
         sourceExport: 'AService',
       },
-      HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
-      HOST_REGISTRATION_SYMBOL,
-      ...HOST_REGISTRATION_TYPE_SYMBOLS,
-      HOST_FILE_LOCK_RECLAIM_SYMBOL,
-      HOST_FILE_LOCK_SYMBOL,
+      ...HOST_SYMBOLS,
     ],
   })));
 

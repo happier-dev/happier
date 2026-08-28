@@ -17,7 +17,7 @@
       "default": "./dist/index.js"
     }
   },
-  "description": "Held internal conformance fixture for a descriptor and embedded-renderer protocol contributor contract; not an ordinary authoring template.",
+  "description": "Advanced public Developer Preview fixture for a descriptor and embedded-renderer protocol contributor contract.",
   "files": [
     "dist"
   ],

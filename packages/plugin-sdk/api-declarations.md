@@ -735,7 +735,11 @@ Declared by `dist/definePlugin.d.ts` as `DefinedPluginActionContracts`.
 
 ```ts
 type DefinedPluginActionContracts<TPluginId extends string = string, TActions extends Readonly<Record<string, PluginActionDeclaration>> = Readonly<Record<string, never>>> = Readonly<{
-    [TLocalId in keyof TActions & string]: Readonly<{
+    [TLocalId in keyof TActions & string]: ActionContract<ProtocolActionSchemaInput<TActions[TLocalId] extends {
+        inputSchema: infer TSchema;
+    } ? TSchema : undefined>, ProtocolActionSchemaOutput<TActions[TLocalId] extends {
+        resultSchema: infer TSchema;
+    } ? TSchema : undefined>> & Readonly<{
         pluginId: TPluginId;
         localId: TLocalId;
     }>;
@@ -875,6 +879,7 @@ interface PluginApi {
     };
     readonly agents: {
         register(id: string, factory: AgentRuntimeFactory, options?: AgentRuntimeRegistrationOptions): void;
+        registerCliAuth(id: string, contribution: AgentCliAuthContributionV1): void;
         registerExternalSessions(id: string, contribution: AgentExternalSessionsContribution): void;
         registerExternalSessionHooks(id: string, contribution: AgentExternalSessionHooksContribution): void;
         registerExternalSessionObservation(id: string, contribution: AgentExternalSessionObservationContribution): void;
@@ -892,6 +897,15 @@ interface PluginApi {
     readonly resources: ResourcesRegistrationApi;
     readonly backgroundServices: BackgroundServicesRegistrationApi;
 }
+```
+
+
+### `.` — `PluginAutomationRunCause` (type)
+
+Declared by `dist/invocation.d.ts` as `PluginAutomationRunCause`.
+
+```ts
+type PluginAutomationRunCause = ProtocolAutomationRunCause;
 ```
 
 
@@ -1158,7 +1172,7 @@ type PluginInvocationCaller = Readonly<{
     kind: 'automationRun';
     runId: string;
     automationId: string;
-    origin: 'schedule' | 'manual' | 'event' | 'conversation';
+    cause: PluginAutomationRunCause;
 }>;
 ```
 
@@ -1172,6 +1186,7 @@ interface PluginInvocationContext {
     readonly plugin: PluginIdentity;
     readonly contribution: PluginInvocationContributionIdentity;
     readonly surface: PluginInvocationSurface;
+    readonly invokedAtMs: number;
     readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{
         id: string;
@@ -1737,6 +1752,15 @@ const arePluginMachineExecutionOriginsEqual: (left: PluginMachineExecutionOrigin
 ```
 
 
+### `.` — `arePluginMachineMaterializationRefsEqual` (value)
+
+Declared by `dist/executionOrigin.d.ts` as `arePluginMachineMaterializationRefsEqual`.
+
+```ts
+const arePluginMachineMaterializationRefsEqual: (left: PluginMachineMaterializationRefV1, right: PluginMachineMaterializationRefV1) => boolean;
+```
+
+
 ### `.` — `computeCanonicalDomainSeparatedDigest` (value)
 
 Declared by `dist/identity.d.ts` as `computeCanonicalDomainSeparatedDigest`.
@@ -1941,7 +1965,50 @@ type ActionCaller = Readonly<{
     kind: 'automationRun';
     runId: string;
     automationId: string;
-    origin: 'schedule' | 'manual' | 'event' | 'conversation';
+    cause: {
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'schedule';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: {
+            scheduledFor: number;
+        };
+    } | {
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'pluginEvent';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: {
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceSelectorId: string;
+        };
+    } | {
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'sessionLifecycle';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: {
+            event: 'parentTurnCompleted';
+            sourceSessionId: string;
+            sourceTurnId: string;
+        };
+    } | {
+        kind: 'manual';
+        invokedAt: number;
+    } | {
+        kind: 'conversation';
+        occurrenceKey: string;
+        occurredAt: number;
+    };
 }>;
 ```
 
@@ -1951,7 +2018,12 @@ type ActionCaller = Readonly<{
 Declared by `dist/actions/contracts.d.ts` as `ActionContract`.
 
 ```ts
-type ActionContract = PluginContributionRef;
+type ActionContract<TInput extends JsonValue = JsonValue, TResult extends JsonValue | void = JsonValue | void> = PluginContributionRef & Readonly<{
+    typeProjection: Readonly<{
+        input: TInput;
+        result: TResult;
+    }> | undefined;
+}>;
 ```
 
 
@@ -2457,9 +2529,9 @@ Declared by `dist/actions/service.d.ts` as `ActionsService`.
 ```ts
 interface ActionsService {
     execute<K extends PluginInvocableActionId>(actionId: K, input: PluginActionInputById[K], options?: PluginCancellationOptions): Promise<PluginActionResultById[K]>;
-    execute<TRef extends PluginContributionRef>(action: TRef, input: JsonValue, options?: PluginCancellationOptions): Promise<JsonValue | void>;
+    execute<TRef extends PluginContributionRef>(action: TRef, input: NoInfer<TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue>, options?: PluginCancellationOptions): Promise<TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void>;
     executeAdmittedTargetedOperation<TInput extends JsonValue, TResult extends JsonValue | void>(operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>, input: NoInfer<TInput>, options?: AdmittedTargetedOperationExecutionOptions): Promise<TResult>;
-    executeWithExecutionOrigin<TRef extends PluginContributionRef>(action: TRef, input: JsonValue, options?: ContributedActionExecutionWithOriginOptions): Promise<ContributedActionExecutionWithOriginResult>;
+    executeWithExecutionOrigin<TRef extends PluginContributionRef>(action: TRef, input: NoInfer<TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue>, options?: ContributedActionExecutionWithOriginOptions): Promise<ContributedActionExecutionWithOriginResult<TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void>>;
     executeAdmittedTargetedOperationWithExecutionOrigin<TInput extends JsonValue, TResult extends JsonValue | void>(operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>, input: NoInfer<TInput>, options?: AdmittedTargetedOperationExecutionWithOriginOptions): Promise<Readonly<{
         result: TResult;
         executionOrigin: PluginMachineExecutionOriginV1;
@@ -2474,10 +2546,10 @@ Declared by `dist/actions/admittedTargetedOperation.d.ts` as `AdmittedTargetedOp
 
 ```ts
 abstract class AdmittedTargetedOperationExecutionHandle<TInput extends JsonValue = JsonValue, TResult extends JsonValue | void = JsonValue | void, TRole extends string = string> {
-    protected readonly opaqueTypes: Readonly<{
+    readonly typeProjection: Readonly<{
         readonly input: TInput;
         readonly result: TResult;
-    }>;
+    }> | undefined;
     readonly identity: AdmittedTargetedOperationIdentity<TRole>;
 }
 ```
@@ -2585,10 +2657,37 @@ type ContributedActionExecutionWithOriginOptions = PluginCancellationOptions & R
 Declared by `dist/actions/service.d.ts` as `ContributedActionExecutionWithOriginResult`.
 
 ```ts
-type ContributedActionExecutionWithOriginResult = Readonly<{
-    result: JsonValue | null;
+type ContributedActionExecutionWithOriginResult<TResult extends JsonValue | void = JsonValue | void> = Readonly<{
+    result: TResult extends void ? null : TResult;
     executionOrigin: PluginMachineExecutionOriginV1;
 }>;
+```
+
+
+### `./actions` — `EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/actions/externalActionLimits.d.ts` as `EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH`.
+
+```ts
+const EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH: 256;
+```
+
+
+### `./actions` — `EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/actions/externalActionLimits.d.ts` as `EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1`.
+
+```ts
+const EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1: 128;
+```
+
+
+### `./actions` — `EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/actions/externalActionLimits.d.ts` as `EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES`.
+
+```ts
+const EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES: 24000000;
 ```
 
 
@@ -2946,6 +3045,7 @@ type PluginActionInputById = {
         [x: string]: unknown;
         sessionId?: string | undefined;
         targetMachineId?: string | undefined;
+        targetPath?: string | undefined;
         targetSessionStorageMode?: 'direct' | 'persisted' | undefined;
         workspaceTransfer?: {
             [x: string]: unknown;
@@ -3035,7 +3135,22 @@ type PluginActionInputById = {
             branchMode?: 'existing' | 'new' | undefined;
         } | null | undefined;
         title?: string | undefined;
-        initialMessage?: string | undefined;
+        initialInput?: {
+            text?: string | undefined;
+            attachments?: {
+                attachmentLocalId: string;
+                value: {
+                    key: string;
+                    value: unknown;
+                    presentation: {
+                        label: string;
+                        description?: string | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'info' | 'warning' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'refresh' | 'add' | 'back' | 'close' | 'forward' | 'more' | undefined;
+                        tone?: 'success' | 'danger' | 'neutral' | 'info' | 'warning' | undefined;
+                    };
+                };
+            }[] | undefined;
+        } | undefined;
         environmentVariables?: Record<string, string> | undefined;
         agentSessionStartupInstructionsV1?: Readonly<{
             instructions: string;
@@ -3060,25 +3175,7 @@ type PluginActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
     };
-    readonly "projects.list": {
-        [x: string]: unknown;
-        machineId?: string | undefined;
-        limit?: number | undefined;
-    };
-    readonly "prompts.invocations.list": {
-        [x: string]: unknown;
-        limit?: number | undefined;
-    };
-    readonly "prompts.invocation.resolve": {
-        [x: string]: unknown;
-        invocationId: string;
-        argsText?: string | undefined;
-    };
     readonly "machines.list": {
-        [x: string]: unknown;
-        limit?: number | undefined;
-    };
-    readonly "servers.list": {
         [x: string]: unknown;
         limit?: number | undefined;
     };
@@ -3616,11 +3713,15 @@ type PluginActionInputById = {
             } | undefined;
             engineId?: string | undefined;
         } | undefined;
-        linkedRefs?: {
+        linkedRefs?: ({
             kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
             id?: string | undefined;
             url?: string | undefined;
-        }[] | undefined;
+        } | {
+            kind: 'issue';
+            id: string;
+            url?: string | undefined;
+        })[] | undefined;
         suggestedFix?: {
             kind: 'external' | 'patch' | 'replacement';
             patch?: string | undefined;
@@ -3893,7 +3994,6 @@ type PluginActionInputById = {
         } | undefined;
     };
     readonly "reviews.comments.claimPublicationDispatch": {
-        commentId: string;
         target: {
             providerId: string;
             configuredAccountId: string;
@@ -3903,23 +4003,122 @@ type PluginActionInputById = {
                 collisionScope: string;
                 entryId: string;
             };
+            subtarget: {
+                kindId: 'review-thread' | 'review-comment';
+                targetId: string;
+            } | null;
         };
-    };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        groupId?: string | null | undefined;
-        limit?: number | undefined;
-    };
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId?: string | undefined;
-    };
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        id?: string | undefined;
+        baseRevision: string | null;
+        headRevision: string | null;
+        entries: {
+            happierCommentId: string;
+            expectedServerRevision: number;
+            anchor: {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'before' | 'after' | undefined;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'before' | 'after' | undefined;
+            } | {
+                kind: 'hunk';
+                filePath: string;
+                hunkId: string;
+                side?: 'before' | 'after' | undefined;
+            } | {
+                kind: 'file';
+                filePath: string;
+            } | {
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'run';
+                runId: string;
+            } | {
+                kind: 'finding';
+                runId: string;
+                findingId: string;
+            } | {
+                kind: 'binary';
+                filePath: string;
+                sizeBytes: number;
+                sha256: string;
+            } | {
+                kind: 'submodule';
+                filePath: string;
+                commitSha?: string | undefined;
+                url?: string | undefined;
+            } | {
+                kind: 'symlink';
+                filePath: string;
+                targetPath: string;
+            };
+            snapshot: {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'committed' | 'untracked' | 'workingTree' | 'diffSide' | 'agentBuffer';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
+                diffContext?: {
+                    side: 'before' | 'after';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                } | undefined;
+            } | {
+                kind: 'binary';
+                sizeBytes: number;
+                sha256: string;
+                source: 'committed' | 'untracked' | 'workingTree' | 'diffSide' | 'agentBuffer';
+                capturedAt: number;
+                mimeType?: string | undefined;
+            } | {
+                kind: 'submodule';
+                filePath: string;
+                capturedAt: number;
+                commitSha?: string | undefined;
+                url?: string | undefined;
+            } | {
+                kind: 'symlink';
+                filePath: string;
+                targetPath: string;
+                capturedAt: number;
+                targetExists?: boolean | undefined;
+            } | {
+                kind: 'too_large';
+                filePath: string;
+                sizeBytes: number;
+                capBytes: number;
+                capturedAt: number;
+                sha256?: string | undefined;
+            };
+            body: string;
+        }[];
+        verdict: {
+            kind: 'comment' | 'approve' | 'requestChanges';
+            body: string;
+        } | null;
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -4173,15 +4372,6 @@ type PluginActionInputById = {
         timeoutSeconds?: number | undefined;
         pollIntervalMs?: number | undefined;
     };
-    readonly "session.target.primary.set": {
-        [x: string]: unknown;
-        sessionId?: string | null | undefined;
-        sessionTitle?: string | undefined;
-    };
-    readonly "session.target.tracked.set": {
-        [x: string]: unknown;
-        sessionIds: string[];
-    };
     readonly "session.list": {
         [x: string]: unknown;
         limit?: number | undefined;
@@ -4280,10 +4470,8 @@ type PluginActionInputById = {
         maxReads?: number | undefined;
     };
     readonly "session.permission.respond": {
-        [x: string]: unknown;
+        requestId: string;
         decision: 'allow' | 'deny';
-        sessionId?: string | undefined;
-        requestId?: string | undefined;
     };
     readonly "session.permission.remote.pending.list": {
         sessionId: string;
@@ -4342,23 +4530,12 @@ type PluginActionInputById = {
         modeId: string;
         sessionId?: string | undefined;
     };
-    readonly "sessions.external.follow": {
-        sessionId: string;
-        leaseId?: string | undefined;
-        ttlMs?: number | undefined;
-        acceptedTailCursor?: string | undefined;
-    };
-    readonly "sessions.external.unfollow": {
-        sessionId: string;
-        leaseId: string;
-    };
     readonly "sessions.external.backgroundFollow.set": {
         sessionId: string;
         enabled: boolean;
     };
     readonly "sessions.external.status.get": {
         sessionId: string;
-        takeoverReadiness?: 'fresh' | undefined;
     };
     readonly "sessions.external.materialize.start": {
         request: {
@@ -4395,16 +4572,6 @@ type PluginActionInputById = {
         operationId: string;
         revision: number;
     };
-    readonly "ui.voice_global.reset": Record<string, never>;
-    readonly "ui.voice_agent.teleport": {
-        [x: string]: unknown;
-        sessionId?: string | undefined;
-    };
-    readonly "ui.current_context.read": Record<string, never>;
-    readonly "ui.current_context.command.invoke": {
-        commandId: string;
-    };
-    readonly "ui.pet.choose": Record<string, never>;
     readonly "memory.search": {
         [x: string]: unknown;
         machineId: string;
@@ -7534,6 +7701,8 @@ type PluginActionInputById = {
         knownRevision?: string | undefined;
         checkpointRetirementCandidates?: {
             automationId: string;
+            triggerId: string;
+            triggerRevision: number;
             eventRef: {
                 pluginId: string;
                 localId: string;
@@ -7545,7 +7714,8 @@ type PluginActionInputById = {
     readonly "automation.event.admit": {
         definitions: {
             automationId: string;
-            templateVersion: number;
+            triggerId: string;
+            triggerRevision: number;
             sourceSelectorId: string;
         }[];
         eventRef: {
@@ -7560,7 +7730,8 @@ type PluginActionInputById = {
     readonly "automation.event.source.status.report": {
         kind: 'source';
         automationId: string;
-        templateVersion: number;
+        triggerId: string;
+        triggerRevision: number;
         eventRef: {
             pluginId: string;
             localId: string;
@@ -7594,13 +7765,11 @@ type PluginActionInputById = {
     };
     readonly "automation.conversation.target.verify": {
         automationId: string;
-        expectedTemplateVersion: number;
         resultDelivery?: 'finalResult' | undefined;
     };
     readonly "automation.conversation.admit": {
         automationId: string;
         bindingId: string;
-        templateVersion: number;
         occurrenceId: string;
         occurredAt: number;
         sender: JsonValue;
@@ -7713,8 +7882,20 @@ type PluginActionInputById = {
     readonly "scm.reviewWorkspace.materializePrepared": {
         cwd: string;
         displayName: string;
-        baseRef: string | null;
-        branchMode: 'existing' | 'new';
+        sourceTip: {
+            repository: {
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                deployment: string;
+                repository: string;
+            };
+            cloneUrl: string;
+            branch: string;
+            sourceHeadSha: string;
+            fetchRef: string;
+        };
+        verification?: {
+            targetPath: string;
+        } | undefined;
     };
     readonly "scm.pullRequest.runStacked": {
         [x: string]: unknown;
@@ -8614,19 +8795,7 @@ type PluginActionResultById = {
     readonly "paths.list_recent": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
-    readonly "projects.list": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "prompts.invocations.list": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "prompts.invocation.resolve": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
     readonly "machines.list": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "servers.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
     readonly "review.engines.list": string | number | boolean | readonly JsonValue[] | {
@@ -9129,11 +9298,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -9422,11 +9595,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -9715,11 +9892,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -10007,11 +10188,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -10299,11 +10484,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -10591,11 +10780,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -10881,11 +11074,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -11173,11 +11370,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -11465,11 +11666,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -11757,11 +11962,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -12050,11 +12259,15 @@ type PluginActionResultById = {
                 } | undefined;
                 engineId?: string | undefined;
             } | undefined;
-            linkedRefs?: {
+            linkedRefs?: ({
                 kind: 'session' | 'external' | 'executionRun' | 'checkpoint' | 'commit' | 'pullRequest';
                 id?: string | undefined;
                 url?: string | undefined;
-            }[] | undefined;
+            } | {
+                kind: 'issue';
+                id: string;
+                url?: string | undefined;
+            })[] | undefined;
             suggestedFix?: {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
@@ -12075,185 +12288,14 @@ type PluginActionResultById = {
     };
     readonly "reviews.comments.claimPublicationDispatch": {
         disposition: 'dispatch' | 'reconcile';
-        publicationCorrelationId: string;
-    };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    }[];
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    } | null;
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        kind: 'snapshot';
-        subagents: {
-            [x: string]: unknown;
-            id: string;
-            parentSessionId: string;
-            origin: 'plugin' | 'agent' | 'happier';
-            kind: 'custom' | 'native' | 'execution-run';
-            status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-            createdAt: number;
-            agentRef?: {
-                [x: string]: unknown;
-                agentId: string;
-                agentKind?: string | undefined;
-            } | undefined;
-            lifecycleDetail?: {
-                [x: string]: unknown;
-                agentState?: string | undefined;
-                reason?: string | undefined;
-            } | undefined;
-            completedAt?: number | undefined;
-            transcript?: {
-                [x: string]: unknown;
-                parentSessionId: string;
-                sidechainId: string;
-            } | undefined;
-            spawnRef?: {
-                [x: string]: unknown;
-                toolCallId?: string | undefined;
-            } | undefined;
-            runRef?: {
-                [x: string]: unknown;
-                runId: string;
-            } | undefined;
-            groupRef?: {
-                [x: string]: unknown;
-                groupId: string;
-                groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-                memberId: string;
-                providerGroupKind?: string | undefined;
-                groupLabel?: string | undefined;
-                memberLabel?: string | undefined;
-                memberRole?: string | undefined;
-                supportsBroadcast?: boolean | undefined;
-            } | undefined;
-            vendorRef?: {
-                [x: string]: unknown;
-                agentSessionId: string;
-                vendorSource?: string | undefined;
-                resumeMetadata?: Record<string, unknown> | undefined;
-            } | undefined;
-            label?: string | undefined;
-            display?: {
-                [x: string]: unknown;
-                label?: string | undefined;
-                iconRef?: string | undefined;
-                colorToken?: string | undefined;
-            } | undefined;
-            agentMetadata?: Record<string, unknown> | undefined;
+        publicationPlanId: string;
+        entries: {
+            happierCommentId: string;
+            publicationCorrelationId: string;
         }[];
+        verdict: {
+            publicationCorrelationId: string;
+        } | null;
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -12527,12 +12569,6 @@ type PluginActionResultById = {
         ok: false;
         code: 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
     };
-    readonly "session.target.primary.set": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "session.target.tracked.set": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
     readonly "session.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
@@ -12780,26 +12816,6 @@ type PluginActionResultById = {
     readonly "session.mode.set": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
-    readonly "sessions.external.follow": {
-        ok: true;
-        leaseId: string;
-        expiresAtMs: number;
-        renewed: boolean;
-        acceptedTailCursor?: string | undefined;
-    } | {
-        ok: false;
-        errorCode: 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
-        error: string;
-        retryable?: boolean | undefined;
-    };
-    readonly "sessions.external.unfollow": {
-        ok: true;
-        detached: boolean;
-    } | {
-        ok: false;
-        errorCode: 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
-        error: string;
-    };
     readonly "sessions.external.backgroundFollow.set": {
         ok: false;
         errorCode: 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
@@ -12948,42 +12964,6 @@ type PluginActionResultById = {
             message: string;
         };
     };
-    readonly "ui.voice_global.reset": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "ui.voice_agent.teleport": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "ui.current_context.read": {
-        navigation: {
-            area: string;
-            screen: string;
-            title?: string | undefined;
-            presentation?: 'screen' | 'modal' | 'pane' | undefined;
-        };
-        commands: {
-            id: string;
-            title: string;
-            description?: string | undefined;
-        }[];
-        entity?: {
-            kind: string;
-            label: string;
-            summary?: string | undefined;
-            reference?: string | number | boolean | readonly PluginUiJsonValueV1[] | {
-                readonly [key: string]: PluginUiJsonValueV1;
-            } | null | undefined;
-        } | undefined;
-        detail?: string | number | boolean | readonly PluginUiJsonValueV1[] | {
-            readonly [key: string]: PluginUiJsonValueV1;
-        } | null | undefined;
-    };
-    readonly "ui.current_context.command.invoke": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
-    readonly "ui.pet.choose": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
     readonly "memory.search": {
         [x: string]: unknown;
         v: 1;
@@ -29357,7 +29337,8 @@ type PluginActionResultById = {
         revision: string;
         definitions: {
             automationId: string;
-            templateVersion: number;
+            triggerId: string;
+            triggerRevision: number;
             eventRef: {
                 pluginId: string;
                 localId: string;
@@ -29403,6 +29384,8 @@ type PluginActionResultById = {
         revision: string;
         checkpointRetirements?: {
             automationId: string;
+            triggerId: string;
+            triggerRevision: number;
             eventRef: {
                 pluginId: string;
                 localId: string;
@@ -29441,7 +29424,6 @@ type PluginActionResultById = {
     readonly "automation.conversation.targets.list": {
         items: {
             automationId: string;
-            templateVersion: number;
             label: string;
             execution: {
                 targetType: 'new_session' | 'existing_session' | 'execution_run';
@@ -29452,10 +29434,9 @@ type PluginActionResultById = {
     };
     readonly "automation.conversation.target.verify": {
         kind: 'verified';
-        templateVersion: number;
     } | {
         kind: 'notVerified';
-        reason: 'notFound' | 'templateVersionMismatch' | 'resultDeliveryUnsupported';
+        reason: 'notFound' | 'resultDeliveryUnsupported';
     };
     readonly "automation.conversation.admit": {
         kind: 'admitted';
@@ -29467,7 +29448,7 @@ type PluginActionResultById = {
         checkpointSafe: true;
     } | {
         kind: 'blocked';
-        reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict';
+        reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'resultDeliveryUnsupported';
         checkpointSafe: false;
     };
     readonly "scm.pullRequest.list": {
@@ -29778,6 +29759,25 @@ type PluginActionResultById = {
         targetPath: string;
         branchName: string;
         created: boolean;
+        currentness: {
+            kind: 'currentAtObservedHead';
+        } | {
+            kind: 'movedToObservedHead';
+            fromSha: string;
+            observedHeadSha: string;
+            recoveryRef: string;
+        } | {
+            kind: 'preservedStale';
+            resolvedHeadSha: string;
+            observedHeadSha: string;
+            reason: 'localCommits' | 'dirtyWorktree' | 'unresolvedHead';
+        };
+    } | {
+        success: true;
+        verification: {
+            targetPath: string;
+            sourceHeadSha: string;
+        };
     } | {
         success: false;
         error: string;
@@ -31346,6 +31346,15 @@ const getActionSpec: (id: ActionId) => ActionSpec;
 ```
 
 
+### `./actions` — `isExternalActionResultWithinResponseEnvelopeLimitV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/actions/externalActionLimits.d.ts` as `isExternalActionResultWithinResponseEnvelopeLimitV1`.
+
+```ts
+function isExternalActionResultWithinResponseEnvelopeLimitV1(result: unknown): boolean;
+```
+
+
 ### `./actions` — `isPluginActionHandlerInvocationKnownNotStarted` (value)
 
 Declared by `dist/errors.d.ts` as `isPluginActionHandlerInvocationKnownNotStarted`.
@@ -31361,6 +31370,15 @@ Declared by `dist/actions/inputHints.d.ts` as `isSameActionInputOptionValue`.
 
 ```ts
 const isSameActionInputOptionValue: (left: ActionInputOptionValue, right: ActionInputOptionValue) => boolean;
+```
+
+
+### `./actions` — `measureExternalActionResultResponseEnvelopeUtf8BytesV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/actions/externalActionLimits.d.ts` as `measureExternalActionResultResponseEnvelopeUtf8BytesV1`.
+
+```ts
+function measureExternalActionResultResponseEnvelopeUtf8BytesV1(result: unknown): number;
 ```
 
 
@@ -31413,6 +31431,9 @@ type AgentDefinitionCapabilityFacts = Readonly<{
         }>;
         sessionRollback: Readonly<{
             conversation: string;
+        }>;
+        usageLimitRecovery?: Readonly<{
+            checkNow: string;
         }>;
     }>;
     localControl?: AgentLocalControlDeclaration | null;
@@ -31580,6 +31601,15 @@ type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
 ```
 
 
+### `./agents` — `AgentSessionRuntimeCapabilities` (type)
+
+Declared by `dist/agentRuntime/session.d.ts` as `AgentSessionRuntimeCapabilities`.
+
+```ts
+type AgentSessionRuntimeCapabilities = RuntimeCapabilities;
+```
+
+
 ### `./agents` — `AgentSurfaceOperationCatalogV1` (value)
 
 Declared by `node_modules/@happier-dev/protocol/dist/plugins/backendSurfaceDeclarationV1.d.ts` as `BackendSurfaceOperationCatalogV1`.
@@ -31644,7 +31674,7 @@ type AuthoredAgentCapabilitySurfaceV2 = Exclude<PluginAgentCapabilitySurfaceV2, 
 Declared by `node_modules/@happier-dev/agents/dist/definitions/agentCapabilityProjection.d.ts` as `AuthoredAgentSessionCapabilitiesV2`.
 
 ```ts
-type AuthoredAgentSessionCapabilitiesV2 = Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback'> & Readonly<{
+type AuthoredAgentSessionCapabilitiesV2 = Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback' | 'usageLimitRecovery'> & Readonly<{
     open: readonly AuthoredAgentSessionOpenRouteV2[];
 }>;
 ```
@@ -31773,11 +31803,29 @@ type PluginAgentDefinition = Readonly<{
     factory: AgentRuntimeFactory;
     providerBinding?: AgentProviderBindingAdapter;
     sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
+    daemonSpawnHooks?: AgentDaemonSpawnHooks;
+    providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+    cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+    cliAuth?: AgentCliAuthContributionV1;
+    connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+    preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+    terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+    sessionStartup?: AgentSessionStartupContributionV1;
+    vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
 }> | Readonly<{
     declaration: PluginHostOwnedAgentDeclaration;
     factory?: never;
     providerBinding?: never;
     sessionRunnerFactory?: never;
+    daemonSpawnHooks?: never;
+    providerCliAttach?: never;
+    cliSessionCommand?: never;
+    cliAuth?: AgentCliAuthContributionV1;
+    connectedAccountLaunch?: never;
+    preflightSessionControls?: never;
+    terminalPromptSubmitVerification?: never;
+    sessionStartup?: never;
+    vendorResumeSupport?: never;
 }>);
 ```
 
@@ -31916,6 +31964,29 @@ Declared by `node_modules/@happier-dev/agents/dist/acpPresets.d.ts` as `ACP_WRIT
 const ACP_WRITE_LIKE_PERMISSION_KINDS: readonly [
     "external_directory",
     "doom_loop"
+];
+```
+
+
+### `./agents/runtime` — `AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS` (value)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS`.
+
+```ts
+const AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS: readonly [
+    'usage_limit',
+    'rate_limit',
+    'temporary_throttle',
+    'capacity',
+    'dependency_failure',
+    'auth_expired',
+    'account_changed',
+    'refresh_failed',
+    'permission_denied',
+    'plan',
+    'validation',
+    'account_disabled',
+    'unknown'
 ];
 ```
 
@@ -32731,12 +32802,720 @@ type AgentAuthorRestoreCheckpointResult = Readonly<{
 ```
 
 
+### `./agents/runtime` — `AgentAuthoredSessionRuntimeCapabilities` (type)
+
+Declared by `dist/agentRuntime/session.d.ts` as `AgentSessionRuntimeCapabilities`.
+
+```ts
+type AgentSessionRuntimeCapabilities = RuntimeCapabilities;
+```
+
+
+### `./agents/runtime` — `AgentCliAuthCommandResultV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliAuthCommandResultV1`.
+
+```ts
+type AgentCliAuthCommandResultV1 = Readonly<{
+    ok: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliAuthContributionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliAuthContributionV1`.
+
+```ts
+type AgentCliAuthContributionV1 = Readonly<{
+    detectAuthStatus(input: Readonly<{
+        runDeclaredSystemToolCommand(input: Readonly<{
+            toolId: string;
+            args: readonly string[];
+            timeoutMs?: number;
+        }>): Promise<AgentCliAuthCommandResultV1>;
+    }>): Promise<AgentCliAuthStatusV1> | AgentCliAuthStatusV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliAuthStatusV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliAuthStatusV1`.
+
+```ts
+type AgentCliAuthStatusV1 = Readonly<{
+    state: 'logged_in' | 'logged_out' | 'unknown';
+    method?: 'api_key_env' | 'auth_token_env' | 'credentials_file' | 'oauth_cli' | 'config_file' | 'gcloud_adc' | 'unknown' | null;
+    accountLabel?: string | null;
+    reason?: 'missing_credentials' | 'expired' | 'cli_missing' | 'probe_failed' | 'timeout' | 'unsupported' | 'interactive_blocked' | 'not_configured' | null;
+    source?: 'env' | 'file' | 'command' | 'mixed' | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliSessionCommandBuildInputV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliSessionCommandBuildInputV1`.
+
+```ts
+type AgentCliSessionCommandBuildInputV1 = Readonly<{
+    isExplicitCliSubcommand: boolean;
+    parsed: AgentCliSessionCommandParsedArgsV1;
+    settings: Readonly<Record<string, unknown>>;
+    environment: Readonly<Record<string, string | undefined>>;
+    startOrigin: 'terminal' | 'daemon';
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliSessionCommandBuildOptionsResultV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliSessionCommandBuildOptionsResultV1`.
+
+```ts
+type AgentCliSessionCommandBuildOptionsResultV1 = Readonly<{
+    ok: true;
+    options: AgentCliSessionCommandOptionsV1;
+}> | Readonly<{
+    ok: false;
+    errorMessage: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliSessionCommandDeclarationV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliSessionCommandDeclarationV1`.
+
+```ts
+type AgentCliSessionCommandDeclarationV1 = Readonly<{
+    sessionRuntimeId?: string;
+    deprecatedAliasAgentId?: string;
+    accountSettingsAgentId?: string;
+    implicitResumeDelegation?: Readonly<{
+        resumeFlags: readonly string[];
+    }>;
+    directoryFlags?: readonly string[];
+    forwardModelFlag?: boolean;
+    forwardResumeFlag?: boolean;
+    yoloAgentArgs?: readonly string[];
+    versionFlags?: readonly string[];
+    infoCommandPrefixes?: readonly (readonly string[])[];
+    buildSessionOptions?: (input: AgentCliSessionCommandBuildInputV1) => AgentCliSessionCommandBuildOptionsResultV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentCliSessionCommandOptionsV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliSessionCommandOptionsV1`.
+
+```ts
+type AgentCliSessionCommandOptionsV1 = Readonly<Record<string, JsonValue | undefined>>;
+```
+
+
+### `./agents/runtime` — `AgentCliSessionCommandParsedArgsV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentCliSessionCommandParsedArgsV1`.
+
+```ts
+type AgentCliSessionCommandParsedArgsV1 = Readonly<{
+    startingMode?: string;
+    directory?: string;
+    resume?: string;
+    agentArgs: readonly string[];
+}>;
+```
+
+
 ### `./agents/runtime` — `AgentConfigurationScalar` (type)
 
 Declared by `dist/agentRuntime/session.d.ts` as `AgentConfigurationScalar`.
 
 ```ts
 type AgentConfigurationScalar = string | number | boolean | null;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountContinuityV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountContinuityV1`.
+
+```ts
+type AgentConnectedAccountContinuityV1 = Readonly<{
+    nativeAuthCodec?: AgentConnectedAccountNativeAuthCodecV1;
+    runtimeAuthAdapter?: AgentConnectedAccountRuntimeAuthAdapterV1;
+    verifyResumeReachable?: (input: AgentConnectedAccountResumeReachabilityInputV1) => Promise<AgentConnectedAccountResumeReachabilityResultV1>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountCredentialRevisionV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountCredentialRevisionV1`.
+
+```ts
+type AgentConnectedAccountCredentialRevisionV1 = string;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountEnvironmentUseV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountEnvironmentUseV1`.
+
+```ts
+type AgentConnectedAccountEnvironmentUseV1 = Readonly<{
+    purpose: string;
+    environmentKey: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountFileEnvironmentUseV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountFileEnvironmentUseV1`.
+
+```ts
+type AgentConnectedAccountFileEnvironmentUseV1 = Readonly<{
+    purpose: string;
+    fileId: string;
+    environmentKey: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountLaunchContributionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountLaunchContributionV1`.
+
+```ts
+type AgentConnectedAccountLaunchContributionV1 = Readonly<{
+    requestAuthUses?: readonly AgentConnectedAccountRequestAuthUseV1[];
+    fileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
+    environmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];
+    switchContinuity?: AgentConnectedAccountSwitchContinuityV1;
+    stateSharingDescriptor?: AgentConnectedAccountStateSharingDescriptorV1;
+    continuity?: AgentConnectedAccountContinuityV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountNativeAuthCodecInspectInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountNativeAuthCodecInspectInputV1`.
+
+```ts
+type AgentConnectedAccountNativeAuthCodecInspectInputV1 = Readonly<{
+    selection: AgentConnectedAccountRuntimeAuthSelectionV1;
+    credential: ConnectedServiceCredentialRecordV1;
+    files: Readonly<Record<string, Uint8Array>>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountNativeAuthCodecMaterializeInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountNativeAuthCodecMaterializeInputV1`.
+
+```ts
+type AgentConnectedAccountNativeAuthCodecMaterializeInputV1 = Readonly<{
+    selection: AgentConnectedAccountRuntimeAuthSelectionV1;
+    credential: ConnectedServiceCredentialRecordV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountNativeAuthCodecV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountNativeAuthCodecV1`.
+
+```ts
+type AgentConnectedAccountNativeAuthCodecV1 = Readonly<{
+    materialize(input: AgentConnectedAccountNativeAuthCodecMaterializeInputV1): Readonly<{
+        files: Readonly<Record<string, Uint8Array>>;
+    }>;
+    inspect(input: AgentConnectedAccountNativeAuthCodecInspectInputV1): AgentConnectedAccountTransitionVerificationResultV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountNativeHomeV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountNativeHomeV1`.
+
+```ts
+type AgentConnectedAccountNativeHomeV1 = Readonly<{
+    environmentKey: string;
+    defaultRelativePath: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountProviderOutcomeInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountProviderOutcomeInputV1`.
+
+```ts
+type AgentConnectedAccountProviderOutcomeInputV1 = Readonly<{
+    target: Readonly<{
+        agentId: string;
+        targetId?: string | null;
+    }>;
+    selections: readonly AgentConnectedAccountProviderOutcomeSelectionV1[];
+    outcome: Readonly<{
+        kind: 'provider_activity';
+        event: 'task_started' | 'assistant_message_end';
+    }> | Readonly<{
+        kind: 'quota_unknown';
+    }>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountProviderOutcomeSelectionV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountProviderOutcomeSelectionV1`.
+
+```ts
+type AgentConnectedAccountProviderOutcomeSelectionV1 = Readonly<{
+    kind?: 'profile' | 'group';
+    serviceId: string;
+    profileId?: string | null;
+    activeProfileId?: string | null;
+    groupId?: string | null;
+    generation?: number | null;
+    credentialRevision?: AgentConnectedAccountCredentialRevisionV1 | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountProviderOutcomeTargetV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountProviderOutcomeTargetV1`.
+
+```ts
+type AgentConnectedAccountProviderOutcomeTargetV1 = Readonly<{
+    serviceId: string;
+    profileId: string;
+    groupId: string | null;
+    groupGeneration: number | null;
+    credentialRevision: AgentConnectedAccountCredentialRevisionV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountProviderOutcomeVerificationResultV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountProviderOutcomeVerificationResultV1`.
+
+```ts
+type AgentConnectedAccountProviderOutcomeVerificationResultV1 = Readonly<{
+    status: 'verified';
+    source: string;
+    targets: readonly AgentConnectedAccountProviderOutcomeTargetV1[];
+}> | Readonly<{
+    status: 'unavailable';
+    reason: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRequestAuthUseV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountRequestAuthUseV1`.
+
+```ts
+type AgentConnectedAccountRequestAuthUseV1 = Readonly<{
+    purpose: string;
+    materialization: Readonly<{
+        kind: 'httpHeaders';
+        origin: string;
+        headerNames: readonly string[];
+    }>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountResumeFileCandidateV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountResumeFileCandidateV1`.
+
+```ts
+type AgentConnectedAccountResumeFileCandidateV1 = Readonly<{
+    fileName: string;
+    nativeSessionId: string | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountResumeFileLookupV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountResumeFileLookupV1`.
+
+```ts
+type AgentConnectedAccountResumeFileLookupV1 = Readonly<{
+    findDeclaredCandidate(input: Readonly<{
+        matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
+    }>): Promise<Readonly<{
+        found: boolean;
+    }>>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountResumeReachabilityInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountResumeReachabilityInputV1`.
+
+```ts
+type AgentConnectedAccountResumeReachabilityInputV1 = Readonly<{
+    vendorResumeId: string | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
+    sessionFiles: AgentConnectedAccountResumeFileLookupV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountResumeReachabilityResultV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountResumeReachabilityResultV1`.
+
+```ts
+type AgentConnectedAccountResumeReachabilityResultV1 = Readonly<{
+    ok: true;
+}> | Readonly<{
+    ok: false;
+    reason: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthAdapterResultV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthAdapterResultV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthAdapterResultV1 = Readonly<{
+    supported?: boolean;
+    applied?: boolean;
+    status?: 'applied' | 'superseded_after_apply' | 'available' | 'unknown' | 'unsupported' | 'refreshed' | 'pending' | 'unavailable' | 'forbidden' | 'failed';
+    reason?: string;
+    recovery?: 'restart_resume' | 'restart_rematerialize';
+    activeProfiles?: Readonly<Partial<Record<string, string>>>;
+    verification?: AgentConnectedAccountTransitionVerificationResultV1 | NonNullable<Extract<AgentSessionRuntimeAuthApplyResult, {
+        ok: true;
+    }>['verification']>;
+    usageSnapshot?: AgentAccountUsageSnapshot;
+    refreshAttemptId?: string;
+    result?: AgentSessionAuthRefreshPayloadV1;
+    error?: AgentSessionAuthRefreshErrorV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthAdapterV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthAdapterV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthAdapterV1 = Readonly<{
+    classifyRuntimeAuthFailure(input: AgentConnectedAccountRuntimeFailureInputV1): AgentConnectedAccountRuntimeFailureClassificationV1 | null;
+    materializeActiveProfile(input: AgentConnectedAccountRuntimeAuthTargetV1): Promise<AgentConnectedAccountRuntimeAuthAdapterResultV1>;
+    canHotApply(input: AgentConnectedAccountRuntimeAuthHotApplyInputV1): AgentConnectedAccountRuntimeAuthAdapterResultV1;
+    hotApply(input: AgentConnectedAccountRuntimeAuthHotApplyInputV1): Promise<AgentConnectedAccountRuntimeAuthAdapterResultV1>;
+    verifyActiveAccount?(input: AgentConnectedAccountRuntimeAuthVerificationInputV1): Promise<AgentConnectedAccountTransitionVerificationResultV1>;
+    verifyProviderOutcome?(input: AgentConnectedAccountProviderOutcomeInputV1): Promise<AgentConnectedAccountProviderOutcomeVerificationResultV1>;
+    probeQuota(input: AgentConnectedAccountRuntimeAuthUsageInputV1): Promise<AgentConnectedAccountRuntimeAuthAdapterResultV1>;
+    refreshActiveProfile(input: AgentConnectedAccountRuntimeAuthTargetV1): Promise<AgentConnectedAccountRuntimeAuthAdapterResultV1>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthFailureKind` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthFailureKind`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthFailureKind = typeof AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS[number];
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthHotApplyInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthHotApplyInputV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthHotApplyInputV1 = AgentConnectedAccountRuntimeAuthTargetV1 & Readonly<{
+    applySelectedAuthGeneration?: () => Promise<AgentSessionRuntimeAuthApplyResult>;
+    materializeNativeAuth?: () => Promise<AgentConnectedAccountTransitionVerificationResultV1>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthSelectionV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthSelectionV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthSelectionV1 = Readonly<{
+    kind?: 'profile' | 'group';
+    serviceId?: string;
+    profileId?: string | null;
+    activeProfileId?: string | null;
+    fallbackProfileId?: string | null;
+    groupId?: string | null;
+    generation?: number | null;
+    groupGeneration?: number | null;
+    credentialRevision?: AgentConnectedAccountCredentialRevisionV1 | null;
+    sourceProviderAccountId?: string | null;
+    sourceAccountLabel?: string | null;
+    applyReason?: string | null;
+    requireDirectLiveHotApply?: boolean;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthTargetV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthTargetV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthTargetV1 = Readonly<{
+    target: Readonly<{
+        agentId: string;
+        targetId?: string | null;
+    }>;
+    selection: AgentConnectedAccountRuntimeAuthSelectionV1;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthUsageInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthUsageInputV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthUsageInputV1 = AgentConnectedAccountRuntimeAuthTargetV1 & Readonly<{
+    readProviderUsage?: (params?: JsonValue) => Promise<unknown>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeAuthVerificationInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeAuthVerificationInputV1`.
+
+```ts
+type AgentConnectedAccountRuntimeAuthVerificationInputV1 = AgentConnectedAccountRuntimeAuthTargetV1 & Readonly<{
+    readProviderAccount?: () => Promise<unknown>;
+    inspectNativeAuth?: () => Promise<AgentConnectedAccountTransitionVerificationResultV1>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeFailureClassificationV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeFailureClassificationV1`.
+
+```ts
+type AgentConnectedAccountRuntimeFailureClassificationV1 = Readonly<{
+    kind: AgentConnectedAccountRuntimeAuthFailureKind;
+    limitCategory?: ConnectedServiceLimitCategoryV1;
+    serviceId: string;
+    profileId: string | null;
+    groupId: string | null;
+    resetsAtMs: number | null;
+    retryAfterMs?: number | null;
+    planType: string | null;
+    providerLimitId?: string | null;
+    sourceProviderAccountId?: string | null;
+    sourceAccountLabel?: string | null;
+    failingAccessTokenFingerprint?: string | null;
+    expectedCredentialRevision?: AgentConnectedAccountCredentialRevisionV1 | null;
+    groupGeneration?: number | null;
+    quotaScope?: ProviderAccountUsageQuotaScopeV1;
+    connectedServiceRecovery?: 'available' | 'unavailable';
+    action?: Readonly<{
+        kind: 'open_url';
+        url: string;
+    }> | null;
+    rateLimits: unknown | null;
+    source: 'structured_provider_error' | 'stable_provider_message' | 'provider_runtime_marker';
+    recoveryAction?: Readonly<{
+        kind: 'provider_state_sharing_required';
+    }> | Readonly<{
+        kind: 'quota_recovery_required';
+    }> | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountRuntimeFailureInputV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountRuntimeFailureInputV1`.
+
+```ts
+type AgentConnectedAccountRuntimeFailureInputV1 = Readonly<{
+    target: Readonly<{
+        agentId: string;
+        targetId?: string | null;
+    }>;
+    error: unknown;
+    selection?: Readonly<Record<string, unknown>>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountStateSharingDescriptorEntryV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountStateSharingDescriptorEntryV1`.
+
+```ts
+type AgentConnectedAccountStateSharingDescriptorEntryV1 = Readonly<{
+    path: string;
+    mode: 'linked' | 'copied' | 'linked_or_copied' | 'env_redirect' | 'force_copied';
+    envVar?: string;
+    allowHardLinkFallback?: boolean;
+    secret?: boolean;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountStateSharingDescriptorTransformV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountStateSharingDescriptorTransformV1`.
+
+```ts
+type AgentConnectedAccountStateSharingDescriptorTransformV1 = Readonly<{
+    entry: string;
+    kind: 'rewrite_toml';
+    spec: Readonly<{
+        setStringValues: Readonly<Record<string, string>>;
+    }>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountStateSharingDescriptorV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountStateSharingDescriptorV1`.
+
+```ts
+type AgentConnectedAccountStateSharingDescriptorV1 = Readonly<{
+    nativeHome?: AgentConnectedAccountNativeHomeV1;
+    providerSupportStatus: 'supported' | 'unsupported';
+    config: Readonly<{
+        supported: boolean;
+        modes: readonly ('linked' | 'copied' | 'isolated')[];
+        entries: readonly AgentConnectedAccountStateSharingDescriptorEntryV1[];
+        unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
+    }>;
+    state: Readonly<{
+        supported: boolean;
+        modes: readonly ('isolated' | 'shared')[];
+        entries: readonly AgentConnectedAccountStateSharingDescriptorEntryV1[];
+        sharedStatePrivacyRiskAcknowledgementRequired?: boolean;
+        symlinkUnavailableDegradePolicy: 'block_continuity' | 'degrade_to_isolated';
+        unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
+    }>;
+    authIsolation: Readonly<{
+        mode: 'env_only' | 'materialized_home' | 'process_env';
+        secretEntries: readonly string[];
+    }>;
+    transforms?: readonly AgentConnectedAccountStateSharingDescriptorTransformV1[];
+    dynamicEntryPatterns?: Readonly<Record<string, AgentConnectedAccountStateSharingDynamicEntryPatternV1>>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountStateSharingDynamicEntryPatternV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountStateSharingDynamicEntryPatternV1`.
+
+```ts
+type AgentConnectedAccountStateSharingDynamicEntryPatternV1 = Readonly<{
+    scope: 'config' | 'state';
+    pattern: string;
+    mode?: AgentConnectedAccountStateSharingDescriptorEntryV1['mode'];
+    envVar?: string;
+    allowHardLinkFallback?: boolean;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountSwitchContinuityV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountSwitchContinuityV1`.
+
+```ts
+type AgentConnectedAccountSwitchContinuityV1 = Readonly<{
+    continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';
+    supportedTransitions?: readonly AgentConnectedAccountSwitchTransitionV1[];
+    providerStateSharingRequired?: Readonly<{
+        serviceIds?: readonly string[];
+        supportedTransitions: readonly AgentConnectedAccountSwitchTransitionV1[];
+    }>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountSwitchTransitionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentConnectedAccountSwitchTransitionV1`.
+
+```ts
+type AgentConnectedAccountSwitchTransitionV1 = 'native_to_connected' | 'connected_to_native' | 'connected_to_connected' | 'same_connected_group';
+```
+
+
+### `./agents/runtime` — `AgentConnectedAccountTransitionVerificationResultV1` (type)
+
+Declared by `dist/agentRuntime/connectedAccountContinuity.d.ts` as `AgentConnectedAccountTransitionVerificationResultV1`.
+
+```ts
+type AgentConnectedAccountTransitionVerificationResultV1 = Readonly<{
+    status: 'verified';
+    providerAccountId?: string | null;
+    activeAccountId?: string | null;
+    sharedAuthSurfaceId?: string | null;
+    proofStrength?: 'exact' | 'weak' | 'diagnostic';
+    source?: string;
+    reason?: string;
+    credentialRevision?: AgentConnectedAccountCredentialRevisionV1 | null;
+    credentialFingerprint?: string | null;
+    generationApplication?: Readonly<{
+        serviceId: ConnectedServiceId;
+        groupId: string;
+        profileId: string;
+        generation: number;
+        credentialRevision: AgentConnectedAccountCredentialRevisionV1;
+        credentialFingerprint: string;
+    }>;
+}> | Readonly<{
+    status: 'weakly_verified';
+    providerAccountId?: string | null;
+    activeAccountId?: string | null;
+    sharedAuthSurfaceId?: string | null;
+    proofStrength?: 'exact' | 'weak' | 'diagnostic';
+    source?: string;
+    reason: string;
+}> | Readonly<{
+    status: 'mismatch';
+    expectedProviderAccountId?: string | null;
+    actualProviderAccountId?: string | null;
+    retryable: boolean;
+    reason?: string;
+}> | Readonly<{
+    status: 'unavailable';
+    retryable: boolean;
+    reason: string;
+    errorClassification?: unknown;
+}>;
 ```
 
 
@@ -32851,7 +33630,7 @@ Declared by `dist/agentRuntime/registration.d.ts` as `AgentDaemonSpawnRuntimeSel
 
 ```ts
 type AgentDaemonSpawnRuntimeSelectionV1 = Readonly<{
-    providerRuntimeSelection?: Readonly<Record<string, unknown>>;
+    agentRuntimeSelection?: Readonly<Record<string, unknown>>;
     runtimeDescriptorV1?: Extract<AgentTerminalSessionStateUpdate, Readonly<{
         fieldId: 'identity.runtimeDescriptor';
     }>>['value'];
@@ -32859,12 +33638,7 @@ type AgentDaemonSpawnRuntimeSelectionV1 = Readonly<{
     directory?: string;
     env?: Readonly<Record<string, string>>;
     connectedServices?: AgentDaemonSpawnConnectedServicesV1;
-    providerBinding?: Readonly<{
-        v: 1;
-        agentTargetKey: string;
-        connectionId: string;
-        modelId: string;
-    }>;
+    hasExternalModelBinding?: true;
     tools?: AgentDaemonSpawnToolResolutionContextV1;
 }>;
 ```
@@ -32919,6 +33693,24 @@ type AgentDaemonSpawnValidationResult = Readonly<{
     ok: false;
     errorMessage: string;
     reasonCode?: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentDeferredStartupEligibilityInputV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentDeferredStartupEligibilityInputV1`.
+
+```ts
+type AgentDeferredStartupEligibilityInputV1 = Readonly<{
+    startedBy: 'terminal' | 'daemon';
+    startingMode: 'terminal' | 'remote' | 'local' | null;
+    hasExistingSession: boolean;
+    hasSessionAttachFile: boolean;
+    hasProviderResumeId: boolean;
+    hasExplicitPermissionMode: boolean;
+    hasPersistedPermissionModeSeed: boolean;
+    hasTerminalTty: boolean;
 }>;
 ```
 
@@ -33040,6 +33832,26 @@ type AgentExecutionRunStopResult = Readonly<{
 ```
 
 
+### `./agents/runtime` — `AgentExperimentalVendorResumeSupportContributionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentExperimentalVendorResumeSupportContributionV1`.
+
+```ts
+type AgentExperimentalVendorResumeSupportContributionV1 = Readonly<{
+    supportsVendorResume(input: AgentExperimentalVendorResumeSupportInputV1): boolean;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentExperimentalVendorResumeSupportInputV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentExperimentalVendorResumeSupportInputV1`.
+
+```ts
+type AgentExperimentalVendorResumeSupportInputV1 = Readonly<Pick<AgentDaemonSpawnRuntimeSelectionV1, 'agentRuntimeSelection' | 'runtimeDescriptorV1'>>;
+```
+
+
 ### `./agents/runtime` — `AgentFeatureDecisionService` (type)
 
 Declared by `dist/agentRuntime/context.d.ts` as `AgentFeatureDecisionService`.
@@ -33047,6 +33859,61 @@ Declared by `dist/agentRuntime/context.d.ts` as `AgentFeatureDecisionService`.
 ```ts
 type AgentFeatureDecisionService = Readonly<{
     isEnabled(featureId: string): boolean;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentFiniteExecutionRunHostOptions` (type)
+
+Declared by `dist/agentRuntime/executionRun.d.ts` as `AgentFiniteExecutionRunHostOptions`.
+
+```ts
+type AgentFiniteExecutionRunHostOptions = Readonly<{
+    request: Extract<AgentExecutionRunOpenRequest, {
+        kind: 'create';
+    }>;
+    signal?: AbortSignal;
+    execute(context: Readonly<{
+        signal: AbortSignal;
+        emit(event: AgentFiniteExecutionRunProgressEvent): void;
+    }>): Promise<AgentFiniteExecutionRunResult>;
+    mapFailure(error: unknown): PluginDiagnosticData;
+    unsupportedSendDiagnostic: PluginDiagnosticData;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentFiniteExecutionRunProgressEvent` (type)
+
+Declared by `dist/agentRuntime/executionRun.d.ts` as `AgentFiniteExecutionRunProgressEvent`.
+
+```ts
+type AgentFiniteExecutionRunProgressEvent = Readonly<{
+    kind: 'run-progress';
+}> | Readonly<{
+    kind: 'output-delta';
+    channel: 'assistant' | 'reasoning';
+    text: string;
+}> | Readonly<{
+    kind: 'checkpoint';
+    checkpointId: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentFiniteExecutionRunResult` (type)
+
+Declared by `dist/agentRuntime/executionRun.d.ts` as `AgentFiniteExecutionRunResult`.
+
+```ts
+type AgentFiniteExecutionRunResult = Readonly<{
+    status: 'complete';
+}> | Readonly<{
+    status: 'failed';
+    diagnostic?: PluginDiagnosticData;
+}> | Readonly<{
+    status: 'cancelled';
+    diagnostic?: PluginDiagnosticData;
 }>;
 ```
 
@@ -33068,7 +33935,111 @@ type AgentLaunchEnvironment = Readonly<{
 Declared by `dist/agentRuntime/session.d.ts` as `AgentPermissionIntent`.
 
 ```ts
-type AgentPermissionIntent = PermissionIntent;
+type AgentPermissionIntent = 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
+```
+
+
+### `./agents/runtime` — `AgentPreflightJsonRpcRequestClientV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightJsonRpcRequestClientV1`.
+
+```ts
+type AgentPreflightJsonRpcRequestClientV1 = Readonly<{
+    request(method: string, params?: JsonValue): Promise<JsonValue>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsCommandResultV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsCommandResultV1`.
+
+```ts
+type AgentPreflightSessionControlsCommandResultV1 = Readonly<{
+    ok: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsCommandV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsCommandV1`.
+
+```ts
+type AgentPreflightSessionControlsCommandV1 = Readonly<{
+    toolId: string;
+    args: readonly string[];
+    environmentKeys?: readonly string[];
+    environmentExcludeKeys?: readonly string[];
+    ci?: 'omit';
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsContributionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsContributionV1`.
+
+```ts
+type AgentPreflightSessionControlsContributionV1 = Readonly<{
+    resolveProbeVariant?: (input: AgentPreflightSessionControlsProbeInputV1) => string | null | undefined;
+    models?: AgentPreflightSessionControlsModelsV1;
+    jsonRpcCommand?: AgentPreflightSessionControlsCommandV1;
+    probeModels?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
+    probeModes?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
+    probeConfigOptions?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
+    probePassiveRealtimeSetup?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsModelsV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsModelsV1`.
+
+```ts
+type AgentPreflightSessionControlsModelsV1 = Readonly<{
+    command: AgentPreflightSessionControlsCommandV1;
+    parseOutput?: (result: AgentPreflightSessionControlsCommandResultV1) => Promise<unknown | null> | unknown | null;
+    fallback?: Readonly<{
+        command: AgentPreflightSessionControlsCommandV1;
+        parseOutput?: (result: AgentPreflightSessionControlsCommandResultV1) => Promise<unknown | null> | unknown | null;
+    }>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsProbeContextV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsProbeContextV1`.
+
+```ts
+type AgentPreflightSessionControlsProbeContextV1 = AgentPreflightSessionControlsProbeInputV1 & Readonly<{
+    signal: AbortSignal;
+    runDeclaredSystemToolCommand(input: Readonly<{
+        toolId: string;
+        args: readonly string[];
+    }>): Promise<AgentPreflightSessionControlsCommandResultV1>;
+    withDeclaredJsonRpcClient<TResult>(input: Readonly<{
+        toolId: string;
+        args: readonly string[];
+    }>, inspect: (client: AgentPreflightJsonRpcRequestClientV1, signal: AbortSignal) => Promise<TResult> | TResult): Promise<TResult>;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentPreflightSessionControlsProbeInputV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionControlsProbeInputV1`.
+
+```ts
+type AgentPreflightSessionControlsProbeInputV1 = Readonly<{
+    accountSettings: Readonly<Record<string, JsonValue>> | null;
+    environment: Readonly<Record<string, boolean>>;
+}>;
 ```
 
 
@@ -33280,6 +34251,46 @@ type AgentProviderBindingResolvedFacts = Readonly<{
 ```
 
 
+### `./agents/runtime` — `AgentProviderCliAttachDeclarationV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentProviderCliAttachDeclarationV1`.
+
+```ts
+type AgentProviderCliAttachDeclarationV1 = Readonly<{
+    resolveTarget(params: Readonly<{
+        metadata: AttachSessionMetadata;
+        fallbackServerBaseUrl?: string | null;
+    }>): AgentProviderCliAttachTargetResolutionV1;
+    createArgs(target: AgentProviderCliAttachTargetV1): readonly string[];
+    buildHealthUrl(target: AgentProviderCliAttachTargetV1): string | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentProviderCliAttachTargetResolutionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentProviderCliAttachTargetResolutionV1`.
+
+```ts
+type AgentProviderCliAttachTargetResolutionV1 = Readonly<{
+    ok: true;
+    value: AgentProviderCliAttachTargetV1;
+}> | Readonly<{
+    ok: false;
+    reason: string;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentProviderCliAttachTargetV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentProviderCliAttachTargetV1`.
+
+```ts
+type AgentProviderCliAttachTargetV1 = Readonly<Record<string, string>>;
+```
+
+
 ### `./agents/runtime` — `AgentProviderCredentialTransport` (type)
 
 Declared by `dist/agentRuntime/providerBinding.d.ts` as `AgentProviderCredentialTransport`.
@@ -33316,9 +34327,9 @@ type AgentRuntime = Readonly<{
     toolExecution?: AgentToolExecutionLifecycle;
 }> & (Readonly<{
     sessions: AgentSessionRuntimeFactory;
-    executionRuns?: AgentExecutionRunRuntimeFactory;
+    executionRuns?: never;
 }> | Readonly<{
-    sessions?: AgentSessionRuntimeFactory;
+    sessions?: never;
     executionRuns: AgentExecutionRunRuntimeFactory;
 }>);
 ```
@@ -33384,6 +34395,9 @@ type AgentRuntimeHandoffSurface = Readonly<{
     evaluateAvailability?: (request: Parameters<NonNullable<HandoffSurfaceV1['evaluateAvailability']>>[0], context: PluginInvocationContext) => ReturnType<NonNullable<HandoffSurfaceV1['evaluateAvailability']>>;
     exportBundle: (request: Parameters<HandoffSurfaceV1['exportBundle']>[0], context: PluginInvocationContext) => ReturnType<HandoffSurfaceV1['exportBundle']>;
     importBundle: (request: Parameters<HandoffSurfaceV1['importBundle']>[0], context: PluginInvocationContext) => ReturnType<HandoffSurfaceV1['importBundle']>;
+    extractMediaScannableRecords?: (request: Parameters<NonNullable<HandoffSurfaceV1['extractMediaScannableRecords']>>[0], context: PluginInvocationContext) => ReturnType<NonNullable<HandoffSurfaceV1['extractMediaScannableRecords']>>;
+    buildRuntimeLocalMetadata?: (request: Parameters<NonNullable<HandoffSurfaceV1['buildRuntimeLocalMetadata']>>[0], context: PluginInvocationContext) => ReturnType<NonNullable<HandoffSurfaceV1['buildRuntimeLocalMetadata']>>;
+    resolveNativeTranscriptPathCandidate?: (request: Parameters<NonNullable<HandoffSurfaceV1['resolveNativeTranscriptPathCandidate']>>[0], context: PluginInvocationContext) => ReturnType<NonNullable<HandoffSurfaceV1['resolveNativeTranscriptPathCandidate']>>;
 }>;
 ```
 
@@ -33430,6 +34444,14 @@ type AgentRuntimeRegistrationOptions = Readonly<{
     providerBinding?: AgentProviderBindingAdapter;
     sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
     daemonSpawnHooks?: AgentDaemonSpawnHooks;
+    providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+    cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+    cliAuth?: AgentCliAuthContributionV1;
+    connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+    preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+    terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+    sessionStartup?: AgentSessionStartupContributionV1;
+    vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
 }>;
 ```
 
@@ -33548,9 +34570,6 @@ type AgentSessionAuthRefreshRequest = Readonly<{
     targetId?: string | null;
     selection?: AgentSessionAuthRefreshSelection;
     planType?: string | null;
-    env?: Readonly<Record<string, string>> | null;
-    materializedEnv?: Readonly<Record<string, string>> | null;
-    targetMaterializedEnv?: Readonly<Record<string, string>> | null;
     classification?: AgentSessionAuthRefreshClassification;
     failingAccessTokenFingerprint?: string | null;
     expectedCredentialRevision?: string | null;
@@ -34110,6 +35129,7 @@ type AgentSessionHostServices = Readonly<{
     mcp: AgentSessionMcpService;
     workflowActivity: AgentSessionWorkflowActivityService;
     toolExecution: AgentToolExecutionService;
+    nativeHome?: AgentSessionNativeHomeService;
     happierTools?: AgentSessionHappierToolsService;
 }>;
 ```
@@ -34276,6 +35296,17 @@ type AgentSessionModelsSource = Readonly<{
 ```
 
 
+### `./agents/runtime` — `AgentSessionNativeHomeService` (type)
+
+Declared by `dist/agentRuntime/context.d.ts` as `AgentSessionNativeHomeService`.
+
+```ts
+type AgentSessionNativeHomeService = Readonly<{
+    readFiles(fileIds: readonly string[]): Promise<Readonly<Record<string, Uint8Array>>>;
+}>;
+```
+
+
 ### `./agents/runtime` — `AgentSessionNativeToolBridgeConfig` (type)
 
 Declared by `dist/agentRuntime/context.d.ts` as `AgentSessionNativeToolBridgeConfig`.
@@ -34319,6 +35350,7 @@ type AgentSessionOpenRequest = Readonly<{
     sessionId: string;
     cwd: string;
     launchEnvironment?: AgentLaunchEnvironment;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     configuration?: AgentSessionConfigurationSnapshot;
     connectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
     mcpServers?: Readonly<Record<string, AgentSessionMcpLaunchConfig>>;
@@ -34708,6 +35740,8 @@ Declared by `dist/agentRuntime/session.d.ts` as `AgentSessionRuntime`.
 ```ts
 interface AgentSessionRuntime extends Disposable {
     dispose(reason?: AgentSessionDisposeReason): void | Promise<void>;
+    readonly runtimeDescriptorV1?: RuntimeDescriptorV1;
+    readonly runtimeCapabilities?: AgentSessionRuntimeCapabilities;
     readonly conversationRollback?: AgentSessionConversationRollbackControl;
     readonly runtimeAuth?: AgentSessionRuntimeAuthControl;
     connectedServiceApplicationSettled?(request: Readonly<{
@@ -34871,6 +35905,15 @@ type AgentSessionRuntimeAuthIdentityResult = Readonly<{
     error: string;
     errorCode?: string;
 }>;
+```
+
+
+### `./agents/runtime` — `AgentSessionRuntimeCapabilitySupportLevel` (type)
+
+Declared by `dist/agentRuntime/session.d.ts` as `AgentSessionRuntimeCapabilitySupportLevel`.
+
+```ts
+type AgentSessionRuntimeCapabilitySupportLevel = AgentSessionCapabilitySupportLevel;
 ```
 
 
@@ -35334,6 +36377,17 @@ type AgentSessionSkillCatalogItem = Readonly<{
 ```
 
 
+### `./agents/runtime` — `AgentSessionStartupContributionV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentSessionStartupContributionV1`.
+
+```ts
+type AgentSessionStartupContributionV1 = Readonly<{
+    shouldUseDeferredBootstrap(input: AgentDeferredStartupEligibilityInputV1): boolean;
+}>;
+```
+
+
 ### `./agents/runtime` — `AgentSessionStartupInstructions` (type)
 
 Declared by `dist/agentRuntime/session.d.ts` as `AgentSessionStartupInstructions`.
@@ -35555,35 +36609,11 @@ Declared by `dist/agentRuntime/surfaces.d.ts` as `AgentTerminalLaunchMetadata`.
 
 ```ts
 type AgentTerminalLaunchMetadata = Readonly<Partial<{
-    terminalRuntime: Readonly<Partial<{
-        claudeArgs: readonly string[];
-        codexArgs: readonly string[];
-        promptInteractive: boolean;
-        conversationId: string;
-        continueLatest: boolean;
-        sandbox: boolean;
-        logFile: string;
-        print: boolean;
-        unsafeSkipPermissions: boolean;
-    }>>;
-    antigravity: Readonly<Partial<{
-        promptInteractive: boolean;
-        conversationId: string;
-        continueLatest: boolean;
-        sandbox: boolean;
-        logFile: string;
-        print: boolean;
-        unsafeSkipPermissions: boolean;
-    }>>;
-    providerSessionId: string;
-    codexSessionId: string;
-    resumeId: string;
-    permissionMode: string;
-    codexArgs: readonly string[];
-    claudeArgs: readonly string[];
-    fallbackModel: string;
-    customSystemPrompt: string;
-    appendSystemPrompt: string;
+    runtimeDescriptorV1: Readonly<{
+        v: 1;
+        agentId: string;
+        agent: Readonly<Record<string, unknown>>;
+    } & Record<string, unknown>>;
 }>>;
 ```
 
@@ -35621,7 +36651,27 @@ type AgentTerminalLaunchRequest = Readonly<{
     sessionId: string;
     cwd: string;
     metadata: AgentTerminalLaunchMetadata;
+    configuration?: AgentSessionConfigurationSnapshot;
     modelSelection: ProviderBoundModelRef | null;
+}>;
+```
+
+
+### `./agents/runtime` — `AgentTerminalPromptSubmitVerificationPolicyV1` (type)
+
+Declared by `dist/agentRuntime/registration.d.ts` as `AgentTerminalPromptSubmitVerificationPolicyV1`.
+
+```ts
+type AgentTerminalPromptSubmitVerificationPolicyV1 = Readonly<{
+    shouldVerifyAfterSubmit(promptText: string): boolean;
+    verifyBeforeSubmitStaging?(input: Readonly<{
+        promptText: string;
+        screenText: string;
+    }>): boolean;
+    verifyAfterSubmit(input: Readonly<{
+        promptText: string;
+        screenText: string;
+    }>): boolean;
 }>;
 ```
 
@@ -35896,8 +36946,6 @@ Declared by `dist/agentRuntime/projections.d.ts` as `BackendSessionLaunchHintsV1
 ```ts
 type BackendSessionLaunchHintsV1 = Readonly<{
     directory?: string;
-    backendModeHint?: string;
-    resumePlanOptions?: Readonly<Record<string, unknown>>;
     environmentVariables?: Readonly<Record<string, string>>;
     sessionStateUpdates?: readonly AgentTerminalSessionStateUpdate[];
 }>;
@@ -36214,6 +37262,7 @@ type HandoffAvailabilityRequestV1 = Readonly<{
     operation: 'exportBundle' | 'importBundle';
     sessionId?: string;
     metadata?: HandoffExportSessionMetadata;
+    transcriptStorage?: 'direct' | 'persisted';
 }>;
 ```
 
@@ -36287,6 +37336,105 @@ type HandoffImportResultV1 = Readonly<{
 ```
 
 
+### `./agents/runtime` — `HandoffMediaScannableRecordsRequestV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffMediaScannableRecordsRequestV1`.
+
+```ts
+type HandoffMediaScannableRecordsRequestV1 = Readonly<{
+    bundle: Readonly<Record<string, unknown>>;
+}>;
+```
+
+
+### `./agents/runtime` — `HandoffNativeTranscriptPathCandidateRequestV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffNativeTranscriptPathCandidateRequestV1`.
+
+```ts
+type HandoffNativeTranscriptPathCandidateRequestV1 = Readonly<{
+    identity: Readonly<{
+        v: 1;
+        vendorResumeId: string;
+    }>;
+    runtimeDescriptorV1: HandoffRuntimeDescriptorV1;
+}>;
+```
+
+
+### `./agents/runtime` — `HandoffNativeTranscriptPathCandidateV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffNativeTranscriptPathCandidateV1`.
+
+```ts
+type HandoffNativeTranscriptPathCandidateV1 = Readonly<{
+    path: string;
+    containmentRoot: string;
+}>;
+```
+
+
+### `./agents/runtime` — `HandoffRuntimeDescriptorV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffRuntimeDescriptorV1`.
+
+```ts
+type HandoffRuntimeDescriptorV1 = Readonly<{
+    v: 1;
+    agentId: string;
+    agent: Readonly<Record<string, unknown>>;
+} & Record<string, unknown>>;
+```
+
+
+### `./agents/runtime` — `HandoffRuntimeLocalExternalSessionSourceV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffRuntimeLocalExternalSessionSourceV1`.
+
+```ts
+type HandoffRuntimeLocalExternalSessionSourceV1 = Readonly<{
+    kind: string;
+} & Record<string, JsonValue>>;
+```
+
+
+### `./agents/runtime` — `HandoffRuntimeLocalMetadataIdentityV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffRuntimeLocalMetadataIdentityV1`.
+
+```ts
+type HandoffRuntimeLocalMetadataIdentityV1 = Readonly<{
+    machineId: string | null;
+    workingDirectory: string | null;
+    transcriptStorage: 'direct' | 'persisted' | null;
+    vendorResumeId: string;
+}>;
+```
+
+
+### `./agents/runtime` — `HandoffRuntimeLocalMetadataRequestV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffRuntimeLocalMetadataRequestV1`.
+
+```ts
+type HandoffRuntimeLocalMetadataRequestV1 = Readonly<{
+    identity: HandoffRuntimeLocalMetadataIdentityV1;
+    runtimeDescriptorV1: HandoffRuntimeDescriptorV1;
+}>;
+```
+
+
+### `./agents/runtime` — `HandoffRuntimeLocalMetadataV1` (type)
+
+Declared by `dist/agentRuntime/projections.d.ts` as `HandoffRuntimeLocalMetadataV1`.
+
+```ts
+type HandoffRuntimeLocalMetadataV1 = Readonly<Partial<{
+    externalSessionSource: HandoffRuntimeLocalExternalSessionSourceV1;
+}>>;
+```
+
+
 ### `./agents/runtime` — `HandoffSurfaceV1` (type)
 
 Declared by `dist/agentRuntime/projections.d.ts` as `HandoffSurfaceV1`.
@@ -36296,6 +37444,9 @@ type HandoffSurfaceV1 = Readonly<{
     evaluateAvailability?: (request: HandoffAvailabilityRequestV1) => BackendSurfaceAvailabilityV1 | Promise<BackendSurfaceAvailabilityV1>;
     exportBundle: (request: HandoffExportRequestV1) => BackendSurfaceResultV1<HandoffExportResultV1, HandoffFailureCodeV1> | Promise<BackendSurfaceResultV1<HandoffExportResultV1, HandoffFailureCodeV1>>;
     importBundle: (request: HandoffImportRequestV1) => BackendSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1> | Promise<BackendSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
+    extractMediaScannableRecords?: (request: HandoffMediaScannableRecordsRequestV1) => readonly unknown[] | Promise<readonly unknown[]>;
+    buildRuntimeLocalMetadata?: (request: HandoffRuntimeLocalMetadataRequestV1) => HandoffRuntimeLocalMetadataV1 | null | Promise<HandoffRuntimeLocalMetadataV1 | null>;
+    resolveNativeTranscriptPathCandidate?: (request: HandoffNativeTranscriptPathCandidateRequestV1) => HandoffNativeTranscriptPathCandidateV1 | null | Promise<HandoffNativeTranscriptPathCandidateV1 | null>;
 }>;
 ```
 
@@ -36506,6 +37657,19 @@ type RuntimeConfigUpdateOutcomeV1 = Readonly<{
     timing?: RuntimeConfigOutcomeTimingV1;
     reason?: string;
 }>;
+```
+
+
+### `./agents/runtime` — `RuntimeDescriptorV1` (type)
+
+Declared by `dist/agentRuntime/session.d.ts` as `RuntimeDescriptorV1`.
+
+```ts
+type RuntimeDescriptorV1 = Readonly<{
+    v: 1;
+    agentId: string;
+    agent: Readonly<Record<string, unknown>>;
+} & Record<string, unknown>>;
 ```
 
 
@@ -37157,6 +38321,15 @@ function createAgentSessionPreAdmissionBuffer<T>(): AgentSessionPreAdmissionBuff
 ```
 
 
+### `./agents/runtime` — `createFiniteExecutionRunHostRuntime` (value)
+
+Declared by `dist/agentRuntime/executionRun.d.ts` as `createFiniteExecutionRunHostRuntime`.
+
+```ts
+function createFiniteExecutionRunHostRuntime(options: AgentFiniteExecutionRunHostOptions): AgentExecutionRunRuntime;
+```
+
+
 ### `./agents/runtime` — `isRuntimeConfigUpdateOutcomeApplied` (value)
 
 Declared by `node_modules/@happier-dev/agents/dist/runtime/session/runtimeConfigUpdateOutcome.d.ts` as `isRuntimeConfigUpdateOutcomeApplied`.
@@ -37177,10 +38350,10 @@ const normalizeAcpPermissionIntent: (permissionMode: string | null | undefined, 
 
 ### `./agents/runtime` — `parsePermissionIntentAlias` (value)
 
-Declared by `node_modules/@happier-dev/agents/dist/permissions/index.d.ts` as `parsePermissionIntentAlias`.
+Declared by `dist/agentRuntime/projections.d.ts` as `parsePermissionIntentAlias`.
 
 ```ts
-function parsePermissionIntentAlias(raw: string): PermissionIntent | null;
+const parsePermissionIntentAlias: (raw: string) => AgentPermissionIntent | null;
 ```
 
 
@@ -37248,6 +38421,18 @@ type CoalescedScheduler = Readonly<{
 ```
 
 
+### `./async` — `MergedAbortSignals` (type)
+
+Declared by `dist/abortSignals.d.ts` as `MergedAbortSignals`.
+
+```ts
+type MergedAbortSignals = Readonly<{
+    signal: AbortSignal | undefined;
+    dispose(): void;
+}>;
+```
+
+
 ### `./async` — `RaceWithTimeoutResult` (type)
 
 Declared by `dist/timeout.d.ts` as `RaceWithTimeoutResult`.
@@ -37265,6 +38450,18 @@ type RaceWithTimeoutResult<T> = Readonly<{
 ```
 
 
+### `./async` — `RequiredMergedAbortSignals` (type)
+
+Declared by `dist/abortSignals.d.ts` as `RequiredMergedAbortSignals`.
+
+```ts
+type RequiredMergedAbortSignals = Readonly<{
+    signal: AbortSignal;
+    dispose(): void;
+}>;
+```
+
+
 ### `./async` — `createCoalescedScheduler` (value)
 
 Declared by `dist/runtime/coalescedScheduler.d.ts` as `createCoalescedScheduler`.
@@ -37274,6 +38471,21 @@ function createCoalescedScheduler(params: Readonly<{
     drain: () => Promise<void>;
     onError?: (error: unknown) => void;
 }>): CoalescedScheduler;
+```
+
+
+### `./async` — `mergeAbortSignals` (value)
+
+Declared by `dist/abortSignals.d.ts` as `mergeAbortSignals`.
+
+```ts
+function mergeAbortSignals(signals: readonly [
+]): MergedAbortSignals;
+function mergeAbortSignals(signals: readonly [
+    AbortSignal,
+    ...(AbortSignal | undefined)[]
+]): RequiredMergedAbortSignals;
+function mergeAbortSignals(signals: ReadonlyArray<AbortSignal | undefined>): MergedAbortSignals;
 ```
 
 
@@ -38159,17 +39371,13 @@ type CloudAuthCallbackCreateInputV1 = Readonly<{
 
 ### `./connected-accounts` — `AuthCallbackCreateResult` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCallbackCreateResultV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthCallbackCreateResult`.
 
 ```ts
-type CloudAuthCallbackCreateResultV1 = Readonly<{
+type AuthCallbackCreateResult = Readonly<{
     ok: true;
-    session: CloudAuthCallbackSessionV1;
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
+    session: AuthCallbackSession;
+}> | ConnectedAccountAuthFailure;
 ```
 
 
@@ -38184,45 +39392,41 @@ type CloudAuthCallbackModeV1 = 'loopback' | 'paste';
 
 ### `./connected-accounts` — `AuthCallbackResult` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCallbackResultV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthCallbackResult`.
 
 ```ts
-type CloudAuthCallbackResultV1 = Readonly<{
+type AuthCallbackResult = Readonly<{
     ok: true;
     code: string;
     state: string;
     redirectUri: string;
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
+}> | ConnectedAccountAuthFailure;
 ```
 
 
 ### `./connected-accounts` — `AuthCallbackService` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCallbackServiceV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthCallbackService`.
 
 ```ts
-type CloudAuthCallbackServiceV1 = Readonly<{
-    create(input: CloudAuthCallbackCreateInputV1): Promise<CloudAuthCallbackCreateResultV1>;
+type AuthCallbackService = Readonly<{
+    create(input: AuthCallbackCreateInput): Promise<AuthCallbackCreateResult>;
 }>;
 ```
 
 
 ### `./connected-accounts` — `AuthCallbackSession` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCallbackSessionV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthCallbackSession`.
 
 ```ts
-type CloudAuthCallbackSessionV1 = Readonly<{
-    mode: CloudAuthCallbackModeV1;
+type AuthCallbackSession = Readonly<{
+    mode: 'loopback' | 'paste';
     state: string;
     redirectUri: string;
     callbackUrl?: string;
     port?: number;
-    wait(input?: CloudAuthCallbackWaitInputV1): Promise<CloudAuthCallbackResultV1>;
+    wait(input?: AuthCallbackWaitInput): Promise<AuthCallbackResult>;
     close(): Promise<void>;
 }>;
 ```
@@ -38235,47 +39439,6 @@ Declared by `dist/cloud/auth.d.ts` as `CloudAuthCallbackWaitInputV1`.
 ```ts
 type CloudAuthCallbackWaitInputV1 = Readonly<{
     promptLabel?: string;
-}>;
-```
-
-
-### `./connected-accounts` — `AuthCredentialWriteInput` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCredentialWriteInputV1`.
-
-```ts
-type CloudAuthCredentialWriteInputV1 = Readonly<{
-    serviceId?: string;
-    profileId?: string;
-    record?: unknown;
-}>;
-```
-
-
-### `./connected-accounts` — `AuthCredentialWriteResult` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthCredentialWriteResultV1`.
-
-```ts
-type CloudAuthCredentialWriteResultV1 = Readonly<{
-    ok: true;
-    credentialRef: string;
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
-```
-
-
-### `./connected-accounts` — `AuthDiagnostic` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthDiagnosticV1`.
-
-```ts
-type CloudAuthDiagnosticV1 = Readonly<{
-    code: string;
-    message?: string;
 }>;
 ```
 
@@ -38303,10 +39466,10 @@ type CloudAuthLoopbackInputV1 = Readonly<{
 
 ### `./connected-accounts` — `AuthLoopbackResult` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthLoopbackResultV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthLoopbackResult`.
 
 ```ts
-type CloudAuthLoopbackResultV1 = CloudAuthCallbackResultV1;
+type AuthLoopbackResult = AuthCallbackResult;
 ```
 
 
@@ -38337,16 +39500,12 @@ type AuthMaterializationHelpers<TServiceId extends ConnectedServiceId, TInputKey
 
 ### `./connected-accounts` — `AuthOpenBrowserResult` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthOpenBrowserResultV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthOpenBrowserResult`.
 
 ```ts
-type CloudAuthOpenBrowserResultV1 = Readonly<{
+type AuthOpenBrowserResult = Readonly<{
     ok: true;
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
+}> | ConnectedAccountAuthFailure;
 ```
 
 
@@ -38376,93 +39535,13 @@ type CloudAuthPromptTextInputV1 = Readonly<{
 
 ### `./connected-accounts` — `AuthPromptTextResult` (type)
 
-Declared by `dist/cloud/auth.d.ts` as `CloudAuthPromptTextResultV1`.
+Declared by `dist/connected-accounts/projections.d.ts` as `AuthPromptTextResult`.
 
 ```ts
-type CloudAuthPromptTextResultV1 = Readonly<{
+type AuthPromptTextResult = Readonly<{
     ok: true;
     value: string;
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
-```
-
-
-### `./connected-accounts` — `AuthenticateOptions` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudConnectAuthenticateOptionsV1`.
-
-```ts
-type CloudConnectAuthenticateOptionsV1 = Readonly<{
-    paste?: boolean;
-    device?: boolean;
-    noOpen?: boolean;
-    timeoutSeconds?: number;
-    signal?: AbortSignal;
-    serviceId?: string;
-    profileId?: string;
-}>;
-```
-
-
-### `./connected-accounts` — `AuthenticateResult` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudConnectAuthenticateResultV1`.
-
-```ts
-type CloudConnectAuthenticateResultV1 = Readonly<{
-    ok: true;
-    accountRef?: string;
-    credentialRef?: string;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}> | Readonly<{
-    ok: false;
-    code: CloudAuthFailureCodeV1;
-    retryAfterMs?: number;
-    diagnostics?: readonly CloudAuthDiagnosticV1[];
-}>;
-```
-
-
-### `./connected-accounts` — `Authenticator` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudCustomAuthenticatorV1`.
-
-```ts
-type CloudCustomAuthenticatorV1 = (opts: CloudConnectAuthenticateOptionsV1, context: CloudCustomAuthenticatorContextV1) => Promise<CloudConnectAuthenticateResultV1 | unknown> | CloudConnectAuthenticateResultV1 | unknown;
-```
-
-
-### `./connected-accounts` — `AuthenticatorContext` (type)
-
-Declared by `dist/cloud/auth.d.ts` as `CloudCustomAuthenticatorContextV1`.
-
-```ts
-type CloudCustomAuthenticatorContextV1 = Readonly<{
-    signal: AbortSignal;
-    now(): number;
-    fetch: Pick<HttpService, 'request'>;
-    browser: Readonly<{
-        open(url: string): Promise<CloudAuthOpenBrowserResultV1>;
-    }>;
-    prompt: Readonly<{
-        requestText(input: CloudAuthPromptTextInputV1): Promise<CloudAuthPromptTextResultV1>;
-    }>;
-    oauth: Readonly<{
-        createPkceChallenge(): Promise<CloudAuthPkceChallengeV1>;
-        callback: CloudAuthCallbackServiceV1;
-        listenForCallback(input: CloudAuthLoopbackInputV1): Promise<CloudAuthLoopbackResultV1>;
-    }>;
-    credentials: Readonly<{
-        write(input: CloudAuthCredentialWriteInputV1): Promise<CloudAuthCredentialWriteResultV1>;
-    }>;
-    diagnostics: Readonly<{
-        info(input: CloudAuthDiagnosticV1): void;
-        warn(input: CloudAuthDiagnosticV1): void;
-    }>;
-}>;
+}> | ConnectedAccountAuthFailure;
 ```
 
 
@@ -38562,6 +39641,31 @@ type PluginConnectedAccountAuthCompletionResult = Readonly<{
 }> | Readonly<{
     status: 'outcomeUnknown';
     diagnostic: PluginDiagnosticData;
+}>;
+```
+
+
+### `./connected-accounts` — `ConnectedAccountAuthDiagnostic` (type)
+
+Declared by `dist/connected-accounts/projections.d.ts` as `ConnectedAccountAuthDiagnostic`.
+
+```ts
+type ConnectedAccountAuthDiagnostic = Readonly<{
+    code: string;
+    message?: string;
+}>;
+```
+
+
+### `./connected-accounts` — `ConnectedAccountAuthFailure` (type)
+
+Declared by `dist/connected-accounts/projections.d.ts` as `ConnectedAccountAuthFailure`.
+
+```ts
+type ConnectedAccountAuthFailure = Readonly<{
+    ok: false;
+    code: AuthFailureCode;
+    diagnostics?: readonly ConnectedAccountAuthDiagnostic[];
 }>;
 ```
 
@@ -38966,6 +40070,7 @@ Declared by `dist/connected-accounts/requestAuth.d.ts` as `ConnectedAccountReque
 type ConnectedAccountRequestAuthClientSourceParams = Readonly<{
     capabilityPathEnv: string;
     requestTimeoutMs?: number;
+    authFailureRequestTimeoutMs?: number;
 }>;
 ```
 
@@ -39573,15 +40678,6 @@ const defineAuthMaterialization: <const TServiceId extends ConnectedServiceId, c
 ```
 
 
-### `./connected-accounts` — `isAuthenticateResult` (value)
-
-Declared by `dist/connectedAccounts.d.ts` as `isAuthenticateResult`.
-
-```ts
-const isAuthenticateResult: (value: unknown) => value is CloudConnectAuthenticateResultV1;
-```
-
-
 ### `./connected-accounts` — `parseCredentialRecord` (value)
 
 Declared by `dist/connectedAccounts.d.ts` as `parseCredentialRecord`.
@@ -39896,7 +40992,7 @@ Declared by `dist/targetedContributionAuthoring.d.ts` as `ContributionSurfaceHan
 
 ```ts
 abstract class ContributionSurfaceHandle<TInput extends JsonValue = JsonValue, TPointId extends string = string, TPresentation extends ContributionSurfacePresentation = ContributionSurfacePresentation> {
-    protected readonly opaqueInput: TInput;
+    readonly inputProjection?: TInput;
     point: Readonly<{
         pointId: TPointId;
         protocol: Readonly<{
@@ -40180,6 +41276,35 @@ function defineContributionProtocol<const TOperations extends Readonly<Record<st
 ```
 
 
+### `./events` — `CheckpointedPluginEventDispositionV1` (type)
+
+Declared by `dist/checkpointedEventAutomation.d.ts` as `CheckpointedPluginEventDispositionV1`.
+
+```ts
+type CheckpointedPluginEventDispositionV1 = Readonly<{
+    kind: 'checkpointSafe' | 'unsettled';
+}>;
+```
+
+
+### `./events` — `CheckpointedPluginEventObservationV1` (type)
+
+Declared by `dist/checkpointedEventAutomation.d.ts` as `CheckpointedPluginEventObservationV1`.
+
+```ts
+type CheckpointedPluginEventObservationV1 = Readonly<{
+    eventRef: PluginContributionRef;
+    sourceInstanceId: string;
+    sourceContractVersion: number;
+    occurrenceId: string;
+    occurredAt: number;
+    observationReceivedAt: number;
+    observedDelta: 0 | 1;
+    payload: JsonValue;
+}>;
+```
+
+
 ### `./events` — `EventContribution` (type)
 
 Declared by `node_modules/@happier-dev/protocol/dist/plugins/contributions/events.d.ts` as `PluginEventContributionV1`.
@@ -40418,6 +41543,24 @@ interface PluginEvents {
     emit(localId: string, payload: JsonValue, options?: PluginCancellationOptions): Promise<PluginEventEmitResult>;
     subscribe(event: PluginContributionRef, listener: (event: PluginEventEnvelope) => void | Promise<void>): Disposable;
 }
+```
+
+
+### `./events` — `admitCheckpointedPluginEventObservationV1` (value)
+
+Declared by `dist/checkpointedEventAutomation.d.ts` as `admitCheckpointedPluginEventObservationV1`.
+
+```ts
+function admitCheckpointedPluginEventObservationV1(observation: CheckpointedPluginEventObservationV1, context: PluginInvocationContext): Promise<CheckpointedPluginEventDispositionV1>;
+```
+
+
+### `./events` — `createPluginEventAutomationSetupResultV1JsonSchema` (value)
+
+Declared by `dist/events.d.ts` as `createPluginEventAutomationSetupResultV1JsonSchema`.
+
+```ts
+const createPluginEventAutomationSetupResultV1JsonSchema: (sourceContractVersion: number, sourceConfigSchema: PluginJsonSchema) => PluginJsonSchema;
 ```
 
 
@@ -40892,6 +42035,20 @@ interface FileSystemService {
 ```
 
 
+### `./fs` — `FsAtomicWriteInput` (type)
+
+Declared by `dist/fs.d.ts` as `FsAtomicWriteInput`.
+
+```ts
+type FsAtomicWriteInput = Readonly<{
+    path: string;
+    contents: string | Uint8Array;
+    mode?: number;
+    temporaryDirectory?: string | null;
+}>;
+```
+
+
 ### `./fs` — `FsAtomicWriteJsonInput` (type)
 
 Declared by `dist/fs.d.ts` as `FsAtomicWriteJsonInput`.
@@ -41005,6 +42162,15 @@ function withExclusiveFileLock<TResult>(options: Readonly<{
     lockPath: string;
     timeoutMs: number;
 }>, effect: () => Promise<TResult>): Promise<TResult>;
+```
+
+
+### `./fs` — `writeAtomicFile` (value)
+
+Declared by `dist/fs.d.ts` as `writeAtomicFile`.
+
+```ts
+function writeAtomicFile(input: FsAtomicWriteInput): Promise<void>;
 ```
 
 
@@ -41563,6 +42729,15 @@ type PluginRuntimeRegistration = {
 ```
 
 
+### `./host/registration` — `createExecutionRunHostBackendFromSessionRuntime` (value)
+
+Declared by `dist/agentRuntime/executionRun.d.ts` as `createExecutionRunHostBackendFromSessionRuntime`.
+
+```ts
+function createExecutionRunHostBackendFromSessionRuntime(options: AgentExecutionRunSessionAdapterOptions): Promise<AgentExecutionRunRuntime>;
+```
+
+
 ### `./host/registration` — `createPluginActionHandlerNotStartedError` (value)
 
 Declared by `dist/host/registration/actionHandlerInvocation.d.ts` as `createPluginActionHandlerNotStartedError`.
@@ -41583,6 +42758,48 @@ function createPluginRegistrationScope(params: PluginRegistrationScopeParams & R
 function createPluginRegistrationScope(params: PluginRegistrationScopeParams & Readonly<{
     target: PluginDaemonRegistrationScopeTarget;
 }>): PluginRegistrationScope<PluginApi>;
+```
+
+
+### `./host/registration` — `readPluginActionInputParser` (value)
+
+Declared by `dist/host/registration/actionInputParser.d.ts` as `readPluginActionInputParser`.
+
+```ts
+function readPluginActionInputParser(value: unknown): PluginActionInputParser | undefined;
+```
+
+
+### `./host/ui` — `PluginUiHostApiDecodeResult` (type)
+
+Declared by `dist/host/ui/hostApiCodecs.d.ts` as `PluginUiHostApiDecodeResult`.
+
+```ts
+type PluginUiHostApiDecodeResult<T> = Readonly<{
+    ok: true;
+    value: T;
+}> | Readonly<{
+    ok: false;
+    diagnostic: string;
+}>;
+```
+
+
+### `./host/ui` — `decodePluginUiClipboardReadResult` (value)
+
+Declared by `dist/host/ui/hostApiCodecs.d.ts` as `decodePluginUiClipboardReadResult`.
+
+```ts
+function decodePluginUiClipboardReadResult(value: JsonValue | undefined): PluginUiHostApiDecodeResult<string>;
+```
+
+
+### `./host/ui` — `decodePluginUiResourceContent` (value)
+
+Declared by `dist/host/ui/hostApiCodecs.d.ts` as `decodePluginUiResourceContent`.
+
+```ts
+function decodePluginUiResourceContent(value: JsonValue | undefined, decodeBytes: (bytesBase64: string) => Uint8Array): PluginUiHostApiDecodeResult<ResourceContent>;
 ```
 
 
@@ -42703,7 +43920,7 @@ type AgentUiBehaviorDeclarationV1 = {
     payload?: {
         spawnSessionExtras?: {
             kind: 'static';
-            value: Record<string, unknown>;
+            value: Record<string, string | number | boolean | null>;
         };
         sessionExtras?: {
             outputKey: string;
@@ -42743,10 +43960,26 @@ type AgentUiBehaviorDeclarationV1 = {
                 legacyExperimentalValue?: string;
             };
             runtimeHandleFields: string[];
-            runtimeDescriptorOutputKey?: string;
-            legacyModeOutputKey?: string;
             agentExtra?: AgentUiRuntimeDescriptorAgentExtraIdentityV1;
         };
+    };
+    askUserQuestion?: {
+        dialogs: {
+            dialogId: string;
+            settingMutation?: {
+                settingId: string;
+                allowedValues: string[];
+            };
+            terminalNotice?: {
+                headerKey: string;
+                questionKey: string;
+            };
+            terminalSecondaryAction?: {
+                kind: 'openAttachedTerminal';
+                labelKey: string;
+                descriptionKey: string;
+            };
+        }[];
     };
     externalSessions?: {
         browse?: {
@@ -42930,8 +44163,6 @@ type AgentUiRuntimeDescriptorLinkExtrasV1 = {
         values: string[];
     };
     sourceFields: string[];
-    runtimeDescriptorOutputKey?: string;
-    legacyModeOutputKey?: string;
     agentExtra?: AgentUiRuntimeDescriptorAgentExtraV1;
 };
 ```
@@ -43814,67 +45045,7 @@ type PluginManifestAuthorInput = {
             }>[];
         }>;
         ui?: Readonly<{
-            views?: readonly (Readonly<{
-                id: string;
-                renderer: string;
-                fallbackRenderers?: readonly string[];
-                readonly [key: string]: unknown;
-            }> & (Readonly<{
-                container: 'appPage';
-                target: Readonly<{
-                    kind: 'app';
-                }>;
-            }> | Readonly<{
-                container: 'rightSidebarTab';
-                target: Readonly<{
-                    kind: 'app';
-                }> | Readonly<{
-                    kind: 'session';
-                    sessionIdPath?: string;
-                }> | Readonly<{
-                    kind: 'project';
-                    workspaceRefIdPath?: string;
-                    serverIdPath?: string;
-                    machineIdPath?: string;
-                    rootPathPath?: string;
-                    projectIdPath?: string;
-                }>;
-            }> | Readonly<{
-                container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane';
-                target: Readonly<{
-                    kind: 'session';
-                    sessionIdPath?: string;
-                }> | Readonly<{
-                    kind: 'project';
-                    workspaceRefIdPath?: string;
-                    serverIdPath?: string;
-                    machineIdPath?: string;
-                    rootPathPath?: string;
-                    projectIdPath?: string;
-                }>;
-            }> | Readonly<{
-                container: 'browserPanel';
-                target: Readonly<{
-                    kind: 'browser';
-                    browserViewIdPath: string;
-                    sessionIdPath?: string;
-                    profileIdPath?: string;
-                }>;
-            }> | Readonly<{
-                container: 'servicesPanel';
-                target: Readonly<{
-                    kind: 'services';
-                    sessionIdPath?: string;
-                    serverIdPath?: string;
-                    machineIdPath?: string;
-                }>;
-            }> | Readonly<{
-                container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
-                target: Readonly<{
-                    kind: 'session';
-                    sessionIdPath?: string;
-                }>;
-            }>))[];
+            views?: readonly PluginUiViewV2Input[];
             renderers?: readonly (Readonly<{
                 id: string;
                 readonly [key: string]: unknown;
@@ -46711,6 +47882,15 @@ type ReviewCommentAnchorV1 = z.infer<typeof ReviewCommentAnchorV1Schema>;
 ```
 
 
+### `./reviews` — `ReviewCommentClaimPublicationDispatchResponseV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentClaimPublicationDispatchResponseV1`.
+
+```ts
+type ReviewCommentClaimPublicationDispatchResponseV1 = z.infer<typeof ReviewCommentClaimPublicationDispatchResponseV1Schema>;
+```
+
+
 ### `./reviews` — `ReviewCommentEvidenceV1` (type)
 
 Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` as `ReviewCommentEvidenceV1`.
@@ -46726,6 +47906,1567 @@ Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` a
 
 ```ts
 type ReviewCommentFingerprintV1 = z.infer<typeof ReviewCommentFingerprintV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentLinkedIssueIdentityV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` as `ReviewCommentLinkedIssueIdentityV1`.
+
+```ts
+type ReviewCommentLinkedIssueIdentityV1 = z.infer<typeof ReviewCommentLinkedIssueIdentityV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationCorrelationV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationCorrelationV1`.
+
+```ts
+type ReviewCommentPublicationCorrelationV1 = z.infer<typeof ReviewCommentPublicationCorrelationV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationEntryResultV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationEntryResultV1`.
+
+```ts
+type ReviewCommentPublicationEntryResultV1 = z.infer<typeof ReviewCommentPublicationEntryResultV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationEntryV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationEntryV1`.
+
+```ts
+type ReviewCommentPublicationEntryV1 = z.infer<typeof ReviewCommentPublicationEntryV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationPlanV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationPlanV1`.
+
+```ts
+type ReviewCommentPublicationPlanV1 = z.infer<typeof ReviewCommentPublicationPlanV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `ReviewCommentPublicationPlanV1ProtocolSchema`.
+
+```ts
+const ReviewCommentPublicationPlanV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationResultV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationResultV1`.
+
+```ts
+type ReviewCommentPublicationResultV1 = z.infer<typeof ReviewCommentPublicationResultV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationResultV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `ReviewCommentPublicationResultV1ProtocolSchema`.
+
+```ts
+const ReviewCommentPublicationResultV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
+    readonly publicationPlanId: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly publicationCorrelationId: string;
+        readonly outcome: Readonly<{
+            readonly kind: "published";
+            readonly externalRef: string;
+        } & {}> | Readonly<{
+            readonly kind: "failed";
+            readonly code: string;
+        } & {
+            readonly message?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "uncertain";
+        } & {}> | Readonly<{
+            readonly kind: "skippedPriorFailure";
+        } & {}>;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "notRequested";
+    } & {}> | Readonly<{
+        readonly publicationCorrelationId: string;
+        readonly outcome: Readonly<{
+            readonly kind: "published";
+        } & {
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "failed";
+            readonly code: string;
+        } & {
+            readonly message?: string | undefined;
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "uncertain";
+        } & {
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "skippedPriorFailure";
+        } & {}>;
+    } & {}>;
+} & {}>, Readonly<{
+    readonly publicationPlanId: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly publicationCorrelationId: string;
+        readonly outcome: Readonly<{
+            readonly kind: "published";
+            readonly externalRef: string;
+        } & {}> | Readonly<{
+            readonly kind: "failed";
+            readonly code: string;
+        } & {
+            readonly message?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "uncertain";
+        } & {}> | Readonly<{
+            readonly kind: "skippedPriorFailure";
+        } & {}>;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "notRequested";
+    } & {}> | Readonly<{
+        readonly publicationCorrelationId: string;
+        readonly outcome: Readonly<{
+            readonly kind: "published";
+        } & {
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "failed";
+            readonly code: string;
+        } & {
+            readonly message?: string | undefined;
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "uncertain";
+        } & {
+            readonly externalRef?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "skippedPriorFailure";
+        } & {}>;
+    } & {}>;
+} & {}>>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationRoutingV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationRoutingV1`.
+
+```ts
+type ReviewCommentPublicationRoutingV1 = Readonly<{
+    kind: 'ready';
+    inlineEntryIndexes: readonly number[];
+    verdictSummaryEntryIndexes: readonly number[];
+} | {
+    kind: 'rejected';
+    reason: 'diff_less_entry_requires_verdict_summary';
+    entryIndexes: readonly number[];
+}>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationTargetV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationTargetV1`.
+
+```ts
+type ReviewCommentPublicationTargetV1 = z.infer<typeof ReviewCommentPublicationTargetV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationVerdictResultV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationVerdictResultV1`.
+
+```ts
+type ReviewCommentPublicationVerdictResultV1 = z.infer<typeof ReviewCommentPublicationVerdictResultV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentPublicationVerdictV1` (type)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `ReviewCommentPublicationVerdictV1`.
+
+```ts
+type ReviewCommentPublicationVerdictV1 = z.infer<typeof ReviewCommentPublicationVerdictV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentRevisionedPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `ReviewCommentRevisionedPublicationPlanV1ProtocolSchema`.
+
+```ts
+const ReviewCommentRevisionedPublicationPlanV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}>>;
 ```
 
 
@@ -46746,6 +49487,556 @@ Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` a
 
 ```ts
 type ReviewCommentSnapshotV1 = z.infer<typeof ReviewCommentSnapshotV1Schema>;
+```
+
+
+### `./reviews` — `ReviewCommentUnversionedPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `ReviewCommentUnversionedPublicationPlanV1ProtocolSchema`.
+
+```ts
+const ReviewCommentUnversionedPublicationPlanV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>>;
+```
+
+
+### `./reviews` — `ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema`.
+
+```ts
+const ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: null;
+    readonly headRevision: null;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>>;
 ```
 
 
@@ -47528,12 +50819,867 @@ function createReviewCommentFingerprintV1(input: CreateReviewCommentFingerprintI
 ```
 
 
+### `./reviews` — `createReviewCommentLinkedIssueIdV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` as `createReviewCommentLinkedIssueIdV1`.
+
+```ts
+function createReviewCommentLinkedIssueIdV1(input: ReviewCommentLinkedIssueIdentityV1): string;
+```
+
+
+### `./reviews` — `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema`.
+
+```ts
+function defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(revisionSchema: ProtocolComposableSchema<string, string>): ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}> | null;
+} & {}> | Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: Readonly<{
+        readonly kind: "approve" | "comment" | "requestChanges";
+        readonly body: string;
+    } & {}>;
+} & {}>>;
+```
+
+
+### `./reviews` — `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema` (value)
+
+Declared by `dist/reviews/comments.d.ts` as `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema`.
+
+```ts
+function defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(revisionSchema: ProtocolComposableSchema<string, string>): ProtocolComposableSchema<Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>, Readonly<{
+    readonly target: Readonly<{
+        readonly providerId: string;
+        readonly configuredAccountId: string;
+        readonly entryRef: Readonly<{
+            readonly sourceId: string;
+            readonly kindId: string;
+            readonly collisionScope: string;
+            readonly entryId: string;
+        } & {}>;
+        readonly subtarget: Readonly<{
+            readonly kindId: "review-comment" | "review-thread";
+            readonly targetId: string;
+        } & {}> | null;
+    } & {}>;
+    readonly baseRevision: string;
+    readonly headRevision: string;
+    readonly entries: readonly Readonly<{
+        readonly happierCommentId: string;
+        readonly expectedServerRevision: number;
+        readonly anchor: Readonly<{
+            readonly kind: "line";
+            readonly filePath: string;
+            readonly line: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "range";
+            readonly filePath: string;
+            readonly startLine: number;
+            readonly endLine: number;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "hunk";
+            readonly filePath: string;
+            readonly hunkId: string;
+        } & {
+            readonly side?: "after" | "before" | undefined;
+        }> | Readonly<{
+            readonly kind: "file";
+            readonly filePath: string;
+        } & {}> | Readonly<{
+            readonly kind: "folder";
+            readonly folderPath: string;
+        } & {}> | Readonly<{
+            readonly kind: "workspace";
+            readonly workspaceId: string;
+        } & {}> | Readonly<{
+            readonly kind: "project";
+            readonly projectId: string;
+        } & {}> | Readonly<{
+            readonly kind: "run";
+            readonly runId: string;
+        } & {}> | Readonly<{
+            readonly kind: "finding";
+            readonly runId: string;
+            readonly findingId: string;
+        } & {}> | Readonly<{
+            readonly kind: "binary";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly sha256: string;
+        } & {}> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+        } & {}>;
+        readonly snapshot: Readonly<{
+            readonly kind: "text";
+            readonly selectedLines: readonly string[];
+            readonly beforeContext: readonly string[];
+            readonly afterContext: readonly string[];
+            readonly selectedLinesHash: string;
+            readonly contextWindowHash: string;
+            readonly capturedAt: number;
+            readonly fileLength: number;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly isUncommitted: boolean;
+            readonly isUntracked: boolean;
+            readonly truncated: boolean;
+            readonly hasBidiControls: boolean;
+            readonly likelyMinified: boolean;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly truncationReason?: "context_cap" | "file_too_large" | "line_too_long" | undefined;
+            readonly diffContext?: Readonly<{
+                readonly side: "after" | "before";
+            } & {
+                readonly baseSha?: string | undefined;
+                readonly headSha?: string | undefined;
+                readonly startSha?: string | undefined;
+            }> | undefined;
+        }> | Readonly<{
+            readonly kind: "binary";
+            readonly sizeBytes: number;
+            readonly sha256: string;
+            readonly source: "agentBuffer" | "committed" | "diffSide" | "untracked" | "workingTree";
+            readonly capturedAt: number;
+        } & {
+            readonly mimeType?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "submodule";
+            readonly filePath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly commitSha?: string | undefined;
+            readonly url?: string | undefined;
+        }> | Readonly<{
+            readonly kind: "symlink";
+            readonly filePath: string;
+            readonly targetPath: string;
+            readonly capturedAt: number;
+        } & {
+            readonly targetExists?: boolean | undefined;
+        }> | Readonly<{
+            readonly kind: "too_large";
+            readonly filePath: string;
+            readonly sizeBytes: number;
+            readonly capBytes: number;
+            readonly capturedAt: number;
+        } & {
+            readonly sha256?: string | undefined;
+        }>;
+        readonly body: string;
+    } & {}>[];
+    readonly verdict: null;
+} & {}>>;
+```
+
+
+### `./reviews` — `parseReviewCommentPublicationPlanV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `parseReviewCommentPublicationPlanV1`.
+
+```ts
+function parseReviewCommentPublicationPlanV1(value: unknown): ReviewCommentPublicationPlanV1;
+```
+
+
 ### `./reviews` — `parseReviewFindingsV2` (value)
 
 Declared by `node_modules/@happier-dev/protocol/dist/messages/structured/reviewFindingsV2.d.ts` as `parseReviewFindingsV2`.
 
 ```ts
 function parseReviewFindingsV2(payload: unknown): ReviewFindingsV2 | null;
+```
+
+
+### `./reviews` — `preflightReviewCommentPublicationRoutingV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `preflightReviewCommentPublicationRoutingV1`.
+
+```ts
+function preflightReviewCommentPublicationRoutingV1(plan: ReviewCommentPublicationPlanV1): ReviewCommentPublicationRoutingV1;
 ```
 
 
@@ -47552,6 +51698,33 @@ Declared by `dist/reviews/comments.d.ts` as `redactReviewCommentSensitiveText`.
 
 ```ts
 function redactReviewCommentSensitiveText(input: string, options?: ReviewCommentSensitiveTextRedactionOptions): string;
+```
+
+
+### `./reviews` — `reviewCommentPublicationEntryIsDiffLessV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `reviewCommentPublicationEntryIsDiffLessV1`.
+
+```ts
+function reviewCommentPublicationEntryIsDiffLessV1(entry: ReviewCommentPublicationEntryV1): boolean;
+```
+
+
+### `./reviews` — `validateReviewCommentPublicationClaimAgainstPlanV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `validateReviewCommentPublicationClaimAgainstPlanV1`.
+
+```ts
+function validateReviewCommentPublicationClaimAgainstPlanV1(plan: ReviewCommentPublicationPlanV1, candidate: unknown): ReviewCommentClaimPublicationDispatchResponseV1;
+```
+
+
+### `./reviews` — `validateReviewCommentPublicationResultAgainstPlanV1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` as `validateReviewCommentPublicationResultAgainstPlanV1`.
+
+```ts
+function validateReviewCommentPublicationResultAgainstPlanV1(plan: ReviewCommentPublicationPlanV1, claim: ReviewCommentClaimPublicationDispatchResponseV1, candidate: unknown): ReviewCommentPublicationResultV1;
 ```
 
 
@@ -49217,6 +53390,46 @@ type ScmRepositoryRemoveIndexLockResponse = ({
 ```
 
 
+### `./scm` — `ScmReviewWorkspaceCurrentness` (type)
+
+Declared by `dist/scm/projections.d.ts` as `ScmReviewWorkspaceCurrentness`.
+
+```ts
+type ScmReviewWorkspaceCurrentness = Readonly<{
+    kind: 'currentAtObservedHead';
+}> | Readonly<{
+    kind: 'movedToObservedHead';
+    fromSha: string;
+    observedHeadSha: string;
+    recoveryRef: string;
+}> | Readonly<{
+    kind: 'preservedStale';
+    resolvedHeadSha: string;
+    observedHeadSha: string;
+    reason: 'localCommits' | 'dirtyWorktree' | 'unresolvedHead';
+}>;
+```
+
+
+### `./scm` — `ScmReviewWorkspaceSourceTip` (type)
+
+Declared by `dist/scm/projections.d.ts` as `ScmReviewWorkspaceSourceTip`.
+
+```ts
+type ScmReviewWorkspaceSourceTip = Readonly<{
+    repository: Readonly<{
+        kind: ScmHostingProviderKind;
+        deployment: string;
+        repository: string;
+    }>;
+    cloneUrl: string;
+    branch: string;
+    sourceHeadSha: string;
+    fetchRef: string;
+}>;
+```
+
+
 ### `./scm` — `ScmSelectedMutationPath` (type)
 
 Declared by `dist/scm/projections.d.ts` as `ScmSelectedMutationPath`.
@@ -50327,6 +54540,47 @@ type ScmBackendId = string;
 ```
 
 
+### `./scm/backend` — `ScmReviewWorkspaceMaterializePreparedRequest` (type)
+
+Declared by `dist/scm/backend.d.ts` as `ScmReviewWorkspaceMaterializePreparedRequest`.
+
+```ts
+type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{
+    cwd: string;
+    displayName: string;
+    sourceTip: ScmReviewWorkspaceSourceTip;
+    verification?: Readonly<{
+        targetPath: string;
+    }>;
+}>;
+```
+
+
+### `./scm/backend` — `ScmReviewWorkspaceMaterializePreparedResponse` (type)
+
+Declared by `dist/scm/backend.d.ts` as `ScmReviewWorkspaceMaterializePreparedResponse`.
+
+```ts
+type ScmReviewWorkspaceMaterializePreparedResponse = Readonly<{
+    success: true;
+    targetPath: string;
+    branchName: string;
+    created: boolean;
+    currentness: ScmReviewWorkspaceCurrentness;
+}> | Readonly<{
+    success: true;
+    verification: Readonly<{
+        targetPath: string;
+        sourceHeadSha: string;
+    }>;
+}> | Readonly<{
+    success: false;
+    error: string;
+    errorCode: ScmOperationErrorCode;
+}>;
+```
+
+
 ### `./scm/backend` — `WorkspaceCheckoutCreationRequest` (type)
 
 Declared by `dist/scm/backend.d.ts` as `WorkspaceCheckoutCreationRequest`.
@@ -50431,6 +54685,20 @@ type WorkspaceIntegrationHandlers = Readonly<{
         previousTargetPath?: string;
         workspaceIntegrationMetadata?: WorkspaceTransferMetadata;
     }>) => Promise<void> | void;
+    prepareReviewWorkspace?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        request: ScmReviewWorkspaceMaterializePreparedRequest;
+        signal: AbortSignal;
+    }>) => Promise<ScmReviewWorkspaceMaterializePreparedResponse> | ScmReviewWorkspaceMaterializePreparedResponse;
+    verifyPreparedReviewWorkspace?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        request: ScmReviewWorkspaceMaterializePreparedRequest & Readonly<{
+            verification: Readonly<{
+                targetPath: string;
+            }>;
+        }>;
+        signal: AbortSignal;
+    }>) => Promise<ScmReviewWorkspaceMaterializePreparedResponse> | ScmReviewWorkspaceMaterializePreparedResponse;
     realizeWorkspaceCheckout?: (input: Readonly<{
         context: BackendRuntimeContext;
         workspaceCheckoutRealization: WorkspaceCheckoutRealizationRequest;
@@ -50733,31 +55001,6 @@ type HostingProviderContribution = {
 ```
 
 
-### `./scm/hosting` — `HostingProviderDefaultBranchInput` (type)
-
-Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderDefaultBranchInput`.
-
-```ts
-type HostingProviderDefaultBranchInput = Readonly<{
-    runtimeServices?: HostingProviderRuntimeServices;
-    signal?: AbortSignal;
-    provider: ScmHostingProviderRef;
-}>;
-```
-
-
-### `./scm/hosting` — `HostingProviderDefaultBranchMetadata` (type)
-
-Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderDefaultBranchMetadata`.
-
-```ts
-type HostingProviderDefaultBranchMetadata = Readonly<{
-    name: string;
-    sha?: string | null;
-}>;
-```
-
-
 ### `./scm/hosting` — `HostingProviderDescriptor` (type)
 
 Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderDescriptor`.
@@ -50771,6 +55014,17 @@ type HostingProviderDescriptor = Readonly<Omit<HostingProviderContribution, 'tit
         allowedBaseUrls: readonly string[];
         allowedOrigins: readonly string[];
     }>;
+}>;
+```
+
+
+### `./scm/hosting` — `HostingProviderPullRequestCheckoutCapability` (type)
+
+Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderPullRequestCheckoutCapability`.
+
+```ts
+type HostingProviderPullRequestCheckoutCapability = Readonly<{
+    resolvePullRequestCheckoutReference: (input: HostingProviderPullRequestCheckoutReferenceInput) => Promise<HostingProviderPullRequestCheckoutReferenceMetadata>;
 }>;
 ```
 
@@ -50852,6 +55106,22 @@ type HostingProviderPullRequestListInput = Readonly<{
 ```
 
 
+### `./scm/hosting` — `HostingProviderPullRequestsCapability` (type)
+
+Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderPullRequestsCapability`.
+
+```ts
+type HostingProviderPullRequestsCapability = Readonly<{
+    getPullRequestAuthProfileKey: (input: Readonly<{
+        provider: ScmHostingProviderRef;
+    }>) => string | null;
+    listPullRequests: (input: HostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
+    getPullRequest: (input: HostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
+    createPullRequest: (input: HostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
+}>;
+```
+
+
 ### `./scm/hosting` — `HostingProviderRegistryDiagnostic` (type)
 
 Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRegistryDiagnostic`.
@@ -50890,6 +55160,17 @@ type HostingProviderRemoteDetectionResult = Readonly<{
 }> | Readonly<{
     kind: 'unknown';
     provider: HostingProviderUnresolvedRemote;
+}>;
+```
+
+
+### `./scm/hosting` — `HostingProviderRepositoryCloneCapability` (type)
+
+Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRepositoryCloneCapability`.
+
+```ts
+type HostingProviderRepositoryCloneCapability = Readonly<{
+    describeCloneTargets: (input: HostingProviderRepositoryDescribeCloneTargetsInput) => Promise<ScmRepositoryCloneTargetDescription>;
 }>;
 ```
 
@@ -50953,7 +55234,7 @@ Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRepositoryDescrib
 
 ```ts
 type HostingProviderRepositoryDescribePublishTargetsResult = Readonly<{
-    auth: ScmHostingRepositoryPublishTarget['auth'];
+    auth: ScmHostingRepositoryAuthSummary;
     targets: readonly ScmHostingRepositoryPublishTarget[];
 }>;
 ```
@@ -50970,6 +55251,19 @@ type HostingProviderRepositoryGetInput = Readonly<{
     provider: ScmHostingProviderRef;
     owner: string;
     repositoryName: string;
+}>;
+```
+
+
+### `./scm/hosting` — `HostingProviderRepositoryPublishingCapability` (type)
+
+Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRepositoryPublishingCapability`.
+
+```ts
+type HostingProviderRepositoryPublishingCapability = Readonly<{
+    describePublishTargets: (input: HostingProviderRepositoryDescribePublishTargetsInput) => Promise<HostingProviderRepositoryDescribePublishTargetsResult>;
+    createRepository: (input: HostingProviderRepositoryCreateInput) => Promise<ScmHostingRepositorySummary>;
+    getRepository: (input: HostingProviderRepositoryGetInput) => Promise<ScmHostingRepositorySummary | null>;
 }>;
 ```
 
@@ -50993,7 +55287,11 @@ type HostingProviderResolvedRegistry = Readonly<{
     providersById: ReadonlyMap<string, HostingProviderResolvedProvider>;
     diagnostics: readonly HostingProviderRegistryDiagnostic[];
     getProvider: (id: string) => HostingProviderResolvedProvider | undefined;
-    getAdapter: (id: string) => HostingProviderRuntimeAdapter | undefined;
+    getRouting: (id: string) => HostingProviderRoutingCapability | undefined;
+    getPullRequests: (id: string) => HostingProviderPullRequestsCapability | undefined;
+    getPullRequestCheckout: (id: string) => HostingProviderPullRequestCheckoutCapability | undefined;
+    getRepositoryPublishing: (id: string) => HostingProviderRepositoryPublishingCapability | undefined;
+    getRepositoryClone: (id: string) => HostingProviderRepositoryCloneCapability | undefined;
     detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
         provider: HostingProviderResolvedRemote | HostingProviderUnresolvedRemote;
@@ -51028,6 +55326,18 @@ type HostingProviderResolvedRemote = Readonly<{
 ```
 
 
+### `./scm/hosting` — `HostingProviderRoutingCapability` (type)
+
+Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRoutingCapability`.
+
+```ts
+type HostingProviderRoutingCapability = Readonly<{
+    detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
+    buildCompareUrl: (input: HostingProviderCompareUrlInput) => string | null;
+}>;
+```
+
+
 ### `./scm/hosting` — `HostingProviderRuntime` (type)
 
 Declared by `dist/activation.d.ts` as `HostingProviderRuntime`.
@@ -51042,21 +55352,12 @@ type HostingProviderRuntime = Omit<HostingProviderRuntimeRegistration, 'id'>;
 Declared by `dist/scm/hostingProvider.d.ts` as `HostingProviderRuntimeAdapter`.
 
 ```ts
-type HostingProviderRuntimeAdapter = Readonly<Record<string, unknown> & {
-    detectRemote?: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
-    buildCompareUrl?: (input: HostingProviderCompareUrlInput) => string | null;
-    getPullRequestAuthProfileKey?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-    }>) => string | null;
-    listPullRequests?: (input: HostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
-    getPullRequest?: (input: HostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
-    createPullRequest?: (input: HostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
-    getDefaultBranch?: (input: HostingProviderDefaultBranchInput) => Promise<HostingProviderDefaultBranchMetadata>;
-    resolvePullRequestCheckoutReference?: (input: HostingProviderPullRequestCheckoutReferenceInput) => Promise<HostingProviderPullRequestCheckoutReferenceMetadata>;
-    describePublishTargets?: (input: HostingProviderRepositoryDescribePublishTargetsInput) => Promise<HostingProviderRepositoryDescribePublishTargetsResult>;
-    createRepository?: (input: HostingProviderRepositoryCreateInput) => Promise<ScmHostingRepositorySummary>;
-    getRepository?: (input: HostingProviderRepositoryGetInput) => Promise<ScmHostingRepositorySummary | null>;
-    describeCloneTargets?: (input: HostingProviderRepositoryDescribeCloneTargetsInput) => Promise<ScmRepositoryCloneTargetDescription>;
+type HostingProviderRuntimeAdapter = Readonly<{
+    routing?: HostingProviderRoutingCapability;
+    pullRequests?: HostingProviderPullRequestsCapability;
+    pullRequestCheckout?: HostingProviderPullRequestCheckoutCapability;
+    repositoryPublishing?: HostingProviderRepositoryPublishingCapability;
+    repositoryClone?: HostingProviderRepositoryCloneCapability;
 }>;
 ```
 
@@ -51970,7 +56271,7 @@ type SessionSendResult = Readonly<{
 Declared by `dist/services/sessions.d.ts` as `SessionServerStartSpawnDraftV1`.
 
 ```ts
-type SessionServerStartSpawnDraftV1 = Omit<SessionSpawnNewInputV2, 'creationKey' | 'initialMessage' | 'environmentVariables'>;
+type SessionServerStartSpawnDraftV1 = Omit<SessionSpawnNewInputV2, 'creationKey' | 'initialInput' | 'environmentVariables'>;
 ```
 
 
@@ -52977,6 +57278,7 @@ type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
     directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
 ```
 
@@ -53231,6 +57533,7 @@ Declared by `dist/externalSessions.d.ts` as `AgentExternalSessionsReadAfterDiagn
 ```ts
 type AgentExternalSessionsReadAfterDiagnostic = Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     positions: readonly number[];
 }>;
@@ -53263,6 +57566,7 @@ type AgentExternalSessionsReadAfterTranscriptResult = Readonly<{
     items: readonly AgentExternalSessionTranscriptItem[];
     nextCursor: string;
     boundary: string;
+    hasMore: boolean;
     diagnostics?: readonly AgentExternalSessionsReadAfterDiagnostic[];
 }> | Readonly<{
     outcome: 'gap_or_cursor_expired';
@@ -53486,6 +57790,7 @@ Declared by `dist/services/externalSessions.d.ts` as `ExternalSessionReadAfterDi
 ```ts
 type ExternalSessionReadAfterDiagnostic = Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     positions: readonly number[];
 }>;
@@ -53660,6 +57965,7 @@ type ExternalSessionTranscriptReadResult = Readonly<{
     items: readonly ExternalSessionTranscriptItem[];
     nextCursor: string;
     boundary: string;
+    hasMore: boolean;
     diagnostics?: readonly ExternalSessionReadAfterDiagnostic[];
 }> | Readonly<{
     mode: 'readAfter';
@@ -54256,6 +58562,15 @@ function readJsonlFileForwardLines(params: Readonly<{
     truncated: boolean;
     reachedEnd: boolean;
 }>>;
+```
+
+
+### `./sessions/file-stores` — `readSessionIdFromFileHead` (value)
+
+Declared by `dist/sessions/fileStores/sessionFileNameCodec.d.ts` as `readSessionIdFromFileHead`.
+
+```ts
+function readSessionIdFromFileHead(filePath: string): Promise<string | null>;
 ```
 
 
@@ -55750,6 +60065,21 @@ function resolveSessionWorkStatePrimaryItemId(items: readonly (SessionWorkStateI
 ```
 
 
+### `./settings` — `PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1` (value)
+
+Declared by `node_modules/@happier-dev/protocol/dist/plugins/settings/accountSettingsLimits.d.ts` as `PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1`.
+
+```ts
+const PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1: Readonly<{
+    readonly maximumFields: 256;
+    readonly maximumFieldEncodedBytes: number;
+    readonly maximumRecordEncodedBytes: number;
+    readonly maximumEncryptedCiphertextUtf8Bytes: number;
+    readonly maximumJsonDepth: 12;
+}>;
+```
+
+
 ### `./settings` — `PluginSettingFieldIdV2` (type)
 
 Declared by `node_modules/@happier-dev/protocol/dist/plugins/contributions/settings.d.ts` as `PluginSettingFieldIdV2`.
@@ -56441,6 +60771,14 @@ type PluginTestkitRegistrationByFamily = Readonly<{
         providerBinding?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['providerBinding']>;
         sessionRunnerFactory?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['sessionRunnerFactory']>;
         daemonSpawnHooks?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['daemonSpawnHooks']>;
+        providerCliAttach?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['providerCliAttach']>;
+        cliSessionCommand?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['cliSessionCommand']>;
+        cliAuth?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['cliAuth']>;
+        connectedAccountLaunch?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['connectedAccountLaunch']>;
+        preflightSessionControls?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['preflightSessionControls']>;
+        terminalPromptSubmitVerification?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['terminalPromptSubmitVerification']>;
+        sessionStartup?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['sessionStartup']>;
+        vendorResumeSupport?: NonNullable<NonNullable<Parameters<PluginApi['agents']['register']>[2]>['vendorResumeSupport']>;
         externalSessions?: Parameters<PluginApi['agents']['registerExternalSessions']>[1];
         externalSessionHooks?: Parameters<PluginApi['agents']['registerExternalSessionHooks']>[1];
         externalSessionObservation?: Parameters<PluginApi['agents']['registerExternalSessionObservation']>[1];
@@ -56619,6 +60957,7 @@ interface PluginUiSemanticSurfaceMount {
         revision: number;
         handle: string;
         action: 'press';
+        invokedAtMs: number;
         target: PluginUiSemanticTarget;
     }>): Promise<void>;
     dispose(): Promise<void>;
@@ -56760,6 +61099,8 @@ type PluginUiTestkitHostHandlers = Readonly<{
     }>) => void | Promise<void>;
     executeAction?: (input: PluginUiTestkitExecuteActionInput) => JsonValue | Promise<JsonValue>;
     selectActionInput?: (input: PluginUiTestkitSelectActionInputInput) => SelectActionInputResult | Promise<SelectActionInputResult>;
+    openNewSession?: (input: PluginUiTestkitOpenNewSessionInput) => void | Promise<void>;
+    settleEphemeralInput?: (input: PluginUiTestkitSettleEphemeralInputInput) => void | Promise<void>;
     readResource?: (input: PluginUiTestkitReadResourceInput) => ResourceContent | Promise<ResourceContent>;
     statOpenableContent?: (input: PluginUiTestkitStatOpenableContentInput) => OpenableContentStatResult | Promise<OpenableContentStatResult>;
     readOpenableContent?: (input: PluginUiTestkitReadOpenableContentInput) => OpenableContentReadResult | Promise<OpenableContentReadResult>;
@@ -56868,6 +61209,20 @@ type PluginUiTestkitMountResult = Readonly<{
 }> | Readonly<{
     kind: 'refused';
     availability: PluginUiTestkitMountAvailability;
+}>;
+```
+
+
+### `./testing` — `PluginUiTestkitOpenNewSessionInput` (type)
+
+Declared by `dist/testing/uiHost.d.ts` as `PluginUiTestkitOpenNewSessionInput`.
+
+```ts
+type PluginUiTestkitOpenNewSessionInput = Readonly<{
+    request: OpenNewSessionRequest;
+    preparedReviewWorkspace?: PluginUiSelectedActionInputCarrierV1;
+    consumePreparedReviewWorkspace?: true;
+    signal: AbortSignal;
 }>;
 ```
 
@@ -57003,6 +61358,18 @@ type PluginUiTestkitSetComposerDecorationsInput = Readonly<{
     ref: ComposerRefV1;
     key: string;
     decorations: ComposerDecorationSetV1 | null;
+    signal: AbortSignal;
+}>;
+```
+
+
+### `./testing` — `PluginUiTestkitSettleEphemeralInputInput` (type)
+
+Declared by `dist/testing/uiHost.d.ts` as `PluginUiTestkitSettleEphemeralInputInput`.
+
+```ts
+type PluginUiTestkitSettleEphemeralInputInput = Readonly<{
+    settlement: EphemeralInputSettlement;
     signal: AbortSignal;
 }>;
 ```
@@ -57809,6 +62176,15 @@ type CurrentUiContextSnapshotV1 = ProtocolCurrentUiContextSnapshotV1;
 ```
 
 
+### `./ui` — `EphemeralInputSettlement` (type)
+
+Declared by `dist/ui/hostApi.d.ts` as `EphemeralInputSettlement`.
+
+```ts
+type EphemeralInputSettlement = PluginUiEphemeralInputSettlementV1;
+```
+
+
 ### `./ui` — `HostedWebBridgeEnvelopeV1` (type)
 
 Declared by `dist/ui/publicContract.d.ts` as `PluginHostedWebBridgeEnvelopeV1`.
@@ -57861,6 +62237,26 @@ Declared by `dist/ui/hostApi.d.ts` as `MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES
 
 ```ts
 const MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1: number;
+```
+
+
+### `./ui` — `OpenNewSessionOptions` (type)
+
+Declared by `dist/ui/hostApi.d.ts` as `OpenNewSessionOptions`.
+
+```ts
+type OpenNewSessionOptions = PluginCancellationOptions & Readonly<{
+    preparedReviewWorkspace?: PluginUiSelectedActionInputCarrierV1;
+}>;
+```
+
+
+### `./ui` — `OpenNewSessionRequest` (type)
+
+Declared by `dist/ui/hostApi.d.ts` as `OpenNewSessionRequest`.
+
+```ts
+type OpenNewSessionRequest = PluginUiOpenNewSessionRequestV1;
 ```
 
 
@@ -58190,6 +62586,8 @@ interface PluginUiHostApi {
     watchContext(listener: (context: SurfaceContext) => void, options?: PluginCancellationOptions): Promise<Disposable>;
     executeAction<TAction extends PluginUiActionReference>(action: TAction, input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>, options?: PluginUiActionExecutionOptions): Promise<PluginUiActionResultFor<NoInfer<TAction>>>;
     selectActionInput(request: SelectActionInputRequest, options?: PluginCancellationOptions): Promise<SelectActionInputResult>;
+    openNewSession(request: OpenNewSessionRequest, options?: OpenNewSessionOptions): Promise<void>;
+    settleEphemeralInput(settlement: PluginUiEphemeralInputSettlementV1, options?: PluginCancellationOptions): Promise<void>;
     readResource(resource: PluginReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
     statOpenableContent(ref: OpenableContentRef, options?: PluginCancellationOptions): Promise<OpenableContentStatResult>;
     readOpenableContent(request: OpenableContentReadRequest, options?: PluginCancellationOptions): Promise<OpenableContentReadResult>;
@@ -58231,7 +62629,7 @@ interface PluginUiHostApi {
 Declared by `dist/ui/publicContract.d.ts` as `PluginUiHostMethodV1`.
 
 ```ts
-type PluginUiHostMethodV1 = 'context' | 'publishCurrentUiContext' | 'watchContext' | 'executeAction' | 'readResource' | 'statOpenableContent' | 'readOpenableContent' | 'watchResource' | 'openSurface' | 'replacePageLocation' | 'notify' | 'confirm' | 'diagnostic' | 'readClipboard' | 'writeClipboard' | 'openExternalLink' | 'selectActionInput' | 'activeComposer' | 'readComposer' | 'watchComposer' | 'applyComposer' | 'focusComposer' | 'setComposerDecorations' | 'acquireComposerInputLock' | 'pickComposerMedia' | 'inspectComposerContent' | 'releaseComposerContent';
+type PluginUiHostMethodV1 = ProtocolPluginUiHostMethodV1;
 ```
 
 
@@ -58272,7 +62670,7 @@ Declared by `dist/ui/publicContract.d.ts` as `PluginUiMountContextV1`.
 type PluginUiMountContextV1 = Readonly<{
     kind: 'destination';
     destination: PluginUiContributionIdentityV1;
-    container: PluginUiContainerV1;
+    container: Exclude<PluginUiContainerV1, 'sessionSubagentLaunch' | 'sessionSubagentDetails' | 'sessionInfoSection'>;
 }> | Readonly<{
     kind: 'embedded';
     role: string;
@@ -58385,6 +62783,15 @@ Declared by `dist/ui/publicContract.d.ts` as `PluginUiSemanticOpenSurfaceCommand
 type PluginUiSemanticOpenSurfaceCommandV1 = Extract<PluginUiSemanticCommandV1, {
     kind: 'openSurface';
 }>;
+```
+
+
+### `./ui` — `PluginUiSessionCheckoutIntentV1` (type)
+
+Declared by `dist/ui/publicContract.d.ts` as `PluginUiSessionCheckoutIntentV1`.
+
+```ts
+type PluginUiSessionCheckoutIntentV1 = 'none' | 'preparedReviewWorkspace' | 'reuseWorkspace' | 'createWorktree' | 'ask';
 ```
 
 
@@ -58612,16 +63019,16 @@ type PluginUiViewDestinationBindingInputV2 = {
     instancePolicy?: 'singleton';
     headerActions?: [
     ];
-} | {
-    container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
-    target: {
-        kind: 'session';
-        sessionIdPath?: string;
-    };
-    instancePolicy?: 'singleton';
-    headerActions?: [
-    ];
 };
+```
+
+
+### `./ui` — `PluginUiViewInlineBindingInputV2` (type)
+
+Declared by `dist/ui/publicContract.d.ts` as `PluginUiViewInlineBindingInputV2`.
+
+```ts
+type PluginUiViewInlineBindingInputV2 = ProtocolPluginUiViewInlineBindingInputV2;
 ```
 
 
@@ -58661,7 +63068,7 @@ type PluginUiViewTargetV2 = {
 Declared by `dist/ui/publicContract.d.ts` as `PluginUiViewV2`.
 
 ```ts
-type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput ? TInput extends PluginUiViewDestinationBindingInputV2 ? TInput & Required<Pick<TInput, 'instancePolicy' | 'headerActions'>> : never : never;
+type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput ? TInput extends PluginUiViewDestinationBindingInputV2 ? TInput & Required<Pick<TInput, 'instancePolicy' | 'headerActions'>> : TInput : never;
 ```
 
 
@@ -58670,19 +63077,38 @@ type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput ? TInput extends 
 Declared by `dist/ui/publicContract.d.ts` as `PluginUiViewV2Input`.
 
 ```ts
-type PluginUiViewV2Input = PluginUiViewDestinationBindingInputV2 & {
+type PluginUiViewV2Input = {
     id: string;
     renderer: string;
     fallbackRenderers?: string[];
     title?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
+} & ((PluginUiViewDestinationBindingInputV2 & {
     badge?: {
         label: PluginLocalizedStringV2;
         tone?: PluginUiToneV1;
     };
     groupHint?: 'navigation' | 'sessions';
     rankHint?: number;
-};
+}) | PluginUiViewInlineBindingInputV2);
+```
+
+
+### `./ui` — `PreparedReviewWorkspaceResult` (type)
+
+Declared by `dist/ui/hostApi.d.ts` as `PreparedReviewWorkspaceResult`.
+
+```ts
+type PreparedReviewWorkspaceResult = PluginUiPreparedReviewWorkspaceResultV1;
+```
+
+
+### `./ui` — `PreparedReviewWorkspaceResultSchema` (value)
+
+Declared by `dist/ui/hostApi.d.ts` as `PreparedReviewWorkspaceResultSchema`.
+
+```ts
+const PreparedReviewWorkspaceResultSchema: PluginUiSchema<PreparedReviewWorkspaceResult>;
 ```
 
 
@@ -58812,6 +63238,8 @@ interface PluginUiHostApi {
     watchContext(listener: (context: SurfaceContext) => void, options?: PluginCancellationOptions): Promise<Disposable>;
     executeAction<TAction extends PluginUiActionReference>(action: TAction, input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>, options?: PluginUiActionExecutionOptions): Promise<PluginUiActionResultFor<NoInfer<TAction>>>;
     selectActionInput(request: SelectActionInputRequest, options?: PluginCancellationOptions): Promise<SelectActionInputResult>;
+    openNewSession(request: OpenNewSessionRequest, options?: OpenNewSessionOptions): Promise<void>;
+    settleEphemeralInput(settlement: PluginUiEphemeralInputSettlementV1, options?: PluginCancellationOptions): Promise<void>;
     readResource(resource: PluginReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
     statOpenableContent(ref: OpenableContentRef, options?: PluginCancellationOptions): Promise<OpenableContentStatResult>;
     readOpenableContent(request: OpenableContentReadRequest, options?: PluginCancellationOptions): Promise<OpenableContentReadResult>;
@@ -59508,6 +63936,17 @@ type PluginVoiceProviderDefinition = Readonly<{
 ```
 
 
+### `./voice` — `RegisteredVoiceProviderRuntime` (type)
+
+Declared by `dist/voice/projections.d.ts` as `RegisteredVoiceProviderRuntime`.
+
+```ts
+type RegisteredVoiceProviderRuntime = (RealtimeVoiceProviderRuntime | SpeechProviderRuntime) & Readonly<{
+    settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
+}>;
+```
+
+
 ### `./voice` — `VoiceAccountOperationService` (type)
 
 Declared by `dist/voice/projections.d.ts` as `VoiceAccountOperationService`.
@@ -59835,9 +64274,7 @@ Declared by `dist/voice/projections.d.ts` as `VoiceProvidersRegistrationApi`.
 
 ```ts
 type VoiceProvidersRegistrationApi = Readonly<{
-    register(localId: PluginContributionLocalId, runtime: (RealtimeVoiceProviderRuntime | SpeechProviderRuntime) & Readonly<{
-        settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
-    }>): void;
+    register(localId: PluginContributionLocalId, runtime: RegisteredVoiceProviderRuntime): void;
 }>;
 ```
 
@@ -60628,7 +65065,7 @@ const isVoiceSdkSafeActionSpec: (spec: Pick<ActionSpec, 'sideEffectClass'>) => b
 Declared by `dist/voice/client.d.ts` as `listVoiceSdkSafeToolActionSpecs`.
 
 ```ts
-const listVoiceSdkSafeToolActionSpecs: () => readonly ActionSpec[];
+const listVoiceSdkSafeToolActionSpecs: (() => readonly ActionSpec[]);
 ```
 
 
@@ -60936,6 +65373,24 @@ function definePluginWebhookTestFixture(input: PluginWebhookTestFixture): Plugin
 
 ## Reachable package-owned declarations
 
+### `dist/agentRuntime/executionRun.d.ts` — `AgentExecutionRunSessionAdapterOptions`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentExecutionRunSessionAdapterOptions = Readonly<{
+    request: Extract<AgentExecutionRunOpenRequest, {
+        kind: 'create' | 'resume';
+    }>;
+    sessionId: string;
+    openSession: (request: Extract<AgentSessionOpenRequest, {
+        kind: 'create' | 'resume';
+    }>) => AgentSessionRuntime | Promise<AgentSessionRuntime>;
+    readCheckpointId?: (event: AgentSessionRuntimeEvent) => string | null;
+}>;
+```
+
+
 ### `dist/definePlugin.d.ts` — `ContributionRow`
 
 Reached from a published signature; not itself a published export.
@@ -61123,6 +65578,34 @@ type ReclaimResult = 'reclaimed' | 'successor_preserved' | 'ownership_unknown';
 ```
 
 
+### `dist/host/registration/actionInputParser.d.ts` — `PluginActionInputParser`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginActionInputParser = (input: JsonValue) => Readonly<{
+    success: true;
+    data: unknown;
+} | {
+    success: false;
+    issues: readonly PluginActionInputParserIssue[];
+}>;
+```
+
+
+### `dist/host/registration/actionInputParser.d.ts` — `PluginActionInputParserIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginActionInputParserIssue = Readonly<{
+    path: readonly (string | number)[];
+    code: string;
+    message: string;
+}>;
+```
+
+
 ### `dist/host/registration/scope.d.ts` — `PluginClientRegistrationScopeTarget`
 
 Reached from a published signature; not itself a published export.
@@ -61150,7 +65633,7 @@ type PluginDaemonRegistrationScopeTarget = Extract<PluginRegistrationScopeTarget
 Reached from a published signature; not itself a published export.
 
 ```ts
-type PluginRegistrationRequiredField = 'factory' | 'sessionRunnerFactory' | 'externalSessions' | ComposerAttachmentRuntimeRegistrationFieldV1;
+type PluginRegistrationRequiredField = 'factory' | 'sessionRunnerFactory' | 'cliAuth' | 'externalSessions' | ComposerAttachmentRuntimeRegistrationFieldV1;
 ```
 
 
@@ -61369,6 +65852,14 @@ interface PluginRegistrationValueByFamily {
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
         daemonSpawnHooks?: AgentDaemonSpawnHooks;
+        providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+        cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+        cliAuth?: AgentCliAuthContributionV1;
+        connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+        terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+        sessionStartup?: AgentSessionStartupContributionV1;
+        vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
         externalSessions?: AgentExternalSessionsContribution;
         externalSessionHooks?: AgentExternalSessionHooksContribution;
         externalSessionObservation?: AgentExternalSessionObservationContribution;
@@ -61620,6 +66111,20 @@ type OpenableContentStatResultV1 = {
 ```
 
 
+### `dist/ui/publicContract.d.ts` — `PluginUiEphemeralInputSettlementV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiEphemeralInputSettlementV1 = {
+    kind: 'completed';
+    input: PluginUiJsonValueV1;
+} | {
+    kind: 'cancelled';
+};
+```
+
+
 ### `dist/ui/publicContract.d.ts` — `PluginUiHostApiSurfaceContextV1`
 
 Reached from a published signature; not itself a published export.
@@ -61748,11 +66253,9 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type PluginUiNewSessionSeedV1 = {
-    prompt?: {
-        text: string;
-        mode: 'replace' | 'append';
-    };
+    prompt?: string;
     profileId?: string;
+    checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: {
         serverId?: string;
         machineId?: string;
@@ -61764,6 +66267,24 @@ type PluginUiNewSessionSeedV1 = {
         value: ComposerAttachmentAuthorValueV1;
     }[];
 };
+```
+
+
+### `dist/ui/publicContract.d.ts` — `PluginUiOpenNewSessionRequestV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiOpenNewSessionRequestV1 = PluginUiNewSessionSeedV1;
+```
+
+
+### `dist/ui/publicContract.d.ts` — `PluginUiPreparedReviewWorkspaceResultV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiPreparedReviewWorkspaceResultV1 = DeepReadonly<ProtocolPluginUiPreparedReviewWorkspaceResultV1>;
 ```
 
 
@@ -61803,7 +66324,6 @@ type PluginUiSelectActionInputHostRequestV1 = {
         projection: 'serverStartDraft';
     };
     draft?: PluginUiJsonObjectV1;
-    seed?: PluginUiNewSessionSeedV1;
 };
 ```
 
@@ -61825,8 +66345,6 @@ Reached from a published signature; not itself a published export.
 type PluginUiSelectActionInputResultV1 = PluginUiSelectActionInputTargetedSubmittedV1 | {
     kind: 'serverStartDraft';
     draft: PluginUiSessionServerStartDraftV1;
-} | {
-    kind: 'newSessionSeeded';
 } | {
     kind: 'cancelled';
 };
@@ -61871,6 +66389,42 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type DistributiveOmit<T, TKey extends PropertyKey> = T extends unknown ? Omit<T, TKey> : never;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/runtime/capabilities/runtimeCapabilities.d.ts` — `RuntimeCapabilities`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeCapabilities = Readonly<{
+    localControl?: RuntimeControlSurface['localControl'] | null;
+    sessionStorage?: RuntimeControlSurface['sessionStorage'] | null;
+    sessionCapabilities?: RuntimeControlSurface['sessionCapabilities'] | null;
+    tools?: RuntimeControlSurface['tools'] | null;
+    handoff?: RuntimeControlSurface['handoff'] | null;
+    executionRun?: RuntimeExecutionRunCapabilities | null;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/runtime/capabilities/runtimeCapabilities.d.ts` — `RuntimeExecutionRunCapabilities`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeExecutionRunCapabilities = Readonly<{
+    supported: boolean;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/runtime/engine/contracts.d.ts` — `RuntimeControlSurface`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeControlSurface = AgentCoreRuntimeControlSurface;
 ```
 
 
@@ -62074,8 +66628,6 @@ type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
     targetId?: string | null;
     selection?: AgentSessionAuthRefreshSelectionV1;
     planType?: string | null;
-    env?: Readonly<Record<string, string>> | null;
-    materializedEnv?: Readonly<Record<string, string>> | null;
     targetMaterializedEnv?: Readonly<Record<string, string>> | null;
     classification?: AgentSessionAuthRefreshClassificationV1;
     failingAccessTokenFingerprint?: string | null;
@@ -62105,11 +66657,7 @@ Reached from a published signature; not itself a published export.
 ```ts
 type AttachSessionMetadataV1 = Readonly<Partial<{
     path: string;
-    providerSessionId: string;
-    opencodeSessionId: string;
-    opencodeBackendMode: string;
-    opencodeServerBaseUrl: string;
-    opencodeServerBaseUrlExplicit: boolean;
+    runtimeDescriptorV1: RuntimeDescriptorV1;
 }>>;
 ```
 
@@ -62120,30 +66668,8 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type ForkSessionMetadataV1 = Readonly<Partial<{
-    providerSessionId: string;
-    codexSessionId: string;
-    codexBackendMode: string;
-    codexHome: 'user' | 'connectedService';
-    codexConnectedServiceId: string;
-    codexConnectedServiceProfileId: string;
-    codexConnectedServiceGroupId: string;
-    codexHomePath: string;
-    opencodeSessionId: string;
-    opencodeBackendMode: string;
-    opencodeServerBaseUrl: string;
-    opencodeServerBaseUrlExplicit: boolean;
+    runtimeDescriptorV1: RuntimeDescriptorV1;
 }>>;
-```
-
-
-### `node_modules/@happier-dev/agents/dist/runtime/surfaces/handoff.d.ts` — `AgentExternalSessionSource`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type AgentExternalSessionSource = Readonly<{
-    kind: string;
-} & Record<string, PluginAgentExternalSessionLinkDataValue>>;
 ```
 
 
@@ -62154,40 +66680,216 @@ Reached from a published signature; not itself a published export.
 ```ts
 type HandoffExportSessionMetadataV1 = Readonly<Partial<{
     path: string;
-    providerSessionId: string;
-    claudeSessionId: string;
-    codexSessionId: string;
-    codexBackendMode: string;
-    opencodeSessionId: string;
-    opencodeBackendMode: string;
-    opencodeServerBaseUrl: string;
-    opencodeServerBaseUrlExplicit: boolean;
-    externalSessionSource: AgentExternalSessionSource;
+    runtimeDescriptorV1: RuntimeDescriptorV1;
+    externalSessionSource: HandoffRuntimeLocalExternalSessionSourceV1;
 }>>;
 ```
 
 
-### `node_modules/@happier-dev/agents/dist/types.d.ts` — `PERMISSION_INTENTS`
+### `node_modules/@happier-dev/agents/dist/runtime/surfaces/handoff.d.ts` — `HandoffRuntimeLocalExternalSessionSourceV1`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
-const PERMISSION_INTENTS: readonly [
-    'default',
-    'read-only',
-    'safe-yolo',
-    'yolo',
-    'plan'
-];
+type HandoffRuntimeLocalExternalSessionSourceV1 = Readonly<{
+    kind: string;
+} & Record<string, PluginAgentExternalSessionLinkDataValue>>;
 ```
 
 
-### `node_modules/@happier-dev/agents/dist/types.d.ts` — `PermissionIntent`
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentCoreRuntimeControlSurface`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
-type PermissionIntent = (typeof PERMISSION_INTENTS)[number];
+type AgentCoreRuntimeControlSurface = Readonly<{
+    resume: AgentResumeConfig;
+    sessionStorage: AgentSessionStorage;
+    sessionCapabilities: AgentSessionCapabilities;
+    handoff: AgentHandoffConfig;
+    localControl?: AgentLocalControlConfig | null;
+    runtimeInput?: AgentRuntimeInputConfig | null;
+    tools: AgentToolsConfig;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentHandoffConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentHandoffConfig = Readonly<{
+    vendorStateTransfer: VendorHandoffSupportLevel;
+    requiresExplicitSessionId?: boolean;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentLocalControlAttachStrategy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentLocalControlAttachStrategy = 'terminal_host' | 'provider_attach' | 'unsupported';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentLocalControlConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentLocalControlConfig = Readonly<{
+    supported: boolean;
+    topology?: AgentLocalControlTopology;
+    attachStrategy?: AgentLocalControlAttachStrategy;
+    remoteWritable?: boolean;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentLocalControlTopology`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentLocalControlTopology = 'exclusive' | 'shared';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentResumeConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentResumeConfig = Readonly<{
+    vendorResume: VendorResumeSupportLevel;
+    vendorResumeIdField?: VendorResumeIdField | null;
+    vendorResumeContinuityProofField?: string | null;
+    experimentalResumePolicy?: ExperimentalVendorResumePolicy;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentRuntimeInputConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentRuntimeInputConfig = Readonly<{
+    inFlightSteerSupported: boolean;
+    terminalPromptInjectionSupported: boolean;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentSessionCapabilities`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentSessionCapabilities = Readonly<{
+    sessionListing: AgentSessionCapabilitySupportLevel;
+    sessionFork: Readonly<{
+        conversation: AgentSessionCapabilitySupportLevel;
+        fromMessage: AgentSessionCapabilitySupportLevel;
+        protocol?: 'acp';
+    }>;
+    sessionRollback: Readonly<{
+        conversation: AgentSessionCapabilitySupportLevel;
+    }>;
+    usageLimitRecovery?: Readonly<{
+        checkNow: AgentSessionCapabilitySupportLevel;
+    }>;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentSessionCapabilitySupportLevel`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentSessionCapabilitySupportLevel = 'supported' | 'unsupported' | 'experimental';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentSessionStorage`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentSessionStorage = Readonly<{
+    direct: boolean;
+    persisted: boolean;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentToolsConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentToolsConfig = Readonly<{
+    delivery: AgentToolsDelivery;
+    support: AgentToolsSupportLevel;
+}>;
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentToolsDelivery`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentToolsDelivery = 'native_mcp' | 'native_extension' | 'shell_bridge' | 'unsupported';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `AgentToolsSupportLevel`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AgentToolsSupportLevel = 'supported' | 'experimental' | 'unsupported';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `ExperimentalVendorResumePolicy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ExperimentalVendorResumePolicy = 'disabled_by_default' | 'runtime_checked';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `VendorHandoffSupportLevel`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type VendorHandoffSupportLevel = 'supported' | 'unsupported' | 'experimental';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `VendorResumeIdField`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type VendorResumeIdField = 'claudeSessionId' | 'codexSessionId' | 'geminiSessionId' | 'grokSessionId' | 'opencodeSessionId' | 'auggieSessionId' | 'qwenSessionId' | 'kimiSessionId' | 'kiloSessionId' | 'kiroSessionId' | 'cursorSessionId' | 'ohMyPiSessionId' | 'piSessionId' | 'antigravitySessionId' | 'copilotSessionId';
+```
+
+
+### `node_modules/@happier-dev/agents/dist/types.d.ts` — `VendorResumeSupportLevel`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experimental';
 ```
 
 
@@ -62198,7 +66900,8 @@ Reached from a published signature; not itself a published export.
 ```ts
 const PluginEventAutomationHistoryGapResetActionInputV1Schema: z.ZodObject<{
     automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-    templateVersion: z.ZodNumber;
+    triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+    triggerRevision: z.ZodNumber;
     sourceSelectorId: z.core.$ZodBranded<z.ZodString, "AutomationSourceSelectorIdV1", "out">;
 }, z.core.$strict>;
 ```
@@ -62246,7 +66949,6 @@ Reached from a published signature; not itself a published export.
 const AutomationConversationAdmitInputV1Schema: z.ZodObject<{
     automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
     bindingId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-    templateVersion: z.ZodNumber;
     occurrenceId: z.ZodString;
     occurredAt: z.ZodNumber;
     sender: z.ZodType<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2>>;
@@ -62298,6 +67000,7 @@ const AutomationConversationAdmitResultV1Schema: z.ZodDiscriminatedUnion<[
         reason: z.ZodEnum<{
             capacity: "capacity";
             occurrenceConflict: "occurrenceConflict";
+            resultDeliveryUnsupported: "resultDeliveryUnsupported";
             temporarilyUnavailable: "temporarilyUnavailable";
         }>;
         checkpointSafe: z.ZodLiteral<false>;
@@ -62351,7 +67054,6 @@ const AutomationResultDeliveryInputV1Schema: z.ZodObject<{
         automationRunId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
         resultId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
         automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-        templateVersion: z.ZodNumber;
         resultDelivery: z.ZodLiteral<"finalResult">;
     }, z.core.$strict>;
     result: z.ZodObject<{
@@ -62415,9 +67117,84 @@ const AutomationResultDeliverySourceV1Schema: z.ZodObject<{
     automationRunId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
     resultId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
     automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-    templateVersion: z.ZodNumber;
     resultDelivery: z.ZodLiteral<"finalResult">;
 }, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/automations/automationRunCause.d.ts` — `AutomationRunCause`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AutomationRunCause = z.infer<typeof AutomationRunCauseSchema>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/automations/automationRunCause.d.ts` — `AutomationRunCauseSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const AutomationRunCauseSchema: z.ZodUnion<readonly [
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"schedule">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            scheduledFor: z.ZodNumber;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"pluginEvent">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            eventRef: z.ZodType<{
+                pluginId: string;
+                localId: string;
+            }, {
+                pluginId: string;
+                localId: string;
+            }, z.core.$ZodTypeInternals<{
+                pluginId: string;
+                localId: string;
+            }, {
+                pluginId: string;
+                localId: string;
+            }>>;
+            sourceSelectorId: z.core.$ZodBranded<z.ZodString, "AutomationSourceSelectorIdV1", "out">;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"sessionLifecycle">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            event: z.ZodLiteral<"parentTurnCompleted">;
+            sourceSessionId: z.ZodString;
+            sourceTurnId: z.ZodString;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"manual">;
+        invokedAt: z.ZodNumber;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"conversation">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+    }, z.core.$strict>
+]>;
 ```
 
 
@@ -112933,7 +117710,7 @@ const PluginEventContributionV1Schema: z.ZodDiscriminatedUnion<[
                     localId: string;
                 }>>>;
                 sourceConfigSchema: z.ZodType<import("./jsonSchema.js").PluginJsonSchemaV2, unknown, z.core.$ZodTypeInternals<import("./jsonSchema.js").PluginJsonSchemaV2, unknown>>;
-                setupActionRef: z.ZodOptional<z.ZodType<{
+                setupActionRef: z.ZodType<{
                     pluginId: string;
                     localId: string;
                 }, {
@@ -112945,7 +117722,11 @@ const PluginEventContributionV1Schema: z.ZodDiscriminatedUnion<[
                 }, {
                     pluginId: string;
                     localId: string;
-                }>>>;
+                }>>;
+                setupSurface: z.ZodOptional<z.ZodObject<{
+                    renderer: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                    fallbackRenderers: z.ZodOptional<z.ZodArray<z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>>>;
+                }, z.core.$strict>>;
                 historyGapResetActionRef: z.ZodOptional<z.ZodType<{
                     pluginId: string;
                     localId: string;
@@ -118302,14 +123083,103 @@ const PluginSystemToolContributionV1Schema: z.ZodObject<{
 ```
 
 
-### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/json.d.ts` — `PluginUiJsonValueV1`
+### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/surfaceRegistry.d.ts` — `PLUGIN_UI_INLINE_SURFACE_SLOTS_V1`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
-type PluginUiJsonValueV1 = null | boolean | number | string | readonly PluginUiJsonValueV1[] | {
-    readonly [key: string]: PluginUiJsonValueV1;
-};
+const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1: Readonly<{
+    sessionSubagentLaunch: Readonly<{
+        role: 'sessionSubagentLaunch';
+        targetKind: 'session';
+        presentations: readonly [
+            "content"
+        ];
+        surfaceContextPlacement: 'sessionPane';
+        platforms: readonly ("android" | "desktop" | "ios" | "web")[];
+    }>;
+    sessionSubagentDetails: Readonly<{
+        role: 'sessionSubagentDetails';
+        targetKind: 'session';
+        presentations: readonly [
+            "content",
+            "fill"
+        ];
+        surfaceContextPlacement: 'sessionPane';
+        platforms: readonly ("android" | "desktop" | "ios" | "web")[];
+    }>;
+    sessionInfoSection: Readonly<{
+        role: 'sessionInfoSection';
+        targetKind: 'session';
+        presentations: readonly [
+            "content"
+        ];
+        surfaceContextPlacement: 'sessionPane';
+        platforms: readonly ("android" | "desktop" | "ios" | "web")[];
+    }>;
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/v2.d.ts` — `PluginUiViewInlineBindingInputV2`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiViewInlineBindingInputV2 = {
+    [TSlot in PluginUiViewInlineSlotV1 as TSlot['role']]: Readonly<{
+        container: TSlot['role'];
+        target: z.input<typeof PluginUiViewTargetSchemaByKindV1.session>;
+    }>;
+}[PluginUiViewInlineSlotV1['role']];
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/v2.d.ts` — `PluginUiViewInlineSlotV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiViewInlineSlotV1 = Exclude<typeof PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[keyof typeof PLUGIN_UI_INLINE_SURFACE_SLOTS_V1], Readonly<{
+    role: 'sessionInfoSection';
+}>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/v2.d.ts` — `PluginUiViewTargetSchemaByKindV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const PluginUiViewTargetSchemaByKindV1: Readonly<{
+    app: z.ZodObject<{
+        kind: z.ZodLiteral<"app">;
+    }, z.core.$strict>;
+    session: z.ZodObject<{
+        kind: z.ZodLiteral<"session">;
+        sessionIdPath: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>;
+    project: z.ZodObject<{
+        kind: z.ZodLiteral<"project">;
+        workspaceRefIdPath: z.ZodOptional<z.ZodString>;
+        serverIdPath: z.ZodOptional<z.ZodString>;
+        machineIdPath: z.ZodOptional<z.ZodString>;
+        rootPathPath: z.ZodOptional<z.ZodString>;
+        projectIdPath: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>;
+    browser: z.ZodObject<{
+        kind: z.ZodLiteral<"browser">;
+        browserViewIdPath: z.ZodString;
+        sessionIdPath: z.ZodOptional<z.ZodString>;
+        profileIdPath: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>;
+    services: z.ZodObject<{
+        kind: z.ZodLiteral<"services">;
+        sessionIdPath: z.ZodOptional<z.ZodString>;
+        serverIdPath: z.ZodOptional<z.ZodString>;
+        machineIdPath: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>;
+}>;
 ```
 
 
@@ -119159,28 +124029,13 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         unsupported: "unsupported";
                     }>;
                     machineLoginKey: z.ZodOptional<z.ZodString>;
-                    probe: z.ZodObject<{
-                        parser: z.ZodEnum<{
-                            claudeCredentialsFile: "claudeCredentialsFile";
-                            codexLoginStatus: "codexLoginStatus";
-                            copilotGhAuth: "copilotGhAuth";
-                            cursorAboutJson: "cursorAboutJson";
-                            envOnly: "envOnly";
-                            geminiCredentialFiles: "geminiCredentialFiles";
-                            kiroWhoamiJson: "kiroWhoamiJson";
-                            none: "none";
-                            opencodeAuthList: "opencodeAuthList";
-                            piEnvOnly: "piEnvOnly";
-                            unknown: "unknown";
-                        }>;
-                        backgroundChecks: z.ZodEnum<{
-                            manual_only: "manual_only";
-                            safe: "safe";
-                        }>;
-                        statusArgs: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-                        envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                        credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                    }, z.core.$strict>;
+                    environmentVariables: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    nonInteractiveStatusProbe: z.ZodOptional<z.ZodLiteral<true>>;
+                    missingCredentialState: z.ZodOptional<z.ZodEnum<{
+                        logged_out: "logged_out";
+                        unknown: "unknown";
+                    }>>;
                     loginLaunches: z.ZodArray<z.ZodObject<{
                         kind: z.ZodEnum<{
                             device_code: "device_code";
@@ -119201,6 +124056,18 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                 }, z.core.$strict>>;
                 agentCliSystemTool: z.ZodOptional<z.ZodObject<{
                     toolId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                }, z.core.$strict>>;
+                codingPromptBehavior: z.ZodOptional<z.ZodObject<{
+                    blocks: z.ZodArray<z.ZodObject<{
+                        id: z.ZodString;
+                        text: z.ZodString;
+                        when: z.ZodOptional<z.ZodEnum<{
+                            disableTodos: "disableTodos";
+                        }>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                resumeChecklist: z.ZodOptional<z.ZodObject<{
+                    includeLoginStatus: z.ZodLiteral<true>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>;
             ui: z.ZodOptional<z.ZodObject<{
@@ -119293,7 +124160,12 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                     payload: z.ZodOptional<z.ZodObject<{
                         spawnSessionExtras: z.ZodOptional<z.ZodObject<{
                             kind: z.ZodLiteral<"static">;
-                            value: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                            value: z.ZodRecord<z.ZodString, z.ZodUnion<readonly [
+                                z.ZodString,
+                                z.ZodNumber,
+                                z.ZodBoolean,
+                                z.ZodNull
+                            ]>>;
                         }, z.core.$strict>>;
                         sessionExtras: z.ZodOptional<z.ZodObject<{
                             outputKey: z.ZodString;
@@ -119332,8 +124204,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                         backendTransport: z.ZodOptional<z.ZodObject<{
-                            runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                            legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                             backendMode: z.ZodObject<{
                                 values: z.ZodArray<z.ZodString>;
                                 aliases: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -119344,6 +124214,24 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                 owner: z.ZodString;
                                 schemaId: z.ZodString;
                                 v: z.ZodNumber;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    askUserQuestion: z.ZodOptional<z.ZodObject<{
+                        dialogs: z.ZodArray<z.ZodObject<{
+                            dialogId: z.ZodString;
+                            settingMutation: z.ZodOptional<z.ZodObject<{
+                                settingId: z.ZodString;
+                                allowedValues: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                            terminalNotice: z.ZodOptional<z.ZodObject<{
+                                headerKey: z.ZodString;
+                                questionKey: z.ZodString;
+                            }, z.core.$strict>>;
+                            terminalSecondaryAction: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"openAttachedTerminal">;
+                                labelKey: z.ZodString;
+                                descriptionKey: z.ZodString;
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                     }, z.core.$strict>>;
@@ -119391,8 +124279,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                     optionalFields: z.ZodArray<z.ZodString>;
                                 }, z.core.$strict>>;
                                 runtimeDescriptorFromCandidate: z.ZodOptional<z.ZodObject<{
-                                    runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                                    legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                                     backendMode: z.ZodObject<{
                                         values: z.ZodArray<z.ZodString>;
                                     }, z.core.$strict>;
@@ -119409,6 +124295,54 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         sessionHandoff: z.ZodOptional<z.ZodObject<{
                             clearMetadataKeys: z.ZodOptional<z.ZodArray<z.ZodString>>;
                         }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                session: z.ZodOptional<z.ZodObject<{
+                    providerBehavior: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.providerBehavior.v1">;
+                        agentTeam: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"session.agentTeamBehavior.v1">;
+                            snapshotKey: z.ZodString;
+                            providerLabel: z.ZodString;
+                            flavorAliases: z.ZodArray<z.ZodString>;
+                            tools: z.ZodObject<{
+                                teamCreate: z.ZodArray<z.ZodString>;
+                                teamDelete: z.ZodArray<z.ZodString>;
+                                teamSendMessage: z.ZodArray<z.ZodString>;
+                                subagentSpawn: z.ZodArray<z.ZodString>;
+                                activeTeamFallbackSubagentSpawn: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                configMutation: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                            }, z.core.$strict>;
+                            configTeamPath: z.ZodOptional<z.ZodObject<{
+                                rootDirectory: z.ZodString;
+                                teamsDirectory: z.ZodString;
+                                filename: z.ZodString;
+                            }, z.core.$strict>>;
+                            lifecycleEvents: z.ZodOptional<z.ZodObject<{
+                                ignoreActivityPreview: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                shutdownApproved: z.ZodOptional<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        participants: z.ZodOptional<z.ZodObject<{
+                            sidechainIds: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"toolCallInputString">;
+                                toolNames: z.ZodArray<z.ZodString>;
+                                inputKey: z.ZodString;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        subagents: z.ZodOptional<z.ZodObject<{
+                            ignoreActivityPreviewText: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"jsonEventType">;
+                                recipientKinds: z.ZodArray<z.ZodString>;
+                                eventTypes: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    visibleMessages: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.visibleMessages.v1">;
+                        subagentKinds: z.ZodArray<z.ZodString>;
+                        fallbackToolNames: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                        excludeJsonEventTypes: z.ZodArray<z.ZodString>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>>;
                 message: z.ZodOptional<z.ZodObject<{
@@ -119652,6 +124586,26 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         }, z.core.$strict>>;
                     }, z.core.$strict>
                 ], "kind">;
+                definition: z.ZodOptional<z.ZodObject<{
+                    modelConfigOptionId: z.ZodOptional<z.ZodString>;
+                    stderrRules: z.ZodOptional<z.ZodObject<{
+                        suppress: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                            includes: z.ZodArray<z.ZodString>;
+                            caseSensitive: z.ZodOptional<z.ZodBoolean>;
+                        }, z.core.$strict>>>;
+                        statusErrors: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                            includes: z.ZodArray<z.ZodString>;
+                            caseSensitive: z.ZodOptional<z.ZodBoolean>;
+                            detail: z.ZodString;
+                        }, z.core.$strict>>>;
+                    }, z.core.$strict>>;
+                    mcp: z.ZodOptional<z.ZodObject<{
+                        policy: z.ZodEnum<{
+                            drop: "drop";
+                            pass_through: "pass_through";
+                        }>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
             }, z.core.$strict>;
         }, z.core.$strict>,
         z.ZodObject<{
@@ -120335,28 +125289,13 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         unsupported: "unsupported";
                     }>;
                     machineLoginKey: z.ZodOptional<z.ZodString>;
-                    probe: z.ZodObject<{
-                        parser: z.ZodEnum<{
-                            claudeCredentialsFile: "claudeCredentialsFile";
-                            codexLoginStatus: "codexLoginStatus";
-                            copilotGhAuth: "copilotGhAuth";
-                            cursorAboutJson: "cursorAboutJson";
-                            envOnly: "envOnly";
-                            geminiCredentialFiles: "geminiCredentialFiles";
-                            kiroWhoamiJson: "kiroWhoamiJson";
-                            none: "none";
-                            opencodeAuthList: "opencodeAuthList";
-                            piEnvOnly: "piEnvOnly";
-                            unknown: "unknown";
-                        }>;
-                        backgroundChecks: z.ZodEnum<{
-                            manual_only: "manual_only";
-                            safe: "safe";
-                        }>;
-                        statusArgs: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-                        envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                        credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                    }, z.core.$strict>;
+                    environmentVariables: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    nonInteractiveStatusProbe: z.ZodOptional<z.ZodLiteral<true>>;
+                    missingCredentialState: z.ZodOptional<z.ZodEnum<{
+                        logged_out: "logged_out";
+                        unknown: "unknown";
+                    }>>;
                     loginLaunches: z.ZodArray<z.ZodObject<{
                         kind: z.ZodEnum<{
                             device_code: "device_code";
@@ -120377,6 +125316,18 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                 }, z.core.$strict>>;
                 agentCliSystemTool: z.ZodOptional<z.ZodObject<{
                     toolId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                }, z.core.$strict>>;
+                codingPromptBehavior: z.ZodOptional<z.ZodObject<{
+                    blocks: z.ZodArray<z.ZodObject<{
+                        id: z.ZodString;
+                        text: z.ZodString;
+                        when: z.ZodOptional<z.ZodEnum<{
+                            disableTodos: "disableTodos";
+                        }>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                resumeChecklist: z.ZodOptional<z.ZodObject<{
+                    includeLoginStatus: z.ZodLiteral<true>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>;
             ui: z.ZodOptional<z.ZodObject<{
@@ -120469,7 +125420,12 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                     payload: z.ZodOptional<z.ZodObject<{
                         spawnSessionExtras: z.ZodOptional<z.ZodObject<{
                             kind: z.ZodLiteral<"static">;
-                            value: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                            value: z.ZodRecord<z.ZodString, z.ZodUnion<readonly [
+                                z.ZodString,
+                                z.ZodNumber,
+                                z.ZodBoolean,
+                                z.ZodNull
+                            ]>>;
                         }, z.core.$strict>>;
                         sessionExtras: z.ZodOptional<z.ZodObject<{
                             outputKey: z.ZodString;
@@ -120508,8 +125464,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                         backendTransport: z.ZodOptional<z.ZodObject<{
-                            runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                            legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                             backendMode: z.ZodObject<{
                                 values: z.ZodArray<z.ZodString>;
                                 aliases: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -120520,6 +125474,24 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                 owner: z.ZodString;
                                 schemaId: z.ZodString;
                                 v: z.ZodNumber;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    askUserQuestion: z.ZodOptional<z.ZodObject<{
+                        dialogs: z.ZodArray<z.ZodObject<{
+                            dialogId: z.ZodString;
+                            settingMutation: z.ZodOptional<z.ZodObject<{
+                                settingId: z.ZodString;
+                                allowedValues: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                            terminalNotice: z.ZodOptional<z.ZodObject<{
+                                headerKey: z.ZodString;
+                                questionKey: z.ZodString;
+                            }, z.core.$strict>>;
+                            terminalSecondaryAction: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"openAttachedTerminal">;
+                                labelKey: z.ZodString;
+                                descriptionKey: z.ZodString;
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                     }, z.core.$strict>>;
@@ -120567,8 +125539,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                     optionalFields: z.ZodArray<z.ZodString>;
                                 }, z.core.$strict>>;
                                 runtimeDescriptorFromCandidate: z.ZodOptional<z.ZodObject<{
-                                    runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                                    legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                                     backendMode: z.ZodObject<{
                                         values: z.ZodArray<z.ZodString>;
                                     }, z.core.$strict>;
@@ -120585,6 +125555,54 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         sessionHandoff: z.ZodOptional<z.ZodObject<{
                             clearMetadataKeys: z.ZodOptional<z.ZodArray<z.ZodString>>;
                         }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                session: z.ZodOptional<z.ZodObject<{
+                    providerBehavior: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.providerBehavior.v1">;
+                        agentTeam: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"session.agentTeamBehavior.v1">;
+                            snapshotKey: z.ZodString;
+                            providerLabel: z.ZodString;
+                            flavorAliases: z.ZodArray<z.ZodString>;
+                            tools: z.ZodObject<{
+                                teamCreate: z.ZodArray<z.ZodString>;
+                                teamDelete: z.ZodArray<z.ZodString>;
+                                teamSendMessage: z.ZodArray<z.ZodString>;
+                                subagentSpawn: z.ZodArray<z.ZodString>;
+                                activeTeamFallbackSubagentSpawn: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                configMutation: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                            }, z.core.$strict>;
+                            configTeamPath: z.ZodOptional<z.ZodObject<{
+                                rootDirectory: z.ZodString;
+                                teamsDirectory: z.ZodString;
+                                filename: z.ZodString;
+                            }, z.core.$strict>>;
+                            lifecycleEvents: z.ZodOptional<z.ZodObject<{
+                                ignoreActivityPreview: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                shutdownApproved: z.ZodOptional<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        participants: z.ZodOptional<z.ZodObject<{
+                            sidechainIds: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"toolCallInputString">;
+                                toolNames: z.ZodArray<z.ZodString>;
+                                inputKey: z.ZodString;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        subagents: z.ZodOptional<z.ZodObject<{
+                            ignoreActivityPreviewText: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"jsonEventType">;
+                                recipientKinds: z.ZodArray<z.ZodString>;
+                                eventTypes: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    visibleMessages: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.visibleMessages.v1">;
+                        subagentKinds: z.ZodArray<z.ZodString>;
+                        fallbackToolNames: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                        excludeJsonEventTypes: z.ZodArray<z.ZodString>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>>;
                 message: z.ZodOptional<z.ZodObject<{
@@ -121444,28 +126462,13 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         unsupported: "unsupported";
                     }>;
                     machineLoginKey: z.ZodOptional<z.ZodString>;
-                    probe: z.ZodObject<{
-                        parser: z.ZodEnum<{
-                            claudeCredentialsFile: "claudeCredentialsFile";
-                            codexLoginStatus: "codexLoginStatus";
-                            copilotGhAuth: "copilotGhAuth";
-                            cursorAboutJson: "cursorAboutJson";
-                            envOnly: "envOnly";
-                            geminiCredentialFiles: "geminiCredentialFiles";
-                            kiroWhoamiJson: "kiroWhoamiJson";
-                            none: "none";
-                            opencodeAuthList: "opencodeAuthList";
-                            piEnvOnly: "piEnvOnly";
-                            unknown: "unknown";
-                        }>;
-                        backgroundChecks: z.ZodEnum<{
-                            manual_only: "manual_only";
-                            safe: "safe";
-                        }>;
-                        statusArgs: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-                        envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                        credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                    }, z.core.$strict>;
+                    environmentVariables: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    nonInteractiveStatusProbe: z.ZodOptional<z.ZodLiteral<true>>;
+                    missingCredentialState: z.ZodOptional<z.ZodEnum<{
+                        logged_out: "logged_out";
+                        unknown: "unknown";
+                    }>>;
                     loginLaunches: z.ZodArray<z.ZodObject<{
                         kind: z.ZodEnum<{
                             device_code: "device_code";
@@ -121486,6 +126489,18 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                 }, z.core.$strict>>;
                 agentCliSystemTool: z.ZodOptional<z.ZodObject<{
                     toolId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                }, z.core.$strict>>;
+                codingPromptBehavior: z.ZodOptional<z.ZodObject<{
+                    blocks: z.ZodArray<z.ZodObject<{
+                        id: z.ZodString;
+                        text: z.ZodString;
+                        when: z.ZodOptional<z.ZodEnum<{
+                            disableTodos: "disableTodos";
+                        }>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                resumeChecklist: z.ZodOptional<z.ZodObject<{
+                    includeLoginStatus: z.ZodLiteral<true>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>;
             ui: z.ZodOptional<z.ZodObject<{
@@ -121578,7 +126593,12 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                     payload: z.ZodOptional<z.ZodObject<{
                         spawnSessionExtras: z.ZodOptional<z.ZodObject<{
                             kind: z.ZodLiteral<"static">;
-                            value: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                            value: z.ZodRecord<z.ZodString, z.ZodUnion<readonly [
+                                z.ZodString,
+                                z.ZodNumber,
+                                z.ZodBoolean,
+                                z.ZodNull
+                            ]>>;
                         }, z.core.$strict>>;
                         sessionExtras: z.ZodOptional<z.ZodObject<{
                             outputKey: z.ZodString;
@@ -121617,8 +126637,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                         backendTransport: z.ZodOptional<z.ZodObject<{
-                            runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                            legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                             backendMode: z.ZodObject<{
                                 values: z.ZodArray<z.ZodString>;
                                 aliases: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -121629,6 +126647,24 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                 owner: z.ZodString;
                                 schemaId: z.ZodString;
                                 v: z.ZodNumber;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    askUserQuestion: z.ZodOptional<z.ZodObject<{
+                        dialogs: z.ZodArray<z.ZodObject<{
+                            dialogId: z.ZodString;
+                            settingMutation: z.ZodOptional<z.ZodObject<{
+                                settingId: z.ZodString;
+                                allowedValues: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                            terminalNotice: z.ZodOptional<z.ZodObject<{
+                                headerKey: z.ZodString;
+                                questionKey: z.ZodString;
+                            }, z.core.$strict>>;
+                            terminalSecondaryAction: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"openAttachedTerminal">;
+                                labelKey: z.ZodString;
+                                descriptionKey: z.ZodString;
                             }, z.core.$strict>>;
                         }, z.core.$strict>>;
                     }, z.core.$strict>>;
@@ -121676,8 +126712,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                     optionalFields: z.ZodArray<z.ZodString>;
                                 }, z.core.$strict>>;
                                 runtimeDescriptorFromCandidate: z.ZodOptional<z.ZodObject<{
-                                    runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                                    legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                                     backendMode: z.ZodObject<{
                                         values: z.ZodArray<z.ZodString>;
                                     }, z.core.$strict>;
@@ -121694,6 +126728,54 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         sessionHandoff: z.ZodOptional<z.ZodObject<{
                             clearMetadataKeys: z.ZodOptional<z.ZodArray<z.ZodString>>;
                         }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                session: z.ZodOptional<z.ZodObject<{
+                    providerBehavior: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.providerBehavior.v1">;
+                        agentTeam: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"session.agentTeamBehavior.v1">;
+                            snapshotKey: z.ZodString;
+                            providerLabel: z.ZodString;
+                            flavorAliases: z.ZodArray<z.ZodString>;
+                            tools: z.ZodObject<{
+                                teamCreate: z.ZodArray<z.ZodString>;
+                                teamDelete: z.ZodArray<z.ZodString>;
+                                teamSendMessage: z.ZodArray<z.ZodString>;
+                                subagentSpawn: z.ZodArray<z.ZodString>;
+                                activeTeamFallbackSubagentSpawn: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                configMutation: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                            }, z.core.$strict>;
+                            configTeamPath: z.ZodOptional<z.ZodObject<{
+                                rootDirectory: z.ZodString;
+                                teamsDirectory: z.ZodString;
+                                filename: z.ZodString;
+                            }, z.core.$strict>>;
+                            lifecycleEvents: z.ZodOptional<z.ZodObject<{
+                                ignoreActivityPreview: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                                shutdownApproved: z.ZodOptional<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        participants: z.ZodOptional<z.ZodObject<{
+                            sidechainIds: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"toolCallInputString">;
+                                toolNames: z.ZodArray<z.ZodString>;
+                                inputKey: z.ZodString;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                        subagents: z.ZodOptional<z.ZodObject<{
+                            ignoreActivityPreviewText: z.ZodOptional<z.ZodObject<{
+                                kind: z.ZodLiteral<"jsonEventType">;
+                                recipientKinds: z.ZodArray<z.ZodString>;
+                                eventTypes: z.ZodArray<z.ZodString>;
+                            }, z.core.$strict>>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    visibleMessages: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.visibleMessages.v1">;
+                        subagentKinds: z.ZodArray<z.ZodString>;
+                        fallbackToolNames: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                        excludeJsonEventTypes: z.ZodArray<z.ZodString>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>>;
                 message: z.ZodOptional<z.ZodObject<{
@@ -122554,28 +127636,13 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                     unsupported: "unsupported";
                 }>;
                 machineLoginKey: z.ZodOptional<z.ZodString>;
-                probe: z.ZodObject<{
-                    parser: z.ZodEnum<{
-                        claudeCredentialsFile: "claudeCredentialsFile";
-                        codexLoginStatus: "codexLoginStatus";
-                        copilotGhAuth: "copilotGhAuth";
-                        cursorAboutJson: "cursorAboutJson";
-                        envOnly: "envOnly";
-                        geminiCredentialFiles: "geminiCredentialFiles";
-                        kiroWhoamiJson: "kiroWhoamiJson";
-                        none: "none";
-                        opencodeAuthList: "opencodeAuthList";
-                        piEnvOnly: "piEnvOnly";
-                        unknown: "unknown";
-                    }>;
-                    backgroundChecks: z.ZodEnum<{
-                        manual_only: "manual_only";
-                        safe: "safe";
-                    }>;
-                    statusArgs: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-                    envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                    credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
-                }, z.core.$strict>;
+                environmentVariables: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                credentialPaths: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                nonInteractiveStatusProbe: z.ZodOptional<z.ZodLiteral<true>>;
+                missingCredentialState: z.ZodOptional<z.ZodEnum<{
+                    logged_out: "logged_out";
+                    unknown: "unknown";
+                }>>;
                 loginLaunches: z.ZodArray<z.ZodObject<{
                     kind: z.ZodEnum<{
                         device_code: "device_code";
@@ -122596,6 +127663,18 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
             }, z.core.$strict>>;
             agentCliSystemTool: z.ZodOptional<z.ZodObject<{
                 toolId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+            }, z.core.$strict>>;
+            codingPromptBehavior: z.ZodOptional<z.ZodObject<{
+                blocks: z.ZodArray<z.ZodObject<{
+                    id: z.ZodString;
+                    text: z.ZodString;
+                    when: z.ZodOptional<z.ZodEnum<{
+                        disableTodos: "disableTodos";
+                    }>>;
+                }, z.core.$strict>>;
+            }, z.core.$strict>>;
+            resumeChecklist: z.ZodOptional<z.ZodObject<{
+                includeLoginStatus: z.ZodLiteral<true>;
             }, z.core.$strict>>;
         }, z.core.$strict>>;
         ui: z.ZodOptional<z.ZodObject<{
@@ -122688,7 +127767,12 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                 payload: z.ZodOptional<z.ZodObject<{
                     spawnSessionExtras: z.ZodOptional<z.ZodObject<{
                         kind: z.ZodLiteral<"static">;
-                        value: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                        value: z.ZodRecord<z.ZodString, z.ZodUnion<readonly [
+                            z.ZodString,
+                            z.ZodNumber,
+                            z.ZodBoolean,
+                            z.ZodNull
+                        ]>>;
                     }, z.core.$strict>>;
                     sessionExtras: z.ZodOptional<z.ZodObject<{
                         outputKey: z.ZodString;
@@ -122727,8 +127811,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                         }, z.core.$strict>>;
                     }, z.core.$strict>>;
                     backendTransport: z.ZodOptional<z.ZodObject<{
-                        runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                        legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                         backendMode: z.ZodObject<{
                             values: z.ZodArray<z.ZodString>;
                             aliases: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -122739,6 +127821,24 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                             owner: z.ZodString;
                             schemaId: z.ZodString;
                             v: z.ZodNumber;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                askUserQuestion: z.ZodOptional<z.ZodObject<{
+                    dialogs: z.ZodArray<z.ZodObject<{
+                        dialogId: z.ZodString;
+                        settingMutation: z.ZodOptional<z.ZodObject<{
+                            settingId: z.ZodString;
+                            allowedValues: z.ZodArray<z.ZodString>;
+                        }, z.core.$strict>>;
+                        terminalNotice: z.ZodOptional<z.ZodObject<{
+                            headerKey: z.ZodString;
+                            questionKey: z.ZodString;
+                        }, z.core.$strict>>;
+                        terminalSecondaryAction: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"openAttachedTerminal">;
+                            labelKey: z.ZodString;
+                            descriptionKey: z.ZodString;
                         }, z.core.$strict>>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>>;
@@ -122786,8 +127886,6 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                                 optionalFields: z.ZodArray<z.ZodString>;
                             }, z.core.$strict>>;
                             runtimeDescriptorFromCandidate: z.ZodOptional<z.ZodObject<{
-                                runtimeDescriptorOutputKey: z.ZodOptional<z.ZodString>;
-                                legacyModeOutputKey: z.ZodOptional<z.ZodString>;
                                 backendMode: z.ZodObject<{
                                     values: z.ZodArray<z.ZodString>;
                                 }, z.core.$strict>;
@@ -122804,6 +127902,54 @@ const PluginAgentContributionV2Schema: z.ZodUnion<readonly [
                     sessionHandoff: z.ZodOptional<z.ZodObject<{
                         clearMetadataKeys: z.ZodOptional<z.ZodArray<z.ZodString>>;
                     }, z.core.$strict>>;
+                }, z.core.$strict>>;
+            }, z.core.$strict>>;
+            session: z.ZodOptional<z.ZodObject<{
+                providerBehavior: z.ZodOptional<z.ZodObject<{
+                    kind: z.ZodLiteral<"session.providerBehavior.v1">;
+                    agentTeam: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"session.agentTeamBehavior.v1">;
+                        snapshotKey: z.ZodString;
+                        providerLabel: z.ZodString;
+                        flavorAliases: z.ZodArray<z.ZodString>;
+                        tools: z.ZodObject<{
+                            teamCreate: z.ZodArray<z.ZodString>;
+                            teamDelete: z.ZodArray<z.ZodString>;
+                            teamSendMessage: z.ZodArray<z.ZodString>;
+                            subagentSpawn: z.ZodArray<z.ZodString>;
+                            activeTeamFallbackSubagentSpawn: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                            configMutation: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                        }, z.core.$strict>;
+                        configTeamPath: z.ZodOptional<z.ZodObject<{
+                            rootDirectory: z.ZodString;
+                            teamsDirectory: z.ZodString;
+                            filename: z.ZodString;
+                        }, z.core.$strict>>;
+                        lifecycleEvents: z.ZodOptional<z.ZodObject<{
+                            ignoreActivityPreview: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                            shutdownApproved: z.ZodOptional<z.ZodString>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    participants: z.ZodOptional<z.ZodObject<{
+                        sidechainIds: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"toolCallInputString">;
+                            toolNames: z.ZodArray<z.ZodString>;
+                            inputKey: z.ZodString;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                    subagents: z.ZodOptional<z.ZodObject<{
+                        ignoreActivityPreviewText: z.ZodOptional<z.ZodObject<{
+                            kind: z.ZodLiteral<"jsonEventType">;
+                            recipientKinds: z.ZodArray<z.ZodString>;
+                            eventTypes: z.ZodArray<z.ZodString>;
+                        }, z.core.$strict>>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
+                visibleMessages: z.ZodOptional<z.ZodObject<{
+                    kind: z.ZodLiteral<"session.visibleMessages.v1">;
+                    subagentKinds: z.ZodArray<z.ZodString>;
+                    fallbackToolNames: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    excludeJsonEventTypes: z.ZodArray<z.ZodString>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>;
             message: z.ZodOptional<z.ZodObject<{
@@ -123086,8 +128232,8 @@ const PluginResourceContextV1Schema: z.ZodDiscriminatedUnion<[
     z.ZodObject<{
         kind: z.ZodLiteral<"surface">;
         mountInstanceKey: z.ZodString;
-        launchInput: z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("./ui/json.js").PluginUiJsonValueV1[] | {
-            readonly [key: string]: import("./ui/json.js").PluginUiJsonValueV1;
+        launchInput: z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+            readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
         } | null, unknown>>;
     }, z.core.$strict>
 ], "kind">;
@@ -123316,6 +128462,7 @@ const VoiceCredentialDeclarationSchema: z.ZodObject<{
                         origin: z.ZodString;
                         headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                     }, z.core.$strict>;
+                    requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                     allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                 }, z.core.$strict>
             ], "kind">>>;
@@ -123386,6 +128533,7 @@ const VoiceCredentialDeclarationSchema: z.ZodObject<{
                         origin: z.ZodString;
                         headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                     }, z.core.$strict>;
+                    requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                     allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                 }, z.core.$strict>
             ], "kind">>>;
@@ -123550,6 +128698,7 @@ const VoiceCredentialOperationProjectionSchema: z.ZodDiscriminatedUnion<[
             origin: z.ZodString;
             headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
         }, z.core.$strict>;
+        requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
         allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
     }, z.core.$strict>
 ], "kind">;
@@ -123687,6 +128836,7 @@ const VoiceProviderContributionSchema: z.ZodDiscriminatedUnion<[
                                 origin: z.ZodString;
                                 headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                             }, z.core.$strict>;
+                            requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                             allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                         }, z.core.$strict>
                     ], "kind">>>;
@@ -123757,6 +128907,7 @@ const VoiceProviderContributionSchema: z.ZodDiscriminatedUnion<[
                                 origin: z.ZodString;
                                 headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                             }, z.core.$strict>;
+                            requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                             allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                         }, z.core.$strict>
                     ], "kind">>>;
@@ -124906,6 +130057,7 @@ const VoiceProviderContributionSchema: z.ZodDiscriminatedUnion<[
                                 origin: z.ZodString;
                                 headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                             }, z.core.$strict>;
+                            requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                             allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                         }, z.core.$strict>
                     ], "kind">>>;
@@ -124976,6 +130128,7 @@ const VoiceProviderContributionSchema: z.ZodDiscriminatedUnion<[
                                 origin: z.ZodString;
                                 headerNames: z.ZodReadonly<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>;
                             }, z.core.$strict>;
+                            requiredHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                             allowedHeaderNames: z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                         }, z.core.$strict>
                     ], "kind">>>;
@@ -127636,12 +132789,65 @@ Reached from a published signature; not itself a published export.
 const AutomationRunStateChangedHostEventV1Schema: z.ZodObject<{
     runId: z.ZodString;
     automationId: z.ZodString;
-    originKind: z.ZodEnum<{
-        conversation: "conversation";
-        manual: "manual";
-        pluginEvent: "pluginEvent";
-        scheduled: "scheduled";
-    }>;
+    runCause: z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodLiteral<"trigger">;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
+            triggerKind: z.ZodLiteral<"schedule">;
+            occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+            occurredAt: z.ZodNumber;
+            evidence: z.ZodObject<{
+                scheduledFor: z.ZodNumber;
+            }, z.core.$strict>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"trigger">;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
+            triggerKind: z.ZodLiteral<"pluginEvent">;
+            occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+            occurredAt: z.ZodNumber;
+            evidence: z.ZodObject<{
+                eventRef: z.ZodType<{
+                    pluginId: string;
+                    localId: string;
+                }, {
+                    pluginId: string;
+                    localId: string;
+                }, z.core.$ZodTypeInternals<{
+                    pluginId: string;
+                    localId: string;
+                }, {
+                    pluginId: string;
+                    localId: string;
+                }>>;
+                sourceSelectorId: z.core.$ZodBranded<z.ZodString, "AutomationSourceSelectorIdV1", "out">;
+            }, z.core.$strict>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"trigger">;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
+            triggerKind: z.ZodLiteral<"sessionLifecycle">;
+            occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+            occurredAt: z.ZodNumber;
+            evidence: z.ZodObject<{
+                event: z.ZodLiteral<"parentTurnCompleted">;
+                sourceSessionId: z.ZodString;
+                sourceTurnId: z.ZodString;
+            }, z.core.$strict>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"manual">;
+            invokedAt: z.ZodNumber;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"conversation">;
+            occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+            occurredAt: z.ZodNumber;
+        }, z.core.$strict>
+    ]>;
     previousState: z.ZodNullable<z.ZodEnum<{
         cancelled: "cancelled";
         claimed: "claimed";
@@ -127670,7 +132876,7 @@ const AutomationRunStateChangedHostEventV1Schema: z.ZodObject<{
     }>;
     transitionedAt: z.ZodNumber;
     claimedByMachineId: z.ZodNullable<z.ZodString>;
-    cause: z.ZodOptional<z.ZodString>;
+    transitionCause: z.ZodOptional<z.ZodString>;
 }, z.core.$strict>;
 ```
 
@@ -128249,8 +133455,8 @@ const CurrentUiCommandDeclarationV1Schema: z.ZodObject<{
         z.ZodObject<{
             kind: z.ZodLiteral<"executeAction">;
             action: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-            input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-                readonly [key: string]: PluginUiJsonValueV1;
+            input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+                readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
             } | null, unknown>>>;
         }, z.core.$strict>,
         z.ZodObject<{
@@ -128271,8 +133477,8 @@ const CurrentUiCommandDeclarationV1Schema: z.ZodObject<{
                     localId: string;
                 }>>
             ]>;
-            input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-                readonly [key: string]: PluginUiJsonValueV1;
+            input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+                readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
             } | null, unknown>>>;
             subPath: z.ZodOptional<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
             instanceKey: z.ZodOptional<z.ZodString>;
@@ -128342,8 +133548,8 @@ const CurrentUiContextEntityV1Schema: z.ZodObject<{
     kind: z.ZodString;
     label: z.ZodString;
     summary: z.ZodOptional<z.ZodString>;
-    reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-        readonly [key: string]: PluginUiJsonValueV1;
+    reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+        readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
     } | null, unknown>>>;
 }, z.core.$strict>;
 ```
@@ -128378,12 +133584,12 @@ const CurrentUiContextSnapshotV1Schema: z.ZodObject<{
         kind: z.ZodString;
         label: z.ZodString;
         summary: z.ZodOptional<z.ZodString>;
-        reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-            readonly [key: string]: PluginUiJsonValueV1;
+        reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+            readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
         } | null, unknown>>>;
     }, z.core.$strict>>;
-    detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-        readonly [key: string]: PluginUiJsonValueV1;
+    detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+        readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
     } | null, unknown>>>;
     commands: z.ZodArray<z.ZodObject<{
         id: z.ZodString;
@@ -128413,12 +133619,12 @@ const PluginUiContextEnrichmentV1Schema: z.ZodObject<{
         kind: z.ZodString;
         label: z.ZodString;
         summary: z.ZodOptional<z.ZodString>;
-        reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-            readonly [key: string]: PluginUiJsonValueV1;
+        reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+            readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
         } | null, unknown>>>;
     }, z.core.$strict>>;
-    detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-        readonly [key: string]: PluginUiJsonValueV1;
+    detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+        readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
     } | null, unknown>>>;
     commands: z.ZodOptional<z.ZodArray<z.ZodObject<{
         title: z.ZodString;
@@ -128427,8 +133633,8 @@ const PluginUiContextEnrichmentV1Schema: z.ZodObject<{
             z.ZodObject<{
                 kind: z.ZodLiteral<"executeAction">;
                 action: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-                input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-                    readonly [key: string]: PluginUiJsonValueV1;
+                input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+                    readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
                 } | null, unknown>>>;
             }, z.core.$strict>,
             z.ZodObject<{
@@ -128449,8 +133655,8 @@ const PluginUiContextEnrichmentV1Schema: z.ZodObject<{
                         localId: string;
                     }>>
                 ]>;
-                input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly PluginUiJsonValueV1[] | {
-                    readonly [key: string]: PluginUiJsonValueV1;
+                input: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../interactions/transientV1.js").JsonValue[] | {
+                    readonly [key: string]: import("../interactions/transientV1.js").JsonValue;
                 } | null, unknown>>>;
                 subPath: z.ZodOptional<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>;
                 instanceKey: z.ZodOptional<z.ZodString>;
@@ -128458,6 +133664,75 @@ const PluginUiContextEnrichmentV1Schema: z.ZodObject<{
         ], "kind">;
     }, z.core.$strict>>>;
 }, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/ui/hostApiDefinition.d.ts` — `PluginUiHostMethodV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiHostMethodV1 = z.infer<typeof PluginUiHostMethodV1Schema>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/ui/hostApiDefinition.d.ts` — `PluginUiHostMethodV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const PluginUiHostMethodV1Schema: z.ZodEnum<{
+    acquireComposerInputLock: "acquireComposerInputLock";
+    activeComposer: "activeComposer";
+    applyComposer: "applyComposer";
+    confirm: "confirm";
+    context: "context";
+    diagnostic: "diagnostic";
+    executeAction: "executeAction";
+    focusComposer: "focusComposer";
+    inspectComposerContent: "inspectComposerContent";
+    notify: "notify";
+    openExternalLink: "openExternalLink";
+    openNewSession: "openNewSession";
+    openSurface: "openSurface";
+    pickComposerMedia: "pickComposerMedia";
+    publishCurrentUiContext: "publishCurrentUiContext";
+    readClipboard: "readClipboard";
+    readComposer: "readComposer";
+    readOpenableContent: "readOpenableContent";
+    readResource: "readResource";
+    releaseComposerContent: "releaseComposerContent";
+    replacePageLocation: "replacePageLocation";
+    selectActionInput: "selectActionInput";
+    setComposerDecorations: "setComposerDecorations";
+    settleEphemeralInput: "settleEphemeralInput";
+    statOpenableContent: "statOpenableContent";
+    watchComposer: "watchComposer";
+    watchContext: "watchContext";
+    watchResource: "watchResource";
+    writeClipboard: "writeClipboard";
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/ui/hostApiRequests.d.ts` — `PluginUiPreparedReviewWorkspaceResultV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<typeof PluginUiPreparedReviewWorkspaceResultV1Schema>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/plugins/ui/hostApiRequests.d.ts` — `PluginUiPreparedReviewWorkspaceResultV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const PluginUiPreparedReviewWorkspaceResultV1Schema: z.ZodObject<{
+    kind: z.ZodLiteral<"prepared">;
+    repositoryPath: z.ZodString;
+}, z.core.$loose>;
 ```
 
 
@@ -129587,6 +134862,19 @@ const AIBackendProfileSchema: z.ZodObject<{
     createdAt: z.ZodDefault<z.ZodNumber>;
     updatedAt: z.ZodDefault<z.ZodNumber>;
     version: z.ZodDefault<z.ZodString>;
+    codingPromptBehaviorV1: z.ZodOptional<z.ZodCatch<z.ZodObject<{
+        v: z.ZodDefault<z.ZodLiteral<1>>;
+        sessionTitleUpdates: z.ZodOptional<z.ZodPipe<z.ZodEnum<{
+            agent: "agent";
+            disabled: "disabled";
+            initial: "initial";
+            ongoing: "ongoing";
+        }>, z.ZodTransform<"disabled" | "initial" | "ongoing", "agent" | "disabled" | "initial" | "ongoing">>>;
+        responseOptions: z.ZodOptional<z.ZodEnum<{
+            agent: "agent";
+            disabled: "disabled";
+        }>>;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 ```
 
@@ -131115,6 +136403,7 @@ const ProviderCatalogDeclarationV1Schema: z.ZodDiscriminatedUnion<[
             parser: z.ZodType<ProviderCatalogParserV1, ProviderCatalogParserV1, z.core.$ZodTypeInternals<ProviderCatalogParserV1, ProviderCatalogParserV1>>;
             reportsModelLoadState: z.ZodOptional<z.ZodBoolean>;
         }, z.core.$strict>>;
+        sourceRegistryVersion: z.ZodOptional<z.ZodString>;
     }, z.core.$strict>,
     z.ZodObject<{
         source: z.ZodLiteral<"static+probe">;
@@ -131167,6 +136456,7 @@ const ProviderCatalogDeclarationV1Schema: z.ZodDiscriminatedUnion<[
             parser: z.ZodType<ProviderCatalogParserV1, ProviderCatalogParserV1, z.core.$ZodTypeInternals<ProviderCatalogParserV1, ProviderCatalogParserV1>>;
             reportsModelLoadState: z.ZodOptional<z.ZodBoolean>;
         }, z.core.$strict>>;
+        sourceRegistryVersion: z.ZodOptional<z.ZodString>;
     }, z.core.$strict>
 ], "source">;
 ```
@@ -131536,6 +136826,7 @@ const ProviderContributionV1Schema: z.ZodObject<{
                 parser: z.ZodType<import("../index.js").ProviderCatalogParserV1, import("../index.js").ProviderCatalogParserV1, z.core.$ZodTypeInternals<import("../index.js").ProviderCatalogParserV1, import("../index.js").ProviderCatalogParserV1>>;
                 reportsModelLoadState: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strict>>;
+            sourceRegistryVersion: z.ZodOptional<z.ZodString>;
         }, z.core.$strict>,
         z.ZodObject<{
             source: z.ZodLiteral<"static+probe">;
@@ -131588,6 +136879,7 @@ const ProviderContributionV1Schema: z.ZodObject<{
                 parser: z.ZodType<import("../index.js").ProviderCatalogParserV1, import("../index.js").ProviderCatalogParserV1, z.core.$ZodTypeInternals<import("../index.js").ProviderCatalogParserV1, import("../index.js").ProviderCatalogParserV1>>;
                 reportsModelLoadState: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strict>>;
+            sourceRegistryVersion: z.ZodOptional<z.ZodString>;
         }, z.core.$strict>
     ], "source">;
     modelLoad: z.ZodOptional<z.ZodObject<{
@@ -132237,6 +137529,553 @@ function resolveSessionModelSelectionIntentV1(input: Readonly<{
 ```
 
 
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentClaimPublicationDispatchResponseV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentClaimPublicationDispatchResponseV1Schema: z.ZodObject<{
+    disposition: z.ZodEnum<{
+        dispatch: "dispatch";
+        reconcile: "reconcile";
+    }>;
+    publicationPlanId: z.ZodString;
+    entries: z.ZodArray<z.ZodObject<{
+        happierCommentId: z.ZodString;
+        publicationCorrelationId: z.ZodString;
+    }, z.core.$strict>>;
+    verdict: z.ZodNullable<z.ZodObject<{
+        publicationCorrelationId: z.ZodString;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationCorrelationV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationCorrelationV1Schema: z.ZodObject<{
+    happierCommentId: z.ZodString;
+    publicationCorrelationId: z.ZodString;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationEntryResultV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationEntryResultV1Schema: z.ZodObject<{
+    happierCommentId: z.ZodString;
+    publicationCorrelationId: z.ZodString;
+    outcome: z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodLiteral<"published">;
+            externalRef: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"failed">;
+            code: z.ZodString;
+            message: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"uncertain">;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"skippedPriorFailure">;
+        }, z.core.$strict>
+    ]>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationEntryV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationEntryV1Schema: z.ZodObject<{
+    happierCommentId: z.ZodString;
+    expectedServerRevision: z.ZodNumber;
+    anchor: z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodLiteral<"line">;
+            filePath: z.ZodString;
+            line: z.ZodNumber;
+            side: z.ZodOptional<z.ZodEnum<{
+                after: "after";
+                before: "before";
+            }>>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"range">;
+            filePath: z.ZodString;
+            startLine: z.ZodNumber;
+            endLine: z.ZodNumber;
+            side: z.ZodOptional<z.ZodEnum<{
+                after: "after";
+                before: "before";
+            }>>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"hunk">;
+            filePath: z.ZodString;
+            hunkId: z.ZodString;
+            side: z.ZodOptional<z.ZodEnum<{
+                after: "after";
+                before: "before";
+            }>>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"file">;
+            filePath: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"folder">;
+            folderPath: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"workspace">;
+            workspaceId: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"project">;
+            projectId: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"run">;
+            runId: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"finding">;
+            runId: z.ZodString;
+            findingId: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"binary">;
+            filePath: z.ZodString;
+            sizeBytes: z.ZodNumber;
+            sha256: z.ZodString;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"submodule">;
+            filePath: z.ZodString;
+            commitSha: z.ZodOptional<z.ZodString>;
+            url: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"symlink">;
+            filePath: z.ZodString;
+            targetPath: z.ZodString;
+        }, z.core.$strict>
+    ]>;
+    snapshot: z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodLiteral<"text">;
+            selectedLines: z.ZodArray<z.ZodString>;
+            beforeContext: z.ZodArray<z.ZodString>;
+            afterContext: z.ZodArray<z.ZodString>;
+            selectedLinesHash: z.ZodString;
+            contextWindowHash: z.ZodString;
+            capturedAt: z.ZodNumber;
+            fileLength: z.ZodNumber;
+            source: z.ZodEnum<{
+                agentBuffer: "agentBuffer";
+                committed: "committed";
+                diffSide: "diffSide";
+                untracked: "untracked";
+                workingTree: "workingTree";
+            }>;
+            commitSha: z.ZodOptional<z.ZodString>;
+            isUncommitted: z.ZodBoolean;
+            isUntracked: z.ZodBoolean;
+            truncated: z.ZodBoolean;
+            truncationReason: z.ZodOptional<z.ZodEnum<{
+                context_cap: "context_cap";
+                file_too_large: "file_too_large";
+                line_too_long: "line_too_long";
+            }>>;
+            hasBidiControls: z.ZodBoolean;
+            likelyMinified: z.ZodBoolean;
+            diffContext: z.ZodOptional<z.ZodObject<{
+                side: z.ZodEnum<{
+                    after: "after";
+                    before: "before";
+                }>;
+                baseSha: z.ZodOptional<z.ZodString>;
+                headSha: z.ZodOptional<z.ZodString>;
+                startSha: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"binary">;
+            sizeBytes: z.ZodNumber;
+            sha256: z.ZodString;
+            mimeType: z.ZodOptional<z.ZodString>;
+            source: z.ZodEnum<{
+                agentBuffer: "agentBuffer";
+                committed: "committed";
+                diffSide: "diffSide";
+                untracked: "untracked";
+                workingTree: "workingTree";
+            }>;
+            capturedAt: z.ZodNumber;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"submodule">;
+            filePath: z.ZodString;
+            commitSha: z.ZodOptional<z.ZodString>;
+            url: z.ZodOptional<z.ZodString>;
+            capturedAt: z.ZodNumber;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"symlink">;
+            filePath: z.ZodString;
+            targetPath: z.ZodString;
+            targetExists: z.ZodOptional<z.ZodBoolean>;
+            capturedAt: z.ZodNumber;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"too_large">;
+            filePath: z.ZodString;
+            sizeBytes: z.ZodNumber;
+            sha256: z.ZodOptional<z.ZodString>;
+            capBytes: z.ZodNumber;
+            capturedAt: z.ZodNumber;
+        }, z.core.$strict>
+    ]>;
+    body: z.ZodString;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationPlanV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationPlanV1Schema: z.ZodObject<{
+    target: z.ZodObject<{
+        providerId: z.ZodString;
+        configuredAccountId: z.ZodString;
+        entryRef: z.ZodObject<{
+            sourceId: z.ZodString;
+            kindId: z.ZodString;
+            collisionScope: z.ZodString;
+            entryId: z.ZodString;
+        }, z.core.$strict>;
+        subtarget: z.ZodNullable<z.ZodObject<{
+            kindId: z.ZodEnum<{
+                "review-comment": "review-comment";
+                "review-thread": "review-thread";
+            }>;
+            targetId: z.ZodString;
+        }, z.core.$strict>>;
+    }, z.core.$strict>;
+    baseRevision: z.ZodNullable<z.ZodString>;
+    headRevision: z.ZodNullable<z.ZodString>;
+    entries: z.ZodArray<z.ZodObject<{
+        happierCommentId: z.ZodString;
+        expectedServerRevision: z.ZodNumber;
+        anchor: z.ZodUnion<readonly [
+            z.ZodObject<{
+                kind: z.ZodLiteral<"line">;
+                filePath: z.ZodString;
+                line: z.ZodNumber;
+                side: z.ZodOptional<z.ZodEnum<{
+                    after: "after";
+                    before: "before";
+                }>>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"range">;
+                filePath: z.ZodString;
+                startLine: z.ZodNumber;
+                endLine: z.ZodNumber;
+                side: z.ZodOptional<z.ZodEnum<{
+                    after: "after";
+                    before: "before";
+                }>>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"hunk">;
+                filePath: z.ZodString;
+                hunkId: z.ZodString;
+                side: z.ZodOptional<z.ZodEnum<{
+                    after: "after";
+                    before: "before";
+                }>>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"file">;
+                filePath: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"folder">;
+                folderPath: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"workspace">;
+                workspaceId: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"project">;
+                projectId: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"run">;
+                runId: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"finding">;
+                runId: z.ZodString;
+                findingId: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"binary">;
+                filePath: z.ZodString;
+                sizeBytes: z.ZodNumber;
+                sha256: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"submodule">;
+                filePath: z.ZodString;
+                commitSha: z.ZodOptional<z.ZodString>;
+                url: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"symlink">;
+                filePath: z.ZodString;
+                targetPath: z.ZodString;
+            }, z.core.$strict>
+        ]>;
+        snapshot: z.ZodUnion<readonly [
+            z.ZodObject<{
+                kind: z.ZodLiteral<"text">;
+                selectedLines: z.ZodArray<z.ZodString>;
+                beforeContext: z.ZodArray<z.ZodString>;
+                afterContext: z.ZodArray<z.ZodString>;
+                selectedLinesHash: z.ZodString;
+                contextWindowHash: z.ZodString;
+                capturedAt: z.ZodNumber;
+                fileLength: z.ZodNumber;
+                source: z.ZodEnum<{
+                    agentBuffer: "agentBuffer";
+                    committed: "committed";
+                    diffSide: "diffSide";
+                    untracked: "untracked";
+                    workingTree: "workingTree";
+                }>;
+                commitSha: z.ZodOptional<z.ZodString>;
+                isUncommitted: z.ZodBoolean;
+                isUntracked: z.ZodBoolean;
+                truncated: z.ZodBoolean;
+                truncationReason: z.ZodOptional<z.ZodEnum<{
+                    context_cap: "context_cap";
+                    file_too_large: "file_too_large";
+                    line_too_long: "line_too_long";
+                }>>;
+                hasBidiControls: z.ZodBoolean;
+                likelyMinified: z.ZodBoolean;
+                diffContext: z.ZodOptional<z.ZodObject<{
+                    side: z.ZodEnum<{
+                        after: "after";
+                        before: "before";
+                    }>;
+                    baseSha: z.ZodOptional<z.ZodString>;
+                    headSha: z.ZodOptional<z.ZodString>;
+                    startSha: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"binary">;
+                sizeBytes: z.ZodNumber;
+                sha256: z.ZodString;
+                mimeType: z.ZodOptional<z.ZodString>;
+                source: z.ZodEnum<{
+                    agentBuffer: "agentBuffer";
+                    committed: "committed";
+                    diffSide: "diffSide";
+                    untracked: "untracked";
+                    workingTree: "workingTree";
+                }>;
+                capturedAt: z.ZodNumber;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"submodule">;
+                filePath: z.ZodString;
+                commitSha: z.ZodOptional<z.ZodString>;
+                url: z.ZodOptional<z.ZodString>;
+                capturedAt: z.ZodNumber;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"symlink">;
+                filePath: z.ZodString;
+                targetPath: z.ZodString;
+                targetExists: z.ZodOptional<z.ZodBoolean>;
+                capturedAt: z.ZodNumber;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"too_large">;
+                filePath: z.ZodString;
+                sizeBytes: z.ZodNumber;
+                sha256: z.ZodOptional<z.ZodString>;
+                capBytes: z.ZodNumber;
+                capturedAt: z.ZodNumber;
+            }, z.core.$strict>
+        ]>;
+        body: z.ZodString;
+    }, z.core.$strict>>;
+    verdict: z.ZodNullable<z.ZodObject<{
+        kind: z.ZodEnum<{
+            approve: "approve";
+            comment: "comment";
+            requestChanges: "requestChanges";
+        }>;
+        body: z.ZodString;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationResultV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationResultV1Schema: z.ZodObject<{
+    publicationPlanId: z.ZodString;
+    entries: z.ZodArray<z.ZodObject<{
+        happierCommentId: z.ZodString;
+        publicationCorrelationId: z.ZodString;
+        outcome: z.ZodUnion<readonly [
+            z.ZodObject<{
+                kind: z.ZodLiteral<"published">;
+                externalRef: z.ZodString;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"failed">;
+                code: z.ZodString;
+                message: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"uncertain">;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"skippedPriorFailure">;
+            }, z.core.$strict>
+        ]>;
+    }, z.core.$strict>>;
+    verdict: z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodLiteral<"notRequested">;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            publicationCorrelationId: z.ZodString;
+            outcome: z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"published">;
+                    externalRef: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"failed">;
+                    code: z.ZodString;
+                    message: z.ZodOptional<z.ZodString>;
+                    externalRef: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"uncertain">;
+                    externalRef: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"skippedPriorFailure">;
+                }, z.core.$strict>
+            ]>;
+        }, z.core.$strict>
+    ]>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationTargetV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationTargetV1Schema: z.ZodObject<{
+    providerId: z.ZodString;
+    configuredAccountId: z.ZodString;
+    entryRef: z.ZodObject<{
+        sourceId: z.ZodString;
+        kindId: z.ZodString;
+        collisionScope: z.ZodString;
+        entryId: z.ZodString;
+    }, z.core.$strict>;
+    subtarget: z.ZodNullable<z.ZodObject<{
+        kindId: z.ZodEnum<{
+            "review-comment": "review-comment";
+            "review-thread": "review-thread";
+        }>;
+        targetId: z.ZodString;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationVerdictResultV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationVerdictResultV1Schema: z.ZodUnion<readonly [
+    z.ZodObject<{
+        kind: z.ZodLiteral<"notRequested">;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        publicationCorrelationId: z.ZodString;
+        outcome: z.ZodUnion<readonly [
+            z.ZodObject<{
+                kind: z.ZodLiteral<"published">;
+                externalRef: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"failed">;
+                code: z.ZodString;
+                message: z.ZodOptional<z.ZodString>;
+                externalRef: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"uncertain">;
+                externalRef: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"skippedPriorFailure">;
+            }, z.core.$strict>
+        ]>;
+    }, z.core.$strict>
+]>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/actions.d.ts` — `ReviewCommentPublicationVerdictV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentPublicationVerdictV1Schema: z.ZodObject<{
+    kind: z.ZodEnum<{
+        approve: "approve";
+        comment: "comment";
+        requestChanges: "requestChanges";
+    }>;
+    body: z.ZodString;
+}, z.core.$strict>;
+```
+
+
 ### `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` — `ReviewCommentAnchorV1Schema`
 
 Reached from a published signature; not itself a published export.
@@ -132370,6 +138209,23 @@ const ReviewCommentFingerprintV1Schema: z.ZodObject<{
     }, z.core.$strict>>;
     normalizedMessageHash: z.ZodString;
     engineId: z.ZodOptional<z.ZodString>;
+}, z.core.$strict>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/reviews/comments/v1.d.ts` — `ReviewCommentLinkedIssueIdentityV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ReviewCommentLinkedIssueIdentityV1Schema: z.ZodObject<{
+    source: z.ZodObject<{
+        pluginId: z.ZodString;
+        localId: z.ZodString;
+    }, z.core.$strict>;
+    kindId: z.ZodString;
+    collisionScope: z.ZodString;
+    entryId: z.ZodString;
 }, z.core.$strict>;
 ```
 
@@ -132864,18 +138720,25 @@ const ReviewCommentV1Schema: z.ZodObject<{
         normalizedMessageHash: z.ZodString;
         engineId: z.ZodOptional<z.ZodString>;
     }, z.core.$strict>>;
-    linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-        kind: z.ZodEnum<{
-            checkpoint: "checkpoint";
-            commit: "commit";
-            executionRun: "executionRun";
-            external: "external";
-            pullRequest: "pullRequest";
-            session: "session";
-        }>;
-        id: z.ZodOptional<z.ZodString>;
-        url: z.ZodOptional<z.ZodString>;
-    }, z.core.$strict>>>;
+    linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+        z.ZodObject<{
+            kind: z.ZodEnum<{
+                checkpoint: "checkpoint";
+                commit: "commit";
+                executionRun: "executionRun";
+                external: "external";
+                pullRequest: "pullRequest";
+                session: "session";
+            }>;
+            id: z.ZodOptional<z.ZodString>;
+            url: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>,
+        z.ZodObject<{
+            kind: z.ZodLiteral<"issue">;
+            id: z.ZodString;
+            url: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>
+    ]>>>;
     suggestedFix: z.ZodOptional<z.ZodObject<{
         kind: z.ZodEnum<{
             external: "external";
@@ -139905,6 +145768,37 @@ const TranscriptRawAgentEventV1Schema: z.ZodPipe<z.ZodDiscriminatedUnion<[
     [x: string]: unknown;
     type: "ready";
 }>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/sessions/metadata/runtimeDescriptorV1.d.ts` — `RuntimeDescriptorAgentShape`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeDescriptorAgentShape = Readonly<Record<string, unknown>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/sessions/metadata/runtimeDescriptorV1.d.ts` — `RuntimeDescriptorEnvelopeV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeDescriptorEnvelopeV1<TAgentId extends string = string, TAgent extends RuntimeDescriptorAgentShape = RuntimeDescriptorAgentShape> = Readonly<{
+    v: 1;
+    agentId: TAgentId;
+    agent: TAgent;
+} & Record<string, unknown>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/sessions/metadata/runtimeDescriptorV1.d.ts` — `RuntimeDescriptorV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RuntimeDescriptorV1 = RuntimeDescriptorEnvelopeV1;
 ```
 
 

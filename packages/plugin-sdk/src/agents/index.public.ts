@@ -8,6 +8,7 @@ export type { AgentModelOption } from '../agents.js';
 export type { AgentModelOptionOverrideRule } from '../agents.js';
 export type { AgentModelOptionValueId } from '../agents.js';
 export type { AgentProfile } from '../agents.js';
+export type { AgentSessionRuntimeCapabilities } from '../agents.js';
 export type { AgentPassiveRealtimeSetupResultV1 } from '../agents.js';
 export { AgentPassiveRealtimeSetupResultV1Schema } from '../agents.js';
 export type { AgentPassiveRealtimeSetupStatusV1 } from '../agents.js';

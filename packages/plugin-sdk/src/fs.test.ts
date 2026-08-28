@@ -20,6 +20,12 @@ type FsModule = Readonly<{
     mode?: number;
     temporaryDirectory?: string | null;
   }>): Promise<void>;
+  writeAtomicFile(input: Readonly<{
+    path: string;
+    contents: string | Uint8Array;
+    mode?: number;
+    temporaryDirectory?: string | null;
+  }>): Promise<void>;
   writeAtomicTextFileIfChanged(input: Readonly<{
     path: string;
     contents: string;
@@ -180,6 +186,19 @@ describe('fs helpers', () => {
     expect(await readFile(path, 'utf8')).toBe('{\n  "token": "new-token"\n}\n');
     const entries = await import('node:fs/promises').then(({ readdir }) => readdir(dirname(path)));
     expect(entries).toEqual(['auth.json']);
+  });
+
+  it('atomically preserves arbitrary binary file bytes', async () => {
+    const fs = await loadFs();
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-fs-binary-'));
+    const path = join(root, 'nested', 'credential.bin');
+    const contents = Uint8Array.from([0, 255, 195, 40, 10, 128]);
+
+    await fs.writeAtomicFile({ path, contents, mode: 0o600 });
+
+    expect(await readFile(path)).toEqual(Buffer.from(contents));
+    const entries = await import('node:fs/promises').then(({ readdir }) => readdir(dirname(path)));
+    expect(entries).toEqual(['credential.bin']);
   });
 
   it('atomically publishes generated text only when its bytes change', async () => {

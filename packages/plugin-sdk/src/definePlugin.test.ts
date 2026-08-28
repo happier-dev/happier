@@ -7,9 +7,17 @@ import {
 } from '@happier-dev/protocol';
 
 import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsContributionV1,
     AgentProviderBindingAdapter,
+    AgentProviderCliAttachDeclarationV1,
     AgentRuntimeFactory,
+    AgentSessionStartupContributionV1,
     AgentSessionRunnerFactoryLocatorV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
 } from './agentRuntime/index.js';
 import type { BackgroundServiceRunner } from './backgroundServices.js';
 import {
@@ -39,6 +47,7 @@ import type {
 } from './index.js';
 import type { ComposerOperationV1 } from './ui/hostApi.js';
 import { defineAccountCollection } from './collections.js';
+import { createPluginTestkit } from './testing/host.js';
 import {
     defineComposerAttachment,
     defineComposerControl,
@@ -350,18 +359,20 @@ describe('definePlugin', () => {
         expect(action?.inputSchema).not.toHaveProperty('parse');
         expect(action?.resultSchema).not.toHaveProperty('safeParse');
 
-        const register = vi.fn();
-        await plugin.activate({ actions: { register } } as never);
-        const handler = register.mock.calls[0]?.[1] as ((input: unknown, context: unknown) => Promise<unknown>) | undefined;
-        expect(handler).toBeDefined();
-        if (!handler) return;
-
-        await expect(handler({ entryId: 'entry', ignored: true }, {})).resolves.toEqual({ accepted: true });
-        expect(receivedInputs).toEqual([{ entryId: 'entry' }]);
-        await expect(handler({ entryId: '' }, {})).rejects.toMatchObject({
-            name: 'ProtocolValidationError',
-        });
-        expect(receivedInputs).toHaveLength(1);
+        const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+        try {
+            await expect(testkit.invokeAction('inspect', {
+                entryId: 'entry',
+                ignored: true,
+            })).resolves.toEqual({ accepted: true });
+            expect(receivedInputs).toEqual([{ entryId: 'entry' }]);
+            await expect(testkit.invokeAction('inspect', { entryId: '' })).rejects.toMatchObject({
+                code: 'plugin_action_input_schema_invalid',
+            });
+            expect(receivedInputs).toHaveLength(1);
+        } finally {
+            await testkit.dispose();
+        }
     });
 
     it('projects mixed Action targets but root activation registers only daemon handlers', async () => {
@@ -2029,10 +2040,9 @@ describe('definePlugin', () => {
         expect(definePlugin(input).manifest.id).toBe('example.symbol-sidecar');
     });
 
-    it('registers the same mixed Agent factory with its explicit runner locator', async () => {
+    it('registers the same Session Agent factory with its explicit runner locator', async () => {
         const mixedFactory: AgentRuntimeFactory = () => Object.freeze({
             sessions: Object.freeze({ open: vi.fn() }),
-            executionRuns: Object.freeze({ open: vi.fn() }),
         });
         const plugin = definePlugin({
             id: 'example.mixed-agent',
@@ -2081,7 +2091,6 @@ describe('definePlugin', () => {
     it('routes every authored Agent registration capability through definePlugin', async () => {
         const completeFactory: AgentRuntimeFactory = () => Object.freeze({
             sessions: Object.freeze({ open: vi.fn() }),
-            executionRuns: Object.freeze({ open: vi.fn() }),
         });
         const providerBinding = Object.freeze({
             v: 1,
@@ -2107,7 +2116,15 @@ describe('definePlugin', () => {
             resolveTarget: () => ({ ok: false as const, reason: 'fixture target is unavailable' }),
             createArgs: () => [],
             buildHealthUrl: () => null,
-        });
+        }) satisfies AgentProviderCliAttachDeclarationV1;
+        const cliSessionCommand = Object.freeze({
+            sessionRuntimeId: 'example.complete-agent-registration',
+            accountSettingsAgentId: 'example.complete-agent-registration',
+            buildSessionOptions: () => ({ ok: true as const, options: {} }),
+        }) satisfies AgentCliSessionCommandDeclarationV1;
+        const cliAuth = Object.freeze({
+            detectAuthStatus: () => ({ state: 'unknown' as const, reason: 'not_configured' as const }),
+        }) satisfies AgentCliAuthContributionV1;
         const preflightSessionControls = Object.freeze({
             models: Object.freeze({
                 command: Object.freeze({
@@ -2115,14 +2132,14 @@ describe('definePlugin', () => {
                     args: Object.freeze(['models']),
                 }),
             }),
-        });
+        }) satisfies AgentPreflightSessionControlsContributionV1;
         const terminalPromptSubmitVerification = Object.freeze({
             shouldVerifyAfterSubmit: (promptText: string) => promptText.trim().length > 0,
             verifyAfterSubmit: ({ promptText, screenText }: Readonly<{
                 promptText: string;
                 screenText: string;
             }>) => screenText.includes(promptText),
-        });
+        }) satisfies AgentTerminalPromptSubmitVerificationPolicyV1;
         const connectedAccountLaunch = Object.freeze({
             requestAuthUses: Object.freeze([Object.freeze({
                 purpose: 'model_upstream',
@@ -2136,13 +2153,13 @@ describe('definePlugin', () => {
                 providerSupportStatus: 'unsupported' as const,
                 config: Object.freeze({
                     supported: false,
-                    modes: Object.freeze(['isolated']),
+                    modes: Object.freeze(['isolated'] as const),
                     entries: Object.freeze([]),
                     unavailableReason: 'not_implemented' as const,
                 }),
                 state: Object.freeze({
                     supported: false,
-                    modes: Object.freeze(['isolated']),
+                    modes: Object.freeze(['isolated'] as const),
                     entries: Object.freeze([]),
                     symlinkUnavailableDegradePolicy: 'degrade_to_isolated' as const,
                     unavailableReason: 'not_implemented' as const,
@@ -2152,7 +2169,13 @@ describe('definePlugin', () => {
                     secretEntries: Object.freeze(['EXAMPLE_API_KEY']),
                 }),
             }),
-        });
+        }) satisfies AgentConnectedAccountLaunchContributionV1;
+        const sessionStartup = Object.freeze({
+            shouldUseDeferredBootstrap: () => false,
+        }) satisfies AgentSessionStartupContributionV1;
+        const vendorResumeSupport = Object.freeze({
+            supportsVendorResume: () => true,
+        }) satisfies AgentExperimentalVendorResumeSupportContributionV1;
         const plugin = definePlugin({
             id: 'example.complete-agent-registration',
             version: '0.1.0',
@@ -2179,12 +2202,16 @@ describe('definePlugin', () => {
                     },
                     daemonSpawnHooks,
                     providerCliAttach,
+                    cliSessionCommand,
+                    cliAuth,
                     preflightSessionControls,
                     terminalPromptSubmitVerification,
                     connectedAccountLaunch,
+                    sessionStartup,
+                    vendorResumeSupport,
                 },
             },
-        } as unknown as Parameters<typeof definePlugin>[0]);
+        });
         const register = vi.fn();
 
         await plugin.activate({ agents: { register } } as never);
@@ -2198,9 +2225,13 @@ describe('definePlugin', () => {
             },
             daemonSpawnHooks,
             providerCliAttach,
+            cliSessionCommand,
+            cliAuth,
             preflightSessionControls,
             terminalPromptSubmitVerification,
             connectedAccountLaunch,
+            sessionStartup,
+            vendorResumeSupport,
         });
     });
 

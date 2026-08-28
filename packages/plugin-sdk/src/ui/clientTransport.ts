@@ -16,6 +16,7 @@ import {
     PluginUiFocusComposerRequestV1Schema,
     PluginUiInspectComposerContentRequestV1Schema,
     PluginUiJsonObjectV1Schema,
+    PluginUiOpenNewSessionRequestV1Schema,
     PluginUiReadComposerRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
     PluginUiPublishCurrentUiContextRequestV1Schema,
@@ -29,6 +30,7 @@ import {
     PluginUiHostApiRenderContextSnapshotV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
     PluginUiSelectActionInputResultV1Schema,
+    PluginUiEphemeralInputSettlementV1Schema,
     PluginUiSelectedActionInputCarrierV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
     pluginUiHostApiWireIdentitiesEqual,
@@ -44,6 +46,10 @@ import {
 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { PluginError } from '../errors.js';
+import {
+    decodePluginUiClipboardReadResult,
+    decodePluginUiResourceContent,
+} from '../host/ui/hostApiCodecs.js';
 import type { PluginErrorData } from '../errors.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginReference } from '../identity.js';
@@ -923,11 +929,54 @@ export async function createPluginUiHostApiClientFromTransport(
             }
             return result.data;
         },
+        openNewSession: async (openRequest, requestOptions) => {
+            const payload = PluginUiOpenNewSessionRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) {
+                throw new PluginUiHostApiClientError(
+                    'invalid_payload',
+                    'openNewSession request is invalid.',
+                );
+            }
+            const selected = requestOptions?.preparedReviewWorkspace === undefined
+                ? undefined
+                : PluginUiSelectedActionInputCarrierV1Schema.safeParse(
+                    requestOptions.preparedReviewWorkspace,
+                );
+            if (
+                (selected !== undefined && !selected.success)
+                || (payload.data.checkoutIntent === 'preparedReviewWorkspace')
+                    !== (selected !== undefined && selected.success)
+            ) {
+                throw new PluginUiHostApiClientError(
+                    'invalid_payload',
+                    'A prepared review-workspace request requires its exact selected operation.',
+                );
+            }
+            await request(
+                'openNewSession',
+                payload.data,
+                requestOptions?.signal,
+                selected?.success ? selected.data : undefined,
+                selected?.success ? true : undefined,
+            );
+        },
+        settleEphemeralInput: async (settlement, requestOptions) => {
+            const payload = PluginUiEphemeralInputSettlementV1Schema.safeParse(settlement);
+            if (!payload.success) {
+                throw new PluginUiHostApiClientError(
+                    'invalid_payload',
+                    'Ephemeral input settlement is invalid.',
+                );
+            }
+            await request('settleEphemeralInput', payload.data, requestOptions?.signal);
+        },
         readResource: async (resource, requestOptions): Promise<ResourceContent> => {
-            const result = requireRecord(await request('readResource', { resource: asJsonReference(resource) }, requestOptions?.signal), 'resource result');
-            requireExactKeys(result, ['contentType', 'digest', 'bytesBase64'], 'resource result');
-            if (typeof result.contentType !== 'string' || result.contentType.trim() === '' || typeof result.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(result.digest) || typeof result.bytesBase64 !== 'string') throw new PluginUiHostApiClientError('invalid_payload');
-            return { contentType: result.contentType, digest: result.digest, bytes: decodeBase64(result.bytesBase64) };
+            const decoded = decodePluginUiResourceContent(
+                await request('readResource', { resource: asJsonReference(resource) }, requestOptions?.signal),
+                decodeBase64,
+            );
+            if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
+            return decoded.value;
         },
         statOpenableContent: async (ref, requestOptions): Promise<OpenableContentStatResult> => (
             readOpenableContentStatResult(await request(
@@ -1175,9 +1224,11 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         diagnostic: (data) => { void request('diagnostic', diagnosticToJson(data)).catch(() => undefined); },
         readClipboard: async (requestOptions) => {
-            const result = requireRecord(await request('readClipboard', undefined, requestOptions?.signal), 'clipboard result');
-            if (typeof result.value !== 'string') throw new PluginUiHostApiClientError('invalid_payload');
-            return result.value;
+            const decoded = decodePluginUiClipboardReadResult(
+                await request('readClipboard', undefined, requestOptions?.signal),
+            );
+            if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
+            return decoded.value;
         },
         writeClipboard: async (value, requestOptions) => { await request('writeClipboard', { value }, requestOptions?.signal); },
         openExternalLink: async (url, requestOptions) => { await request('openExternalLink', { url }, requestOptions?.signal); },

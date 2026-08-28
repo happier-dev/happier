@@ -1,8 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type {
-    BackendSessionLaunchHintsV1,
-} from '../agents/runtime/index.js';
 import {
     AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS,
     validateAgentExternalSessionTakeoverContribution,
@@ -118,6 +115,49 @@ describe('External Session takeover public contract', () => {
             .resolves.toMatchObject({ value: { owner: 'structural-takeover' } });
     });
 
+    it('rejects inherited and accessor-backed DTO fields without reading accessors', () => {
+        let accessorReads = 0;
+        class StructuralRequest {
+            readonly signal = request.signal;
+            readonly deadlineAtMs = request.deadlineAtMs;
+            readonly maxSerializedBytes = request.maxSerializedBytes;
+            readonly linkedSessionId = request.linkedSessionId;
+            readonly source = request.source;
+            readonly remoteSessionId = request.remoteSessionId;
+            readonly linkData = request.linkData;
+            readonly targetDirectory = request.targetDirectory;
+        }
+        rejects(() => validateAgentExternalSessionTakeoverResolveLaunchRequest(
+            new StructuralRequest(),
+        ));
+
+        const accessorResult = { ok: true } as Record<string, unknown>;
+        Object.defineProperty(accessorResult, 'value', {
+            enumerable: true,
+            get() {
+                accessorReads += 1;
+                return plan;
+            },
+        });
+        rejects(() => validateAgentExternalSessionTakeoverResolveLaunchResult(
+            accessorResult,
+        ));
+        expect(accessorReads).toBe(0);
+
+        const nonEnumerableResult = { ok: true } as Record<string, unknown>;
+        Object.defineProperty(nonEnumerableResult, 'value', {
+            enumerable: false,
+            value: plan,
+        });
+        rejects(() => validateAgentExternalSessionTakeoverResolveLaunchResult(
+            nonEnumerableResult,
+        ));
+
+        expect(validateAgentExternalSessionTakeoverResolveLaunchResult(
+            Object.assign(Object.create(null), result),
+        )).toEqual(result);
+    });
+
     it('strictly snapshots the bounded fresh linked-identity request', () => {
         expect(validateAgentExternalSessionTakeoverResolveLaunchRequest(request))
             .toEqual(request);
@@ -165,6 +205,25 @@ describe('External Session takeover public contract', () => {
         expect(validateAgentExternalSessionTakeoverLaunchPlan(
             planWithRuntimeDescriptor,
         )).toEqual(planWithRuntimeDescriptor);
+        let nestedAccessorReads = 0;
+        const accessorAgent = {};
+        const accessorDescriptor = {
+            v: 1,
+            agentId: 'fixture.agent',
+            agent: accessorAgent,
+        };
+        Object.defineProperty(accessorAgent, 'providerSessionId', {
+            enumerable: true,
+            get() {
+                nestedAccessorReads += 1;
+                return 'native-session-1';
+            },
+        });
+        rejects(() => validateAgentExternalSessionTakeoverLaunchPlan({
+            directory: '/work/project',
+            runtimeDescriptorV1: accessorDescriptor,
+        }));
+        expect(nestedAccessorReads).toBe(0);
         expect(validateAgentExternalSessionTakeoverLaunchPlan({
             directory: 'd'.repeat(AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits),
             backendModeHint: 'm'.repeat(
@@ -197,12 +256,10 @@ describe('External Session takeover public contract', () => {
             },
         })).toBeDefined();
 
-        const broadHints: BackendSessionLaunchHintsV1 = {
+        const broadHints = {
             directory: '/work/project',
             environmentVariables: {},
-            resumePlanOptions: {
-                mode: 'new',
-            },
+            resumePlanOptions: { mode: 'new' },
         };
         for (const invalidPlan of [
             { directory: '' },
@@ -277,7 +334,7 @@ describe('External Session takeover public contract', () => {
         });
 
         for (const invalidResult of [
-            { ok: true, value: { directory: '/work/project', target: 'chosen' } },
+            { ok: true, value: { ...plan, target: 'chosen' } },
             { ok: true, value: plan, source: request.source },
             { ok: false, code: 'unknown_failure' },
             { ok: false, code: 'unavailable', retryable: 'yes' },

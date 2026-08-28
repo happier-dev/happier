@@ -1,9 +1,11 @@
 # Production Hosted Review Reference
 
 This is the hosted-web member of the production reference portfolio. It is a
-complete external plugin package, not a beginner template: the cold manifest
-declares one safe Action, a packaged review guide, one hosted artifact, and a
-declarative unavailable fallback.
+complete external plugin package, not a beginner template: its
+`definePlugin(...)` definition declares one safe Action, a packaged review
+guide, one hosted artifact, and a declarative unavailable fallback. The
+canonical author build derives the cold manifest and verifies parity with that
+definition.
 
 It is not an ordinary authoring template. Start a new plugin with
 `happier plugins create` and declare ordinary contributions through
@@ -19,7 +21,8 @@ construction back through `openSurface`. The retry control reuses the same
 mount-bound API and signal; it does not create a second bridge, poller, URL
 parser, or cache.
 
-The cold manifest binds this package's packaged PNG to `brand.iconResourceId`.
+The derived cold manifest binds this package's packaged PNG to
+`brand.iconResourceId`.
 The existing host brand presentation owns byte validation and its neutral
 fallback; this browser artifact neither fetches a remote image nor introduces
 an image/fallback pipeline.

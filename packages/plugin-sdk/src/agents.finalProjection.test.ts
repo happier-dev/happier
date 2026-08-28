@@ -5,7 +5,7 @@ import {
 import { createAgentSessionPreAdmissionBuffer as canonicalCreateAgentSessionPreAdmissionBuffer } from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
 import * as protocol from '@happier-dev/protocol';
 import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as agentDeclarations from './agents.js';
 import * as agentRuntime from './agentRuntime/index.js';
@@ -14,6 +14,15 @@ import { assertExperimentalAgentSessionRealtimeRuntime } from './experimental/ag
 import { buildUsageObservationEffect as canonicalBuildUsageObservationEffect } from './usage.js';
 
 describe('final Agent SDK projections', () => {
+  it('keeps live Session runtime capabilities on the canonical Agents type owner', () => {
+    expectTypeOf<agentDeclarations.AgentSessionRuntimeCapabilities>()
+      .toEqualTypeOf<agents.RuntimeCapabilities>();
+    expectTypeOf<agentRuntimeAuthoring.AgentSessionRuntimeCapabilitySupportLevel>()
+      .toEqualTypeOf<agents.AgentSessionCapabilitySupportLevel>();
+    expectTypeOf<agentRuntimeAuthoring.AgentAuthoredSessionRuntimeCapabilities>()
+      .toEqualTypeOf<agentDeclarations.AgentSessionRuntimeCapabilities>();
+  });
+
   it('keeps host-generated Agent inventories out of the author declaration surface', () => {
     for (const name of [
       'AGENT_MODEL_CONFIG',

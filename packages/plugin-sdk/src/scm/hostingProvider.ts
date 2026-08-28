@@ -1,5 +1,6 @@
 /** @moduleRealm daemon */
 import type {
+    ScmHostingRepositoryAuthSummary,
     ScmHostingRepositoryPublishTarget,
     ScmHostingRepositorySummary,
     ScmHostingRepositoryVisibility,
@@ -157,7 +158,11 @@ export type HostingProviderResolvedRegistry = Readonly<{
     providersById: ReadonlyMap<string, HostingProviderResolvedProvider>;
     diagnostics: readonly HostingProviderRegistryDiagnostic[];
     getProvider: (id: string) => HostingProviderResolvedProvider | undefined;
-    getAdapter: (id: string) => HostingProviderRuntimeAdapter | undefined;
+    getRouting: (id: string) => HostingProviderRoutingCapability | undefined;
+    getPullRequests: (id: string) => HostingProviderPullRequestsCapability | undefined;
+    getPullRequestCheckout: (id: string) => HostingProviderPullRequestCheckoutCapability | undefined;
+    getRepositoryPublishing: (id: string) => HostingProviderRepositoryPublishingCapability | undefined;
+    getRepositoryClone: (id: string) => HostingProviderRepositoryCloneCapability | undefined;
     detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
         provider: HostingProviderResolvedRemote | HostingProviderUnresolvedRemote;
@@ -237,17 +242,6 @@ export type HostingProviderPullRequestCreateInput = Readonly<{
     draft?: boolean;
 }>;
 
-export type HostingProviderDefaultBranchInput = Readonly<{
-    runtimeServices?: HostingProviderRuntimeServices;
-    signal?: AbortSignal;
-    provider: ScmHostingProviderRef;
-}>;
-
-export type HostingProviderDefaultBranchMetadata = Readonly<{
-    name: string;
-    sha?: string | null;
-}>;
-
 export type HostingProviderPullRequestCheckoutReferenceInput = Readonly<{
     runtimeServices?: HostingProviderRuntimeServices;
     signal?: AbortSignal;
@@ -271,7 +265,7 @@ export type HostingProviderRepositoryDescribePublishTargetsInput = Readonly<{
 }>;
 
 export type HostingProviderRepositoryDescribePublishTargetsResult = Readonly<{
-    auth: ScmHostingRepositoryPublishTarget['auth'];
+    auth: ScmHostingRepositoryAuthSummary;
     targets: readonly ScmHostingRepositoryPublishTarget[];
 }>;
 
@@ -308,29 +302,48 @@ export type HostingProviderRepositoryDescribeCloneTargetsInput = Readonly<{
     }>;
 }>;
 
-export type HostingProviderRuntimeAdapter = Readonly<Record<string, unknown> & {
-    detectRemote?: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
-    buildCompareUrl?: (input: HostingProviderCompareUrlInput) => string | null;
-    getPullRequestAuthProfileKey?: (input: Readonly<{ provider: ScmHostingProviderRef }>) => string | null;
-    listPullRequests?: (input: HostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
-    getPullRequest?: (input: HostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
-    createPullRequest?: (input: HostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
-    getDefaultBranch?: (input: HostingProviderDefaultBranchInput) => Promise<HostingProviderDefaultBranchMetadata>;
-    resolvePullRequestCheckoutReference?: (
+export type HostingProviderRoutingCapability = Readonly<{
+    detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
+    buildCompareUrl: (input: HostingProviderCompareUrlInput) => string | null;
+}>;
+
+export type HostingProviderPullRequestsCapability = Readonly<{
+    getPullRequestAuthProfileKey: (input: Readonly<{ provider: ScmHostingProviderRef }>) => string | null;
+    listPullRequests: (input: HostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
+    getPullRequest: (input: HostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
+    createPullRequest: (input: HostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
+}>;
+
+export type HostingProviderPullRequestCheckoutCapability = Readonly<{
+    resolvePullRequestCheckoutReference: (
         input: HostingProviderPullRequestCheckoutReferenceInput
     ) => Promise<HostingProviderPullRequestCheckoutReferenceMetadata>;
-    describePublishTargets?: (
+}>;
+
+export type HostingProviderRepositoryPublishingCapability = Readonly<{
+    describePublishTargets: (
         input: HostingProviderRepositoryDescribePublishTargetsInput
     ) => Promise<HostingProviderRepositoryDescribePublishTargetsResult>;
-    createRepository?: (
+    createRepository: (
         input: HostingProviderRepositoryCreateInput
     ) => Promise<ScmHostingRepositorySummary>;
-    getRepository?: (
+    getRepository: (
         input: HostingProviderRepositoryGetInput
     ) => Promise<ScmHostingRepositorySummary | null>;
-    describeCloneTargets?: (
+}>;
+
+export type HostingProviderRepositoryCloneCapability = Readonly<{
+    describeCloneTargets: (
         input: HostingProviderRepositoryDescribeCloneTargetsInput
     ) => Promise<ScmRepositoryCloneTargetDescription>;
+}>;
+
+export type HostingProviderRuntimeAdapter = Readonly<{
+    routing?: HostingProviderRoutingCapability;
+    pullRequests?: HostingProviderPullRequestsCapability;
+    pullRequestCheckout?: HostingProviderPullRequestCheckoutCapability;
+    repositoryPublishing?: HostingProviderRepositoryPublishingCapability;
+    repositoryClone?: HostingProviderRepositoryCloneCapability;
 }>;
 
 export type HostingProviderRuntimeRegistration = Readonly<{
@@ -363,8 +376,6 @@ export type { HostingProviderRuntime } from '../activation.js';
 // final declaration above depends on them.
 export type ScmHostingProviderCompareUrlInput = HostingProviderCompareUrlInput;
 export type ScmHostingProviderCompareUrlResult = HostingProviderCompareUrlResult;
-export type ScmHostingProviderDefaultBranchInput = HostingProviderDefaultBranchInput;
-export type ScmHostingProviderDefaultBranchMetadata = HostingProviderDefaultBranchMetadata;
 export type ScmHostingProviderDescriptor = HostingProviderDescriptor;
 export type ScmHostingProviderPullRequestCheckoutReferenceInput = HostingProviderPullRequestCheckoutReferenceInput;
 export type ScmHostingProviderPullRequestCheckoutReferenceMetadata = HostingProviderPullRequestCheckoutReferenceMetadata;

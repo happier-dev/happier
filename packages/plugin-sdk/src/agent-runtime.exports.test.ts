@@ -83,6 +83,7 @@ describe('public agent-runtime entrypoint', () => {
     expectTypeOf<AgentSessionHostServices>().toHaveProperty('terminalHost');
     expectTypeOf<AgentSessionHostServices>().not.toHaveProperty('systemRecords');
     expectTypeOf<AgentSessionHostServices>().toHaveProperty('workflowActivity');
+    expectTypeOf<AgentSessionHostServices>().toHaveProperty('nativeHome');
   });
 
   it('exposes one bounded Provider binding input on every session-open variant', () => {

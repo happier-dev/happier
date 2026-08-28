@@ -56,6 +56,35 @@ test('retains the portable production reference package contract', async () => {
   const projectCompanionDashboard = manifest.contributes.ui.views.find(
     (view) => view.id === 'project-companion-dashboard',
   );
+  assert.deepEqual(
+    manifest.contributes.ui.views
+      .filter((view) => view.container === 'sessionSubagentLaunch' || view.container === 'sessionSubagentDetails')
+      .map(({ id, container, target }) => ({ id, container, target })),
+    [
+      {
+        id: 'review-subagent-launch',
+        container: 'sessionSubagentLaunch',
+        target: { kind: 'session' },
+      },
+      {
+        id: 'review-subagent-details',
+        container: 'sessionSubagentDetails',
+        target: { kind: 'session' },
+      },
+    ],
+  );
+  const reviewAgent = manifest.contributes.agents.find((agent) => agent.id === 'review-agent');
+  assert.deepEqual(
+    reviewAgent.ui.components.slots.map(({ slot, surfaceId }) => ({ slot, surfaceId })),
+    [
+      { slot: 'sessionSubagents.launchCards', surfaceId: 'review-subagent-launch' },
+      { slot: 'sessionSubagents.teammateDetailsTab', surfaceId: 'review-subagent-details' },
+    ],
+  );
+  assert.deepEqual(manifest.contributes.ui.translations[0].messages, {
+    'review.subagents.launch.title': 'Launch review teammate',
+    'review.subagents.launch.subtitle': 'Start a focused teammate in this review Session.',
+  });
   assert.deepEqual(manifest.contributes.sessionInfoSections, [{
     id: 'project-companion-status',
     resourceId: 'project-companion-dashboard-document',

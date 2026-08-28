@@ -25,8 +25,138 @@ const identity = {
     sessionId: 'session-1',
 } as const;
 
+const preparedOperation = {
+    point: { pointId: 'triage.sources', protocol: { id: 'triage.sources', version: 1 } },
+    contributor: {
+        pluginId: 'happier.scm.github',
+        contributionId: 'github',
+        immutableGenerationId: 'github-generation-1',
+    },
+    role: 'prepareReviewWorkspace',
+    action: { pluginId: 'happier.scm.github', localId: 'prepare-review-workspace' },
+} as const;
+
+const preparedSelection = {
+    kind: 'submitted' as const,
+    action: preparedOperation.action,
+    input: { repository: 'happier-dev/happier' },
+    selection: {
+        target: { pluginId: identity.pluginId, immutableGenerationId: identity.generation },
+        point: preparedOperation.point,
+        contributor: preparedOperation.contributor,
+    },
+    connectedAccount: { kind: 'none' as const },
+};
+
 describe('plugin UI domain client transport adapter', () => {
     afterEach(() => vi.useRealTimers());
+
+    it('forwards openNewSession as one strict flat request', async () => {
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        let receive: ((message: unknown) => void) | undefined;
+        const controller = new AbortController();
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            createRequestId: () => 'open-new-session-request',
+            transport: {
+                subscribe(listener) {
+                    receive = listener;
+                    return { dispose: () => undefined };
+                },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({
+                            wireVersion: 1,
+                            kind: 'negotiated',
+                            identity,
+                            apiVersion: '1.0.0',
+                            methods: ['openNewSession'],
+                            surface,
+                        });
+                    } else if (message.kind === 'request' && message.method === 'openNewSession') {
+                        expect(message.payload).toEqual({ prompt: 'Repair CI' });
+                        receive?.({
+                            wireVersion: 1,
+                            kind: 'result',
+                            identity,
+                            requestId: message.requestId,
+                            method: message.method,
+                            result: null,
+                        });
+                    }
+                },
+            },
+        });
+
+        await expect(api.openNewSession(
+            { prompt: 'Repair CI' },
+            { signal: controller.signal },
+        )).resolves.toBeUndefined();
+        expect(sent).toContainEqual(expect.objectContaining({
+            kind: 'request',
+            method: 'openNewSession',
+            payload: { prompt: 'Repair CI' },
+        }));
+        await expect(api.openNewSession({ prompt: { text: 'retired' } } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+    });
+
+    it('terminally carries the exact prepared-workspace selection and rejects incomplete requests', async () => {
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        let receive: ((message: unknown) => void) | undefined;
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            createRequestId: () => 'open-prepared-session-request',
+            transport: {
+                subscribe(listener) {
+                    receive = listener;
+                    return { dispose: () => undefined };
+                },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({
+                            wireVersion: 1,
+                            kind: 'negotiated',
+                            identity,
+                            apiVersion: '1.0.0',
+                            methods: ['openNewSession'],
+                            surface,
+                        });
+                    } else if (message.kind === 'request') {
+                        receive?.({
+                            wireVersion: 1,
+                            kind: 'result',
+                            identity,
+                            requestId: message.requestId,
+                            method: message.method,
+                            result: null,
+                        });
+                    }
+                },
+            },
+        });
+
+        await expect(api.openNewSession({ checkoutIntent: 'preparedReviewWorkspace' }))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace' },
+            {
+                preparedReviewWorkspace: {
+                    operation: preparedOperation,
+                    result: preparedSelection,
+                },
+            },
+        )).resolves.toBeUndefined();
+        expect(sent).toContainEqual(expect.objectContaining({
+            kind: 'request',
+            method: 'openNewSession',
+            targetedOperation: preparedOperation,
+            selectedActionInput: preparedSelection,
+            consumeSelectedActionInput: true,
+        }));
+    });
 
     it('keeps the Protocol surface context mutually assignable through direct and watched reads', async () => {
         const protocolSurface: PluginUiHostApiSurfaceContextV1 = surface;

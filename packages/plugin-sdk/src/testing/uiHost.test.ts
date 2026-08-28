@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import ts from 'typescript';
 import { DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol';
 import {
@@ -444,6 +444,30 @@ describe('createPluginUiTestkit', () => {
         expect(createSurfaceContextFixture().theme).toBe(SURFACE_CONTEXT_THEME_FIXTURE);
     });
 
+    it('carries one strict ephemeral-input completion through the real SDK client boundary', async () => {
+        const settleEphemeralInput = vi.fn(async () => undefined);
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: { settleEphemeralInput },
+        });
+
+        await expect(fixture.context.hostApi.settleEphemeralInput({
+            kind: 'completed',
+            input: { repository: 'happier-dev/happier' },
+        })).resolves.toBeUndefined();
+        expect(settleEphemeralInput).toHaveBeenCalledExactlyOnceWith({
+            settlement: {
+                kind: 'completed',
+                input: { repository: 'happier-dev/happier' },
+            },
+            signal: expect.any(AbortSignal),
+        });
+        await fixture.dispose();
+    });
+
     it('returns an exact host-provided mount refusal without invoking the semantic adapter', async () => {
         const refusals: readonly PluginUiTestkitMountAvailability[] = [
             {
@@ -873,6 +897,110 @@ describe('createPluginUiTestkit', () => {
         await fixture.dispose();
     });
 
+    it('routes the dedicated New Session seed through the public testkit', async () => {
+        const controller = new AbortController();
+        const openNewSession = vi.fn(async ({ request, signal }) => {
+            expect(request).toEqual({ prompt: 'Repair CI' });
+            expect(signal.aborted).toBe(false);
+        });
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: { openNewSession },
+        });
+
+        await expect(fixture.context.hostApi.openNewSession(
+            { prompt: 'Repair CI' },
+            { signal: controller.signal },
+        )).resolves.toBeUndefined();
+        expect(openNewSession).toHaveBeenCalledOnce();
+        await fixture.dispose();
+    });
+
+    it('lets an external author carry one exact selected preparation into openNewSession', async () => {
+        const operation = {
+            point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },
+            contributor: {
+                pluginId: 'com.acme.scm',
+                contributionId: 'github',
+                immutableGenerationId: 'scm-generation-1',
+            },
+            role: 'prepareReviewWorkspace',
+            action: { pluginId: 'com.acme.scm', localId: 'prepare-review-workspace' },
+        } as const;
+        const targeted = PluginUiTargetedContributionsV1Schema.parse(initialSurface.targetedContributions);
+        const result = {
+            kind: 'submitted' as const,
+            action: operation.action,
+            input: { repository: 'acme/widgets' },
+            selection: {
+                target: targeted.target,
+                point: operation.point,
+                contributor: operation.contributor,
+            },
+            connectedAccount: { kind: 'none' as const },
+        };
+        const opened = vi.fn(async () => undefined);
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: {
+                selectActionInput: async () => result,
+                openNewSession: opened,
+            },
+        });
+
+        const abandonedLifetime = new AbortController();
+        const abandoned = await fixture.context.hostApi.selectActionInput(
+            { operation },
+            { signal: abandonedLifetime.signal },
+        );
+        if (abandoned.kind !== 'submitted') throw new Error('expected submitted preparation');
+        abandonedLifetime.abort('selection_abandoned');
+        await expect(fixture.context.hostApi.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace' },
+            { preparedReviewWorkspace: { operation, result: abandoned } },
+        )).rejects.toMatchObject({ code: 'invalid_payload' });
+
+        const selected = await fixture.context.hostApi.selectActionInput({ operation });
+        expect(selected.kind).toBe('submitted');
+        if (selected.kind !== 'submitted') throw new Error('expected submitted preparation');
+        await expect(fixture.context.hostApi.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Counterfeit the preparation' },
+            {
+                preparedReviewWorkspace: {
+                    operation,
+                    result: {
+                        ...selected,
+                        input: { repository: 'attacker/replacement' },
+                    },
+                },
+            },
+        )).rejects.toMatchObject({ code: 'invalid_payload' });
+        await fixture.context.hostApi.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Review this pull request' },
+            { preparedReviewWorkspace: { operation, result: selected } },
+        );
+        expect(opened).toHaveBeenCalledWith(expect.objectContaining({
+            request: {
+                checkoutIntent: 'preparedReviewWorkspace',
+                prompt: 'Review this pull request',
+            },
+            preparedReviewWorkspace: { operation, result },
+            consumePreparedReviewWorkspace: true,
+        }));
+        await expect(fixture.context.hostApi.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Replay the preparation' },
+            { preparedReviewWorkspace: { operation, result: selected } },
+        )).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(opened).toHaveBeenCalledOnce();
+        await fixture.dispose();
+    });
+
     it('does not advertise semantic roles that no public producer can emit', () => {
         expect(PluginUiSemanticRoleSchema.safeParse('option').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('form').success).toBe(true);
@@ -1057,11 +1185,14 @@ describe('createPluginUiTestkit', () => {
         expect(target).toEqual({ role: 'button', name: 'Save review', state: { disabled: false } });
         expect(target).not.toHaveProperty('handle');
         expect(target).not.toHaveProperty('revision');
+        const invocationClock = vi.spyOn(Date, 'now').mockReturnValue(1_777_777_777_777);
         await fixture.press(target);
+        invocationClock.mockRestore();
         expect(semantic.invokes).toEqual([{
             revision: 1,
             handle: 'save-review',
             action: 'press',
+            invokedAtMs: 1_777_777_777_777,
             target: { role: 'button', name: 'Save review', state: { disabled: false } },
         }]);
 

@@ -281,7 +281,7 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(installTrustGuide).toContain('`outcome_unknown`');
     });
 
-    it('documents notification category, channel, and service authoring as externally deferred', () => {
+    it('distinguishes external notification source evidence from deferred loaded availability', () => {
         const guide = readFileSync(notificationsGuidePath, 'utf8');
         const apiGuide = readFileSync(join(documentationRoot, 'index.mdx'), 'utf8');
         const entrypointGuide = readFileSync(entrypointGuidePath, 'utf8');
@@ -292,8 +292,10 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).toContain('context.services.notifications.send');
         expect(guide).toContain('context.ui.notify(');
         expect(guide).toContain('examples/action-contract-producer');
-        expect(guide).toContain('Deferred for external authors');
-        expect(guide).toContain('first-party Preview');
+        expect(guide).toContain('external-author source-consumer evidence');
+        expect(guide).toContain('Loaded availability remains deferred');
+        expect(guide).toContain('nonbundled action-contract pair');
+        expect(guide).not.toContain('first-party Preview');
         expect(guide).not.toContain('host-internal');
         expect(apiGuide).toContain('- notification channels\n');
         expect(apiGuide).not.toContain('notification channels (deferred; host-internal)');
@@ -329,7 +331,7 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(actionsGuide).toContain('[Diagnostics](/plugins/testing/diagnostics)');
     });
 
-    it('links Session-Agent authors to the compiled and packed advanced package reference', () => {
+    it('links Session-Agent authors to the managed source-build advanced package reference', () => {
         const agentModeGuide = readFileSync(agentModeGuidePath, 'utf8');
         const agentRuntimeGuide = readFileSync(agentRuntimeGuidePath, 'utf8');
 
@@ -337,7 +339,8 @@ describe('Plugin SDK public authoring documentation', () => {
             expect(guide).toContain('advanced-package-root');
             expect(guide).toContain('happier plugins dev typecheck .');
             expect(guide).toContain('happier plugins dev build .');
-            expect(guide).toContain('happier plugins test . --packed');
+            expect(guide).toContain('happier plugins test .');
+            expect(guide).not.toContain('happier plugins test . --packed');
         }
     });
 

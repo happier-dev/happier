@@ -6,6 +6,7 @@ export type {
     AgentModelConfig,
     AgentModelNonAcpApplyScope,
 } from '@happier-dev/agents';
+export type { AgentSessionRuntimeCapabilities } from './agentRuntime/session.js';
 
 export {
     BackendSurfaceOperationCatalogV1 as AgentSurfaceOperationCatalogV1,

@@ -56,6 +56,7 @@ export type {
   AgentSessionHooksService,
   AgentSessionHostServices,
   AgentSessionHappierToolsService,
+  AgentSessionNativeHomeService,
   AgentSessionNativeToolBridgeConfig,
   AgentSessionNativeToolDescriptor,
   AgentTerminalHostCreateOrAttachRequest,
@@ -115,14 +116,18 @@ export type {
 } from './controls.js';
 export type {
   AgentExecutionRunEvent,
+  AgentFiniteExecutionRunHostOptions,
+  AgentFiniteExecutionRunProgressEvent,
+  AgentFiniteExecutionRunResult,
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
-  AgentExecutionRunSessionAdapterOptions,
   AgentExecutionRunSendResult,
   AgentExecutionRunStopResult,
 } from './executionRun.js';
-export { createExecutionRunHostBackendFromSessionRuntime } from './executionRun.js';
+export {
+  createFiniteExecutionRunHostRuntime,
+} from './executionRun.js';
 export type { AgentRuntime, AgentRuntimeBase, AgentToolExecutionLifecycle } from './runtime.js';
 export type {
   AgentProviderBindingAdapter,
@@ -134,6 +139,33 @@ export type {
   AgentProviderBindingResolvedFacts,
   AgentProviderCredentialTransport,
 } from './providerBinding.js';
+export type {
+  AgentConnectedAccountCredentialRevisionV1,
+  AgentConnectedAccountContinuityV1,
+  AgentConnectedAccountNativeAuthCodecInspectInputV1,
+  AgentConnectedAccountNativeAuthCodecMaterializeInputV1,
+  AgentConnectedAccountNativeAuthCodecV1,
+  AgentConnectedAccountProviderOutcomeInputV1,
+  AgentConnectedAccountProviderOutcomeSelectionV1,
+  AgentConnectedAccountProviderOutcomeTargetV1,
+  AgentConnectedAccountProviderOutcomeVerificationResultV1,
+  AgentConnectedAccountResumeFileCandidateV1,
+  AgentConnectedAccountResumeFileLookupV1,
+  AgentConnectedAccountResumeReachabilityInputV1,
+  AgentConnectedAccountResumeReachabilityResultV1,
+  AgentConnectedAccountRuntimeAuthAdapterResultV1,
+  AgentConnectedAccountRuntimeAuthAdapterV1,
+  AgentConnectedAccountRuntimeAuthFailureKind,
+  AgentConnectedAccountRuntimeAuthSelectionV1,
+  AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+  AgentConnectedAccountRuntimeAuthTargetV1,
+  AgentConnectedAccountRuntimeAuthUsageInputV1,
+  AgentConnectedAccountRuntimeAuthVerificationInputV1,
+  AgentConnectedAccountRuntimeFailureInputV1,
+  AgentConnectedAccountRuntimeFailureClassificationV1,
+  AgentConnectedAccountTransitionVerificationResultV1,
+} from './connectedAccountContinuity.js';
+export { AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS } from './connectedAccountContinuity.js';
 export type {
   AgentDaemonResolvedToolV1,
   AgentDaemonRunToolResultV1,
@@ -148,7 +180,12 @@ export type {
   AgentCliAuthContributionV1,
   AgentCliAuthStatusV1,
   AgentConnectedAccountLaunchContributionV1,
+  AgentConnectedAccountEnvironmentUseV1,
+  AgentConnectedAccountFileEnvironmentUseV1,
+  AgentConnectedAccountNativeHomeV1,
   AgentConnectedAccountRequestAuthUseV1,
+  AgentConnectedAccountSwitchContinuityV1,
+  AgentConnectedAccountSwitchTransitionV1,
   AgentConnectedAccountStateSharingDescriptorEntryV1,
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
@@ -194,6 +231,7 @@ export type {
   AgentSessionProviderBinding,
   AgentSessionProviderBindingUpstream,
   AgentSessionRuntime,
+  AgentSessionRuntimeCapabilitySupportLevel,
   AgentSessionRuntimeAuthApplyRequest,
   AgentSessionRuntimeAuthApplyResult,
   AgentSessionRuntimeAuthControl,
@@ -281,7 +319,11 @@ export type {
   AgentProviderBindingEnvironmentEntry,
   AgentProviderBindingModel,
 } from './providerBinding.js';
-export type { AgentSessionDisposeReason, AgentSessionProviderCheckpoint } from './session.js';
+export type {
+  AgentSessionDisposeReason,
+  AgentSessionProviderCheckpoint,
+  AgentSessionRuntimeCapabilities,
+} from './session.js';
 export type {
   AgentSessionActiveInputBinding,
   AgentSessionActiveInputService,

@@ -27,7 +27,6 @@ import {
   createApiSurfaceGenerationPlan,
   projectApiSurfaceInventory,
   projectPublishedApiSurfaceInventory,
-  projectRetainedPublishedApiSurfaceInventory,
 } from './apiSurface.mjs';
 import {
   createPublicSurfaceProgram,
@@ -211,23 +210,6 @@ async function readPreviousPublishedApiSurfaceInventory(options) {
     options.previousPublishedInventoryPath,
     'previous published API surface inventory',
   );
-}
-
-async function readRetainedPublishedApiSurfaceInventory(inventoryPath) {
-  const existing = await optionalLstat(inventoryPath);
-  if (!existing) return undefined;
-  // Let the sole output-preflight owner report invalid output kinds. This
-  // metadata reader must not become a parallel output-path validator.
-  if (!existing.isFile()) return undefined;
-  const retainedInventory = await readJson(inventoryPath, 'retained published API surface inventory');
-  if (!Array.isArray(retainedInventory?.symbols)) return retainedInventory;
-  const sinceCount = retainedInventory.symbols.filter((symbol) => (
-    symbol !== null
-    && typeof symbol === 'object'
-    && Object.hasOwn(symbol, 'since')
-  )).length;
-  if (sinceCount === 0) return undefined;
-  return retainedInventory;
 }
 
 /**
@@ -2236,7 +2218,6 @@ async function prepareApiSurfaceMaterialization(
   options,
   {
     requireVendoredWorkspaceDeclarations = true,
-    useRetainedPublicationMetadata = true,
   } = {},
 ) {
   assertPublicationOptions(options);
@@ -2292,21 +2273,13 @@ async function prepareApiSurfaceMaterialization(
     })),
   });
   const previousPublishedInventory = await readPreviousPublishedApiSurfaceInventory(options);
-  const retainedPublishedInventory = options.publishedVersion === undefined && useRetainedPublicationMetadata
-    ? await readRetainedPublishedApiSurfaceInventory(inventoryPath)
-    : undefined;
   const inventory = options.publishedVersion !== undefined
     ? projectPublishedApiSurfaceInventory({
       inventory: sourceInventory,
       publishedVersion: options.publishedVersion,
       previousPublishedInventory,
     })
-    : retainedPublishedInventory === undefined
-      ? sourceInventory
-      : projectRetainedPublishedApiSurfaceInventory({
-        inventory: sourceInventory,
-        retainedPublishedInventory,
-      });
+    : sourceInventory;
   const generationPlan = createApiSurfaceGenerationPlan(inventory);
   // Building the public-surface program is the single most expensive phase, and
   // the signature-closure assertion and the declaration report must both read
@@ -2346,10 +2319,7 @@ async function prepareApiSurfaceMaterialization(
  * inventory or writes public-contract outputs.
  */
 export async function readCurrentApiSurfaceInventory({ packageRoot }) {
-  const prepared = await prepareApiSurfaceMaterialization(
-    { packageRoot },
-    { useRetainedPublicationMetadata: false },
-  );
+  const prepared = await prepareApiSurfaceMaterialization({ packageRoot });
   return prepared.inventory;
 }
 
@@ -2503,7 +2473,6 @@ export async function runApiSurfaceSourceHarnessForTests({ packageRoot, onProgre
   });
   const prepared = await prepareApiSurfaceMaterialization(options, {
     requireVendoredWorkspaceDeclarations: false,
-    useRetainedPublicationMetadata: false,
   });
   const report = await finalizeApiSurfaceMaterialization(prepared, options, {
     materializedPlanOutputs: API_SURFACE_MATERIALIZED_PLAN_OUTPUTS,

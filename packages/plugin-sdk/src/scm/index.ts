@@ -103,6 +103,8 @@ export type { ScmRepositoryInitRequest } from './projections.js';
 export type { ScmRepositoryInitResponse } from './projections.js';
 export type { ScmRepositoryRemoveIndexLockRequest } from './projections.js';
 export type { ScmRepositoryRemoveIndexLockResponse } from './projections.js';
+export type { ScmReviewWorkspaceCurrentness } from './projections.js';
+export type { ScmReviewWorkspaceSourceTip } from './projections.js';
 export type { ScmSelectedMutationPath } from './projections.js';
 export { ScmSelectedMutationPathSchema } from './projections.js';
 export type { ScmStashApplyRequest } from './projections.js';

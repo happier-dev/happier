@@ -28,6 +28,8 @@ import type {
   AgentDaemonSpawnConnectedServicesV1,
   AgentDaemonSpawnHooks,
   AgentDaemonSpawnRuntimeSelectionV1,
+  AgentConnectedAccountLaunchContributionV1,
+  AgentConnectedAccountSwitchContinuityV1,
   AgentExperimentalVendorResumeSupportContributionV1,
   AgentExperimentalVendorResumeSupportInputV1,
   AgentPreflightJsonRpcRequestClientV1,
@@ -61,7 +63,7 @@ function readAuthorSurfaceContract() {
 }
 
 describe('public Agent runner-factory authoring contract', () => {
-  it('keeps the composite factory process-neutral and requires at least one primary facet', () => {
+  it('keeps each factory process-neutral with exactly one primary lifecycle facet', () => {
     expectTypeOf<AgentRuntimeFactory>().returns.toMatchTypeOf<
       AgentRuntime | Promise<AgentRuntime>
     >();
@@ -70,11 +72,12 @@ describe('public Agent runner-factory authoring contract', () => {
     const executionRuns = {} as AgentExecutionRunRuntimeFactory;
     const sessionRuntime = { sessions } satisfies AgentRuntime;
     const executionRuntime = { executionRuns } satisfies AgentRuntime;
-    const compositeRuntime = { sessions, executionRuns } satisfies AgentRuntime;
-
     expectTypeOf(sessionRuntime).toMatchTypeOf<AgentRuntime>();
     expectTypeOf(executionRuntime).toMatchTypeOf<AgentRuntime>();
-    expectTypeOf(compositeRuntime).toMatchTypeOf<AgentRuntime>();
+
+/* @sdk-negative-type-case:src-agentRuntime-runnerFactoryAuthoringContract-test-ts-composite:QSBydW50aW1lIGNhbm5vdCByZWdpc3RlciBib3RoIFNlc3Npb24gYW5kIGV4ZWN1dGlvbi1ydW4gbGlmZWN5Y2xlIG93bmVycy4=:Y29uc3QgY29tcG9zaXRlUnVudGltZTogQWdlbnRSdW50aW1lID0geyBzZXNzaW9ucywgZXhlY3V0aW9uUnVucyB9Ow== */
+const compositeRuntime = undefined as never; /* @sdk-negative-type-case-end */
+    void compositeRuntime;
 
 /* @sdk-negative-type-case:src-agentRuntime-runnerFactoryAuthoringContract-test-ts-89:4oCUIGEgZmFjdG9yeSB3aXRoIG5laXRoZXIgcHJpbWFyeSBmYWNldCBpcyBub3QgYW4gQWdlbnQgcnVudGltZS4:Y29uc3QgZW1wdHlSdW50aW1lOiBBZ2VudFJ1bnRpbWUgPSB7fTs */
 const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
@@ -245,6 +248,26 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expectTypeOf<AgentDaemonSpawnConnectedServicesV1['v']>().toEqualTypeOf<1>();
   });
 
+  it('keeps account-switch continuity static and bounded on the existing launch seam', () => {
+    expectTypeOf<keyof AgentConnectedAccountLaunchContributionV1>().toEqualTypeOf<
+      | 'requestAuthUses'
+      | 'fileEnvironmentUses'
+      | 'environmentUses'
+      | 'switchContinuity'
+      | 'stateSharingDescriptor'
+      | 'continuity'
+    >();
+    expectTypeOf<keyof AgentConnectedAccountSwitchContinuityV1>().toEqualTypeOf<
+      | 'continuityMode'
+      | 'supportedTransitions'
+      | 'providerStateSharingRequired'
+    >();
+    expectTypeOf<AgentConnectedAccountSwitchContinuityV1>()
+      .not.toHaveProperty('resolve');
+    expectTypeOf<AgentConnectedAccountSwitchContinuityV1>()
+      .not.toHaveProperty('restart');
+  });
+
   it('projects the registration and locator types through the normal Agent runtime surface', () => {
     const agentRuntimeSurface = new Set<string>(
       readAuthorSurfaceContract().exports['./agents/runtime'],
@@ -256,6 +279,9 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       'AgentDaemonSpawnHooks',
       'AgentDaemonSpawnRuntimeSelectionV1',
       'AgentDaemonSpawnConnectedServicesV1',
+      'AgentConnectedAccountLaunchContributionV1',
+      'AgentConnectedAccountSwitchContinuityV1',
+      'AgentConnectedAccountSwitchTransitionV1',
     ].filter((name) => !agentRuntimeSurface.has(name))).toEqual([]);
   });
 });

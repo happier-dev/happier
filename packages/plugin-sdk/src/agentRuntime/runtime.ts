@@ -22,10 +22,10 @@ export type AgentRuntime = Readonly<{
 }> & (
   | Readonly<{
       sessions: AgentSessionRuntimeFactory;
-      executionRuns?: AgentExecutionRunRuntimeFactory;
+      executionRuns?: never;
     }>
   | Readonly<{
-      sessions?: AgentSessionRuntimeFactory;
+      sessions?: never;
       executionRuns: AgentExecutionRunRuntimeFactory;
     }>
 );

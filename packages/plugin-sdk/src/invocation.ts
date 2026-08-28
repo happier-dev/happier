@@ -2,6 +2,7 @@
 import {
     PluginMachineMaterializationRefV1Schema as canonicalPluginMachineMaterializationRefV1Schema,
 } from '@happier-dev/protocol';
+import type { AutomationRunCause as ProtocolAutomationRunCause } from '@happier-dev/protocol';
 import type { PluginServices } from './services/index.js';
 import type { PresentationService } from './interactions.js';
 import type {
@@ -60,6 +61,9 @@ export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'voice' |
 
 export type PluginInvocationOriginSurface = Exclude<PluginInvocationSurface, 'plugin'>;
 
+/** Portable projection of immutable Automation admission provenance. */
+export type PluginAutomationRunCause = ProtocolAutomationRunCause;
+
 /**
  * Host-stamped provenance for an invocation. Plugins receive this data but do
  * not supply it, so a nested call gets a fresh caller for its immediate edge.
@@ -83,7 +87,8 @@ export type PluginInvocationCaller =
         kind: 'automationRun';
         runId: string;
         automationId: string;
-        origin: 'schedule' | 'manual' | 'event' | 'conversation';
+        /** Exact immutable cause frozen by canonical Automation admission. */
+        cause: PluginAutomationRunCause;
     }>;
 
 export type PluginActionOperationProgressUpdateV1 = Readonly<{
@@ -102,6 +107,8 @@ export interface PluginInvocationContext {
     readonly plugin: PluginIdentity;
     readonly contribution: PluginInvocationContributionIdentity;
     readonly surface: PluginInvocationSurface;
+    /** Host clock captured once when this invocation context is admitted. */
+    readonly invokedAtMs: number;
     readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{ id: string }>;
     /**

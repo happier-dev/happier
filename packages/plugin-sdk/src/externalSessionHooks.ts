@@ -627,6 +627,12 @@ function snapshotVariant(value: unknown): AgentExternalSessionHookInstallationVa
 export function validateAgentExternalSessionHooksContribution(
     value: unknown,
 ): AgentExternalSessionHooksContribution {
+    readRecord(
+        value,
+        ['installationVariants', 'resolveInstallation', 'mapHookEvent'],
+        ['installationVariants', 'resolveInstallation', 'mapHookEvent'],
+        'contribution',
+    );
     const receiver = requireStaticRegistrationObject(
         value,
         'External Session hooks contribution',

@@ -380,27 +380,24 @@ describe('author signature closure source contract', () => {
             readFile(new URL('../../plugins/scm-git/src/operations/materializeGitWorkspaceCheckout.ts', import.meta.url), 'utf8'),
         ]);
 
-        expect(agentSessionSource).toContain(
-            "RuntimeDescriptorV1 as ProtocolRuntimeDescriptorV1",
-        );
-        expect(agentSessionSource).toContain(
-            'export type RuntimeDescriptorV1 = ProtocolRuntimeDescriptorV1;',
-        );
+        expect(agentSessionSource).not.toContain('@happier-dev/protocol');
+        expect(agentSessionSource).toContain('export type RuntimeDescriptorV1 = Readonly<{');
         expect(agentRuntimeProjectionSource).toMatch(
             /export type \{[\s\S]*\bRuntimeDescriptorV1,[\s\S]*\} from '\.\/session\.js';/u,
         );
         expect(agentRuntimePublicSource).toContain(
             "export type { RuntimeDescriptorV1 } from '../../agentRuntime/projections.js';",
         );
-        expect(externalSessionsPublicSource).toContain(
-            "export type { RuntimeDescriptorV1 } from '../../agentRuntime/projections.js';",
-        );
+        expect(externalSessionsPublicSource).not.toContain('RuntimeDescriptorV1');
 
         for (const source of [scmBackendSource, scmBackendPublicSource]) {
             expect(source).toContain('ScmReviewWorkspaceMaterializePreparedRequest');
             expect(source).toContain('ScmReviewWorkspaceMaterializePreparedResponse');
         }
-        expect(scmBackendSource).toContain("from '@happier-dev/protocol';");
+        expect(scmBackendSource).not.toContain('@happier-dev/protocol');
+        expect(scmBackendSource).toContain(
+            'export type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{',
+        );
         expect(scmBackendPublicSource).toContain("from '../backend.js';");
         for (const name of [
             'ScmReviewWorkspaceCurrentness',

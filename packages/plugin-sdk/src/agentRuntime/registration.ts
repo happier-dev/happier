@@ -4,6 +4,7 @@ import type {
   AttachSessionMetadata,
 } from './projections.js';
 import type { JsonValue } from '../identity.js';
+import type { AgentConnectedAccountContinuityV1 } from './connectedAccountContinuity.js';
 
 /**
  * Secret-free connected-service selection supplied to an Agent daemon spawn
@@ -314,12 +315,19 @@ export type AgentConnectedAccountStateSharingDynamicEntryPatternV1 = Readonly<{
   allowHardLinkFallback?: boolean;
 }>;
 
+/** Exact native home used as the source for host-owned state sharing. */
+export type AgentConnectedAccountNativeHomeV1 = Readonly<{
+  environmentKey: string;
+  defaultRelativePath: string;
+}>;
+
 /**
  * Static Agent-native classification of a materialized Connected Account
  * home. The Agent never receives a materialized root or filesystem capability
  * through this declaration; the existing host state-sharing owner consumes it.
  */
 export type AgentConnectedAccountStateSharingDescriptorV1 = Readonly<{
+  nativeHome?: AgentConnectedAccountNativeHomeV1;
   providerSupportStatus: 'supported' | 'unsupported';
   config: Readonly<{
     supported: boolean;
@@ -357,6 +365,40 @@ export type AgentConnectedAccountRequestAuthUseV1 = Readonly<{
   }>;
 }>;
 
+/** One host-materialized credential file projected into an Agent environment variable. */
+export type AgentConnectedAccountFileEnvironmentUseV1 = Readonly<{
+  purpose: string;
+  fileId: string;
+  environmentKey: string;
+}>;
+
+/** One host-materialized credential value projected into an Agent environment variable. */
+export type AgentConnectedAccountEnvironmentUseV1 = Readonly<{
+  purpose: string;
+  environmentKey: string;
+}>;
+
+export type AgentConnectedAccountSwitchTransitionV1 =
+  | 'native_to_connected'
+  | 'connected_to_native'
+  | 'connected_to_connected'
+  | 'same_connected_group';
+
+/**
+ * Static Agent-owned facts used by the host's existing-Session account-switch
+ * coordinator. The host remains the transition, restart, and Session lifecycle
+ * owner; this declaration only classifies which native transitions preserve
+ * continuity for this Agent.
+ */
+export type AgentConnectedAccountSwitchContinuityV1 = Readonly<{
+  continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';
+  supportedTransitions?: readonly AgentConnectedAccountSwitchTransitionV1[];
+  providerStateSharingRequired?: Readonly<{
+    serviceIds?: readonly string[];
+    supportedTransitions: readonly AgentConnectedAccountSwitchTransitionV1[];
+  }>;
+}>;
+
 /**
  * Focused pre-open Connected Account facts captured with one Agent runtime
  * registration. Manifest declarations remain the authority for service and
@@ -365,7 +407,16 @@ export type AgentConnectedAccountRequestAuthUseV1 = Readonly<{
  */
 export type AgentConnectedAccountLaunchContributionV1 = Readonly<{
   requestAuthUses?: readonly AgentConnectedAccountRequestAuthUseV1[];
+  fileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
+  environmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];
+  switchContinuity?: AgentConnectedAccountSwitchContinuityV1;
   stateSharingDescriptor?: AgentConnectedAccountStateSharingDescriptorV1;
+  /**
+   * Agent-owned interpretation required by host-owned account switching and
+   * retained-session continuity. Registration generation currentness remains
+   * enforced by the host before and after every callback.
+   */
+  continuity?: AgentConnectedAccountContinuityV1;
 }>;
 
 /**

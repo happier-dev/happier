@@ -14,6 +14,7 @@ import {
     PluginUiInspectComposerContentRequestV1Schema,
     PluginUiInspectComposerContentResultV1Schema,
     PluginUiExecuteActionRequestV1Schema,
+    PluginUiEphemeralInputSettlementV1Schema,
     PluginUiFocusComposerRequestV1Schema,
     PluginUiFocusComposerResultV1Schema,
     PluginUiHostApiDiagnosticV1Schema,
@@ -22,6 +23,7 @@ import {
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiHostApiWireIdentityV1Schema,
     PluginUiJsonValueV1Schema,
+    PluginUiOpenNewSessionRequestV1Schema,
     PluginUiOpenSurfaceRequestV1Schema,
     PluginUiReplacePageLocationRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
@@ -38,6 +40,8 @@ import {
     PluginUiLaunchInputV1Schema,
     PluginUiResourceSubscriptionTargetV1Schema,
     PluginUiSelectedActionInputCarrierV1Schema,
+    pluginUiSelectedActionInputsEqual,
+    pluginUiTargetedContributionOperationKey,
     PluginUiSubPathV1Schema,
     PluginUiWatchComposerRequestV1Schema,
     type PluginUiHostApiWireEnvelopeV1,
@@ -48,6 +52,7 @@ import {
     OpenableContentReadRequestV1Schema,
     OpenableContentRefV1Schema,
     readDaemonPluginUiTargetedSurfaceMountV1,
+    pluginJsonValuesEqual,
 } from '@happier-dev/protocol';
 import {
     derivePluginUiTargetedSurfaceMountInstanceKeyV1,
@@ -90,6 +95,8 @@ import type {
     SurfaceContext,
     SelectActionInputRequest,
     SelectActionInputResult,
+    EphemeralInputSettlement,
+    OpenNewSessionRequest,
 } from '../ui/hostApi.js';
 import {
     ComposerRefV1Schema,
@@ -254,6 +261,8 @@ export interface PluginUiSemanticSurfaceMount {
         revision: number;
         handle: string;
         action: 'press';
+        /** Host-stamped once when the semantic action is admitted. */
+        invokedAtMs: number;
         /** Re-read by the adapter immediately before invocation. */
         target: PluginUiSemanticTarget;
     }>): Promise<void>;
@@ -526,6 +535,20 @@ export type PluginUiTestkitSelectActionInputInput = Readonly<{
     signal: AbortSignal;
 }>;
 
+export type PluginUiTestkitOpenNewSessionInput = Readonly<{
+    request: OpenNewSessionRequest;
+    /** Exact transient preparation selected by this same fixture mount. */
+    preparedReviewWorkspace?: PluginUiSelectedActionInputCarrierV1;
+    /** Mirrors the mounted host's terminal-consumption fact. */
+    consumePreparedReviewWorkspace?: true;
+    signal: AbortSignal;
+}>;
+
+export type PluginUiTestkitSettleEphemeralInputInput = Readonly<{
+    settlement: EphemeralInputSettlement;
+    signal: AbortSignal;
+}>;
+
 export type PluginUiTestkitHostHandlers = Readonly<{
     publishCurrentUiContext?: (
         input: Readonly<{ enrichment: PluginUiContextEnrichmentV1 | null; signal: AbortSignal }>,
@@ -534,6 +557,12 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     selectActionInput?: (
         input: PluginUiTestkitSelectActionInputInput,
     ) => SelectActionInputResult | Promise<SelectActionInputResult>;
+    openNewSession?: (
+        input: PluginUiTestkitOpenNewSessionInput,
+    ) => void | Promise<void>;
+    settleEphemeralInput?: (
+        input: PluginUiTestkitSettleEphemeralInputInput,
+    ) => void | Promise<void>;
     readResource?: (input: PluginUiTestkitReadResourceInput) => ResourceContent | Promise<ResourceContent>;
     statOpenableContent?: (
         input: PluginUiTestkitStatOpenableContentInput,
@@ -619,6 +648,8 @@ const hostMethodPolicies = {
     writeClipboard: 'writeClipboard',
     openExternalLink: 'openExternalLink',
     selectActionInput: 'selectActionInput',
+    openNewSession: 'openNewSession',
+    settleEphemeralInput: 'settleEphemeralInput',
     activeComposer: 'activeComposer',
     readComposer: 'readComposer',
     watchComposer: 'watchComposer',
@@ -975,6 +1006,11 @@ async function createPluginUiTestkitInternal<TSurface>(
     const contextSubscriptions = new Set<string>();
     const resourceSubscriptions = new Map<string, ResourceSubscription>();
     const composerHostResources = new Map<string, ComposerHostResource>();
+    const selectedInputByOperation = new Map<string, Readonly<{
+        carrier: PluginUiSelectedActionInputCarrierV1;
+        requestId: string;
+    }>>();
+    const selectedOperationKeyByRequest = new Map<string, string>();
     const lifetime = new AbortController();
     const targets = new WeakMap<PluginUiSemanticTarget, PrivateSemanticTarget>();
     let active = true;
@@ -998,6 +1034,43 @@ async function createPluginUiTestkitInternal<TSurface>(
 
     function assertActive(): void {
         if (!active) throw fixtureError('stale_surface', 'The plugin UI fixture generation is retired.');
+    }
+
+    function retainSelectedInput(
+        carrier: PluginUiSelectedActionInputCarrierV1,
+        requestId: string,
+    ): void {
+        const key = pluginUiTargetedContributionOperationKey(carrier.operation);
+        const previous = selectedInputByOperation.get(key);
+        if (previous !== undefined) selectedOperationKeyByRequest.delete(previous.requestId);
+        selectedInputByOperation.set(key, Object.freeze({ carrier, requestId }));
+        selectedOperationKeyByRequest.set(requestId, key);
+    }
+
+    function readActiveSelectedInput(
+        carrier: PluginUiSelectedActionInputCarrierV1,
+        consume: boolean,
+    ): PluginUiSelectedActionInputCarrierV1 | null {
+        const key = pluginUiTargetedContributionOperationKey(carrier.operation);
+        const activeSelection = selectedInputByOperation.get(key);
+        if (
+            activeSelection === undefined
+            || !pluginJsonValuesEqual(activeSelection.carrier.operation, carrier.operation)
+            || !pluginUiSelectedActionInputsEqual(activeSelection.carrier.result, carrier.result)
+        ) return null;
+        if (consume) {
+            selectedInputByOperation.delete(key);
+            selectedOperationKeyByRequest.delete(activeSelection.requestId);
+        }
+        return activeSelection.carrier;
+    }
+
+    function retireSelectedInputRequest(requestId: string): void {
+        const key = selectedOperationKeyByRequest.get(requestId);
+        if (key === undefined) return;
+        const activeSelection = selectedInputByOperation.get(key);
+        if (activeSelection?.requestId === requestId) selectedInputByOperation.delete(key);
+        selectedOperationKeyByRequest.delete(requestId);
     }
 
     function sendFailure(
@@ -1054,6 +1127,8 @@ async function createPluginUiTestkitInternal<TSurface>(
         activeRequests.clear();
         contextSubscriptions.clear();
         resourceSubscriptions.clear();
+        selectedInputByOperation.clear();
+        selectedOperationKeyByRequest.clear();
         const composerResources = [...composerHostResources.values()];
         composerHostResources.clear();
         const mounted = semanticMount;
@@ -1122,10 +1197,21 @@ async function createPluginUiTestkitInternal<TSurface>(
                 if (selectedActionInput !== undefined && !selectedActionInput.success) {
                     throw fixtureError('invalid_payload', 'executeAction selected Action input is invalid.');
                 }
+                const activeSelectedActionInput = selectedActionInput?.success
+                    ? readActiveSelectedInput(
+                        selectedActionInput.data,
+                        message.consumeSelectedActionInput === true,
+                    )
+                    : undefined;
+                if (selectedActionInput?.success && activeSelectedActionInput === null) {
+                    throw fixtureError('invalid_payload', 'executeAction selected Action input is not active.');
+                }
                 return await handlers.executeAction({
                     action: payload.data.action,
                     input: payload.data.input,
-                    ...(selectedActionInput === undefined ? {} : { selectedActionInput: selectedActionInput.data }),
+                    ...(activeSelectedActionInput === undefined || activeSelectedActionInput === null
+                        ? {}
+                        : { selectedActionInput: activeSelectedActionInput }),
                     ...(message.consumeSelectedActionInput === undefined
                         ? {}
                         : { consumeSelectedActionInput: message.consumeSelectedActionInput }),
@@ -1150,7 +1236,78 @@ async function createPluginUiTestkitInternal<TSurface>(
                 if (!wireResult.success) {
                     throw fixtureError('invalid_payload', 'selectActionInput result is not transport-safe JSON.');
                 }
+                if (result.data.kind === 'submitted' && 'operation' in payload.data) {
+                    const carrier = PluginUiSelectedActionInputCarrierV1Schema.safeParse({
+                        operation: payload.data.operation,
+                        result: result.data,
+                    });
+                    if (!carrier.success) {
+                        throw fixtureError(
+                            'invalid_payload',
+                            'selectActionInput result does not match its targeted operation.',
+                        );
+                    }
+                    retainSelectedInput(carrier.data, message.requestId);
+                }
                 return wireResult.data;
+            }
+            case 'openNewSession': {
+                if (!handlers.openNewSession) {
+                    throw fixtureError('unsupported_method', 'openNewSession is not installed.');
+                }
+                const payload = PluginUiOpenNewSessionRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) {
+                    throw fixtureError('invalid_payload', 'openNewSession payload is invalid.');
+                }
+                const selected = (
+                    message.targetedOperation === undefined && message.selectedActionInput === undefined
+                )
+                    ? undefined
+                    : PluginUiSelectedActionInputCarrierV1Schema.safeParse({
+                        operation: message.targetedOperation,
+                        result: message.selectedActionInput,
+                    });
+                if (
+                    (selected !== undefined && !selected.success)
+                    || (payload.data.checkoutIntent === 'preparedReviewWorkspace')
+                        !== (selected !== undefined && selected.success)
+                ) {
+                    throw fixtureError(
+                        'invalid_payload',
+                        'openNewSession prepared review-workspace selection is invalid.',
+                    );
+                }
+                const activeSelected = selected?.success
+                    ? readActiveSelectedInput(selected.data, true)
+                    : undefined;
+                if (selected?.success && activeSelected === null) {
+                    throw fixtureError(
+                        'invalid_payload',
+                        'openNewSession prepared review-workspace selection is not active.',
+                    );
+                }
+                await handlers.openNewSession({
+                    request: payload.data,
+                    ...(activeSelected === undefined || activeSelected === null
+                        ? {}
+                        : { preparedReviewWorkspace: activeSelected }),
+                    ...(message.consumeSelectedActionInput === true
+                        ? { consumePreparedReviewWorkspace: true }
+                        : {}),
+                    signal,
+                });
+                return null;
+            }
+            case 'settleEphemeralInput': {
+                if (!handlers.settleEphemeralInput) {
+                    throw fixtureError('unsupported_method', 'settleEphemeralInput is not installed.');
+                }
+                const settlement = PluginUiEphemeralInputSettlementV1Schema.safeParse(message.payload);
+                if (!settlement.success) {
+                    throw fixtureError('invalid_payload', 'settleEphemeralInput payload is invalid.');
+                }
+                await handlers.settleEphemeralInput({ settlement: settlement.data, signal });
+                return null;
             }
             case 'readResource': {
                 if (!handlers.readResource) throw fixtureError('unsupported_method', 'readResource is not installed.');
@@ -1532,6 +1689,7 @@ async function createPluginUiTestkitInternal<TSurface>(
         }
         if (message.kind === 'cancel') {
             activeRequests.get(message.requestId)?.controller.abort('aborted');
+            retireSelectedInputRequest(message.requestId);
             return;
         }
         if (message.kind === 'disposeHostResource') {
@@ -1774,6 +1932,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 revision: privateTarget.adapterRevision,
                 handle: privateTarget.handle,
                 action: 'press',
+                invokedAtMs: Date.now(),
                 target: privateTarget.target,
             });
         },

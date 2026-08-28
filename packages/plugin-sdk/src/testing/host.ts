@@ -1,5 +1,6 @@
 /** @moduleRealm daemon */
 import {
+    arePluginMachineMaterializationRefsEqual,
     createPluginActionInvocation,
     readPluginActionFailureAuthorPayload,
     MessageActionAvailableSnapshotV1Schema,
@@ -25,6 +26,7 @@ import type {
     ContributedActionExecutionWithOriginResult,
 } from '../actions/service.js';
 import type { PluginCleanup } from '../activation.js';
+import { readPluginActionInputParser } from '../host/registration/actionInputParser.js';
 import { PluginError } from '../errors.js';
 import {
     parsePluginManifest,
@@ -532,10 +534,12 @@ export async function createPluginTestkit(
                 if (registration.family !== 'actions') return [];
                 const definition = actionDefinitions.get(registration.localId);
                 if (!definition) return [];
+                const inputParser = readPluginActionInputParser(registration.value);
                 return [[registration.localId, createPluginActionInvocation({
                     pluginId: manifest.id,
                     localId: registration.localId,
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
+                    ...(inputParser === undefined ? {} : { inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
                     generationSignal: invocationLifetime.signal,
                     isCurrent: () => state === 'active',
@@ -649,9 +653,7 @@ export async function createPluginTestkit(
         const callerMaterialization = caller.materialization;
         return currentMaterialization !== undefined
             && callerMaterialization !== undefined
-            && currentMaterialization.pluginId === callerMaterialization.pluginId
-            && currentMaterialization.machineId === callerMaterialization.machineId
-            && currentMaterialization.materializationId === callerMaterialization.materializationId;
+            && arePluginMachineMaterializationRefsEqual(currentMaterialization, callerMaterialization);
     }
 
     function throwIfContributedActionCallerInactive(
@@ -1216,6 +1218,7 @@ export async function createPluginTestkit(
                     plugin: Object.freeze({ id: manifest.id, version: manifest.version }),
                     contribution: Object.freeze({ id: invocationOptions.localId, qualifiedId }),
                     surface: invocationOptions.surface,
+                    invokedAtMs: Date.now(),
                     ...(invocationOptions.caller === undefined ? {} : { caller: invocationOptions.caller }),
                     ...(invocationOptions.sessionId === undefined
                         ? {}

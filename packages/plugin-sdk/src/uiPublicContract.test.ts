@@ -19,6 +19,7 @@ import type {
     PluginUiDeclarativeNodeV2,
     PluginUiDeclarativeToneV2,
     PluginUiIconTokenV1,
+    PluginUiHostMethodV1,
     PluginUiPageHeaderActionV1,
     PluginUiSemanticCommandV1,
     PluginUiSessionServerStartDraftV1,
@@ -31,10 +32,15 @@ import type {
     PluginUiToneV1 as CanonicalPluginUiToneV1,
 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import type { PluginUiChannelV1 as CanonicalPluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiHostMethodV1 as CanonicalPluginUiHostMethodV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiViewDestinationBindingInputV2 as CanonicalPluginUiViewDestinationBindingInputV2,
+    PluginUiViewInlineBindingInputV2 as CanonicalPluginUiViewInlineBindingInputV2,
 } from '@happier-dev/protocol/plugins/contributions/ui';
-import type { PluginUiViewDestinationBindingInputV2 as SdkPluginUiViewDestinationBindingInputV2 } from './ui/publicContract.js';
+import type {
+    PluginUiViewDestinationBindingInputV2 as SdkPluginUiViewDestinationBindingInputV2,
+    PluginUiViewInlineBindingInputV2 as SdkPluginUiViewInlineBindingInputV2,
+} from './ui/publicContract.js';
 
 /**
  * The Registry row — not a literal restated in this file — owns which container
@@ -366,6 +372,8 @@ describe('UI/testing public type contract', () => {
         // fail at all when the Registry itself moved.
         expectTypeOf<ViewArmCapabilities<SdkPluginUiViewDestinationBindingInputV2>>()
             .toEqualTypeOf<ViewArmCapabilities<CanonicalPluginUiViewDestinationBindingInputV2>>();
+        expectTypeOf<SdkPluginUiViewInlineBindingInputV2>()
+            .toEqualTypeOf<CanonicalPluginUiViewInlineBindingInputV2>();
         // The admitted arm carries the SDK's own projected action row, not the
         // Protocol declaration site an external author cannot resolve.
         expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['headerActions']>()
@@ -392,7 +400,10 @@ describe('UI/testing public type contract', () => {
         // `PluginUiDestinationBadgeV1Schema.tone` IS the full `PluginUiToneV1Schema`
         // (accent included), so a public badge type that omits `accent` denies an
         // author a value the canonical parser admits.
-        expectTypeOf<NonNullable<PluginUiViewV2Input['badge']>['tone']>()
+        expectTypeOf<NonNullable<Extract<
+            PluginUiViewV2Input,
+            { container: 'appPage' }
+        >['badge']>['tone']>()
             .toEqualTypeOf<CanonicalPluginUiToneV1 | undefined>();
         // Composer attachment presentation is the one canonical narrowing
         // (`PluginUiToneV1Schema.exclude(['accent'])`), expressed as a derivation
@@ -421,6 +432,7 @@ describe('UI/testing public type contract', () => {
         // not, though `PluginUiCompatibilityV1Schema` reads both from the same
         // Protocol module.
         expectTypeOf<PluginUiChannel>().toEqualTypeOf<CanonicalPluginUiChannelV1>();
+        expectTypeOf<PluginUiHostMethodV1>().toEqualTypeOf<CanonicalPluginUiHostMethodV1>();
     });
 
     it('is enforced by the TypeScript imports in this module', () => {

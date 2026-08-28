@@ -109,6 +109,21 @@ const compiledPayloadAdapter: AgentContributions = [{
     },
 }];
 
+const nonScalarStaticSpawnOption: AgentContributions = [{
+    id: 'acme.agent',
+    ui: {
+        behavior: {
+            payload: {
+                spawnSessionExtras: {
+                    kind: 'static',
+                    // @ts-expect-error static spawn configuration is scalar-only.
+                    value: { acmeMode: { nested: true } },
+                },
+            },
+        },
+    },
+}];
+
 const compiledMessageMetaDescriptors: AgentContributions = [{
     id: 'acme.agent',
     // @ts-expect-error compiled message-meta descriptor ids are not authorable.
@@ -122,5 +137,6 @@ export type _AgentUiGrammarFixtures = [
     typeof repeatedAgentIdentity,
     typeof compiledComponentId,
     typeof compiledPayloadAdapter,
+    typeof nonScalarStaticSpawnOption,
     typeof compiledMessageMetaDescriptors,
 ];

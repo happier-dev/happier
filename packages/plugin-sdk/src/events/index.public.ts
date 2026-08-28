@@ -10,6 +10,7 @@ export type { HostEventTarget } from '../events.js';
 export type { HostEvents } from '../events.js';
 export type { PluginEventAutomationSetupResultV1 } from '../events.js';
 export { PluginEventAutomationSetupResultV1Schema } from '../events.js';
+export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';
 export type { PluginEventAutomationHistoryGapResetActionInputV1 } from '../events.js';
 export { PluginEventAutomationHistoryGapResetActionInputV1JsonSchema } from '../events.js';
 export { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '../events.js';
@@ -20,3 +21,8 @@ export type { PluginEventEmitResult } from '../events.js';
 export type { PluginEventEnvelope } from '../events.js';
 export type { PluginEventHandler } from '../activation.js';
 export type { PluginEvents } from '../events.js';
+export type {
+    CheckpointedPluginEventDispositionV1,
+    CheckpointedPluginEventObservationV1,
+} from '../checkpointedEventAutomation.js';
+export { admitCheckpointedPluginEventObservationV1 } from '../checkpointedEventAutomation.js';

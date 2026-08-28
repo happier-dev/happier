@@ -89,6 +89,12 @@
       "react-native": "./dist/host/registration/index.js",
       "default": "./dist/host/registration/index.js"
     },
+    "./host/ui": {
+      "types": "./dist/host/ui/index.d.ts",
+      "browser": "./dist/host/ui/index.js",
+      "react-native": "./dist/host/ui/index.js",
+      "default": "./dist/host/ui/index.js"
+    },
     "./http": {
       "types": "./dist/http/index.d.ts",
       "default": "./dist/http/index.js"
@@ -222,6 +228,14 @@
     "examples/action-contract-producer/src/index.ts",
     "examples/action-contract-producer/test/index.test.mjs",
     "examples/action-contract-producer/tsconfig.json",
+    "examples/automation-event-source/README.md",
+    "examples/automation-event-source/index.html",
+    "examples/automation-event-source/package.json",
+    "examples/automation-event-source/pluginUiBuild.ts",
+    "examples/automation-event-source/src/index.ts",
+    "examples/automation-event-source/test/index.test.mjs",
+    "examples/automation-event-source/tsconfig.json",
+    "examples/automation-event-source/ui/repositoryPicker.web.ts",
     "examples/operation-only-channel-provider/package.json",
     "examples/operation-only-channel-provider/README.md",
     "examples/operation-only-channel-provider/src/index.ts",
@@ -361,7 +375,7 @@
   ],
   "happier": {
     "publicSdkRelease": {
-      "posture": "prepublish_hold",
+      "posture": "developer_preview",
       "supportPolicy": "README.md#public-sdk-release-posture",
       "canonicalAuthoringDocs": "../../apps/docs/content/docs/plugins/quickstart.mdx",
       "exampleFixtures": "../../apps/cli/src/plugins/testkit/fixtures/authoring-examples",
@@ -406,8 +420,8 @@
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\/])node_modules([\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'plugin-sdk',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "yarn -s test:source && yarn -s test:local:adjacent",
-    "test:local:adjacent": "yarn --cwd examples/public-authoring build && node --test scripts/*.test.mjs examples/action-contract-consumer/test/index.test.mjs examples/action-contract-producer/test/index.test.mjs examples/operation-only-channel-provider/test/index.test.mjs examples/advanced-package-root/test/index.test.mjs examples/background-indexer/test/index.test.mjs examples/code-defined/test/index.test.mjs examples/descriptor-only/test/index.test.mjs examples/hosted-web/test/index.test.mjs examples/multi-mode-fallback/test/index.test.mjs examples/production-hosted-reference/test/index.test.mjs examples/projects-tasks/test/index.test.mjs examples/public-authoring/test/index.test.mjs examples/react-native-dev-hot-reload/test/index.test.mjs examples/react-native-installed/test/index.test.mjs examples/session-agent/test/index.test.mjs examples/tracked-action/test/index.test.mjs",
-    "test:prepared": "vitest run --exclude \"scripts/*.test.mjs\" --exclude \"examples/**/test/*.test.mjs\" --exclude \"src/declarationClosureIdentity.test.ts\" && vitest run --config vitest.declaration-closure.config.ts && node --test ../../scripts/api-governance/apiGovernance.test.mjs scripts/*.test.mjs examples/action-contract-consumer/test/index.test.mjs examples/action-contract-producer/test/index.test.mjs examples/operation-only-channel-provider/test/index.test.mjs examples/advanced-package-root/test/index.test.mjs examples/background-indexer/test/index.test.mjs examples/code-defined/test/index.test.mjs examples/descriptor-only/test/index.test.mjs examples/hosted-web/test/index.test.mjs examples/multi-mode-fallback/test/index.test.mjs examples/production-hosted-reference/test/index.test.mjs examples/projects-tasks/test/index.test.mjs examples/public-authoring/test/index.test.mjs examples/react-native-dev-hot-reload/test/index.test.mjs examples/react-native-installed/test/index.test.mjs examples/session-agent/test/index.test.mjs examples/tracked-action/test/index.test.mjs",
+    "test:local:adjacent": "yarn --cwd examples/public-authoring build && yarn --cwd examples/automation-event-source build && node --test scripts/*.test.mjs examples/action-contract-consumer/test/index.test.mjs examples/action-contract-producer/test/index.test.mjs examples/automation-event-source/test/index.test.mjs examples/operation-only-channel-provider/test/index.test.mjs examples/advanced-package-root/test/index.test.mjs examples/background-indexer/test/index.test.mjs examples/code-defined/test/index.test.mjs examples/descriptor-only/test/index.test.mjs examples/hosted-web/test/index.test.mjs examples/multi-mode-fallback/test/index.test.mjs examples/production-hosted-reference/test/index.test.mjs examples/projects-tasks/test/index.test.mjs examples/public-authoring/test/index.test.mjs examples/react-native-dev-hot-reload/test/index.test.mjs examples/react-native-installed/test/index.test.mjs examples/session-agent/test/index.test.mjs examples/tracked-action/test/index.test.mjs",
+    "test:prepared": "vitest run --exclude \"scripts/*.test.mjs\" --exclude \"examples/**/test/*.test.mjs\" --exclude \"src/declarationClosureIdentity.test.ts\" && vitest run --config vitest.declaration-closure.config.ts && yarn --cwd examples/automation-event-source build && node --test ../../scripts/api-governance/apiGovernance.test.mjs scripts/*.test.mjs examples/action-contract-consumer/test/index.test.mjs examples/action-contract-producer/test/index.test.mjs examples/automation-event-source/test/index.test.mjs examples/operation-only-channel-provider/test/index.test.mjs examples/advanced-package-root/test/index.test.mjs examples/background-indexer/test/index.test.mjs examples/code-defined/test/index.test.mjs examples/descriptor-only/test/index.test.mjs examples/hosted-web/test/index.test.mjs examples/multi-mode-fallback/test/index.test.mjs examples/production-hosted-reference/test/index.test.mjs examples/projects-tasks/test/index.test.mjs examples/public-authoring/test/index.test.mjs examples/react-native-dev-hot-reload/test/index.test.mjs examples/react-native-installed/test/index.test.mjs examples/session-agent/test/index.test.mjs examples/tracked-action/test/index.test.mjs",
     "test:finite": "yarn -s test:prepared",
     "vitest": "../../apps/stack/bin/hstack-exec --script=vitest:local",
     "vitest:local": "vitest",
@@ -448,6 +462,7 @@
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
+    "@noble/hashes": "^1.8.0",
     "@types/node": ">=20",
     "zod": "4.3.6"
   }

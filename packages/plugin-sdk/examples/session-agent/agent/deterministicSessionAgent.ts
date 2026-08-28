@@ -47,11 +47,13 @@ function disposalCause(
 
 function createDeterministicSessionRuntime(
     context: AgentSessionRuntimeContext,
+    providerSessionId: string,
 ): AgentSessionRuntime {
     const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
     let sequence = 0;
     let activeTurn: ActiveTurn | null = null;
     let disposed = false;
+    let providerIdentityPublished = false;
 
     const emit = (event: RuntimeEventInput): void => {
         const published = Object.freeze({
@@ -116,6 +118,18 @@ function createDeterministicSessionRuntime(
     };
 
     return {
+        runtimeCapabilities: {
+            sessionCapabilities: {
+                sessionListing: 'unsupported',
+                sessionFork: {
+                    conversation: 'unsupported',
+                    fromMessage: 'unsupported',
+                },
+                sessionRollback: {
+                    conversation: 'unsupported',
+                },
+            },
+        },
         async send(request) {
             if (disposed) {
                 return {
@@ -152,6 +166,11 @@ function createDeterministicSessionRuntime(
                     retryable: true,
                 });
                 return { status: 'rejected', diagnostic: busy, retryable: true };
+            }
+
+            if (!providerIdentityPublished) {
+                providerIdentityPublished = true;
+                emit({ kind: 'provider-session-id', providerSessionId });
             }
 
             const turn: ActiveTurn = {
@@ -230,8 +249,11 @@ function createDeterministicSessionRuntime(
  */
 export const createDeterministicSessionAgentRuntime: AgentRuntimeFactory = () => ({
     sessions: {
-        async open(_request, context) {
-            return createDeterministicSessionRuntime(context);
+        async open(request, context) {
+            const providerSessionId = request.kind === 'resume'
+                ? request.providerSessionId
+                : `deterministic:${context.session.id}`;
+            return createDeterministicSessionRuntime(context, providerSessionId);
         },
     },
 });

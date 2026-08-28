@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+    createPluginEventAutomationSetupResultV1JsonSchema as canonicalCreatePluginEventAutomationSetupResultV1JsonSchema,
     PluginEventAutomationSetupResultV1Schema as canonicalPluginEventAutomationSetupResultV1Schema,
 } from '@happier-dev/protocol/automations/event-setup-result';
 import {
@@ -33,6 +34,8 @@ import type {
     HostEventTarget as ProtocolHostEventTarget,
 } from '@happier-dev/protocol';
 import type {
+    CheckpointedPluginEventDispositionV1,
+    CheckpointedPluginEventObservationV1,
     PluginEventAutomationHistoryGapResetActionInputV1,
     PluginEventAutomationHistoryGapResetActionResultV1,
     PluginEventAutomationSetupResultV1,
@@ -75,8 +78,18 @@ describe('EventsService contract', () => {
     it('projects the canonical Automation source setup result through the public Event surface', () => {
         expect(publicEvents.PluginEventAutomationSetupResultV1Schema)
             .toBe(canonicalPluginEventAutomationSetupResultV1Schema);
+        expect(publicEvents.createPluginEventAutomationSetupResultV1JsonSchema)
+            .toBe(canonicalCreatePluginEventAutomationSetupResultV1JsonSchema);
         expectTypeOf<PluginEventAutomationSetupResultV1>()
             .toEqualTypeOf<CanonicalPluginEventAutomationSetupResultV1>();
+    });
+
+    it('exposes one provider-neutral checkpointed Event admission bridge', () => {
+        expect(publicEvents.admitCheckpointedPluginEventObservationV1).toBeTypeOf('function');
+        expectTypeOf<Parameters<typeof publicEvents.admitCheckpointedPluginEventObservationV1>[0]>()
+            .toEqualTypeOf<CheckpointedPluginEventObservationV1>();
+        expectTypeOf<Awaited<ReturnType<typeof publicEvents.admitCheckpointedPluginEventObservationV1>>>()
+            .toEqualTypeOf<CheckpointedPluginEventDispositionV1>();
     });
 
     it('projects the canonical host-filled history-gap recovery Action contract through the public Event surface', () => {

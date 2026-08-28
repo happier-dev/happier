@@ -10,8 +10,22 @@ import type { PluginInvocationContext } from '../invocation.js';
 import type { PluginUiHostApi } from '../ui/hostApi.js';
 import type { PluginActionContributionV2 } from './actionTypeMap.generated.js';
 
-/** A contributed Action's complete runtime reference, with no hidden type evidence. */
-export type ActionContract = PluginContributionRef;
+/**
+ * A contributed Action's qualified runtime identity plus declaration-only
+ * input/result inference. The runtime value still contains only `pluginId`
+ * and `localId`; `typeProjection` is required structurally so independently
+ * installed SDK copies preserve the producer's types without carrying a
+ * schema, parser, handler, or other implementation value.
+ */
+export type ActionContract<
+    TInput extends JsonValue = JsonValue,
+    TResult extends JsonValue | void = JsonValue | void,
+> = PluginContributionRef & Readonly<{
+    typeProjection: Readonly<{
+        input: TInput;
+        result: TResult;
+    }> | undefined;
+}>;
 
 /** One manifest-declared Action invocation surface, generated from Protocol. */
 export type PluginActionInvocationSurfaceV2 = PluginActionContributionV2['surfaces'][number];

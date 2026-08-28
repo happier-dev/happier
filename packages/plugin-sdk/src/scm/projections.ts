@@ -1215,7 +1215,29 @@ export type {
     ScmRemoteMutationReasonMapper,
 } from './remoteMutationPreconditions.js';
 
-export type {
-    ScmReviewWorkspaceCurrentness,
-    ScmReviewWorkspaceSourceTip,
-} from '@happier-dev/protocol/scm';
+export type ScmReviewWorkspaceSourceTip = Readonly<{
+    repository: Readonly<{
+        kind: ScmHostingProviderKind;
+        deployment: string;
+        repository: string;
+    }>;
+    cloneUrl: string;
+    branch: string;
+    sourceHeadSha: string;
+    fetchRef: string;
+}>;
+
+export type ScmReviewWorkspaceCurrentness =
+    | Readonly<{ kind: 'currentAtObservedHead' }>
+    | Readonly<{
+        kind: 'movedToObservedHead';
+        fromSha: string;
+        observedHeadSha: string;
+        recoveryRef: string;
+    }>
+    | Readonly<{
+        kind: 'preservedStale';
+        resolvedHeadSha: string;
+        observedHeadSha: string;
+        reason: 'localCommits' | 'dirtyWorktree' | 'unresolvedHead';
+    }>;

@@ -19,6 +19,9 @@ export type { AdmittedTargetedOperationIdentity } from './admittedTargetedOperat
 export type { CommandContribution } from './service.js';
 export type { ContributedActionExecutionWithOriginOptions } from './service.js';
 export type { ContributedActionExecutionWithOriginResult } from './service.js';
+export { EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH } from './externalActionLimits.js';
+export { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
+export { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from './externalActionLimits.js';
 export type { EffectiveActionInputField } from './inputHints.js';
 export type { JSONType } from './actionTypeMap.generated.js';
 export type { PluginActionAuthorDefaults } from '../definePlugin.js';
@@ -47,8 +50,10 @@ export type { SessionUsageLimitConsumeResetCreditRequestV1Input } from './action
 export type { ToolContribution } from './service.js';
 export { actionInputOptionValueKey } from './inputHints.js';
 export { getActionSpec } from './service.js';
+export { isExternalActionResultWithinResponseEnvelopeLimitV1 } from './externalActionLimits.js';
 export { isPluginActionHandlerInvocationKnownNotStarted } from './service.js';
 export { isSameActionInputOptionValue } from './inputHints.js';
+export { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from './externalActionLimits.js';
 export { normalizeActionInputByFieldHints } from './inputHints.js';
 export { readActionInputOptionValue } from './inputHints.js';
 export { resolveEffectiveActionInputFields } from './inputHints.js';

@@ -839,7 +839,7 @@ describe('normal SDK declaration closure identities', () => {
             /export declare abstract class AdmittedTargetedOperationExecutionHandle\b/u,
         );
         expect(operationDeclaration).toMatch(
-            /readonly typeProjection\?: Readonly<\{\s*readonly input: TInput;\s*readonly result: TResult;\s*\}>;/u,
+            /readonly typeProjection: Readonly<\{\s*readonly input: TInput;\s*readonly result: TResult;\s*\}> \| undefined;/u,
         );
         expect(operationDeclaration).not.toMatch(/\b(?:private|protected) readonly\b/u);
         expect(operationDeclaration).not.toMatch(
@@ -1564,7 +1564,7 @@ describe('normal SDK declaration closure identities', () => {
         const sourceFile = parseSource('services/sessions.ts', sourceText);
 
         expect(exportedTypeAlias(sourceFile, 'SessionServerStartSpawnDraftV1')?.type.getText(sourceFile))
-            .toContain("'creationKey' | 'initialMessage' | 'environmentVariables'");
+            .toContain("'creationKey' | 'initialInput' | 'environmentVariables'");
         expect(exportedCallableTypeText(sourceFile, 'SessionServerStartSpawnDraftV1Schema'))
             .toContain('SessionSchema<SessionServerStartSpawnDraftV1>');
         expect(importedName(
@@ -1644,9 +1644,12 @@ describe('normal SDK declaration closure identities', () => {
         for (const name of [
             'HostingProviderCompareUrlInput',
             'HostingProviderCompareUrlResult',
-            'HostingProviderDefaultBranchInput',
-            'HostingProviderDefaultBranchMetadata',
             'HostingProviderDescriptor',
+            'HostingProviderRoutingCapability',
+            'HostingProviderPullRequestsCapability',
+            'HostingProviderPullRequestCheckoutCapability',
+            'HostingProviderRepositoryPublishingCapability',
+            'HostingProviderRepositoryCloneCapability',
             'HostingProviderPullRequestCheckoutReferenceInput',
             'HostingProviderPullRequestCheckoutReferenceMetadata',
             'HostingProviderPullRequestCreateInput',

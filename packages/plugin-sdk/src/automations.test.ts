@@ -41,7 +41,6 @@ const source = {
     automationRunId: 'run-1',
     resultId: 'handoff-1',
     automationId: 'automation-1',
-    templateVersion: 3,
     resultDelivery: 'finalResult',
 } as const;
 
@@ -67,7 +66,6 @@ const thirdPartyDeliveryActionRef = {
 const conversationAdmissionInput = {
     automationId: 'automation-1',
     bindingId: 'binding-1',
-    templateVersion: 3,
     occurrenceId: 'occurrence-1',
     occurredAt: 1,
     sender: {

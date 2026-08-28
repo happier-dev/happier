@@ -1,4 +1,5 @@
 export type { FileSystemService } from '../fs.js';
+export type { FsAtomicWriteInput } from '../fs.js';
 export type { FsAtomicWriteJsonInput } from '../fs.js';
 export type { FsAtomicWriteTextInput } from '../fs.js';
 export type { SecureTempTextFileInput } from '../fs.js';
@@ -9,6 +10,7 @@ export { isCanonicalAbsolutePathInsideRoot } from '../sessions/fileStores/paths.
 export { resolveConfiguredPath } from '../sessions/fileStores/paths.js';
 export { resolveHomeDirFromEnvironment } from '../sessions/fileStores/paths.js';
 export { withExclusiveFileLock } from '../fs.js';
+export { writeAtomicFile } from '../fs.js';
 export { writeAtomicJsonFile } from '../fs.js';
 export { writeAtomicTextFile } from '../fs.js';
 export { writeAtomicTextFileIfChanged } from '../fs.js';

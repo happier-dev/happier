@@ -100,6 +100,16 @@ interoperability and currentness; they are not a sandbox. Read the full
 [cross-plugin contribution guide](../../apps/docs/content/docs/plugins/guides/cross-plugin-contributions.mdx)
 before defining a feature protocol or binding a contributor.
 
+Bundled and externally installed plugins are eligible for the same Action
+capabilities. Public user operations are broadly available through the
+invocation-scoped Action service and start Allowed on the **Trusted plugins**
+surface; a present user can set an individual Action to **Ask first** or
+**Off**. Happier still stamps plugin identity, activation generation, and
+`account_automation` authority. Trust does not let a plugin impersonate the
+present user, another plugin, or a retired generation, so approval and
+security-control operations return `present_user_required` rather than
+acquiring a second plugin-only policy path.
+
 ## 1. Create and develop a plugin
 
 Use the CLI scaffold rather than copying repository fixtures:
@@ -517,9 +527,8 @@ Agent declaration's strict `catalog.codingPromptBehavior` and
 `catalog.resumeChecklist` fields. For a declarative ACP Agent, the optional
 strict `runtime.definition` carries only `modelConfigOptionId`, bounded
 `stderrRules`, and the MCP input policy; Kiro is the current positive consumer.
-When finite Runs reuse the Session adapter, call
-`createExecutionRunHostBackendFromSessionRuntime` instead of owning a second
-Run lifecycle.
+For Session-capable Agents the host derives finite Runs from the registered
+Session factory. Plugin authors do not register or own a second Run lifecycle.
 
 ## Task guides
 

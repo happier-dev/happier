@@ -56,6 +56,7 @@ import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
 import type {
   ProviderAccountUsageRecordKeyV1,
   ProviderAccountUsageSnapshotV1,
+  RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { JsonValue, PluginApi } from './index.js';
 import type {
@@ -66,6 +67,17 @@ import type {
   AgentProviderBindingAdapter as ExperimentalAgentProviderBindingAdapterV1,
   AgentProviderBindingMaterializeInput as ExperimentalAgentProviderBindingMaterializeInputV1,
 } from './agentRuntime/providerBinding.js';
+import type {
+  AgentConnectedAccountRuntimeAuthAdapterV1,
+  AgentConnectedAccountRuntimeAuthAdapterResultV1,
+  AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+  AgentConnectedAccountNativeAuthCodecMaterializeInputV1,
+  AgentConnectedAccountRuntimeAuthSelectionV1,
+  AgentConnectedAccountRuntimeAuthTargetV1,
+  AgentConnectedAccountResumeFileLookupV1,
+  AgentConnectedAccountResumeReachabilityInputV1,
+  AgentConnectedAccountResumeReachabilityResultV1,
+} from './agentRuntime/connectedAccountContinuity.js';
 
 // These imports are deliberate compile-time negatives. Runtime namespace tests
 // cannot detect type-only exports, so each retired public name needs its own
@@ -602,6 +614,7 @@ type _SessionHostServicesMustStayNarrowAndProviderNeutral = AssertTrue<
     | 'activeInput'
     | 'workflowActivity'
     | 'toolExecution'
+    | 'nativeHome'
     | 'happierTools'
   >
 >;
@@ -738,6 +751,92 @@ type _AgentAccountUsageAdoptionResultMustNotEchoHostCustody = AssertTrue<
 
 type _SessionAuthRequestMustNotExposeHostAgentIdentity = AssertNever<
   Extract<keyof AgentSessionAuthRefreshRequest, 'agentId'>
+>;
+
+type _SessionAuthRequestMustNotExposeEnvironmentCustody = AssertNever<
+  Extract<keyof AgentSessionAuthRefreshRequest, 'env' | 'materializedEnv' | 'targetMaterializedEnv'>
+>;
+
+type _ConnectedAccountRuntimeTargetMustNotExposeHostCustody = AssertNever<
+  Extract<
+    keyof AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+    | 'credential'
+    | 'nativeHome'
+    | 'runtimeControl'
+    | 'targetMaterializedEnv'
+    | 'validateCurrentBeforeMutation'
+  >
+>;
+
+type _ConnectedAccountRuntimeSelectionMustBeGeneric = AssertTrue<
+  Equal<
+    keyof AgentConnectedAccountRuntimeAuthSelectionV1,
+    | 'kind'
+    | 'serviceId'
+    | 'profileId'
+    | 'activeProfileId'
+    | 'fallbackProfileId'
+    | 'groupId'
+    | 'generation'
+    | 'groupGeneration'
+    | 'credentialRevision'
+    | 'sourceProviderAccountId'
+    | 'sourceAccountLabel'
+    | 'applyReason'
+    | 'requireDirectLiveHotApply'
+  >
+>;
+
+type _ConnectedAccountRuntimeTargetMustBeBounded = AssertNever<
+  string extends keyof AgentConnectedAccountRuntimeAuthTargetV1 ? string : never
+>;
+
+type _ConnectedAccountNativeAuthCodecMustOnlyReceiveExactAuthorFacts = AssertTrue<
+  Equal<
+    keyof AgentConnectedAccountNativeAuthCodecMaterializeInputV1,
+    'selection' | 'credential'
+  >
+>;
+
+type _ConnectedAccountRuntimeResultMustNotBeAnOpenControlBag = AssertNever<
+  string extends keyof AgentConnectedAccountRuntimeAuthAdapterResultV1 ? string : never
+>;
+
+type _ConnectedAccountRuntimeAdapterMustNotOwnHostRecoveryLifecycle = AssertNever<
+  Extract<keyof AgentConnectedAccountRuntimeAuthAdapterV1, 'recoverAfterRuntimeAuthSwitch'>
+>;
+
+type _ConnectedAccountResumeReachabilityMustNotExposeHostCandidatePath = AssertNever<
+  Extract<
+    keyof AgentConnectedAccountResumeReachabilityInputV1,
+    | 'candidatePersistedSessionFile'
+    | 'targetMaterializedRoot'
+    | 'targetMaterializedEnv'
+    | 'cwd'
+    | 'targetStrict'
+    | 'resolvedPath'
+  >
+>;
+
+type _ConnectedAccountResumeReachabilityResultMustNotExposeHostPath = AssertNever<
+  Extract<
+    keyof Extract<AgentConnectedAccountResumeReachabilityResultV1, { ok: true }>,
+    'path' | 'resolvedPath'
+  >
+>;
+
+type _ConnectedAccountResumeFileLookupMustOnlyAcceptPureMatcher = AssertTrue<
+  Equal<
+    keyof Parameters<AgentConnectedAccountResumeFileLookupV1['findDeclaredCandidate']>[0],
+    'matchesCandidate'
+  >
+>;
+
+type _ConnectedAccountResumeReachabilityCarriesOpaqueRuntimeDescriptor = AssertTrue<
+  Equal<
+    Pick<AgentConnectedAccountResumeReachabilityInputV1, 'runtimeDescriptorV1'>,
+    Readonly<{ runtimeDescriptorV1?: RuntimeDescriptorV1 }>
+  >
 >;
 
 type _SessionAuthRequestMustUseNamedBoundedContracts = AssertTrue<

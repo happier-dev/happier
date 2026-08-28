@@ -11,8 +11,8 @@ export const { manifest, activate } = definePlugin({
     version: '0.1.0',
     displayName: 'Advanced package-root reference',
     // `happier plugins pack` stages the daemon runtime for a code-defined
-    // plugin at the declared daemon entrypoint, so the README's
-    // `happier plugins test . --packed` requires it.
+    // plugin at this declared daemon entrypoint. Ordinary feature QA stays on
+    // the managed source-development loop documented in the README.
     entrypoints: { daemon: './dist/index.js' },
     actions: {
         summarize: {

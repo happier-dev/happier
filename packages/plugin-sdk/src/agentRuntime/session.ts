@@ -1,5 +1,7 @@
-import type { PermissionIntent } from '@happier-dev/agents';
-import type { RuntimeDescriptorV1 as ProtocolRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type {
+  AgentSessionCapabilitySupportLevel,
+  RuntimeCapabilities,
+} from '@happier-dev/agents';
 
 import type { JsonValue } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
@@ -7,7 +9,11 @@ import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl } from './controls.js';
 
 /** Agent-owned runtime identity carried across host-owned session lifecycle. */
-export type RuntimeDescriptorV1 = ProtocolRuntimeDescriptorV1;
+export type RuntimeDescriptorV1 = Readonly<{
+  v: 1;
+  agentId: string;
+  agent: Readonly<Record<string, unknown>>;
+} & Record<string, unknown>>;
 
 export type AgentSessionConnectedAccountSelection = Readonly<{
   purpose: string;
@@ -117,6 +123,16 @@ export type AgentSessionProviderBinding = Readonly<{
 }>;
 
 export type AgentSessionProviderCheckpoint = JsonValue;
+
+export type AgentSessionRuntimeCapabilitySupportLevel = AgentSessionCapabilitySupportLevel;
+
+/**
+ * Live, Agent-authored capability facts for the concrete runtime opened for a
+ * Session. The host publishes these facts through its canonical runtime
+ * capability channel so later lifecycle decisions do not infer them from an
+ * Agent id.
+ */
+export type AgentSessionRuntimeCapabilities = RuntimeCapabilities;
 
 /**
  * Public declaration projection of the Protocol-owned runtime event union.
@@ -597,7 +613,7 @@ export type AgentSessionRuntimeAuthControl = Readonly<{
 }>;
 
 export type AgentConfigurationScalar = string | number | boolean | null;
-export type AgentPermissionIntent = PermissionIntent;
+export type AgentPermissionIntent = 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
 
 export type AgentSessionConfigurationSnapshot = Readonly<{
   mode: TimestampedAgentValue<string | null>;
@@ -746,6 +762,7 @@ export interface AgentSessionRuntime extends Disposable {
    * exposing the runtime to consumers.
    */
   readonly runtimeDescriptorV1?: RuntimeDescriptorV1;
+  readonly runtimeCapabilities?: AgentSessionRuntimeCapabilities;
   readonly conversationRollback?: AgentSessionConversationRollbackControl;
   readonly runtimeAuth?: AgentSessionRuntimeAuthControl;
   connectedServiceApplicationSettled?(request: Readonly<{

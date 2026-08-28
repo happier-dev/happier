@@ -463,7 +463,7 @@ describe('generated connected-account request-auth client source', () => {
     await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
       .rejects.toMatchObject({
         name: 'ConnectedAccountRequestAuthTransportError',
-        code: 'happier_request_auth_status_404',
+        code: 'happier_request_auth_response_invalid',
         status: 404,
       });
     expect(fetchRequestAuth).toHaveBeenCalledOnce();
@@ -589,11 +589,11 @@ describe('generated connected-account request-auth client source', () => {
         error: { code: 'request_auth_unauthorized' },
       },
       expected: {
-        code: 'request_auth_unavailable',
-        status: 503,
+        code: 'happier_request_auth_response_too_large',
+        status: 401,
       },
     },
-  ])('bounds an oversized $label response while preserving 401 unavailability', async ({
+  ])('bounds an oversized $label response before interpreting its envelope', async ({
     status,
     envelope,
     expected,
@@ -614,6 +614,46 @@ describe('generated connected-account request-auth client source', () => {
     expect(streamed.producedBytes()).toBeLessThan(new TextEncoder().encode(body).byteLength);
     expect(streamed.wasCancelled()).toBe(true);
     expect(streamed.response.body?.locked).toBe(false);
+  });
+
+  it.each([
+    {
+      label: 'non-200 success',
+      status: 201,
+      envelope: { ok: true, value: { status: 'current_unchanged' } },
+    },
+    {
+      label: 'malformed unauthorized',
+      status: 401,
+      envelope: { ok: false, error: { code: 'request_auth_unauthorized', message: 'detail' } },
+    },
+    {
+      label: 'mismatched closed error',
+      status: 403,
+      envelope: { ok: false, error: { code: 'request_auth_not_active' } },
+    },
+    {
+      label: 'unknown error code',
+      status: 503,
+      envelope: { ok: false, error: { code: 'fixture_error' } },
+    },
+  ])('rejects a $label response before treating it as authoritative', async ({
+    status,
+    envelope,
+  }) => {
+    await configureFiles();
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(envelope), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+    const client = await loadGeneratedClient();
+
+    await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
+      .rejects.toMatchObject({
+        name: 'ConnectedAccountRequestAuthTransportError',
+        code: 'happier_request_auth_response_invalid',
+        status,
+      });
   });
 
   it('releases the response stream lock after a bounded read failure', async () => {

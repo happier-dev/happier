@@ -48,6 +48,7 @@ export type { PluginAccountCollectionMigrationRuntimeProjection } from './define
 export type { PluginActionOperationContextV1 } from './invocation.js';
 export type { PluginActionOperationProgressUpdateV1 } from './invocation.js';
 export type { PluginApi } from './activation.js';
+export type { PluginAutomationRunCause } from './invocation.js';
 export type { PluginCancellationOptions } from './lifecycle.js';
 export type { PluginCleanup } from './activation.js';
 export type { PluginClientActivationModule } from './activation.js';
@@ -111,6 +112,7 @@ export type { UiSurfaceReactNativeRendererDefinition } from './ui/surface.js';
 export type { UiSurfaceRendererDefinition } from './ui/surface.js';
 export type { UiSurfaceSettingsPageDefinition } from './ui/surface.js';
 export { arePluginMachineExecutionOriginsEqual } from './executionOrigin.js';
+export { arePluginMachineMaterializationRefsEqual } from './executionOrigin.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
 export { defineComposerAttachment } from './composer.js';
 export { defineComposerControl } from './composer.js';

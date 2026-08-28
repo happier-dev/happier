@@ -22,6 +22,8 @@ export { ScmBackendContributionSchema } from '../backend.js';
 export type { ScmBackendDescribeRequest } from '../backend.js';
 export type { ScmBackendDescribeResponse } from '../backend.js';
 export type { ScmBackendId } from '../backend.js';
+export type { ScmReviewWorkspaceMaterializePreparedRequest } from '../backend.js';
+export type { ScmReviewWorkspaceMaterializePreparedResponse } from '../backend.js';
 export type { WorkspaceCheckoutCreationRequest } from '../backend.js';
 export type { WorkspaceCheckoutCreationResult } from '../backend.js';
 export type { WorkspaceCheckoutMaterializationRequest } from '../backend.js';

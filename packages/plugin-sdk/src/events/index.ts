@@ -1,3 +1,5 @@
+export type { CheckpointedPluginEventDispositionV1 } from '../checkpointedEventAutomation.js';
+export type { CheckpointedPluginEventObservationV1 } from '../checkpointedEventAutomation.js';
 export type { EventContribution } from '../events.js';
 export type { EventSubscriptionTarget } from '../events.js';
 export type { EventsService } from '../events.js';
@@ -20,3 +22,5 @@ export type { PluginEventEmitResult } from '../events.js';
 export type { PluginEventEnvelope } from '../events.js';
 export type { PluginEventHandler } from '../activation.js';
 export type { PluginEvents } from '../events.js';
+export { admitCheckpointedPluginEventObservationV1 } from '../checkpointedEventAutomation.js';
+export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';

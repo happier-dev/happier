@@ -69,6 +69,13 @@ describe('session file-name codec', () => {
 
     expect(codec.parseSessionIdFromFileName(headerWinsFile)).toBe('c');
     await expect(codec.readSessionIdFromFileHead(headerWinsFile)).resolves.toBe('b_c');
+
+    const nativeSessionIdFile = join(root, 'session-12345678.jsonl');
+    await writeFile(nativeSessionIdFile, jsonlLine({
+      sessionId: realId,
+      messages: [],
+    }), 'utf8');
+    await expect(codec.readSessionIdFromFileHead(nativeSessionIdFile)).resolves.toBe(realId);
   });
 
   it('keeps suffix matching parse-direction-free for id-known lookups', async () => {

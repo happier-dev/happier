@@ -11,14 +11,13 @@ first-party Inspector and `../production-hosted-reference/`; this combined
 package remains a verification companion for the public SDK surface.
 
 Before selecting an authoring family, read the installed
-`capability-matrix.json`; it is the sole availability authority. The Composer
-references, attachments, controls, and regions; `openableContentViewers`;
-tools; commands; and Session-header actions in this broad companion are
-deferred. They are not supported or advertised for ordinary author use; do not
-rely on them; consult each row's unblock condition in
-`capability-matrix.json`. Their presence exercises declared SDK shape and
-source wiring only; it does not claim public availability. Tools and Commands
-need a maintained external development-source proof in the current loaded
+`capability-matrix.json`; it is the sole availability authority. Composer
+references, attachments, controls, and regions, and Session-header actions are
+available in the current Developer Preview source;
+the matrix separately records that loaded-platform proof and publication are
+still open. `openableContentViewers`, Tools, and Commands remain deferred and
+are present here only to exercise their declared SDK shape and source wiring.
+They need a maintained external development-source proof in the current loaded
 development stack before publication metadata can advertise them as usable.
 
 The React Native artifact is one package graph for web, iOS, Android, and

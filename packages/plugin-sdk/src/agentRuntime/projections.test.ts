@@ -88,7 +88,7 @@ const APPROVED_VALUE_ONLY_EXPORTS = [
   'ACP_AGENT_CLI_TRANSPORT_TIMEOUTS',
   'ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES',
   'ACP_WRITE_LIKE_PERMISSION_KINDS',
-  'createExecutionRunHostBackendFromSessionRuntime',
+  'createFiniteExecutionRunHostRuntime',
 ] as const;
 
 const DECLARATION_CLOSURE_GENUINE_EXPORTS = [
@@ -160,6 +160,7 @@ const DECLARATION_REFINED_EXPORTS = new Set([
   'RuntimeOutboundTranscriptToolNormalizationV1',
   'createAcpToolNameInferencePreset',
   'normalizeAcpPermissionIntent',
+  'parsePermissionIntentAlias',
   'resolveAcpToolPermissionPolicy',
 ]);
 
@@ -571,6 +572,12 @@ describe('Agent runtime package-local publication projection', () => {
     expect(names.has('resolveMetadataStringOverrideV1')).toBe(false);
     expect(names.has('buildEncodedPowerShellCommand')).toBe(false);
     expect(publicRuntimeSpecNames.has('buildEncodedPowerShellCommand')).toBe(false);
+    expect(publicRuntimeNames.has('AgentAuthoredSessionRuntimeCapabilities')).toBe(true);
+    expect(publicRuntimeSpecNames.has('AgentAuthoredSessionRuntimeCapabilities')).toBe(true);
+    for (const implementationName of ['AgentSessionRuntimeCapabilities'] as const) {
+      expect(publicRuntimeNames.has(implementationName), implementationName).toBe(false);
+      expect(publicRuntimeSpecNames.has(implementationName), implementationName).toBe(false);
+    }
     expect(internalBarrelNames.has('buildEncodedPowerShellCommand')).toBe(false);
     expect(contextNames.has('AgentTranscriptSourceFactConsumedRequest')).toBe(false);
     expectTypeOf<

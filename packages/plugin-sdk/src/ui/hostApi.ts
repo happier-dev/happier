@@ -36,6 +36,7 @@ import {
     selectPluginUiTargetedContributionOperationV1 as canonicalSelectPluginUiTargetedContributionOperationV1,
     selectPluginUiTargetedContributionSurfaceV1 as canonicalSelectPluginUiTargetedContributionSurfaceV1,
     selectPluginUiTargetedContributionV1 as canonicalSelectPluginUiTargetedContributionV1,
+    PluginUiPreparedReviewWorkspaceResultV1Schema as canonicalPluginUiPreparedReviewWorkspaceResultV1Schema,
 } from '@happier-dev/protocol/plugins/ui/client';
 export const MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1: number =
     canonicalMaxComposerAttachmentDescriptionCodePointsV1;
@@ -115,11 +116,14 @@ import type {
     PluginUiHostApiSurfaceContextV1,
     PluginUiHostApiSurfaceTargetV1,
     PluginUiHostApiSurfaceThemeV1,
+    PluginUiOpenNewSessionRequestV1,
+    PluginUiPreparedReviewWorkspaceResultV1,
     PluginUiResourceSubscriptionEventV1,
     PluginUiSchema,
     PluginUiSelectedActionInputCarrierV1,
     PluginUiSelectActionInputRequestV1,
     PluginUiSelectActionInputResultV1,
+    PluginUiEphemeralInputSettlementV1,
     PluginUiTargetedContributionSurfaceV1,
     PluginUiTargetedContributionV1,
     PluginUiTargetedContributionOperationV1,
@@ -368,6 +372,11 @@ export type SelectActionInputRequest = PluginUiSelectActionInputRequestV1;
 
 /** Exact closed Protocol settlement: targeted submission, Session draft, or cancellation. */
 export type SelectActionInputResult = PluginUiSelectActionInputResultV1;
+export type OpenNewSessionRequest = PluginUiOpenNewSessionRequestV1;
+export type PreparedReviewWorkspaceResult = PluginUiPreparedReviewWorkspaceResultV1;
+export const PreparedReviewWorkspaceResultSchema: PluginUiSchema<PreparedReviewWorkspaceResult> =
+    canonicalPluginUiPreparedReviewWorkspaceResultV1Schema;
+export type EphemeralInputSettlement = PluginUiEphemeralInputSettlementV1;
 
 /**
  * The exact target-scoped settlement an outer contributed Action may consume.
@@ -375,6 +384,20 @@ export type SelectActionInputResult = PluginUiSelectActionInputResultV1;
  */
 export type PluginUiActionExecutionOptions = PluginCancellationOptions & Readonly<{
     selectedActionInput?: PluginUiSelectedActionInputCarrierV1;
+}>;
+
+/**
+ * Options for {@link PluginUiHostApi.openNewSession}.
+ *
+ * A prepared review workspace is selected through the same admitted targeted
+ * operation form as every other cross-plugin operation. The carrier is not an
+ * authority token: the mounted host retains the exact active selection and
+ * consumes it before invoking the source operation. A successful operation
+ * must return `{ kind: 'prepared', repositoryPath: string }`; the operation's
+ * own contribution protocol remains the full result-schema owner.
+ */
+export type OpenNewSessionOptions = PluginCancellationOptions & Readonly<{
+    preparedReviewWorkspace?: PluginUiSelectedActionInputCarrierV1;
 }>;
 
 /**
@@ -447,6 +470,16 @@ export interface PluginUiHostApi {
         request: SelectActionInputRequest,
         options?: PluginCancellationOptions,
     ): Promise<SelectActionInputResult>;
+    /** Open the incumbent New Session authoring screen with a one-shot seed. */
+    openNewSession(
+        request: OpenNewSessionRequest,
+        options?: OpenNewSessionOptions,
+    ): Promise<void>;
+    /** Settle this exact ephemeral mount once with strict input or cancellation. */
+    settleEphemeralInput(
+        settlement: PluginUiEphemeralInputSettlementV1,
+        options?: PluginCancellationOptions,
+    ): Promise<void>;
     readResource(resource: PluginReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
     /**
      * Read host-derived metadata for the exact opaque workspace-file reference

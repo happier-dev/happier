@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Choose repository</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: CanvasText; background: transparent; }
+      main { display: grid; gap: 18px; padding: 24px; }
+      label { font-size: 13px; font-weight: 650; letter-spacing: -0.01em; }
+      input { width: 100%; min-height: 44px; padding: 0 13px; color: inherit; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; font: inherit; outline: none; transition: border-color 140ms ease, box-shadow 140ms ease; }
+      input:focus-visible { border-color: AccentColor; box-shadow: 0 0 0 3px color-mix(in srgb, AccentColor 22%, transparent); }
+      .actions { display: flex; justify-content: flex-end; gap: 10px; }
+      button { min-height: 40px; padding: 0 16px; color: inherit; background: transparent; border: 0; border-radius: 999px; font: inherit; font-weight: 620; cursor: pointer; transition: opacity 120ms ease, transform 120ms ease; }
+      button:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
+      button:active { opacity: 0.78; transform: scale(0.98); }
+      #complete { color: AccentColorText; background: AccentColor; }
+      #complete:hover { background: AccentColor; filter: brightness(1.04); }
+      @media (prefers-reduced-motion: reduce) { input, button { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <main id="root">
+      <label for="repository">Repository</label>
+      <input id="repository" name="repository" autocomplete="off" placeholder="owner/repository" />
+      <div class="actions">
+        <button id="cancel" type="button">Cancel</button>
+        <button id="complete" type="button">Use repository</button>
+      </div>
+    </main>
+    <script type="module" src="./ui/repositoryPicker.web.ts"></script>
+  </body>
+</html>

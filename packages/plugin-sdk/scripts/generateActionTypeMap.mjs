@@ -4,8 +4,15 @@ import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), '../../..');
+const PACKAGE_ROOT = resolve(REPO_ROOT, 'packages/plugin-sdk');
+const WORKSPACE_BUILD_LOCK_PATH = resolveWorkspaceBundleLockPath(REPO_ROOT);
 const OUTPUT_PATH = resolve(REPO_ROOT, 'packages/plugin-sdk/src/actions/actionTypeMap.generated.ts');
 const PROTOCOL_TSCONFIG_PATH = resolve(REPO_ROOT, 'packages/protocol/tsconfig.json');
 const SDK_TSCONFIG_PATH = resolve(REPO_ROOT, 'packages/plugin-sdk/tsconfig.json');
@@ -85,6 +92,13 @@ const TYPE_PROJECTIONS = [
   { relativePath: 'packages/protocol/src/actions/actionSpecs.ts', name: 'PluginActionResultById', export: true },
 ];
 
+export function resolveActionTypeProjectionRootNames({
+  projections = TYPE_PROJECTIONS,
+  repoRoot = REPO_ROOT,
+} = {}) {
+  return [...new Set(projections.map(({ relativePath }) => resolve(repoRoot, relativePath)))].sort();
+}
+
 const PRIVATE_OR_ABSOLUTE_IMPORT = /(?:@happier-dev\/|\bimport\s*\(|\bfrom\s*['"](?:\/|[A-Za-z]:[\\/]))/u;
 
 function requireArgument() {
@@ -113,7 +127,11 @@ function requireParsedConfig(path, label) {
 function requireProtocolProgram() {
   const parsed = requireParsedConfig(PROTOCOL_TSCONFIG_PATH, 'Protocol');
   const program = ts.createProgram({
-    rootNames: parsed.fileNames,
+    // The projection needs only its declared Protocol owners and their normal
+    // transitive imports. Rooting the compiler at every Protocol source file
+    // makes an Action-map check pay for unrelated graphs and can push the
+    // structural printer into pathological heap growth on busy workspaces.
+    rootNames: resolveActionTypeProjectionRootNames(),
     options: parsed.options,
   });
   const diagnostics = program.getOptionsDiagnostics();
@@ -212,15 +230,7 @@ function assertConcreteMapValues(checker, type, sourceFile, name) {
   }
 }
 
-function exportedModuleType(checker, sourceFile, name) {
-  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
-  if (!moduleSymbol) throw new Error(`Generated Action type map has no module symbol: ${sourceFile.fileName}`);
-  const symbol = checker.getExportsOfModule(moduleSymbol).find((candidate) => candidate.name === name);
-  if (!symbol) throw new Error(`Generated Action type map does not export ${name}.`);
-  return checker.getDeclaredTypeOfSymbol(symbol);
-}
-
-function validateGeneratedModule(output, expectedInputKeys, expectedResultKeys) {
+export function validateGeneratedModuleSyntax(output) {
   if (PRIVATE_OR_ABSOLUTE_IMPORT.test(output)) {
     throw new Error('Generated Action type map contains a private or absolute import.');
   }
@@ -228,58 +238,97 @@ function validateGeneratedModule(output, expectedInputKeys, expectedResultKeys) 
     throw new Error('Generated Action type map contains a validator-library implementation reference.');
   }
 
-  const parsed = requireParsedConfig(SDK_TSCONFIG_PATH, 'Plugin SDK');
-  const canonicalOutputPath = ts.sys.resolvePath(OUTPUT_PATH);
-  const host = ts.createCompilerHost({ ...parsed.options, incremental: false, noEmit: true }, true);
-  const defaultGetSourceFile = host.getSourceFile.bind(host);
-  const defaultFileExists = host.fileExists.bind(host);
-  const defaultReadFile = host.readFile.bind(host);
-  const isOutput = (fileName) => ts.sys.resolvePath(fileName) === canonicalOutputPath;
-
-  host.fileExists = (fileName) => isOutput(fileName) || defaultFileExists(fileName);
-  host.readFile = (fileName) => isOutput(fileName) ? output : defaultReadFile(fileName);
-  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => (
-    isOutput(fileName)
-      ? ts.createSourceFile(fileName, output, languageVersion, true, ts.ScriptKind.TS)
-      : defaultGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
+  const sourceFile = ts.createSourceFile(
+    OUTPUT_PATH,
+    output,
+    ts.ScriptTarget.ES2022,
+    false,
+    ts.ScriptKind.TS,
   );
-
-  const program = ts.createProgram({
-    rootNames: [OUTPUT_PATH],
-    options: { ...parsed.options, incremental: false, noEmit: true },
-    host,
-  });
-  const diagnostics = ts.getPreEmitDiagnostics(program)
-    .filter((diagnostic) => diagnostic.file && isOutput(diagnostic.file.fileName));
+  const diagnostics = sourceFile.parseDiagnostics;
   if (diagnostics.length > 0) {
-    throw new Error(`Generated Action type map does not typecheck: ${diagnostics
-      .map((diagnostic) => {
-        const position = diagnostic.file && diagnostic.start !== undefined
-          ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
-          : null;
-        const location = position ? `${position.line + 1}:${position.character + 1}: ` : '';
-        const sourceLine = position
-          ? `\n${output.split('\n').slice(Math.max(0, position.line - 6), position.line + 7).join('\n')}`
-          : '';
-        return `${location}${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}${sourceLine}`;
-      })
-      .join('\n')}`);
+    throw new Error(
+      `Generated Action type map is not valid TypeScript: ${ts.flattenDiagnosticMessageText(diagnostics[0].messageText, '\n')}`,
+    );
   }
-
-  const sourceFile = program.getSourceFile(OUTPUT_PATH);
-  if (!sourceFile) throw new Error(`Generated Action type map source is unavailable: ${OUTPUT_PATH}`);
-  const checker = program.getTypeChecker();
-  const input = exportedModuleType(checker, sourceFile, 'PluginActionInputById');
-  const result = exportedModuleType(checker, sourceFile, 'PluginActionResultById');
-  const actualInputKeys = mapKeys(checker, input, 'generated PluginActionInputById');
-  const actualResultKeys = mapKeys(checker, result, 'generated PluginActionResultById');
-  assertSameKeys(actualInputKeys, expectedInputKeys, 'Generated PluginActionInputById');
-  assertSameKeys(actualResultKeys, expectedResultKeys, 'Generated PluginActionResultById');
-  assertConcreteMapValues(checker, input, sourceFile, 'Generated PluginActionInputById');
-  assertConcreteMapValues(checker, result, sourceFile, 'Generated PluginActionResultById');
 }
 
-function renderModule(onPhase = () => {}) {
+export function collectGeneratedModuleDiagnostics(program, sourceFile) {
+  const canonicalSourcePath = ts.sys.resolvePath(sourceFile.fileName);
+  return ts.getPreEmitDiagnostics(program, sourceFile)
+    .filter((diagnostic) => (
+      diagnostic.file
+      && ts.sys.resolvePath(diagnostic.file.fileName) === canonicalSourcePath
+    ));
+}
+
+export function createGeneratedModuleValidationCompilerOptions(options) {
+  return {
+    ...options,
+    incremental: false,
+    noEmit: true,
+    // The generated module is already the declaration-shaped structural
+    // projection. Declaration-transforming that 29k-line type-only file again
+    // adds no correspondence proof and caused the publisher's heap blow-up.
+    declaration: false,
+    declarationMap: false,
+  };
+}
+
+export function validateGeneratedModule(output, expectedInputKeys, expectedResultKeys) {
+  validateGeneratedModuleSyntax(output);
+
+  const parsed = requireParsedConfig(SDK_TSCONFIG_PATH, 'Plugin SDK');
+  const options = createGeneratedModuleValidationCompilerOptions(parsed.options);
+  const canonicalOutputPath = ts.sys.resolvePath(OUTPUT_PATH);
+  const host = ts.createCompilerHost(options, true);
+  const readSourceFile = host.getSourceFile.bind(host);
+  host.fileExists = (path) => (
+    ts.sys.resolvePath(path) === canonicalOutputPath || ts.sys.fileExists(path)
+  );
+  host.readFile = (path) => (
+    ts.sys.resolvePath(path) === canonicalOutputPath ? output : ts.sys.readFile(path)
+  );
+  host.getSourceFile = (path, languageVersion, onError, shouldCreateNewSourceFile) => (
+    ts.sys.resolvePath(path) === canonicalOutputPath
+      ? ts.createSourceFile(path, output, languageVersion, true, ts.ScriptKind.TS)
+      : readSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile)
+  );
+  const program = ts.createProgram({
+    rootNames: [OUTPUT_PATH],
+    options,
+    host,
+  });
+  const sourceFile = program.getSourceFile(OUTPUT_PATH);
+  if (!sourceFile) throw new Error('Generated Action type map source is unavailable to the Plugin SDK compiler.');
+  const diagnostics = collectGeneratedModuleDiagnostics(program, sourceFile);
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `Generated Action type map does not compile: ${ts.flattenDiagnosticMessageText(diagnostics[0].messageText, '\n')}`,
+    );
+  }
+
+  const checker = program.getTypeChecker();
+  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+  if (!moduleSymbol) throw new Error('Generated Action type map has no module symbol.');
+  const exports = checker.getExportsOfModule(moduleSymbol);
+  const requireGeneratedMap = (name) => {
+    const symbol = exports.find((candidate) => candidate.name === name);
+    if (!symbol) throw new Error(`Generated Action type map is missing ${name}.`);
+    return checker.getDeclaredTypeOfSymbol(symbol);
+  };
+  const inputMap = requireGeneratedMap('PluginActionInputById');
+  const resultMap = requireGeneratedMap('PluginActionResultById');
+  const inputKeys = mapKeys(checker, inputMap, 'Generated PluginActionInputById');
+  const resultKeys = mapKeys(checker, resultMap, 'Generated PluginActionResultById');
+  assertSameKeys(inputKeys, resultKeys, 'Generated Action input/result maps');
+  assertSameKeys(inputKeys, expectedInputKeys, 'Protocol/generated Action input maps');
+  assertSameKeys(resultKeys, expectedResultKeys, 'Protocol/generated Action result maps');
+  assertConcreteMapValues(checker, inputMap, sourceFile, 'Generated PluginActionInputById');
+  assertConcreteMapValues(checker, resultMap, sourceFile, 'Generated PluginActionResultById');
+}
+
+function renderStructuralModule(onPhase = () => {}) {
   const { checker, program } = requireProtocolProgram();
   onPhase('protocol-program');
   const projections = TYPE_PROJECTIONS.map((projection) => {
@@ -326,15 +375,14 @@ function renderModule(onPhase = () => {}) {
     '',
   ].join('\n');
   onPhase('structural-projection');
-  validateGeneratedModule(output, inputKeys, resultKeys);
-  onPhase('generated-module-validation');
-  return output;
+  return Object.freeze({ inputKeys, output, resultKeys });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
-  const mode = requireArgument();
+async function runActionTypeMap(mode) {
   const timing = createActionTypeMapTimingReporter();
-  const output = renderModule(timing);
+  const { inputKeys, output, resultKeys } = renderStructuralModule(timing);
+  validateGeneratedModule(output, inputKeys, resultKeys);
+  timing('generated-module-validation');
 
   if (mode === '--write') {
     await writeFileIfChanged(OUTPUT_PATH, output);
@@ -345,4 +393,31 @@ if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
     }
   }
   timing(mode === '--write' ? 'publication-write' : 'publication-check');
+}
+
+export async function runActionTypeMapWithWorkspaceLock({
+  mode,
+  run = runActionTypeMap,
+  lockPath = WORKSPACE_BUILD_LOCK_PATH,
+  env = process.env,
+  lockOptions = {},
+} = {}) {
+  if (mode !== '--check' && mode !== '--write') {
+    throw new Error('Action type map mode must be --check or --write');
+  }
+  return await withWorkspaceBundleLock(
+    async () => await run(mode),
+    {
+      ...lockOptions,
+      lockPath,
+      heldLockValue: lockOptions.heldLockValue
+        ?? env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+      errorLabel: lockOptions.errorLabel
+        ?? '@happier-dev/plugin-sdk generated Action map lock',
+    },
+  );
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
+  await runActionTypeMapWithWorkspaceLock({ mode: requireArgument() });
 }

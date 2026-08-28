@@ -247,7 +247,11 @@ describe('targeted contribution point semantics', () => {
         expect(semantics.operations.map(({ role, input }) => ({ role, input }))).toEqual([
             { role: 'inspect', input: { kind: 'contributorDefined' } },
         ]);
-        expect(semantics.surfaces).toEqual([{ role: 'detail', presentation: 'content' }]);
+        expect(semantics.surfaces.map(({ role, presentation }) => ({ role, presentation }))).toEqual([
+            { role: 'detail', presentation: 'content' },
+        ]);
+        expect(semantics.surfaces[0]?.inputSchema.safeParse({ issueId: 'issue-1' }).success).toBe(true);
+        expect(semantics.surfaces[0]?.inputSchema.safeParse({ issueId: 42 }).success).toBe(false);
         expect(Object.isFrozen(semantics)).toBe(true);
     });
 
@@ -282,7 +286,11 @@ describe('targeted contribution point semantics', () => {
         ]);
         expect(v2Semantics.descriptor.safeParse({ integrationId: 'linear' }).success).toBe(true);
         expect(v2Semantics.descriptor.safeParse({ providerId: 'github' }).success).toBe(false);
-        expect(v2Semantics.surfaces).toEqual([{ role: 'preview', presentation: 'fill' }]);
+        expect(v2Semantics.surfaces.map(({ role, presentation }) => ({ role, presentation }))).toEqual([
+            { role: 'preview', presentation: 'fill' },
+        ]);
+        expect(v2Semantics.surfaces[0]?.inputSchema.safeParse({ id: 'issue-1' }).success).toBe(true);
+        expect(v2Semantics.surfaces[0]?.inputSchema.safeParse({ id: 42 }).success).toBe(false);
     });
 
     it('rejects malformed target and contributor surface roles before projecting declarations', () => {

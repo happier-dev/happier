@@ -17,6 +17,7 @@ import type {
 
 export type {
     PluginUiViewDestinationBindingInputV2,
+    PluginUiViewInlineBindingInputV2,
     PluginUiViewV2,
     PluginUiViewV2Input,
     PluginUiViewTargetV2,

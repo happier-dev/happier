@@ -8,6 +8,10 @@ const protocolAutomationResultDelivery = resolve(
     import.meta.dirname,
     '../../protocol/src/automations/automationResultDeliveryV1.ts',
 );
+const protocolAutomationEventSetupResult = resolve(
+    import.meta.dirname,
+    '../../protocol/src/automations/automationEventSetupResultV1.ts',
+);
 const protocolSessionSpawnNewInput = resolve(
     import.meta.dirname,
     '../../protocol/src/sessions/creation/sessionSpawnNewInputV2.ts',
@@ -43,6 +47,8 @@ const sourceAliases = [
     ['@happier-dev/protocol/providers/public-headers', '../../protocol/src/providers/publicHeadersSchema.ts'],
     ['@happier-dev/protocol/providers/binding-compatibility', '../../protocol/src/providers/compatibility/resolve.ts'],
     ['@happier-dev/protocol/providers/model-selection', '../../protocol/src/providers/selection/v1.ts'],
+    ['@happier-dev/protocol/providers/claude/oauth-profile', '../../protocol/src/providers/claude/oauthProfile.ts'],
+    ['@happier-dev/protocol/providers/codex/oauth', '../../protocol/src/providers/codex/oauth.ts'],
     ['@happier-dev/protocol/connect/connected-account-purposes', '../../protocol/src/connect/connectedAccountPurposes.ts'],
     ['@happier-dev/protocol/connect/claude-subscription-materialization', '../../protocol/src/connect/claudeSubscriptionMaterialization.ts'],
     ['@happier-dev/protocol/connect/connected-account-request-auth', '../../protocol/src/connect/connectedAccountRequestAuth.ts'],
@@ -63,8 +69,12 @@ const sourceAliases = [
     ['@happier-dev/protocol/tools/v2', '../../protocol/src/tools/v2/index.ts'],
     ['@happier-dev/protocol/actions/actionSpecs', '../../protocol/src/actions/actionSpecs.ts'],
     ['@happier-dev/protocol/actions/actionInputHintsRuntime', '../../protocol/src/actions/actionInputHintsRuntime.ts'],
+    ['@happier-dev/protocol/actions/externalActionLimits', '../../protocol/src/actions/externalActionLimits.ts'],
+    ['@happier-dev/protocol/plugins/settings/accountSettingsLimits', '../../protocol/src/plugins/settings/accountSettingsLimits.ts'],
     ['@happier-dev/protocol/actions', '../../protocol/src/actions/index.ts'],
     ['@happier-dev/protocol/automations/result-delivery', '../../protocol/src/automations/automationResultDeliveryV1.ts'],
+    ['@happier-dev/protocol/automations/event-setup-result', '../../protocol/src/automations/automationEventSetupResultV1.ts'],
+    ['@happier-dev/protocol/automations/event-history-gap-reset-action', '../../protocol/src/automations/automationEventHistoryGapResetActionV1.ts'],
     ['@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2', '../../protocol/src/sessions/creation/sessionSpawnNewInputV2.ts'],
     ['@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1', '../../protocol/src/machines/administration/pluginMachineExecutionOriginV1.ts'],
     ['@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring', '../../protocol/src/plugins/contributions/ui/declarativeDocumentAuthoringV1.ts'],
@@ -158,6 +168,11 @@ const bundleCases = [
         source: 'export { AutomationConversationAdmitInputV1Schema, AutomationResultDeliveryInputV1Schema } from ENTRY;',
     },
     {
+        name: 'Events publication projection',
+        entry: resolve(import.meta.dirname, './events/index.ts'),
+        source: 'export { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema } from ENTRY;',
+    },
+    {
         name: 'Action author projection',
         entry: resolve(import.meta.dirname, './actions/index.public.ts'),
         source: `export {
@@ -169,6 +184,11 @@ const bundleCases = [
           readActionInputOptionValue,
           resolveEffectiveActionInputFields,
         } from ENTRY;`,
+    },
+    {
+        name: 'Settings limits projection',
+        entry: resolve(import.meta.dirname, './settings/projections.ts'),
+        source: 'export { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from ENTRY;',
     },
     {
         name: 'Declarative document content-type projection',
@@ -271,6 +291,10 @@ describe('Plugin SDK publication realm closure', () => {
                 expect(bundle.moduleIds).toContain(protocolAutomationResultDelivery);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
             }
+            if (bundleCase.name === 'Events publication projection') {
+                expect(bundle.moduleIds).toContain(protocolAutomationEventSetupResult);
+                expect(bundle.moduleIds).not.toContain(protocolRoot);
+            }
             if (bundleCase.name === 'Connected Accounts projection') {
                 expect(bundle.moduleIds).toContain(protocolClaudeSubscriptionMaterialization);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
@@ -282,6 +306,10 @@ describe('Plugin SDK publication realm closure', () => {
             if (bundleCase.name === 'Action author projection') {
                 expect(bundle.moduleIds).toContain(protocolPluginMachineExecutionOrigin);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
+            }
+            if (bundleCase.name === 'Settings limits projection') {
+                expect(bundle.moduleIds).not.toContain(protocolRoot);
+                expect(bundle.moduleIds).not.toContain(protocolAccountScopedCipher);
             }
             if (bundleCase.name === 'Declarative document content-type projection') {
                 expect(bundle.moduleIds).not.toContain(protocolDeclarativeDocument);

@@ -1,4 +1,4 @@
-# First-party Preview Cross-plugin Contribution Target
+# Advanced Public Cross-plugin Contribution Target
 
 This copyable plugin owns the `document-reviewers` contribution point. It
 imports the canonical versioned `@happier-dev/triage-protocol`, which declares
@@ -10,10 +10,12 @@ has no contributor registry, runtime callback, or Action lookup. Its
 an `observeForSelf(...)` observation from its generated typed point, reads the
 complete admitted snapshot, and disposes the observation in `finally`.
 
-This pair is a first-party Developer Preview reference because the Triage
-contract includes descriptor and embedded-surface roles. The generated
+This pair is an advanced public Developer Preview reference because the Triage
+contract includes descriptor and embedded-surface roles. External and bundled
+plugins use the same public contracts and physical host. The generated
 `capability-matrix.json` remains the availability authority; the example does
-not create a separate support tier.
+not create a separate support tier or claim loaded-platform or publication
+proof.
 
 It also shows the public browser and request-policy declarations: a browser
 target, a browser Action bound to this plugin's canonical Action, and a

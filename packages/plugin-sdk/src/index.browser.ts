@@ -44,7 +44,10 @@ export type { PluginErrorData } from './errors.js';
 export type { PluginOperationAvailability, PluginRemediationData } from './availability.js';
 export { isPluginError, PluginError } from './errors.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
-export { arePluginMachineExecutionOriginsEqual } from './executionOrigin.js';
+export {
+  arePluginMachineExecutionOriginsEqual,
+  arePluginMachineMaterializationRefsEqual,
+} from './executionOrigin.js';
 export { definePlugin } from './definePlugin.js';
 export {
     defineComposerAttachment,

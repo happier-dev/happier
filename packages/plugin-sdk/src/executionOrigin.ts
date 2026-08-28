@@ -1,5 +1,6 @@
 /** @moduleRealm any */
 import {
+    arePluginMachineMaterializationRefsEqual as canonicalArePluginMachineMaterializationRefsEqual,
     arePluginMachineExecutionOriginsEqual as canonicalArePluginMachineExecutionOriginsEqual,
 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginMachineExecutionOriginV1 } from './actions/executionOrigin.js';
@@ -13,6 +14,12 @@ export type PluginMachineMaterializationRefV1 = {
 
 /** Exact host-stamped machine origin used for currentness and equality checks. */
 export type { PluginMachineExecutionOriginV1 } from './actions/executionOrigin.js';
+
+/** Exact equality for an already host-stamped plugin materialization. */
+export const arePluginMachineMaterializationRefsEqual: (
+    left: PluginMachineMaterializationRefV1,
+    right: PluginMachineMaterializationRefV1,
+) => boolean = canonicalArePluginMachineMaterializationRefsEqual;
 
 /**
  * Browser-safe projection of Protocol/Admin's exact execution-origin equality

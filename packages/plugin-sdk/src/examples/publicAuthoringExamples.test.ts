@@ -125,6 +125,12 @@ async function loadPublicAuthoringSourceActivationEntry(): Promise<PublicAuthori
 // source declarations. The runtime entry remains real source wiring under the
 // source-SDK mock above; emitted/package proof remains staging-owned.
 const publicAuthoringCodeDefinedPlugin = await loadPublicAuthoringSourceActivationEntry();
+const productionHostedCodeDefinedPlugin = await import(pathToFileURL(
+    join(examplesRoot, 'production-hosted-reference', 'index.ts'),
+).href) as Readonly<{
+    manifest: PluginManifest;
+    activate: DefinedPlugin['activate'];
+}>;
 
 const requiredExamples = [
     'descriptor-only',
@@ -146,7 +152,7 @@ const copyableExamples = [
     { name: 'projects-tasks', sourceEntry: 'src/index.ts', ui: 'reactNative', coldManifest: true },
     { name: 'react-native-dev-hot-reload', sourceEntry: 'src/index.ts', ui: 'reactNative', coldManifest: true },
     { name: 'multi-mode-fallback', sourceEntry: 'src/index.ts', ui: 'both', coldManifest: true },
-    { name: 'production-hosted-reference', sourceEntry: 'index.ts', ui: 'hostedWeb', coldManifest: true },
+    { name: 'production-hosted-reference', sourceEntry: 'index.ts', ui: 'hostedWeb', coldManifest: false },
     { name: 'code-defined', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
     { name: 'session-agent', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
     { name: 'tracked-action', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
@@ -435,6 +441,8 @@ async function listTypeScriptFiles(dir: string): Promise<readonly string[]> {
 function readExampleManifest(exampleName: string): ParsedPluginManifest {
     const manifest = exampleName === 'public-authoring'
         ? publicAuthoringCodeDefinedPlugin.manifest
+        : exampleName === 'production-hosted-reference'
+            ? productionHostedCodeDefinedPlugin.manifest
         : JSON.parse(readFileSync(
             join(examplesRoot, exampleName, '.happier-plugin', 'plugin.json'),
             'utf8',
@@ -820,15 +828,15 @@ const documentedSnippetSupportFiles = new Map<string, readonly Readonly<{
         source: 'advanced-package-root/agent/reviewAgent.ts',
         destination: 'agent/reviewAgent.ts',
     }]],
+    ['surfaces/external-sessions.mdx#4', [{
+        source: 'advanced-package-root/agent/reviewAgent.ts',
+        destination: 'agent/reviewAgent.ts',
+    }]],
     ['surfaces/external-sessions.mdx#5', [{
         source: 'advanced-package-root/agent/reviewAgent.ts',
         destination: 'agent/reviewAgent.ts',
     }]],
-    ['surfaces/external-sessions.mdx#6', [{
-        source: 'advanced-package-root/agent/reviewAgent.ts',
-        destination: 'agent/reviewAgent.ts',
-    }]],
-    ['surfaces/external-sessions.mdx#8', [{
+    ['surfaces/external-sessions.mdx#7', [{
         source: 'advanced-package-root/agent/reviewAgent.ts',
         destination: 'agent/reviewAgent.ts',
     }]],
@@ -1285,6 +1293,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             path: 'resources/review-guide.md',
         }));
         expect(hostedManifest.brand).toEqual({ iconResourceId: 'brand-icon' });
+        expect(hostedManifest.runtime.apiVersion).toBe(
+            Number(PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.toolchain.runtime),
+        );
         expect(hostedManifest.contributes.resources).toContainEqual(expect.objectContaining({
             id: 'brand-icon',
             kind: 'asset',
@@ -1314,11 +1325,8 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(hostedReadme).toContain('No separate release representation is created for feature QA.');
     });
 
-    it('uses cold JSON only for cold-manifest examples and code-defined public authoring without startup activation', () => {
-        const exampleNames = [
-            ...requiredExamples,
-            'production-hosted-reference',
-        ] as const;
+    it('uses cold JSON only for cold-manifest examples and definePlugin for code-defined packages', () => {
+        const exampleNames = requiredExamples;
 
         for (const exampleName of exampleNames) {
             const manifestPath = join(examplesRoot, exampleName, '.happier-plugin', 'plugin.json');
@@ -1351,6 +1359,25 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             /export const \{ manifest, activate, collectionMigrations \} = definePlugin/u,
         );
         expect(readExampleManifest('public-authoring').activation?.events ?? []).not.toContainEqual({ kind: 'startup' });
+
+        const productionHostedRoot = join(examplesRoot, 'production-hosted-reference');
+        const productionHostedPackage = readExamplePackageJson('production-hosted-reference');
+        const productionHostedEntry = readFileSync(join(productionHostedRoot, 'index.ts'), 'utf8');
+        const productionHostedDefinition = readFileSync(join(productionHostedRoot, 'definition.ts'), 'utf8');
+        expect(productionHostedPackage.files).not.toContain('.happier-plugin');
+        expect(productionHostedEntry).toContain('PRODUCTION_HOSTED_REFERENCE_PLUGIN');
+        expect(productionHostedDefinition).toMatch(/definePlugin\s*\(/u);
+        expect(productionHostedDefinition).not.toContain('contributes:');
+        expect(readExampleManifest('production-hosted-reference').activation?.events ?? [])
+            .not.toContainEqual({ kind: 'startup' });
+
+        const generatedManifest = parsePluginManifest(JSON.parse(readFileSync(
+            join(productionHostedRoot, '.happier-plugin', 'plugin.json'),
+            'utf8',
+        )) as unknown);
+        expect(generatedManifest.ok).toBe(true);
+        if (!generatedManifest.ok) return;
+        expect(generatedManifest.manifest).toEqual(readExampleManifest('production-hosted-reference'));
     });
 
     it('binds code-defined public authoring manifest projection and runtime registrations to its declared daemon entrypoint', async () => {
@@ -1884,6 +1911,18 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 sessionId: 'minimal-session-agent-success',
                 confirm,
             }));
+            expect(session.runtimeCapabilities).toEqual({
+                sessionCapabilities: {
+                    sessionListing: 'unsupported',
+                    sessionFork: {
+                        conversation: 'unsupported',
+                        fromMessage: 'unsupported',
+                    },
+                    sessionRollback: {
+                        conversation: 'unsupported',
+                    },
+                },
+            });
             const harness = createAgentSessionRuntimeHarness();
             try {
                 harness.attachRuntime({
@@ -1910,6 +1949,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 harness.expectAllEventsValidated();
                 harness.expectExactlyOneTerminalEvent({ turnId: 'turn-success' });
                 expect(harness.canonicalEvents().map((event) => event.kind)).toEqual([
+                    'provider-session-id',
                     'input-accepted',
                     'turn-start',
                     'message-delta',
@@ -2003,6 +2043,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 harness.expectAllEventsValidated();
                 harness.expectExactlyOneTerminalEvent({ turnId: 'turn-cancel' });
                 expect(harness.canonicalEvents().map((event) => event.kind)).toEqual([
+                    'provider-session-id',
                     'input-accepted',
                     'turn-start',
                     'message-delta',
@@ -2015,6 +2056,117 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             }
         } finally {
             await testkit.dispose();
+        }
+    });
+
+    it('reopens the minimal public Session Agent with the exact provider identity and completes a turn', async () => {
+        const exampleRoot = join(examplesRoot, 'session-agent');
+        const module = await import(pathToFileURL(join(exampleRoot, 'index.ts')).href) as Readonly<{
+            manifest: PluginManifest;
+        }>;
+        const runnerLeaf = await import(pathToFileURL(
+            join(exampleRoot, 'agent', 'deterministicSessionAgent.ts'),
+        ).href) as Readonly<{
+            createDeterministicSessionAgentRuntime: AgentRuntimeFactory;
+        }>;
+        const parsedManifest = parsePluginManifest(module.manifest);
+        expect(parsedManifest.ok).toBe(true);
+        if (!parsedManifest.ok) {
+            throw new Error('Minimal public Session Agent manifest must parse before resume is exercised.');
+        }
+        expect(parsedManifest.manifest.contributes.agents).toContainEqual(expect.objectContaining({
+            id: 'session-agent',
+            primary: 'sessions',
+            capabilities: expect.objectContaining({
+                sessions: expect.objectContaining({ open: ['create', 'resume'] }),
+            }),
+        }));
+
+        const confirmation = deferred<Readonly<{
+            requestId: string;
+            kind: 'confirmation';
+            status: 'approved';
+        }>>();
+        const runtime = await runnerLeaf.createDeterministicSessionAgentRuntime({
+            plugin: { id: 'examples.session-agent', version: '0.1.0' },
+            agent: { id: 'session-agent' },
+            signal: new AbortController().signal,
+        });
+        if (!runtime.sessions) {
+            throw new Error('Expected the minimal Agent example to provide a Session runtime.');
+        }
+        const session = await runtime.sessions.open({
+            kind: 'resume',
+            sessionId: 'minimal-session-agent-resume',
+            providerSessionId: 'deterministic-session-provider-1',
+            cwd: '/tmp/minimal-session-agent',
+        }, createSessionAgentRuntimeContext({
+            sessionId: 'minimal-session-agent-resume',
+            confirm: () => confirmation.promise,
+        }));
+        const harness = createAgentSessionRuntimeHarness();
+        try {
+            harness.attachRuntime({
+                subscribeRuntimeEvents: session.watch.bind(session),
+            });
+            const send = session.send({
+                inputIds: ['input-resume'],
+                input: { text: 'Continue this deterministic review.' },
+                delivery: { kind: 'newTurn', turnId: 'turn-resume' },
+            });
+            await harness.until('tool-call');
+            confirmation.resolve({
+                requestId: 'confirmation-resume',
+                kind: 'confirmation',
+                status: 'approved',
+            });
+
+            await expect(send).resolves.toEqual({ status: 'admitted' });
+            await harness.until('turn-complete');
+            harness.expectAllEventsValidated();
+            harness.expectExactlyOneTerminalEvent({ turnId: 'turn-resume' });
+            expect(harness.canonicalEvents()[0]).toMatchObject({
+                kind: 'provider-session-id',
+                providerSessionId: 'deterministic-session-provider-1',
+            });
+        } finally {
+            harness.dispose();
+            await session.dispose();
+        }
+    });
+
+    it('keeps the minimal Session Agent README on the complete canonical lifecycle and shared selectors', () => {
+        const readme = readFileSync(join(examplesRoot, 'session-agent', 'README.md'), 'utf8');
+
+        for (const command of [
+            'happier plugins create my-session-agent',
+            'happier plugins dev typecheck .',
+            'happier plugins dev build .',
+            'happier plugins test .',
+            'happier plugins install . --dev --trust --json',
+            'happier plugins reload --json',
+            'happier daemon restart --restart-session-runners --json',
+            'happier plugins pack . --out ../session-agent.tgz',
+            'happier plugins install ../session-agent.tgz --kind archive --json',
+            'happier plugins change approve <pendingChangeId> --json',
+            'happier plugins pack . --out ../session-agent-update.tgz',
+            'happier plugins install ../session-agent-update.tgz --kind archive --json',
+            'happier plugins disable examples.session-agent --json',
+            'happier plugins enable examples.session-agent --json',
+            'happier plugins uninstall examples.session-agent --json',
+        ]) {
+            expect(readme).toContain(command);
+        }
+
+        for (const selector of [
+            'new-session-agent:agent:examples.session-agent/session-agent',
+            'agent-input-agent-chip',
+            'agent-input-chip-picker.option:agent:examples.session-agent/session-agent',
+            'permission-footer.allow',
+            'agent-input-abort',
+            'settings.plugins.detail.examples.session-agent.action.forgetTrust',
+        ]) {
+            expect(readme).toContain(selector);
         }
     });
 

@@ -99,6 +99,7 @@ export type ExternalSessionTranscriptItem = Readonly<{
 
 export type ExternalSessionReadAfterDiagnostic = Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     positions: readonly number[];
 }>;
@@ -119,6 +120,7 @@ export type ExternalSessionTranscriptReadResult =
         items: readonly ExternalSessionTranscriptItem[];
         nextCursor: string;
         boundary: string;
+        hasMore: boolean;
         diagnostics?: readonly ExternalSessionReadAfterDiagnostic[];
     }>
     | Readonly<{

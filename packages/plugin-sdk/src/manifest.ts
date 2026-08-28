@@ -17,6 +17,7 @@ import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import type {
   PluginUiAttachmentToneV1,
   PluginUiIconTokenV1,
+  PluginUiViewV2Input,
 } from './ui/publicContract.js';
 /**
  * Protocol owns the Agent UI grammar and its strict parser. As with the
@@ -60,8 +61,6 @@ export type AgentUiRuntimeDescriptorAgentExtraV1 = {
 export type AgentUiRuntimeDescriptorLinkExtrasV1 = {
   backendMode: { values: string[] };
   sourceFields: string[];
-  runtimeDescriptorOutputKey?: string;
-  legacyModeOutputKey?: string;
   agentExtra?: AgentUiRuntimeDescriptorAgentExtraV1;
 };
 
@@ -74,8 +73,8 @@ export type AgentUiBehaviorDeclarationV1 = {
     /**
      * Which permission-prompt conversation this Agent speaks. It selects the
      * footer's whole semantic action model — button set, handlers and terminal
-     * decision reading — not just its wording. Absent means the neutral
-     * Claude-shaped default.
+     * decision reading — not just its wording. Absent means the neutral,
+     * fail-closed rejecting action.
      */
     promptProtocol?: 'claude' | 'codexDecision';
     footer?: {
@@ -132,7 +131,10 @@ export type AgentUiBehaviorDeclarationV1 = {
     agentOptions?: { key: string; kind: 'boolean'; spawnConfigOption?: boolean }[];
   };
   payload?: {
-    spawnSessionExtras?: { kind: 'static'; value: Record<string, unknown> };
+    spawnSessionExtras?: {
+      kind: 'static';
+      value: Record<string, string | number | boolean | null>;
+    };
     /**
      * A backend-mode fact this Agent contributes to the spawn/resume envelope.
      * The mode comes from the named account setting and, for an existing
@@ -177,8 +179,6 @@ export type AgentUiBehaviorDeclarationV1 = {
         legacyExperimentalValue?: string;
       };
       runtimeHandleFields: string[];
-      runtimeDescriptorOutputKey?: string;
-      legacyModeOutputKey?: string;
       agentExtra?: AgentUiRuntimeDescriptorAgentExtraIdentityV1;
     };
   };
@@ -606,63 +606,7 @@ export type PluginManifestAuthorInput = {
       }>[];
     }>;
     ui?: Readonly<{
-      views?: readonly (Readonly<{
-        id: string;
-        renderer: string;
-        fallbackRenderers?: readonly string[];
-        readonly [key: string]: unknown;
-      }> & (
-        | Readonly<{ container: 'appPage'; target: Readonly<{ kind: 'app' }> }>
-        | Readonly<{
-          container: 'rightSidebarTab';
-          target:
-            | Readonly<{ kind: 'app' }>
-            | Readonly<{ kind: 'session'; sessionIdPath?: string }>
-            | Readonly<{
-              kind: 'project';
-              workspaceRefIdPath?: string;
-              serverIdPath?: string;
-              machineIdPath?: string;
-              rootPathPath?: string;
-              projectIdPath?: string;
-            }>;
-        }>
-        | Readonly<{
-          container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane';
-          target:
-            | Readonly<{ kind: 'session'; sessionIdPath?: string }>
-            | Readonly<{
-              kind: 'project';
-              workspaceRefIdPath?: string;
-              serverIdPath?: string;
-              machineIdPath?: string;
-              rootPathPath?: string;
-              projectIdPath?: string;
-            }>;
-        }>
-        | Readonly<{
-          container: 'browserPanel';
-          target: Readonly<{
-            kind: 'browser';
-            browserViewIdPath: string;
-            sessionIdPath?: string;
-            profileIdPath?: string;
-          }>;
-        }>
-        | Readonly<{
-          container: 'servicesPanel';
-          target: Readonly<{
-            kind: 'services';
-            sessionIdPath?: string;
-            serverIdPath?: string;
-            machineIdPath?: string;
-          }>;
-        }>
-        | Readonly<{
-          container: 'sessionSubagentLaunch' | 'sessionSubagentDetails';
-          target: Readonly<{ kind: 'session'; sessionIdPath?: string }>;
-        }>
-      ))[];
+      views?: readonly PluginUiViewV2Input[];
       // Raw renderer declarations remain an advanced manifest route until the
       // complete renderer union has one published author owner. Supported SDK
       // declarative authoring flows through the closed `PluginDeclarativeNodeV2`

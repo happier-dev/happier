@@ -6,6 +6,8 @@ import test from 'node:test';
 import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mjs';
 
 const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
+const EXTERNAL_TARGET_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
+const EXTERNAL_CONTRIBUTOR_PROOF = 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts';
 const EXTERNAL_COMPOSER_AUTHOR_PROOF = 'packages/plugin-ui/fixtures/external-authoring/src/index.ts';
 const TRIAGE_COMPOSER_PROOF = 'packages/plugins/triage/src/manifest.ts';
 const CHANNELS_COMPOSER_PROOF = 'packages/plugins/channels/src/manifest.ts';
@@ -191,4 +193,15 @@ test('records current Composer and Session-header source consumers without promo
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies, 'composerReferenceProviders'),
     false,
   );
+});
+
+test('attributes contribution-point and targeted-contribution availability to the maintained external-author example pair', () => {
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.pluginContributionPoints, {
+    availabilityDisposition: 'available',
+    provingConsumer: EXTERNAL_TARGET_PROOF,
+  });
+  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.targetedPluginContributions, {
+    availabilityDisposition: 'available',
+    provingConsumer: EXTERNAL_CONTRIBUTOR_PROOF,
+  });
 });

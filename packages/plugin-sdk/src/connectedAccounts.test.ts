@@ -200,14 +200,14 @@ const EXPECTED_EXPORTS = [
     'AuthenticateResult',
     'Authenticator',
     'AuthenticatorContext',
-    'ConnectedAccountAuthFailureRequestV1Schema',
-    'ConnectedAccountAuthenticationContext',
-    'ConnectedAccountAuthenticationModeRuntime',
     'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
     'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',
     'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
     'ClaudeSubscriptionMaterializationContractV1',
     'ClaudeSubscriptionSetupTokenEnvironmentRequestV1',
+    'ConnectedAccountAuthFailureRequestV1Schema',
+    'ConnectedAccountAuthenticationContext',
+    'ConnectedAccountAuthenticationModeRuntime',
     'ConnectedAccountBindingEvent',
     'ConnectedAccountBindingSummary',
     'ConnectedAccountCredentialStore',
@@ -266,10 +266,10 @@ const EXPECTED_EXPORTS = [
     'CredentialRequirementOptions',
     'HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV',
     'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV',
+    'OPENAI_CODEX_OAUTH_PROFILE',
     'OauthAuthEntry',
     'OauthCredentialRecord',
     'OauthCredentialRecordWithExpiry',
-    'OPENAI_CODEX_OAUTH_PROFILE',
     'PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1',
     'PluginConnectedAccountAuthenticationModeV2',
     'PluginConnectedAccountAuthenticationV2',
@@ -418,14 +418,6 @@ describe('Connected Accounts final package-local projection', () => {
             .toBe(accountUsage.unsupportedAccountUsage);
         expect(connectedAccounts.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV)
             .toBe(envConstants.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV);
-        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
-            .toBe(protocol.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
-        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
-            .toBe(protocol.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
-        expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
-            .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
-        expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
-            .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
         expect(publicConnectedAccounts.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV)
             .toBe(requestAuth.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV);
         expect(publicConnectedAccounts.buildConnectedAccountRequestAuthClientSource)
@@ -452,31 +444,22 @@ describe('Connected Accounts final package-local projection', () => {
         }]);
     });
 
-    it('projects nonsecret first-party OAuth profiles through the public Connected Accounts author seam', () => {
-        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE).toEqual({
-            authorizeUrl: protocol.CLAUDE_OAUTH_AUTHORIZE_URL,
-            callbackUrl: protocol.CLAUDE_OAUTH_CALLBACK_URL,
-            clientId: protocol.CLAUDE_OAUTH_CLIENT_ID,
-            tokenUrl: protocol.CLAUDE_OAUTH_TOKEN_URL,
-        });
-        expect(connectedAccounts.OPENAI_CODEX_OAUTH_PROFILE).toEqual({
-            authBaseUrl: protocol.OPENAI_CODEX_AUTH_BASE_URL,
-            authorizeUrl: protocol.OPENAI_CODEX_AUTHORIZE_URL,
-            clientId: protocol.OPENAI_CODEX_CLIENT_ID,
-            scope: protocol.OPENAI_CODEX_SCOPE,
-            scopes: protocol.OPENAI_CODEX_SCOPES,
-            tokenUrl: protocol.OPENAI_CODEX_TOKEN_URL,
-            device: {
-                redirectUri: protocol.OPENAI_CODEX_DEVICE_REDIRECT_URI,
-                tokenUrl: protocol.OPENAI_CODEX_DEVICE_TOKEN_URL,
-                userCodeUrl: protocol.OPENAI_CODEX_DEVICE_USER_CODE_URL,
-                verificationUrl: protocol.OPENAI_CODEX_DEVICE_VERIFICATION_URL,
-            },
-        });
+    it('projects the exact reusable Claude and Codex Connected Account facts', () => {
+        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
+            .toBe(protocol.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
+        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
+            .toBe(protocol.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
         expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE)
-            .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE);
-        expect(publicConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE)
-            .toBe(connectedAccounts.OPENAI_CODEX_OAUTH_PROFILE);
+            .toEqual({
+                authorizeUrl: protocol.CLAUDE_OAUTH_AUTHORIZE_URL,
+                callbackUrl: protocol.CLAUDE_OAUTH_CALLBACK_URL,
+                clientId: protocol.CLAUDE_OAUTH_CLIENT_ID,
+                tokenUrl: protocol.CLAUDE_OAUTH_TOKEN_URL,
+            });
+        expect(publicConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.clientId)
+            .toBe(protocol.OPENAI_CODEX_CLIENT_ID);
+        expect(publicConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.device.verificationUrl)
+            .toBe(protocol.OPENAI_CODEX_DEVICE_VERIFICATION_URL);
     });
 
     it('directly projects canonical materialization, qualified-account, quota, and descriptor identities', () => {

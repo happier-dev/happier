@@ -938,8 +938,16 @@ describe('plugin registration scope targets', () => {
                 return { isRepo: true, rootPath: '/workspace', mode: '.git' as const };
             },
         };
+        const prepareReviewWorkspace = vi.fn();
+        const verifyPreparedReviewWorkspace = vi.fn();
         const runtime = {
-            handlers: { detection },
+            handlers: {
+                detection,
+                workspaceIntegration: {
+                    prepareReviewWorkspace,
+                    verifyPreparedReviewWorkspace,
+                },
+            },
         } satisfies BackendRuntime;
         const scope = createPluginRegistrationScope({
             pluginId: 'acme.scm',
@@ -965,6 +973,11 @@ describe('plugin registration scope targets', () => {
         expect(Object.isFrozen(registration.value)).toBe(true);
         expect(Object.isFrozen(registration.value.handlers)).toBe(true);
         expect(Object.isFrozen(registration.value.handlers.detection)).toBe(true);
+        expect(Object.isFrozen(registration.value.handlers.workspaceIntegration)).toBe(true);
+        expect(registration.value.handlers.workspaceIntegration?.prepareReviewWorkspace)
+            .toBeTypeOf('function');
+        expect(registration.value.handlers.workspaceIntegration?.verifyPreparedReviewWorkspace)
+            .toBeTypeOf('function');
         detection.detectRepo = vi.fn(() => ({ isRepo: true, rootPath: '/late', mode: '.git' as const }));
         expect(registration.value.handlers.detection?.detectRepo?.({ cwd: '/workspace' }))
             .toEqual({ isRepo: false, rootPath: null, mode: null });
@@ -1114,16 +1127,19 @@ describe('plugin registration scope targets', () => {
         expect(registration.value.runtime.commands).toEqual([]);
     });
 
-    it('captures SCM hosting adapter methods while retaining opaque receiver state', () => {
-        const adapter: HostingProviderRuntime['adapter'] & {
-            baseUrl: string;
-            buildCompareUrl: NonNullable<HostingProviderRuntime['adapter']['buildCompareUrl']>;
-        } = {
+    it('captures SCM hosting capability methods while retaining opaque receiver state', () => {
+        const routing = {
             baseUrl: 'https://captured.example',
+            detectRemote() {
+                return null;
+            },
             buildCompareUrl() {
                 return this.baseUrl;
             },
+        } satisfies NonNullable<HostingProviderRuntime['adapter']['routing']> & {
+            baseUrl: string;
         };
+        const adapter: HostingProviderRuntime['adapter'] = { routing };
         const runtime = { adapter } satisfies HostingProviderRuntime;
         const scope = createPluginRegistrationScope({
             pluginId: 'acme.scm-hosting',
@@ -1136,7 +1152,7 @@ describe('plugin registration scope targets', () => {
         });
         scope.api.scm.registerHostingProvider('forge', runtime);
         const replacement = vi.fn(() => 'https://replacement.example');
-        adapter.buildCompareUrl = replacement;
+        routing.buildCompareUrl = replacement;
 
         const [registration] = scope.commit();
         if (registration?.family !== 'scmHostingProviders') {
@@ -1144,10 +1160,31 @@ describe('plugin registration scope targets', () => {
         }
         expect(Object.isFrozen(registration.value)).toBe(true);
         expect(Object.isFrozen(registration.value.adapter)).toBe(true);
-        adapter.buildCompareUrl = vi.fn(() => 'https://late.example');
-        expect(registration.value.adapter.buildCompareUrl?.({} as never))
+        routing.buildCompareUrl = vi.fn(() => 'https://late.example');
+        expect(registration.value.adapter.routing?.buildCompareUrl({} as never))
             .toBe('https://replacement.example');
         expect(replacement).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a partially declared SCM hosting capability group', () => {
+        const scope = createPluginRegistrationScope({
+            pluginId: 'acme.scm-hosting',
+            target: { realm: 'daemon' },
+            rights: [{
+                family: 'scmHostingProviders',
+                localId: 'forge',
+                target: { realm: 'daemon' },
+            }],
+        });
+
+        scope.api.scm.registerHostingProvider('forge', {
+            adapter: {
+                routing: {
+                    detectRemote: () => null,
+                },
+            },
+        } as unknown as HostingProviderRuntime);
+        expect(() => scope.commit()).toThrow(/invalid 'scmHostingProviders\/forge' runtime/i);
     });
 
     it('captures Prompt Asset descriptor and operations without freezing author input', async () => {

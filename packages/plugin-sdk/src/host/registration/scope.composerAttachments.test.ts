@@ -64,7 +64,7 @@ describe('composer attachment registration', () => {
         )).resolves.toMatchObject({ owner: 'structural-attachment' });
     });
 
-    it('rejects an undeclared or unknown attachment runtime callback', () => {
+    it('rejects an undeclared callback and ignores unrelated runtime fields', () => {
         const withUndeclaredCallback = createAttachmentScope(['prepareForSend']);
         withUndeclaredCallback.api.composerAttachments.register('issue', {
             prepareForSend: async () => ({ attachments: [] }),
@@ -78,7 +78,9 @@ describe('composer attachment registration', () => {
             prepareForSend: async () => ({ attachments: [] }),
             unexpected: true,
         } as never);
-        expect(() => withUnknownProperty.commit())
-            .toThrow(/invalid 'composerAttachments\/issue' runtime/i);
+        expect(() => withUnknownProperty.commit()).not.toThrow();
+        expect(withUnknownProperty.registrations()[0]?.value).toEqual({
+            prepareForSend: expect.any(Function),
+        });
     });
 });

@@ -1,5 +1,5 @@
 export { buildAgentAccountUsageRecordId } from './agentRuntime/index.js';
-export { createExecutionRunHostBackendFromSessionRuntime } from './agentRuntime/index.js';
+export { createFiniteExecutionRunHostRuntime } from './agentRuntime/index.js';
 export type {
   AgentAccountUsageRecordKey,
   AgentAccountUsageDiagnostic,
@@ -29,10 +29,12 @@ export type {
   AgentAcpRuntimeExtensions,
   AgentAcpRuntimeOptions,
   AgentExecutionRunEvent,
+  AgentFiniteExecutionRunHostOptions,
+  AgentFiniteExecutionRunProgressEvent,
+  AgentFiniteExecutionRunResult,
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
-  AgentExecutionRunSessionAdapterOptions,
   AgentFeatureDecisionService,
   AgentLaunchEnvironment,
   AgentPermissionIntent,
@@ -79,6 +81,7 @@ export type {
   AgentSessionHookServerStartRequest,
   AgentSessionHooksService,
   AgentSessionHostServices,
+  AgentSessionNativeHomeService,
   AgentSessionActiveInputBinding,
   AgentSessionActiveInputStatus,
   AgentSessionInput,

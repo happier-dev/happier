@@ -95,6 +95,7 @@ export { isPluginError, PluginError } from './errors.js';
 export type { PluginErrorData } from './errors.js';
 export type { PluginIdentity } from './identity.js';
 export type { PluginInvocationCaller } from './invocation.js';
+export type { PluginAutomationRunCause } from './invocation.js';
 export type {
     PluginActionOperationContextV1,
     PluginActionOperationProgressUpdateV1,
@@ -131,7 +132,10 @@ export type { PluginSettingDescriptorBase } from './services/core.js';
 export type { PluginSettingsChange } from './services/core.js';
 export type { PluginSettingsMutationResult } from './services/core.js';
 export type { PluginSettingsSnapshot } from './services/core.js';
-export { arePluginMachineExecutionOriginsEqual } from './executionOrigin.js';
+export {
+  arePluginMachineExecutionOriginsEqual,
+  arePluginMachineMaterializationRefsEqual,
+} from './executionOrigin.js';
 export { definePlugin } from './definePlugin.js';
 export type {
     ContributionAdmittedEntry,
