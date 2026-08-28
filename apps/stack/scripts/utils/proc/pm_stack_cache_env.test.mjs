@@ -1070,16 +1070,22 @@ test('ensureDepsInstalled does not repeat a successful no-op refresh while depen
   const unchangedInstalls = unchangedOut.split('\n').filter((line) => /\binstall\b/.test(line));
   assert.equal(unchangedInstalls.length, 1, `expected one successful refresh for unchanged inputs, got:\n${unchangedOut}`);
 
-  const changed = new Date(Date.now() + 10_000);
-  await utimes(join(root, 'apps', 'server', 'package.json'), changed, changed);
+  await writeFile(
+    join(root, 'apps', 'server', 'package.json'),
+    '{"name":"happier-server-light","version":"1"}\n',
+    'utf-8',
+  );
   await ensureDepsInstalled(join(root, 'apps', 'server'), 'happier-server-light', { quiet: true });
 
   const changedOut = await readFile(outputPath, 'utf-8');
   const changedInstalls = changedOut.split('\n').filter((line) => /\binstall\b/.test(line));
   assert.equal(changedInstalls.length, 2, `expected a later dependency input change to refresh again, got:\n${changedOut}`);
 
-  const changedAgain = new Date(Date.now() + 20_000);
-  await utimes(join(root, 'apps', 'server', 'package.json'), changedAgain, changedAgain);
+  await writeFile(
+    join(root, 'apps', 'server', 'package.json'),
+    '{"name":"happier-server-light","version":"2"}\n',
+    'utf-8',
+  );
   process.env.YARN_INSTALL_FAIL = '1';
   await assert.rejects(
     ensureDepsInstalled(join(root, 'apps', 'server'), 'happier-server-light', { quiet: true }),
