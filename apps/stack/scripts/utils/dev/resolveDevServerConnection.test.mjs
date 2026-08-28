@@ -26,12 +26,29 @@ test('uses local server defaults when no remote flags are set', () => {
   assert.equal(out.source, 'local');
 });
 
-test('uses explicit --server-url and disables local server', () => {
-  const { flags, kv } = makeArgs({ kv: { '--server-url': 'https://api.example.com/' } });
+test('uses --server-public-url for a locally started server', () => {
+  const { flags, kv } = makeArgs({
+    kv: { '--server-public-url': 'http://127.0.0.1:52753/' },
+  });
+  const out = resolveDevServerConnection({ flags, kv, env: {}, resolvedLocalUrls: localUrls });
+
+  assert.equal(out.startServer, true);
+  assert.equal(out.internalServerUrl, localUrls.internalServerUrl);
+  assert.equal(out.publicServerUrl, 'http://127.0.0.1:52753');
+  assert.equal(out.uiApiUrl, localUrls.defaultPublicUrl);
+});
+
+test('uses explicit server and public URLs while keeping the server local to its target', () => {
+  const { flags, kv } = makeArgs({
+    kv: {
+      '--server-url': 'https://api.example.com/',
+      '--server-public-url': 'https://public.example.com/',
+    },
+  });
   const out = resolveDevServerConnection({ flags, kv, env: {}, resolvedLocalUrls: localUrls });
   assert.equal(out.startServer, false);
   assert.equal(out.internalServerUrl, 'https://api.example.com');
-  assert.equal(out.publicServerUrl, 'https://api.example.com');
+  assert.equal(out.publicServerUrl, 'https://public.example.com');
   assert.equal(out.uiApiUrl, 'https://api.example.com');
   assert.equal(out.source, 'cli-arg');
 });

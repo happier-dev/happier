@@ -30,6 +30,7 @@ test('0.2 adapter delegates only to the controller entrypoint materialized by 0.
   const outcome = await runExecutionHostAdapter({
     controllerEntrypoint: resolved,
     localEntrypoint: '/Users/dev/happier/remote-dev/apps/stack/scripts/repo_local.mjs',
+    stackName: 'repo-remote-dev-d72117acdb',
     argv: ['tui', '--json'],
     cwd: '/Users/dev/happier/remote-dev',
     env: { PATH: '/usr/bin' },
@@ -56,6 +57,7 @@ test('0.2 adapter delegates only to the controller entrypoint materialized by 0.
     '--', 'tui', '--json',
   ]);
   assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.HAPPIER_STACK_STACK, 'repo-remote-dev-d72117acdb');
 });
 
 test('0.2 adapter fails closed when the configured 0.3 controller profile is malformed', () => {

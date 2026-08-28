@@ -114,7 +114,7 @@ export function parseDevTargetsConfig(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[dev-targets] configuration must be an object');
   }
-  if (raw.version !== 1) {
+  if (raw.version !== 1 && raw.version !== 2) {
     throw new Error(`[dev-targets] unsupported configuration version: ${String(raw.version)}`);
   }
   if (!Array.isArray(raw.targets)) {
@@ -128,7 +128,108 @@ export function parseDevTargetsConfig(raw) {
     }
     seen.add(target.name);
   }
-  return { version: 1, targets };
+  if (raw.version === 1) return { version: 1, targets };
+
+  const targetNames = new Set(targets.map((target) => target.name));
+  const runtimePlacementRaw = raw.runtimePlacement;
+  if (
+    runtimePlacementRaw != null
+    && (!runtimePlacementRaw || typeof runtimePlacementRaw !== 'object' || Array.isArray(runtimePlacementRaw))
+  ) {
+    throw new Error('[dev-targets] runtimePlacement must be an object');
+  }
+  return {
+    version: 2,
+    targets,
+    runtimePlacement: {
+      server: normalizePlacement(runtimePlacementRaw?.server, {
+        label: 'runtimePlacement.server',
+        targetNames,
+      }),
+      expo: normalizePlacement(runtimePlacementRaw?.expo, {
+        label: 'runtimePlacement.expo',
+        targetNames,
+      }),
+      daemon: normalizeDaemonPlacement(runtimePlacementRaw?.daemon, { targetNames }),
+    },
+  };
+}
+
+const LOCAL_PLACEMENT = Object.freeze({ mode: 'local' });
+
+function normalizePlacement(raw, { label, targetNames }) {
+  if (raw == null) return { ...LOCAL_PLACEMENT };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`[dev-targets] ${label} must be an object`);
+  }
+  const mode = requireNonEmptyString(raw.mode, `${label} mode`).toLowerCase();
+  if (mode === 'local') return { ...LOCAL_PLACEMENT };
+  if (mode !== 'prefer-target') {
+    throw new Error(`[dev-targets] ${label} mode must be "local" or "prefer-target"`);
+  }
+  const target = requireNonEmptyString(raw.target, `${label} target`).toLowerCase();
+  if (!targetNames.has(target)) {
+    throw new Error(`[dev-targets] ${label} references unknown target: ${target}`);
+  }
+  const fallback = String(raw.fallback ?? 'local').trim().toLowerCase();
+  if (fallback !== 'local') {
+    throw new Error(`[dev-targets] ${label} fallback must be "local"`);
+  }
+  return { mode, target, fallback };
+}
+
+function normalizeDaemonPlacement(raw, { targetNames }) {
+  if (raw?.mode !== 'local-and-targets') {
+    return normalizePlacement(raw, { label: 'runtimePlacement.daemon', targetNames });
+  }
+  if (!Array.isArray(raw.targets) || raw.targets.length === 0) {
+    throw new Error('[dev-targets] runtimePlacement.daemon targets must be a non-empty array');
+  }
+  const targets = [];
+  for (const rawTarget of raw.targets) {
+    const target = requireNonEmptyString(rawTarget, 'runtimePlacement.daemon target').toLowerCase();
+    if (!targetNames.has(target)) {
+      throw new Error(`[dev-targets] runtimePlacement.daemon references unknown target: ${target}`);
+    }
+    if (!targets.includes(target)) targets.push(target);
+  }
+  return { mode: 'local-and-targets', targets };
+}
+
+export function resolveDevTargetExecutionPolicy(
+  config,
+  { targetsEnabled = true, serverRequested = false } = {},
+) {
+  const policy = config?.version === 1
+    ? {
+        server: { mode: 'local' },
+        expo: { mode: 'local' },
+        daemons: config.targets.length > 0
+          ? { mode: 'local-and-targets', targets: config.targets.map((target) => target.name) }
+          : { mode: 'local' },
+      }
+    : config?.version === 2
+      ? {
+          server: { ...config.runtimePlacement.server },
+          expo: { ...config.runtimePlacement.expo },
+          daemons: { ...config.runtimePlacement.daemon },
+        }
+      : null;
+  if (!policy) {
+    throw new Error(`[dev-targets] unsupported configuration version: ${String(config?.version)}`);
+  }
+  if (targetsEnabled !== false) return policy;
+  if (serverRequested && policy.server.mode === 'prefer-target') {
+    throw new Error(
+      '[dev-targets] --no-dev-targets cannot bypass persisted remote server placement; '
+      + 'keep target execution enabled or set runtimePlacement.server to local',
+    );
+  }
+  return {
+    server: { mode: 'local' },
+    expo: { mode: 'local' },
+    daemons: { mode: 'local' },
+  };
 }
 
 export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {

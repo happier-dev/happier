@@ -77,6 +77,301 @@ test('default remote tunnel port varies by Stack process instance', () => {
   assert.ok(replacement >= 40_000 && replacement <= 59_999);
 });
 
+test('authoritative remote server retires the prior target owner and becomes running only after stable-tunnel readiness', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-server-ready-'));
+  const credentialPath = join(root, 'access.key');
+  await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+  const target = {
+    name: 'mac-host',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  const calls = [];
+  const states = [];
+  let resolveReady;
+  const ready = new Promise((resolve) => {
+    resolveReady = resolve;
+  });
+  let resolveRunningState;
+  const runningState = new Promise((resolve) => {
+    resolveRunningState = resolve;
+  });
+  let resolveReadinessStarted;
+  const readinessStarted = new Promise((resolve) => {
+    resolveReadinessStarted = resolve;
+  });
+  let controller = null;
+  try {
+    const controllerPromise = startStackDevTargets({
+      stackName: 'repo-test',
+      stackBaseDir: join(root, 'stack'),
+      sourceDir: '/source/happier',
+      localServerPort: 52753,
+      publicServerUrl: 'http://127.0.0.1:52753',
+      activeServerId: 'stack_repo-test__id_default',
+      credentialPath,
+      targets: [target],
+      targetPlans: [{
+        target,
+        services: { server: true, expo: false, daemon: true },
+      }],
+      remoteServerRuntimeConfig: {
+        serverComponentName: 'happier-server-light',
+        dbProvider: 'sqlite',
+        environment: {
+          HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+          HAPPIER_SQLITE_CONNECTION_LIMIT: '1',
+        },
+      },
+      onTargetStateChange: (state) => {
+        states.push(state);
+        if (state.status === 'running') resolveRunningState();
+      },
+      env: {},
+      instanceId: 100,
+    }, {
+      runProcess: async ({ label, command, args, env }) => {
+        calls.push({ kind: 'run', label, command, args, env });
+        return { code: 0 };
+      },
+      spawnProcess: ({ label, command, args, env }) => {
+        const child = { label, command, args, env, exitCode: null };
+        calls.push({ kind: 'spawn', label, command, args, env, child });
+        return child;
+      },
+      stopProcess: async (child) => {
+        child.exitCode = 0;
+      },
+      waitForServerReady: async ({ url }) => {
+        calls.push({ kind: 'server-ready', url });
+        resolveReadinessStarted();
+        await ready;
+      },
+    });
+
+    await readinessStarted;
+    assert.ok(
+      calls.some((call) => call.kind === 'run' && call.command === 'ssh' && call.args.at(-1)?.includes('stack stop')),
+      'prior target retirement must finish before the replacement worker starts',
+    );
+    const tunnel = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && call.args.includes('-N'));
+    assert.ok(tunnel?.args.includes('-L'));
+    assert.equal(tunnel?.args.includes('-R'), false);
+    assert.deepEqual(calls.find((call) => call.kind === 'server-ready'), {
+      kind: 'server-ready',
+      url: 'http://127.0.0.1:52753',
+    });
+    assert.equal(states.some((state) => state.status === 'running'), false);
+
+    resolveReady();
+    controller = await controllerPromise;
+    await runningState;
+    assert.equal(states.at(-1)?.status, 'running');
+    assert.equal(states.at(-1)?.serviceStatus?.server, 'running');
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('authoritative Mac server forwards its target-owned Expo through the guest Metro endpoint', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-server-expo-'));
+  const credentialPath = join(root, 'access.key');
+  const target = {
+    name: 'mac-host',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  const calls = [];
+  let releaseReady;
+  const ready = new Promise((resolve) => {
+    releaseReady = resolve;
+  });
+  let controller = null;
+  try {
+    await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+    const controllerPromise = startStackDevTargets({
+      stackName: 'repo-test',
+      stackBaseDir: join(root, 'stack'),
+      sourceDir: '/source/happier',
+      localServerPort: 52753,
+      localExpoPort: 18081,
+      expoListenHost: '0.0.0.0',
+      expoPublicUrl: 'http://192.168.1.20:18081',
+      resolveMobilePublicUrlsOnTarget: true,
+      startMobile: true,
+      publicServerUrl: 'http://192.168.1.20:52753',
+      activeServerId: 'stack_repo-test__id_default',
+      credentialPath,
+      targetPlans: [{
+        target,
+        services: { server: true, expo: true, daemon: true },
+      }],
+      remoteServerRuntimeConfig: {
+        serverComponentName: 'happier-server-light',
+        dbProvider: 'sqlite',
+        environment: {
+          HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+          HAPPIER_SQLITE_CONNECTION_LIMIT: '1',
+        },
+      },
+      env: {},
+      instanceId: 100,
+    }, {
+      runProcess: async ({ label, command, args, env }) => {
+        calls.push({ kind: 'run', label, command, args, env });
+        return { code: 0 };
+      },
+      spawnProcess: ({ label, command, args, env }) => {
+        const child = { label, command, args, env, exitCode: null };
+        calls.push({ kind: 'spawn', label, command, args, env, child });
+        return child;
+      },
+      stopProcess: async (child) => {
+        child.exitCode = 0;
+      },
+      waitForServerReady: async () => await ready,
+    });
+
+    releaseReady();
+    controller = await controllerPromise;
+    const tunnel = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && call.args.includes('-N'));
+    assert.deepEqual(
+      tunnel?.args.filter((arg) => arg === '-L').length,
+      2,
+      'one local forward must expose the target server and one the target Metro listener',
+    );
+    assert.ok(tunnel?.args.some((arg) => String(arg).startsWith('*:18081:localhost:')));
+    const worker = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N'));
+    assert.match(worker?.args.at(-1) ?? '', /HAPPIER_STACK_EXPO_DEV_PORT=/);
+    assert.doesNotMatch(
+      worker?.args.at(-1) ?? '',
+      /EXPO_PACKAGER_PROXY_URL=|--server-public-url=|192\.168\.1\.20/,
+      'automatic guest addresses must not override the target\'s own public-host resolution',
+    );
+  } finally {
+    releaseReady?.();
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a co-located server stays available when deferred Expo or daemon preparation fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-companion-preparation-'));
+  const credentialPath = join(root, 'access.key');
+  const target = {
+    name: 'mac-host',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+  try {
+    for (const failure of ['bootstrap', 'credentials']) {
+      const calls = [];
+      const states = [];
+      let markCompanionRetry;
+      const companionRetry = new Promise((resolve) => {
+        markCompanionRetry = resolve;
+      });
+      const retryGate = new Promise(() => {});
+      let controller = null;
+      try {
+        controller = await startStackDevTargets({
+          stackName: 'repo-test',
+          stackBaseDir: join(root, `stack-${failure}`),
+          sourceDir: '/source/happier',
+          localServerPort: 52753,
+          localExpoPort: 18081,
+          publicServerUrl: 'http://192.168.1.20:52753',
+          activeServerId: 'stack_repo-test__id_default',
+          credentialPath,
+          targetPlans: [{
+            target,
+            services: { server: true, expo: true, daemon: true },
+          }],
+          remoteServerRuntimeConfig: {
+            serverComponentName: 'happier-server-light',
+            dbProvider: 'sqlite',
+            environment: {
+              HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+              HAPPIER_SQLITE_CONNECTION_LIMIT: '1',
+            },
+          },
+          onTargetStateChange: (state) => states.push(state),
+          env: {},
+          instanceId: 100,
+        }, {
+          runProcess: async ({ label, command, args, env }) => {
+            const remoteCommand = String(args.at(-1) ?? '');
+            calls.push({ kind: 'run', label, command, args, env });
+            if (failure === 'bootstrap' && remoteCommand.includes('remote_dependency_bootstrap.mjs')) {
+              return { code: 1 };
+            }
+            if (failure === 'credentials' && command === 'scp') {
+              return { code: 1 };
+            }
+            return { code: 0 };
+          },
+          spawnProcess: ({ label, command, args, env }) => {
+            const child = { label, command, args, env, exitCode: null };
+            calls.push({ kind: 'spawn', label, command, args, env, child });
+            return child;
+          },
+          stopProcess: async (child) => {
+            calls.push({ kind: 'stop', child });
+            child.exitCode = 0;
+          },
+          waitForServerReady: async () => {
+            calls.push({ kind: 'server-ready' });
+          },
+          waitForRetry: async () => {
+            markCompanionRetry();
+            await retryGate;
+          },
+          logger: { error() {} },
+        });
+
+        await companionRetry;
+        const serverReadinessIndex = calls.findIndex((call) => call.kind === 'server-ready');
+        const failedPreparationIndex = calls.findIndex((call) => (
+          (failure === 'bootstrap' && String(call.args?.at(-1) ?? '').includes('remote_dependency_bootstrap.mjs'))
+          || (failure === 'credentials' && call.command === 'scp')
+        ));
+        assert.ok(serverReadinessIndex >= 0, `${failure} failure must follow server readiness`);
+        assert.ok(failedPreparationIndex > serverReadinessIndex, `${failure} preparation must not gate server readiness`);
+        assert.equal(
+          calls.filter((call) => call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N')).length,
+          1,
+          'companion preparation retries must retain the existing target worker',
+        );
+        const worker = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N'));
+        assert.match(worker?.args.at(-1) ?? '', /HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1/);
+        assert.equal(
+          calls.some((call) => call.kind === 'stop' && call.child === worker.child),
+          false,
+          'companion failure must not stop the ready server worker',
+        );
+        assert.deepEqual(states.at(-1)?.serviceStatus, {
+          server: 'running',
+          expo: 'degraded',
+          daemon: 'degraded',
+        });
+        assert.equal(states.at(-1)?.status, 'degraded');
+      } finally {
+        await controller?.close();
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('dev target supervisor resumes an equivalent Mutagen project and pauses it on close', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-reuse-'));
   const credentialPath = join(root, 'access.key');
@@ -976,6 +1271,7 @@ test('dev target supervisor owns Mutagen publication, remote bootstrap, auth see
         'run:mutagen',
         'run:mutagen',
         'spawn:mutagen',
+        'run:remote:linux',
         'run:remote:linux',
         'run:remote:linux',
         'run:remote:linux',

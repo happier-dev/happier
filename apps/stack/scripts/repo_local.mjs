@@ -158,9 +158,15 @@ async function main() {
     process.cwd();
   const executionHostController = resolveExecutionHostController({ env: process.env });
   if (executionHostController) {
+    const { stackName } = resolveRepoStackIdentity({
+      repoRoot,
+      stacksStorageRoot: resolveStacksStorageRoot(process.env),
+      createIfMissing: false,
+    });
     const outcome = await runExecutionHostAdapter({
       controllerEntrypoint: executionHostController,
       localEntrypoint: fileURLToPath(import.meta.url),
+      stackName,
       argv: argvRaw,
       cwd: invokedCwd,
       env: process.env,

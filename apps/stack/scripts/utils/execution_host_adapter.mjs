@@ -47,11 +47,16 @@ export function resolveExecutionHostController({
 export async function runExecutionHostAdapter({
   controllerEntrypoint,
   localEntrypoint,
+  stackName = '',
   argv,
   cwd,
   env,
   boundary = defaultBoundary(),
 }) {
+  const selectedStack = String(stackName ?? '').trim();
+  if (/[\0\r\n]/.test(selectedStack)) {
+    throw new Error('[repo-local] execution-host stack name contains unsupported control characters');
+  }
   const child = boundary.spawn(process.execPath, [
     controllerEntrypoint,
     '--workspace-id=0.2',
@@ -60,7 +65,7 @@ export async function runExecutionHostAdapter({
     ...argv,
   ], {
     cwd,
-    env,
+    env: selectedStack ? { ...env, HAPPIER_STACK_STACK: selectedStack } : env,
     stdio: 'inherit',
     shell: false,
   });

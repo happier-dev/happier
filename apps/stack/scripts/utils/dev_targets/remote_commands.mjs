@@ -1,3 +1,5 @@
+import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
+
 function posixQuote(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -140,16 +142,199 @@ export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalP
   );
 }
 
-export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, stackName }) {
+function requireServicePort(value, label, { optional = false } = {}) {
+  if (optional && value == null) return null;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(`[dev-targets] ${label} must be an integer from 1024 to 65535`);
+  }
+  return port;
+}
+
+const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
+  'HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY',
+  'HAPPIER_SQLITE_BUSY_TIMEOUT_MS',
+  'HAPPIER_SQLITE_CONNECTION_LIMIT',
+]);
+const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES = ['HAPPIER_SERVER_RETENTION__'];
+
+function projectRemoteServerLightSemanticEnvironment(env) {
+  const projected = {};
+  for (const [key, value] of Object.entries(env ?? {})) {
+    const included = REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS.has(key)
+      || REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (!included || value == null) continue;
+    if (!/^[A-Z0-9_]+$/.test(key)) {
+      throw new Error('[dev-targets] invalid remote server semantic environment key');
+    }
+    const normalized = String(value).trim();
+    if (!normalized) continue;
+    if (/[\0\r\n]/.test(normalized)) {
+      throw new Error('[dev-targets] invalid remote server semantic environment value');
+    }
+    projected[key] = normalized;
+  }
+  return projected;
+}
+
+export function resolveRemoteServerRuntimeConfig({ serverComponentName, env = {} } = {}) {
+  if (serverComponentName !== 'happier-server-light') {
+    throw new Error('[dev-targets] remote server placement only supports happier-server-light');
+  }
+  const effectiveProvider = resolveEffectiveDbProvider({ serverComponentName, env });
+  if (!effectiveProvider.ok || effectiveProvider.provider !== 'sqlite') {
+    throw new Error('[dev-targets] remote server placement only supports SQLite');
+  }
+  const environment = projectRemoteServerLightSemanticEnvironment(env);
+  if (environment.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY !== 'optional') {
+    throw new Error('[dev-targets] remote server encryption storage policy must be optional');
+  }
+  if (environment.HAPPIER_SQLITE_CONNECTION_LIMIT !== '1') {
+    throw new Error('[dev-targets] remote server SQLite connection limit must be 1');
+  }
+  return {
+    serverComponentName: 'happier-server-light',
+    dbProvider: 'sqlite',
+    environment,
+  };
+}
+
+function normalizeRemoteServerRuntimeConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('[dev-targets] remote server placement requires a supported server runtime configuration');
+  }
+  return resolveRemoteServerRuntimeConfig({
+    serverComponentName: config.serverComponentName,
+    env: {
+      ...(config.environment ?? {}),
+      HAPPIER_DB_PROVIDER: config.dbProvider,
+    },
+  });
+}
+
+function requireStableOuterServerUrl(value) {
+  const text = String(value ?? '').trim();
+  if (!text || /[\0\r\n]/.test(text)) {
+    throw new Error('[dev-targets] remote server placement requires a stable outer --server-public-url');
+  }
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error('[dev-targets] remote server placement requires an HTTP(S) --server-public-url');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('[dev-targets] remote server placement requires an HTTP(S) --server-public-url');
+  }
+  return text;
+}
+
+function buildRemoteDevArgs({ services, serverUrl, publicServerUrl, startMobile = false }) {
+  const args = [];
+  if (!services.server) args.push('--no-server');
+  if (!services.expo) args.push('--no-ui');
+  if (!services.daemon) args.push('--no-daemon');
+  args.push('--no-browser', '--no-dev-targets', '--watch');
+  if (services.expo && startMobile) args.push('--mobile');
+  if (services.server) {
+    // The target's SSH forward owns the stable endpoint, so bind the server to its configured port.
+    args.push('--no-proxy');
+    if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
+  } else {
+    args.push(`--server-url=${serverUrl}`);
+    if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
+  }
+  return args;
+}
+
+function resolveRemoteStackInvocation(target, {
+  services,
+  serverUrl,
+  publicServerUrl = '',
+  activeServerId,
+  stackName,
+  remoteServerPort = null,
+  remoteExpoPort = null,
+  expoPublicUrl = '',
+  startMobile = false,
+  resolveServerPublicUrlOnTarget = false,
+  resolveExpoPublicUrlOnTarget = false,
+  remoteServerRuntimeConfig = null,
+  deferDaemonStartUntilCredentials = false,
+}) {
+  const normalizedServices = {
+    server: services?.server === true,
+    expo: services?.expo === true,
+    daemon: services?.daemon === true,
+  };
+  if (!Object.values(normalizedServices).some(Boolean)) {
+    throw new Error('[dev-targets] remote Stack command requires at least one service');
+  }
+  const serverPort = normalizedServices.server
+    ? requireServicePort(remoteServerPort, 'remote server port')
+    : null;
+  const expoPort = normalizedServices.expo
+    ? requireServicePort(remoteExpoPort, 'remote Expo port')
+    : null;
+  const serverRuntimeConfig = normalizedServices.server
+    ? normalizeRemoteServerRuntimeConfig(remoteServerRuntimeConfig)
+    : null;
+  const stablePublicServerUrl = normalizedServices.server
+    ? (resolveServerPublicUrlOnTarget ? '' : requireStableOuterServerUrl(publicServerUrl))
+    : publicServerUrl;
   const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
   const stackBaseDir = `${stackStorageDir}/${stackName}`;
   const stackEnvPath = `${stackBaseDir}/env`;
   const stackEnvLines = [
     `HAPPIER_STACK_REPO_DIR=${target.repoDir}`,
     `HAPPIER_STACK_CLI_HOME_DIR=${target.cliHomeDir}`,
-    'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+    `HAPPIER_STACK_SERVER_COMPONENT=${serverRuntimeConfig?.serverComponentName ?? 'happier-server-light'}`,
+    ...(serverPort == null ? [] : [`HAPPIER_STACK_SERVER_PORT=${serverPort}`]),
+    ...(expoPort == null ? [] : [
+      `HAPPIER_STACK_EXPO_DEV_PORT=${expoPort}`,
+      'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY=stable',
+      'HAPPIER_STACK_EXPO_HOST=localhost',
+    ]),
+    ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
     'HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000',
+    ...(normalizedServices.daemon && deferDaemonStartUntilCredentials
+      ? ['HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1']
+      : []),
+    ...(serverRuntimeConfig ? [
+      `HAPPIER_DB_PROVIDER=${serverRuntimeConfig.dbProvider}`,
+      ...Object.entries(serverRuntimeConfig.environment).map(([key, value]) => `${key}=${value}`),
+    ] : []),
   ];
+  return {
+    activeServerId,
+    devArgs: buildRemoteDevArgs({
+      services: normalizedServices,
+      serverUrl,
+      publicServerUrl: stablePublicServerUrl,
+      startMobile,
+    }),
+    stackBaseDir,
+    stackEnvLines,
+    stackEnvPath,
+    stackName,
+    stackStorageDir,
+  };
+}
+
+function formatPosixDevArg(arg) {
+  const separator = arg.indexOf('=');
+  if (separator < 0) return arg;
+  return `${arg.slice(0, separator + 1)}${posixQuote(arg.slice(separator + 1))}`;
+}
+
+function formatPowerShellDevArg(arg) {
+  const separator = arg.indexOf('=');
+  if (separator < 0) return arg;
+  return `${arg.slice(0, separator + 1)}${powershellQuote(arg.slice(separator + 1))}`;
+}
+
+export function buildRemoteStackCommand(target, options) {
+  const invocation = resolveRemoteStackInvocation(target, options);
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
@@ -157,18 +342,18 @@ export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, st
         '$ErrorActionPreference = "Stop"',
         `$env:HAPPIER_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
         `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
-        `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(stackStorageDir)}`,
+        "$env:HAPPIER_STACK_CLI_ROOT_DISABLE = '1'",
+        ...(options?.attended === true ? ["$env:HAPPIER_STACK_TUI = '1'"] : []),
+        `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(invocation.stackStorageDir)}`,
         `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = Join-Path $env:USERPROFILE '.cache'`,
-        `$env:HAPPIER_STACK_STACK = ${powershellQuote(stackName)}`,
-        `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(activeServerId)}`,
-        `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(activeServerId)}`,
-        `New-Item -ItemType Directory -Force -Path ${powershellQuote(stackBaseDir)} | Out-Null`,
-        `$stackEnvPath = ${powershellQuote(stackEnvPath)}`,
-        `@(${stackEnvLines.map(powershellQuote).join(', ')}) | Set-Content -LiteralPath $stackEnvPath -Encoding Ascii`,
+        `$env:HAPPIER_STACK_STACK = ${powershellQuote(invocation.stackName)}`,
+        `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(invocation.activeServerId)}`,
+        `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
+        `New-Item -ItemType Directory -Force -Path ${powershellQuote(invocation.stackBaseDir)} | Out-Null`,
+        `$stackEnvPath = ${powershellQuote(invocation.stackEnvPath)}`,
+        `@(${invocation.stackEnvLines.map(powershellQuote).join(', ')}) | Set-Content -LiteralPath $stackEnvPath -Encoding Ascii`,
         `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
-        `corepack yarn workspace @happier-dev/stack stack stop ${powershellQuote(stackName)} --yes --no-docker`,
-        'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
-        `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(stackName)} --no-server --no-ui --no-browser --no-dev-targets --watch --server-url=${powershellQuote(serverUrl)}`,
+        `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -179,18 +364,43 @@ export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, st
       'set -euo pipefail',
       `export HAPPIER_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
       `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
-      `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(stackStorageDir)}`,
+      'export HAPPIER_STACK_CLI_ROOT_DISABLE=1',
+      ...(options?.attended === true ? ['export HAPPIER_STACK_TUI=1'] : []),
+      `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(invocation.stackStorageDir)}`,
       'export HAPPIER_STACK_PM_CACHE_BASE_DIR="$HOME/.cache"',
-      `export HAPPIER_STACK_STACK=${posixQuote(stackName)}`,
-      `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(activeServerId)}`,
-      `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(activeServerId)}`,
-      `install -d -m 700 -- ${posixQuote(stackBaseDir)}`,
-      `printf '%s\\n' ${stackEnvLines.map(posixQuote).join(' ')} > ${posixQuote(stackEnvPath)}`,
+      `export HAPPIER_STACK_STACK=${posixQuote(invocation.stackName)}`,
+      `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(invocation.activeServerId)}`,
+      `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
+      `install -d -m 700 -- ${posixQuote(invocation.stackBaseDir)}`,
+      `printf '%s\\n' ${invocation.stackEnvLines.map(posixQuote).join(' ')} > ${posixQuote(invocation.stackEnvPath)}`,
       `cd -- ${posixQuote(target.repoDir)}`,
-      `corepack yarn workspace @happier-dev/stack stack stop ${posixQuote(stackName)} --yes --no-docker`,
-      `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(stackName)} --no-server --no-ui --no-browser --no-dev-targets --watch --server-url=${posixQuote(serverUrl)}`,
+      `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
     ].join('; '),
   );
+}
+
+export function buildRemoteStackStopCommand(target, options) {
+  const invocation = resolveRemoteStackInvocation(target, options);
+  const command = `corepack yarn workspace @happier-dev/stack stack stop ${target.platform === 'windows'
+    ? powershellQuote(invocation.stackName)
+    : posixQuote(invocation.stackName)} --yes --no-docker --preserve-daemon`;
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(target, [
+      '$ErrorActionPreference = "Stop"',
+      "$env:HAPPIER_STACK_CLI_ROOT_DISABLE = '1'",
+      `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(invocation.stackStorageDir)}`,
+      `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
+      command,
+      'exit $LASTEXITCODE',
+    ].join('; '));
+  }
+  return wrapRemoteScript(target, [
+    'set -euo pipefail',
+    'export HAPPIER_STACK_CLI_ROOT_DISABLE=1',
+    `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(invocation.stackStorageDir)}`,
+    `cd -- ${posixQuote(target.repoDir)}`,
+    command,
+  ].join('; '));
 }
 
 export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
@@ -215,10 +425,15 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
   );
 }
 
-export function buildSshTunnelArgs(
-  target,
-  { localServerPort, remoteServerPort, sshArgs = [] },
-) {
+function renderForwardEndpoint(host, port, { listen = false } = {}) {
+  const normalizedHost = listen && host === '0.0.0.0' ? '*' : host;
+  return `${normalizedHost}:${port}`;
+}
+
+export function buildSshForwardArgs(target, { forwards, sshArgs = [] } = {}) {
+  if (!Array.isArray(forwards) || forwards.length === 0) {
+    throw new Error('[dev-targets] at least one SSH forward is required');
+  }
   return [
     '-T',
     ...sshArgs,
@@ -230,9 +445,16 @@ export function buildSshTunnelArgs(
     'ServerAliveInterval=15',
     '-o',
     'ServerAliveCountMax=3',
+    ...forwards.flatMap((forward) => {
+      if (!['local', 'reverse'].includes(forward.direction)) {
+        throw new Error(`[dev-targets] invalid SSH forward direction: ${String(forward.direction)}`);
+      }
+      return [
+        forward.direction === 'local' ? '-L' : '-R',
+        `${renderForwardEndpoint(forward.listenHost, forward.listenPort, { listen: true })}:${renderForwardEndpoint(forward.targetHost, forward.targetPort)}`,
+      ];
+    }),
     '-N',
-    '-R',
-    `127.0.0.1:${remoteServerPort}:127.0.0.1:${localServerPort}`,
     target.ssh,
   ];
 }

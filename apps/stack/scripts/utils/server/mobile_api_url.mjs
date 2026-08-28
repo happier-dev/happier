@@ -6,6 +6,14 @@ function resolveLanIp({ env = process.env } = {}) {
   return raw || pickLanIpv4() || '';
 }
 
+export function hasExplicitMobileReachableHost({ env = process.env, preferredHost = '' } = {}) {
+  return Boolean(
+    String(preferredHost ?? '').trim()
+    || String(env.HAPPIER_STACK_LAN_IP ?? '').trim()
+    || String(env.HAPPIER_STACK_LAN_HOST ?? '').trim(),
+  );
+}
+
 function resolveReachableHost({ env = process.env, preferredHost = '' } = {}) {
   const preferred = String(preferredHost ?? '').trim();
   return preferred || resolveLanIp({ env });
