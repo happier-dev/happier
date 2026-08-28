@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
-import { Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
@@ -51,7 +50,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
     const handlePress = React.useCallback((event?: unknown) => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
@@ -67,8 +66,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
                 accessibilityRole="button"
                 accessibilityLabel={t('newSession.title')}
                 onPress={handlePress}
-                // No `hitSlop`: the capsule stretches to the tab row, whose shared
-                // metrics enforce the platform's minimum interactive target height.
+                // Keep this capsule's hit area out of the neighbouring tab's expanded press area.
                 focusRingRadius={CAPSULE_RADIUS}
                 style={styles.press}
             >

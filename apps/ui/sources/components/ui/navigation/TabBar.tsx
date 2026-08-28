@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -80,7 +80,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
     const inboxHasContent = useInboxHasContent();
     const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
     const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
@@ -111,7 +111,6 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
                             testID={`tabbar-tab-${tab.key}`}
                             style={[styles.tab, {
                                 minWidth: metrics.tabMinWidth,
-                                minHeight: metrics.tabMinHeight,
                                 paddingVertical: metrics.tabPaddingVertical,
                                 paddingHorizontal: metrics.tabPaddingHorizontal,
                             }]}

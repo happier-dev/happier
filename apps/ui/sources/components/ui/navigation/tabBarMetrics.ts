@@ -15,7 +15,6 @@ export type TabBarSize = 'compact' | 'regular' | 'large';
 export type TabBarMetrics = Readonly<{
     iconSize: number;
     tabMinWidth: number;
-    tabMinHeight: number;
     tabPaddingVertical: number;
     tabPaddingHorizontal: number;
     rowGap: number;
@@ -26,25 +25,22 @@ export type TabBarMetrics = Readonly<{
 const SIZE_PRESETS: Record<TabBarSize, Readonly<{
     iconSize: number;
     minWidth: number;
-    minHeight: number;
     padV: number;
     gap: number;
     pillRadius: number;
 }>> = {
-    compact: { iconSize: 18, minWidth: 44, minHeight: 40, padV: 3, gap: 4, pillRadius: 13 },
-    regular: { iconSize: 22, minWidth: 50, minHeight: 44, padV: 5, gap: 5, pillRadius: 16 },
-    large: { iconSize: 26, minWidth: 54, minHeight: 48, padV: 7, gap: 7, pillRadius: 20 },
+    compact: { iconSize: 20, minWidth: 44, padV: 3, gap: 4, pillRadius: 13 },
+    regular: { iconSize: 24, minWidth: 50, padV: 5, gap: 5, pillRadius: 16 },
+    large: { iconSize: 28, minWidth: 54, padV: 7, gap: 7, pillRadius: 20 },
 };
 
 const LABELED_PILL_RADIUS_BOOST = 6;
 
-export function resolveTabBarMetrics(size: TabBarSize, showLabels: boolean, platform: string): TabBarMetrics {
+export function resolveTabBarMetrics(size: TabBarSize, showLabels: boolean): TabBarMetrics {
     const preset = SIZE_PRESETS[size] ?? SIZE_PRESETS.regular;
-    const minimumInteractiveTargetSize = platform === 'android' ? 48 : 44;
     return {
         iconSize: preset.iconSize,
-        tabMinWidth: Math.max(preset.minWidth, minimumInteractiveTargetSize),
-        tabMinHeight: Math.max(preset.minHeight, minimumInteractiveTargetSize),
+        tabMinWidth: preset.minWidth,
         tabPaddingVertical: showLabels ? preset.padV : preset.padV + 4,
         // Horizontal padding is aligned to the vertical (base) padding so each tab's
         // padding is symmetric — H = V = padV per size.
