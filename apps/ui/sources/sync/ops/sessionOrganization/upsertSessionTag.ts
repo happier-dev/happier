@@ -54,3 +54,29 @@ export async function upsertSessionTag(params: Readonly<{
     getStorage().getState().commitSessionOrganizationOptimistic(recordId);
     return tag;
 }
+
+export async function createSessionOrganizationTagWithLabel(params: Readonly<{
+    credentials: AuthCredentials;
+    serverId: string;
+    serverUrl?: string;
+    label: string;
+    usedIds?: ReadonlySet<string>;
+}>): Promise<UiSessionOrganizationTag> {
+    const label = params.label.trim();
+    if (!label) throw new Error('Session organization tag label is required');
+    const tagId = createSessionOrganizationOpaqueId({
+        prefix: 'tag',
+        usedIds: params.usedIds ?? readCurrentTagIds(params.serverId),
+    });
+    return upsertSessionTag({
+        credentials: params.credentials,
+        serverId: params.serverId,
+        serverUrl: params.serverUrl,
+        request: {
+            tagId,
+            tagKey: tagId,
+            sortKey: null,
+            display: { t: 'plain', v: { label } },
+        },
+    });
+}

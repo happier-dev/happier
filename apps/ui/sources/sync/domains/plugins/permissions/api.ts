@@ -13,6 +13,7 @@ import { serverFetch } from '@/sync/http/client';
 export type PluginPermissionGrantUiActionExecutor = (
     actionId: PluginPermissionGrantActionIdV1,
     input: unknown,
+    options?: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<unknown>;
 
 export type CreatePluginPermissionGrantHttpActionExecutorParams = Readonly<{
@@ -71,12 +72,19 @@ export function createPluginPermissionGrantHttpActionExecutor(
     params: CreatePluginPermissionGrantHttpActionExecutorParams = {},
 ): PluginPermissionGrantUiActionExecutor {
     const request = params.request ?? serverFetch;
-    return async (actionId, input) => {
+    return async (actionId, input, options) => {
+        const actionRequest: typeof serverFetch = options?.signal
+            ? (path, init, requestOptions) => request(
+                path,
+                { ...init, signal: options.signal },
+                requestOptions,
+            )
+            : request;
         switch (actionId) {
             case 'plugins.permissions.grants.list': {
                 const parsed = parsePluginPermissionGrantInput<PluginPermissionGrantListActionInputV1>(actionId, input);
                 const output = await requestPluginPermissionGrantJson(
-                    request,
+                    actionRequest,
                     '/v1/plugins/permissions/grants/list',
                     parsed,
                 );
@@ -85,7 +93,7 @@ export function createPluginPermissionGrantHttpActionExecutor(
             case 'plugins.permissions.grants.request': {
                 const parsed = parsePluginPermissionGrantInput<PluginPermissionGrantRequestActionInputV1>(actionId, input);
                 const output = await requestPluginPermissionGrantJson(
-                    request,
+                    actionRequest,
                     '/v1/plugins/permissions/grants/request',
                     parsed,
                 );
@@ -94,7 +102,7 @@ export function createPluginPermissionGrantHttpActionExecutor(
             case 'plugins.permissions.grants.grant': {
                 const parsed = parsePluginPermissionGrantInput<PluginPermissionGrantGrantActionInputV1>(actionId, input);
                 const output = await requestPluginPermissionGrantJson(
-                    request,
+                    actionRequest,
                     '/v1/plugins/permissions/grants/grant',
                     parsed,
                 );
@@ -103,7 +111,7 @@ export function createPluginPermissionGrantHttpActionExecutor(
             case 'plugins.permissions.grants.revoke': {
                 const parsed = parsePluginPermissionGrantInput<PluginPermissionGrantRevokeActionInputV1>(actionId, input);
                 const output = await requestPluginPermissionGrantJson(
-                    request,
+                    actionRequest,
                     '/v1/plugins/permissions/grants/revoke',
                     parsed,
                 );
@@ -112,7 +120,7 @@ export function createPluginPermissionGrantHttpActionExecutor(
             case 'plugins.permissions.grants.dismissRequest': {
                 const parsed = parsePluginPermissionGrantInput<PluginPermissionGrantDismissRequestActionInputV1>(actionId, input);
                 const output = await requestPluginPermissionGrantJson(
-                    request,
+                    actionRequest,
                     '/v1/plugins/permissions/grants/dismissRequest',
                     parsed,
                 );

@@ -59,7 +59,15 @@ const profileB = {
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => [profileB],
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => left === right,
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
+        const profileByIdentifier: Readonly<Record<string, string>> = {
+            'local-a': 'local-a',
+            'local-b': 'local-b',
+            'legacy-b': 'local-b',
+            srv_server_b: 'local-b',
+        };
+        return profileByIdentifier[String(left)] === profileByIdentifier[String(right)];
+    },
     resolveServerProfileForPortableIdentity: (serverIdentityId: string) => (
         serverIdentityId === 'srv_server_b'
             ? { kind: 'resolved', serverIdentityId, profile: profileB }
@@ -73,6 +81,7 @@ vi.mock('@/sync/store/hooks', () => ({
     useMachineRecordListsByServerId: () => ({}),
     useMachineRecordValues: () => [],
     useProfile: () => ({ id: 'account-1' }),
+    useActiveServerAccountScope: () => ({ serverId: runtime.activeServerId, accountId: 'account-1' }),
     useSettingMutable: () => [{ targetsByKey: {}, pluginExecutionOriginsByPluginId: {} }, vi.fn()],
     useSetting: () => ({ targetsByKey: {}, pluginExecutionOriginsByPluginId: {} }),
 }));
@@ -162,5 +171,29 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
             serverIdentityId: 'srv_server_b',
             machineId: 'machine-b',
         })).toBeNull();
+    });
+});
+
+describe('doesMachineAdministrationTargetMatchActiveAccount', () => {
+    it('uses canonical profile equivalence for portable, local, and legacy identifiers', async () => {
+        const { doesMachineAdministrationTargetMatchActiveAccount } = await import('./useTargetSelection');
+        const target = { serverIdentityId: 'srv_server_b', machineId: 'machine-b' };
+
+        expect(doesMachineAdministrationTargetMatchActiveAccount({
+            target,
+            activeAccountServerId: 'local-b',
+        })).toBe(true);
+        expect(doesMachineAdministrationTargetMatchActiveAccount({
+            target,
+            activeAccountServerId: 'legacy-b',
+        })).toBe(true);
+        expect(doesMachineAdministrationTargetMatchActiveAccount({
+            target,
+            activeAccountServerId: 'local-a',
+        })).toBe(false);
+        expect(doesMachineAdministrationTargetMatchActiveAccount({
+            target: null,
+            activeAccountServerId: 'local-b',
+        })).toBe(false);
     });
 });

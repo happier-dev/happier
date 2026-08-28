@@ -1,4 +1,6 @@
 import {
+    arePluginMachineExecutionOriginsEqual,
+    arePluginMachineMaterializationRefsEqual,
     isExactPluginMachineMaterializationReleaseCorrespondenceV1,
     PluginMachineExecutionOriginV1Schema,
     type PluginMachineExecutionOriginV1,
@@ -46,16 +48,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>
         : null;
-}
-
-function sameOrigin(
-    left: PluginMachineExecutionOriginV1,
-    right: PluginMachineExecutionOriginV1,
-): boolean {
-    return left.serverIdentityId === right.serverIdentityId
-        && left.materializationRef.machineId === right.materializationRef.machineId
-        && left.materializationRef.materializationId === right.materializationRef.materializationId
-        && left.materializationRef.pluginId === right.materializationRef.pluginId;
 }
 
 function graphMatchesExactRelease(input: Readonly<{
@@ -147,9 +139,7 @@ export function resolveCandidateCollectionReleaseExecution(input: Readonly<{
     if (materializations.kind !== 'available') return unavailable();
     const matchedMaterializations = materializations.materializations.filter((materialization) => (
         materialization.serverIdentityId === origin.data.serverIdentityId
-        && materialization.machineId === origin.data.materializationRef.machineId
-        && materialization.materializationId === origin.data.materializationRef.materializationId
-        && materialization.pluginId === origin.data.materializationRef.pluginId
+        && arePluginMachineMaterializationRefsEqual(materialization, origin.data.materializationRef)
     ));
     if (matchedMaterializations.length !== 1) return unavailable();
     const materialization = matchedMaterializations[0]!;
@@ -164,7 +154,7 @@ export function resolveCandidateCollectionReleaseExecution(input: Readonly<{
     if (
         materialization.enabled !== true
         || materialization.trustState !== 'trusted'
-        || !sameOrigin(origin.data, materializationOrigin)
+        || !arePluginMachineExecutionOriginsEqual(origin.data, materializationOrigin)
         || !isExactPluginMachineMaterializationReleaseCorrespondenceV1(
             materialization,
             input.target.facts,

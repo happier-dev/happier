@@ -182,7 +182,7 @@ describe('sessionHandoffs ops', () => {
         vi.resetModules();
         machineRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockImplementation(async (input: any) => {
-            if (input?.method === 'daemon.sessionHandoff.commit') {
+            if (input?.method === 'daemon.sessionHandoff.commit.v3') {
                 const handoffId = typeof input?.payload?.handoffId === 'string' ? input.payload.handoffId : 'handoff_unknown';
                 return {
                     handoffId,
@@ -279,7 +279,7 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
             serverId: 'server_b',
             timeoutMs: expect.any(Number),
             payload: expect.objectContaining({
@@ -291,7 +291,7 @@ describe('sessionHandoffs ops', () => {
             }),
         }));
         const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
-        expect(call.timeoutMs).toBe(90_000);
+        expect(call.timeoutMs).toBe(1_800_000);
     }, 60_000);
 
     it('normalizes legacy start responses that only expose workspaceReplicationSourceRootPath in handoffMetadataV2', async () => {
@@ -543,7 +543,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: '/home/guest/wsrepl-large',
             }),
@@ -679,7 +679,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: 'C:\\Users\\test_qa\\happier-transfer-gate-workspace',
             }),
@@ -815,7 +815,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: '/Users/leeroy/wsrepl-large',
             }),
@@ -970,7 +970,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: '/Users/leeroy/wsrepl-large',
             }),
@@ -1133,7 +1133,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_windows_origin',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: 'C:\\Users\\alice\\projects\\demo',
             }),
@@ -1242,7 +1242,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: '/Users/leeroy/wsrepl-large',
             }),
@@ -1355,7 +1355,7 @@ describe('sessionHandoffs ops', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 targetPath: '/Users/leeroy/wsrepl-large',
             }),
@@ -1723,11 +1723,11 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
         }));
         const firstStartCall = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
         const secondStartCall = machineRpcWithServerScopeMock.mock.calls[1]?.[0] as any;
@@ -1738,7 +1738,7 @@ describe('sessionHandoffs ops', () => {
     it('retries source handoff start when the source machine rpc attempt times out within the retry budget', async () => {
         machineRpcWithServerScopeMock
             .mockRejectedValueOnce(
-                Object.assign(new Error('Machine RPC timed out after 10ms while using active scope for daemon.sessionHandoff.start'), {
+                Object.assign(new Error('Machine RPC timed out after 10ms while using active scope for daemon.sessionHandoff.start.v3'), {
                     code: 'MACHINE_RPC_TIMEOUT',
                 }),
             )
@@ -1944,11 +1944,11 @@ describe('sessionHandoffs ops', () => {
         expect(machineStopSessionMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             preferScoped: true,
             payload: expect.objectContaining({
                 sourceMachineId: 'machine_source',
@@ -1992,12 +1992,12 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.commit',
+            method: 'daemon.sessionHandoff.commit.v3',
             payload: { handoffId: 'handoff_1', mode: 'target' },
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(4, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.commit',
+            method: 'daemon.sessionHandoff.commit.v3',
             payload: expect.objectContaining({
                 handoffId: 'handoff_1',
                 mode: 'source_cleanup',
@@ -2444,7 +2444,7 @@ describe('sessionHandoffs ops', () => {
         expect(machineStopSessionMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.abort',
+            method: 'daemon.sessionHandoff.abort.v3',
             payload: {
                 handoffId: 'handoff_prepare_failure_after_stop',
                 reason: 'target_prepare_failed',
@@ -2453,7 +2453,7 @@ describe('sessionHandoffs ops', () => {
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(4, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.abort',
+            method: 'daemon.sessionHandoff.abort.v3',
             payload: {
                 handoffId: 'handoff_prepare_failure_after_stop',
                 reason: 'target_prepare_failed',
@@ -3951,7 +3951,7 @@ describe('sessionHandoffs ops', () => {
         ]);
         expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.abort',
+            method: 'daemon.sessionHandoff.abort.v3',
             payload: {
                 handoffId: 'handoff_server_routed_cutover_throw',
                 reason: 'target_session_not_active',
@@ -4004,7 +4004,6 @@ describe('sessionHandoffs ops', () => {
                     resume: 'codex_session_1',
                     transcriptStorage: 'persisted',
                     approvedNewDirectoryCreation: true,
-                    codexBackendMode: 'acp',
                 },
             })
             .mockResolvedValueOnce({
@@ -4437,13 +4436,13 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             preferScoped: true,
             timeoutMs: expect.any(Number),
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             preferScoped: true,
             timeoutMs: expect.any(Number),
         }));
@@ -4615,21 +4614,21 @@ describe('sessionHandoffs ops', () => {
             });
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.prepareTarget',
+                method: 'daemon.sessionHandoff.prepareTarget.v3',
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+                method: 'daemon.sessionHandoff.prepareTarget.v3Result.get.v3',
                 timeoutMs: 10_000,
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.status.get',
+                method: 'daemon.sessionHandoff.status.get.v3',
                 timeoutMs: 10_000,
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(4, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+                method: 'daemon.sessionHandoff.prepareTarget.v3Result.get.v3',
                 timeoutMs: 10_000,
             }));
         } finally {
@@ -4725,10 +4724,10 @@ describe('sessionHandoffs ops', () => {
                 7,
             );
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+                method: 'daemon.sessionHandoff.prepareTarget.v3Result.get.v3',
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
-                method: 'daemon.sessionHandoff.status.get',
+                method: 'daemon.sessionHandoff.status.get.v3',
             }));
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
@@ -4933,15 +4932,15 @@ describe('sessionHandoffs ops', () => {
             });
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.prepareTarget',
+                method: 'daemon.sessionHandoff.prepareTarget.v3',
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+                method: 'daemon.sessionHandoff.prepareTarget.v3Result.get.v3',
             }));
             expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
                 machineId: 'machine_target',
-                method: 'daemon.sessionHandoff.status.get',
+                method: 'daemon.sessionHandoff.status.get.v3',
             }));
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
@@ -5066,11 +5065,11 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(6, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTargetResult.get',
+            method: 'daemon.sessionHandoff.prepareTarget.v3Result.get.v3',
         }));
     });
 
@@ -5182,7 +5181,7 @@ describe('sessionHandoffs ops', () => {
     it('retries target prepare when the target machine rpc attempt times out within the retry budget', async () => {
         machineRpcWithServerScopeMock
             .mockRejectedValueOnce(
-                Object.assign(new Error('Machine RPC timed out after 10ms while using scoped scope for daemon.sessionHandoff.prepareTarget'), {
+                Object.assign(new Error('Machine RPC timed out after 10ms while using scoped scope for daemon.sessionHandoff.prepareTarget.v3'), {
                     code: 'MACHINE_RPC_TIMEOUT',
                 }),
             )
@@ -5903,7 +5902,7 @@ describe('sessionHandoffs ops', () => {
         expect(machineStopSessionMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.abort',
+            method: 'daemon.sessionHandoff.abort.v3',
             payload: {
                 handoffId: 'handoff_2',
                 reason: 'SESSION_WEBHOOK_TIMEOUT',
@@ -6027,7 +6026,7 @@ describe('sessionHandoffs ops', () => {
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.abort',
+            method: 'daemon.sessionHandoff.abort.v3',
             payload: {
                 handoffId: 'handoff_2b',
                 reason: 'target_session_not_active',
@@ -6263,7 +6262,7 @@ describe('sessionHandoffs ops', () => {
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine_target',
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 sourceMachineId: 'machine_source',
                 negotiatedTransportStrategy: 'server_routed_stream',
@@ -6271,7 +6270,7 @@ describe('sessionHandoffs ops', () => {
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'server_routed_stream',
             }),
@@ -6382,7 +6381,7 @@ describe('sessionHandoffs ops', () => {
             },
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'direct_peer',
                 allowServerRoutedFallback: false,
@@ -6496,13 +6495,13 @@ describe('sessionHandoffs ops', () => {
             },
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            method: 'daemon.sessionHandoff.start',
+            method: 'daemon.sessionHandoff.start.v3',
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'direct_peer',
             }),
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'direct_peer',
                 allowServerRoutedFallback: true,
@@ -6666,7 +6665,7 @@ describe('sessionHandoffs ops', () => {
 
         const secondPrepareCall = machineRpcWithServerScopeMock.mock.calls[5]?.[0];
         expect(secondPrepareCall).toEqual(expect.objectContaining({
-            method: 'daemon.sessionHandoff.prepareTarget',
+            method: 'daemon.sessionHandoff.prepareTarget.v3',
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'server_routed_stream',
                 allowServerRoutedFallback: true,
@@ -6746,7 +6745,6 @@ describe('sessionHandoffs ops', () => {
                     resume: 'codex_session_recover',
                     transcriptStorage: 'direct',
                     serverId: 'server_a',
-                    codexBackendMode: 'appServer',
                     runtimeDescriptorV1: {
                         v: 1,
                         agentId: 'codex',
@@ -6803,7 +6801,7 @@ describe('sessionHandoffs ops', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.commit',
+            method: 'daemon.sessionHandoff.commit.v3',
             serverId: 'server_a',
             payload: {
                 handoffId: 'handoff_committed_cleanup',
@@ -6864,10 +6862,10 @@ describe('sessionHandoffs ops', () => {
             },
         });
         expect(machineRpcWithServerScopeMock.mock.calls.map(([input]) => input.method)).toEqual([
-            'daemon.sessionHandoff.start',
-            'daemon.sessionHandoff.prepareTarget',
-            'daemon.sessionHandoff.commit',
-            'daemon.sessionHandoff.commit',
+            'daemon.sessionHandoff.start.v3',
+            'daemon.sessionHandoff.prepareTarget.v3',
+            'daemon.sessionHandoff.commit.v3',
+            'daemon.sessionHandoff.commit.v3',
         ]);
         expect(machineRpcWithServerScopeMock.mock.calls[3]?.[0]).toMatchObject({
             machineId: 'machine_source',
@@ -6914,7 +6912,7 @@ describe('sessionHandoffs ops', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_source',
-            method: 'daemon.sessionHandoff.commit',
+            method: 'daemon.sessionHandoff.commit.v3',
             serverId: 'server_a',
             payload: {
                 handoffId: 'handoff_committed_cleanup',

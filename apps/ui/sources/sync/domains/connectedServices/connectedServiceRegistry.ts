@@ -2,6 +2,7 @@ import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   buildQualifiedPluginContributionKey,
   ConnectedServiceIdSchema,
+  parseQualifiedPluginContributionKey,
   type PluginConnectedAccountAuthenticationModeV2,
   type PluginConnectedAccountAuthenticationV2,
   type ConnectedServiceId,
@@ -300,6 +301,21 @@ export function getConnectedServiceRegistrySnapshot(): ConnectedServiceRegistryS
     );
   }
   return connectedServiceRegistrySnapshot;
+}
+
+/**
+ * The provenance-named UI ingress for Connected Account service ids on live
+ * binding paths. A canonical qualified key passes through unchanged; a
+ * released bundled scalar id is translated through the exact generated
+ * built-in mapping. Anything else is unknown and fails closed (`null`) —
+ * never a new current bare-key producer.
+ */
+export function resolveQualifiedConnectedAccountServiceKey(serviceId: string): string | null {
+  if (parseQualifiedPluginContributionKey(serviceId)) return serviceId;
+  const legacy = readBundledLegacyConnectedAccountCompatibility(serviceId);
+  return legacy
+    ? buildQualifiedPluginContributionKey(legacy.compatibility.service)
+    : null;
 }
 
 export function getQualifiedConnectedServiceRegistryEntry(

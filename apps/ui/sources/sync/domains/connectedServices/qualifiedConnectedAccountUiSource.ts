@@ -14,6 +14,7 @@ import {
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     ConnectedServiceAuthGroupPolicyV1Schema,
+    sameQualifiedConnectedAccountGroupRef,
     type BuiltInLegacyConnectedAccountOperation,
     type ConnectedServiceAuthGroupMemberStateV1,
     type ConnectedServiceAuthGroupPolicyV1,
@@ -250,6 +251,18 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
     };
     const normalize = (group: QualifiedConnectedAccountGroupV4): QualifiedConnectedAccountUiGroup =>
         fromQualifiedGroup(group, service);
+    const normalizeExpected = (
+        group: QualifiedConnectedAccountGroupV4,
+        expectedRef: QualifiedConnectedAccountUiGroup['ref'],
+    ): QualifiedConnectedAccountUiGroup => {
+        const normalized = normalize(group);
+        if (!sameQualifiedConnectedAccountGroupRef(normalized.ref, expectedRef)) {
+            throw new QualifiedConnectedAccountUiSourceError(
+                'qualified_connected_accounts_inconsistent_peer',
+            );
+        }
+        return normalized;
+    };
 
     return {
         async list() {
@@ -260,7 +273,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
             return response.groups.map((group) => fromQualifiedGroup(group, service));
         },
         async create(input) {
-            return normalize((await createQualifiedConnectedAccountGroupV4(
+            return normalizeExpected((await createQualifiedConnectedAccountGroupV4(
                 credentials,
                 {
                     service,
@@ -269,7 +282,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         displayName: input.displayName,
                     },
                 },
-            )).group);
+            )).group, { service, groupId: input.groupId });
         },
         async patch(input) {
             assertGroup(input.group);
@@ -277,7 +290,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                 ? mergePolicy(input.group.policy, input.policy)
                 : undefined;
             const revision = readV4Revision(input.group);
-            return normalize((await patchQualifiedConnectedAccountGroupV4(
+            return normalizeExpected((await patchQualifiedConnectedAccountGroupV4(
                 credentials,
                 {
                     service,
@@ -286,17 +299,19 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         ? { displayName: input.displayName }
                         : {}),
                     ...(policy ? { policy } : {}),
+                    expectedGeneration: revision.generation,
                     expectedIncarnation: revision.incarnation,
                     expectedRuntimeStateRevision:
                         revision.runtimeStateRevision,
                 },
-            )).group);
+            )).group, input.group.ref);
         },
         async delete(group) {
             assertGroup(group);
             const revision = readV4Revision(group);
             await deleteQualifiedConnectedAccountGroupV4(credentials, {
                 group: group.ref,
+                expectedGeneration: revision.generation,
                 expectedIncarnation: revision.incarnation,
                 expectedRuntimeStateRevision:
                     revision.runtimeStateRevision,
@@ -307,24 +322,25 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
             assertAccount(input.account);
             const priority = nextMemberPriority(input.group.members);
             const revision = readV4Revision(input.group);
-            return normalize((await addQualifiedConnectedAccountGroupMemberV4(
+            return normalizeExpected((await addQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
                     group: input.group.ref,
                     connectedAccountId: input.account.accountId,
                     priority,
                     enabled: true,
+                    expectedGeneration: revision.generation,
                     expectedIncarnation: revision.incarnation,
                     expectedRuntimeStateRevision:
                         revision.runtimeStateRevision,
                 },
-            )).group);
+            )).group, input.group.ref);
         },
         async patchMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
             const revision = readV4Revision(input.group);
-            return normalize((await patchQualifiedConnectedAccountGroupMemberV4(
+            return normalizeExpected((await patchQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
                     group: input.group.ref,
@@ -335,32 +351,34 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                     ...(input.priority === undefined
                         ? {}
                         : { priority: input.priority }),
+                    expectedGeneration: revision.generation,
                     expectedIncarnation: revision.incarnation,
                     expectedRuntimeStateRevision:
                         revision.runtimeStateRevision,
                 },
-            )).group);
+            )).group, input.group.ref);
         },
         async removeMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
             const revision = readV4Revision(input.group);
-            return normalize((await removeQualifiedConnectedAccountGroupMemberV4(
+            return normalizeExpected((await removeQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
                     group: input.group.ref,
                     connectedAccountId: input.account.accountId,
+                    expectedGeneration: revision.generation,
                     expectedIncarnation: revision.incarnation,
                     expectedRuntimeStateRevision:
                         revision.runtimeStateRevision,
                 },
-            )).group);
+            )).group, input.group.ref);
         },
         async setActiveAccount(input) {
             assertGroup(input.group);
             assertAccount(input.account);
             const revision = readV4Revision(input.group);
-            return normalize((await setQualifiedConnectedAccountGroupActiveAccountV4(
+            return normalizeExpected((await setQualifiedConnectedAccountGroupActiveAccountV4(
                 credentials,
                 {
                     group: input.group.ref,
@@ -373,7 +391,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         ? { overrideRuntimeCooldown: true }
                         : {}),
                 },
-            )).group);
+            )).group, input.group.ref);
         },
     };
 }

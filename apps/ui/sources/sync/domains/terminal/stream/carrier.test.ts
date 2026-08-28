@@ -89,6 +89,112 @@ describe('machine RPC terminal stream carrier', () => {
         expect(machineTerminalStreamReadMock).not.toHaveBeenCalled();
     });
 
+    it('advances and resets the independent control-frame cursor', async () => {
+        machineTerminalStreamReadBytesMock
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 'term-1',
+                frames: [{
+                    t: 'url',
+                    terminalId: 'term-1',
+                    byteOffset: 0,
+                    url: 'https://example.com',
+                    kind: 'generic',
+                }],
+                nextByteOffset: 0,
+                availableByteOffset: 0,
+                droppedBeforeByteOffset: 0,
+                nextControlCursor: 1,
+                done: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 'term-1',
+                frames: [],
+                nextByteOffset: 0,
+                availableByteOffset: 0,
+                droppedBeforeByteOffset: 0,
+                nextControlCursor: 1,
+                done: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 'term-2',
+                frames: [],
+                nextByteOffset: 0,
+                availableByteOffset: 0,
+                droppedBeforeByteOffset: 0,
+                nextControlCursor: 0,
+                done: false,
+            });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        const read = (terminalId: string) => carrier.read({
+            terminalId,
+            cursor: { mode: 'byte-offset' as const, value: 0 },
+            maxBytes: 64,
+            maxFrames: 4,
+        });
+
+        await read('term-1');
+        await read('term-1');
+        await read('term-2');
+
+        expect(machineTerminalStreamReadBytesMock.mock.calls.map((call) => call[1].controlCursor)).toEqual([0, 1, 0]);
+    });
+
+    it('retries once without controlCursor and retains strict predecessor-daemon request mode', async () => {
+        machineTerminalStreamReadBytesMock.mockImplementation(async (
+            _machineId: string,
+            request: Readonly<{ terminalId: string; byteOffset: number; controlCursor?: number }>,
+        ) => {
+            if (request.controlCursor !== undefined) {
+                return {
+                    ok: false,
+                    code: 'terminal_invalid_request',
+                    message: 'terminal_invalid_request',
+                };
+            }
+            return {
+                ok: true,
+                terminalId: request.terminalId,
+                frames: [],
+                nextByteOffset: request.byteOffset,
+                availableByteOffset: request.byteOffset,
+                droppedBeforeByteOffset: request.byteOffset,
+                done: false,
+            };
+        });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        const read = (byteOffset: number) => carrier.read({
+            terminalId: 'term-1',
+            cursor: { mode: 'byte-offset' as const, value: byteOffset },
+            maxBytes: 64,
+            maxFrames: 4,
+        });
+
+        await expect(read(0)).resolves.toEqual(expect.objectContaining({
+            ok: true,
+            mode: 'byte-offset',
+            nextCursor: 0,
+        }));
+        await expect(read(8)).resolves.toEqual(expect.objectContaining({
+            ok: true,
+            mode: 'byte-offset',
+            nextCursor: 8,
+        }));
+
+        expect(machineTerminalStreamReadBytesMock).toHaveBeenCalledTimes(3);
+        expect(machineTerminalStreamReadBytesMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+            terminalId: 'term-1',
+            controlCursor: 0,
+        }));
+        expect(machineTerminalStreamReadBytesMock.mock.calls[1]?.[1]).not.toHaveProperty('controlCursor');
+        expect(machineTerminalStreamReadBytesMock.mock.calls[2]?.[1]).not.toHaveProperty('controlCursor');
+        expect(machineTerminalStreamReadMock).not.toHaveBeenCalled();
+    });
+
     it('resets to the legacy event cursor when a byte-offset read falls back to legacy events', async () => {
         machineTerminalStreamReadBytesMock.mockResolvedValueOnce({
             ok: false,
@@ -231,6 +337,95 @@ describe('machine RPC terminal stream carrier', () => {
             { serverId: undefined, timeoutMs: 2000 },
         );
         expect(machineTerminalInputMock).not.toHaveBeenCalled();
+    });
+
+    it('classifies a structured terminal_not_found ACK response for obsolete-delivery suppression', async () => {
+        machineTerminalStreamAcknowledgeMock.mockResolvedValue({
+            ok: false,
+            code: 'terminal_not_found',
+            message: 'terminal_not_found',
+        });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+        const { createTerminalRendererAckDelivery } = await import('./ackDelivery');
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        const onDiagnostic = vi.fn();
+        const delivery = createTerminalRendererAckDelivery({
+            send: carrier.acknowledge,
+            onDiagnostic,
+        });
+
+        delivery.enqueue({
+            terminalId: 'term-missing',
+            rendererId: 'renderer-a',
+            surfaceEpoch: 2,
+            ackedByteOffset: 24,
+            creditBytes: 1024,
+        });
+
+        await vi.waitFor(() => {
+            expect(onDiagnostic).toHaveBeenCalledWith({
+                kind: 'delivery-suppressed',
+                errorCode: 'terminal_not_found',
+            });
+        });
+        delivery.enqueue({
+            terminalId: 'term-missing',
+            rendererId: 'renderer-a',
+            surfaceEpoch: 2,
+            ackedByteOffset: 48,
+            creditBytes: 1024,
+        });
+        await Promise.resolve();
+
+        expect(machineTerminalStreamAcknowledgeMock).toHaveBeenCalledTimes(1);
+        delivery.dispose();
+    });
+
+    it('classifies a structured transient ACK response for bounded delivery retry', async () => {
+        vi.useFakeTimers();
+        machineTerminalStreamAcknowledgeMock
+            .mockResolvedValueOnce({
+                ok: false,
+                code: 'terminal_ack_temporarily_unavailable',
+                message: 'retry later',
+            })
+            .mockResolvedValueOnce({ ok: true });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+        const { createTerminalRendererAckDelivery } = await import('./ackDelivery');
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        const onDiagnostic = vi.fn();
+        const delivery = createTerminalRendererAckDelivery({
+            send: carrier.acknowledge,
+            onDiagnostic,
+        });
+
+        try {
+            delivery.enqueue({
+                terminalId: 'term-1',
+                rendererId: 'renderer-a',
+                surfaceEpoch: 2,
+                ackedByteOffset: 24,
+                creditBytes: 1024,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(onDiagnostic).toHaveBeenCalledWith({
+                kind: 'retry-scheduled',
+                errorCode: 'terminal_ack_temporarily_unavailable',
+                retryAttempt: 1,
+            });
+            expect(machineTerminalStreamAcknowledgeMock).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(machineTerminalStreamAcknowledgeMock).toHaveBeenCalledTimes(2);
+            expect(onDiagnostic).not.toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'delivery-abandoned',
+            }));
+        } finally {
+            delivery.dispose();
+            vi.useRealTimers();
+        }
     });
 
     it.each([

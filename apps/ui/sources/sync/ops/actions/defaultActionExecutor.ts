@@ -5,6 +5,8 @@ import {
   createActionExecutor,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
+  PluginWebhookActionHttpPathsV1,
+  type PluginWebhookPresentUserActionIdV1,
   projectPluginFailureText,
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
@@ -70,6 +72,8 @@ import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
+import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
+import { createPluginWebhookEndpointHttpActionExecutor } from '@/sync/api/plugins/webhooks/endpointActions';
 import { sync } from '@/sync/sync';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
@@ -80,7 +84,10 @@ import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollback
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+  resolveSessionActionDefaultBackend,
+  resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionStorageAuthority } from '@/sync/domains/session/sessionStorageKind';
 import {
   isRequestedSessionModeSupported,
@@ -163,6 +170,8 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
     return parsed.success ? parsed.data : { v: 1 as const, actions: {} as Record<ActionId, any> };
   };
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor();
+  const executePluginPermissionGrantAction = createPluginPermissionGrantHttpActionExecutor();
+  const executePluginWebhookAction = createPluginWebhookEndpointHttpActionExecutor();
 
   const deps: ActionExecutorDeps = {
     listContributedActionDefinitions: opts?.listContributedActionDefinitions,
@@ -442,7 +451,25 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),
-    reviewCommentAction: async ({ actionId, input }) => await executeReviewCommentAction(actionId, input),
+    reviewCommentAction: async ({ actionId, input, signal }) => signal
+      ? await executeReviewCommentAction(actionId, input, { signal })
+      : await executeReviewCommentAction(actionId, input),
+    pluginPermissionGrantAction: async ({ actionId, input, signal }) => signal
+      ? await executePluginPermissionGrantAction(actionId, input, { signal })
+      : await executePluginPermissionGrantAction(actionId, input),
+    pluginWebhookAction: async ({ actionId, input, signal }) => {
+      if (!Object.hasOwn(PluginWebhookActionHttpPathsV1, actionId)) {
+        return {
+          ok: false,
+          errorCode: 'unsupported_action',
+          error: `unsupported_action:${actionId}`,
+        } as const;
+      }
+      const publicEndpointActionId = actionId as PluginWebhookPresentUserActionIdV1;
+      return signal
+        ? await executePluginWebhookAction(publicEndpointActionId, input, { signal })
+        : await executePluginWebhookAction(publicEndpointActionId, input);
+    },
     agentsBackendsList: async (args) => {
       const { includeDisabled, limit, machineId } = args as AgentsBackendsListArgs;
       return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });
@@ -589,9 +616,9 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
         const backend = resolveSessionActionDefaultBackend({
           session: candidateSession,
         });
-        if (!backend) return null;
-        const agentTargetKey =
-          buildBackendTargetKeyV2(backend.backendTarget);
+        const target = resolveSessionActionDefaultTarget(backend);
+        if (!target) return null;
+        const agentTargetKey = buildBackendTargetKeyV2(target);
         const ownerMetadata = readSessionOwnerMetadataView(candidateSession);
         const currentIntent = resolveModelSelectionIntentFromSessionMetadata(
           ownerMetadata,

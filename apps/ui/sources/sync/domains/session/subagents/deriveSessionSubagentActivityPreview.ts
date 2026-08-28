@@ -1,5 +1,7 @@
 import type { SessionSubagent } from './types';
 import { shouldIgnoreProviderSessionSubagentActivityPreviewText } from '@/sync/domains/session/providers/sessionProviderBehaviorRegistry';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SidechainMessageLike = Readonly<{
     text?: string | null;
@@ -22,6 +24,7 @@ function normalizePreviewText(value: string | null | undefined): string | null {
 export function deriveSessionSubagentActivityPreview(params: Readonly<{
     subagent: SessionSubagent;
     reducerState: SidechainStateLike;
+    session?: Session | null;
 }>): string | null {
     const sidechainId = params.subagent.transcript.sidechainId?.trim();
     if (!sidechainId) return null;
@@ -36,6 +39,7 @@ export function deriveSessionSubagentActivityPreview(params: Readonly<{
             if (!shouldIgnoreProviderSessionSubagentActivityPreviewText({
                 subagent: params.subagent,
                 text: textPreview,
+                metadata: params.session ? readSessionOwnerMetadataView(params.session) : null,
             })) {
                 return textPreview;
             }

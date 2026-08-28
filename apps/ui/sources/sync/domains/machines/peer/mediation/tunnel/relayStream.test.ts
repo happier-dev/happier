@@ -10,7 +10,7 @@ import {
     type PeerTcpTunnelOpenV1,
     type PeerTcpTunnelRelayEnvelope,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 type DynamicModule = Record<string, unknown>;
 type TestStream = Readonly<{
@@ -42,6 +42,126 @@ const binaryOpen: PeerTcpTunnelOpenV1 = {
 };
 
 describe('openPeerTcpTunnelRelayStream', () => {
+    it('retires its exact subscription when the initial OPEN send fails', async () => {
+        const mod = await loadModule('./relayStream');
+        const openRelayStream = mod.openPeerTcpTunnelRelayStream;
+        expect(openRelayStream).toBeTypeOf('function');
+        if (typeof openRelayStream !== 'function') return;
+
+        const detach = vi.fn(() => {
+            throw new Error('subscription detach failed');
+        });
+        const transportFailure = Object.assign(new Error('relay transport unavailable'), {
+            code: 'relay_transport_unavailable',
+        });
+
+        await expect(openRelayStream({
+            scopeUserId: 'user_1',
+            relaySocketId: 'relay_socket_1',
+            open,
+            send: () => {
+                throw transportFailure;
+            },
+            onEnvelope: () => detach,
+        })).rejects.toBe(transportFailure);
+
+        expect(detach).toHaveBeenCalledOnce();
+    });
+
+    it('retires the exact relay subscription and emits one close when its caller aborts', async () => {
+        const mod = await loadModule('./relayStream');
+        const openRelayStream = mod.openPeerTcpTunnelRelayStream;
+        expect(openRelayStream).toBeTypeOf('function');
+        if (typeof openRelayStream !== 'function') return;
+
+        const sent: PeerTcpTunnelRelayEnvelope[] = [];
+        const detach = vi.fn();
+        const controller = new AbortController();
+        const stream = await openRelayStream({
+            scopeUserId: 'user_1',
+            relaySocketId: 'relay_socket_1',
+            open,
+            signal: controller.signal,
+            send: (_event: string, envelope: PeerTcpTunnelRelayEnvelope) => sent.push(envelope),
+            onEnvelope: () => detach,
+        }) as TestStream;
+
+        controller.abort();
+        await stream.close();
+
+        expect(detach).toHaveBeenCalledOnce();
+        expect(sent.filter((envelope) => envelope.v === 1 && envelope.frame.kind === 'close')).toHaveLength(1);
+
+        const preAborted = new AbortController();
+        preAborted.abort();
+        await expect(openRelayStream({
+            scopeUserId: 'user_1',
+            relaySocketId: 'relay_socket_1',
+            open,
+            signal: preAborted.signal,
+            send: () => undefined,
+            onEnvelope: () => () => undefined,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('does not publish a closed stream when abort wins during the initial OPEN send', async () => {
+        const mod = await loadModule('./relayStream');
+        const openRelayStream = mod.openPeerTcpTunnelRelayStream;
+        expect(openRelayStream).toBeTypeOf('function');
+        if (typeof openRelayStream !== 'function') return;
+
+        const controller = new AbortController();
+        const detach = vi.fn();
+        const sent: PeerTcpTunnelRelayEnvelope[] = [];
+        const opening = openRelayStream({
+            scopeUserId: 'user_1',
+            relaySocketId: 'relay_socket_1',
+            open,
+            signal: controller.signal,
+            send: (_event: string, envelope: PeerTcpTunnelRelayEnvelope) => {
+                sent.push(envelope);
+                if (envelope.v !== 1) return;
+                if (envelope.frame.kind === 'open') controller.abort();
+                if (envelope.frame.kind === 'close') throw new Error('relay close unavailable');
+            },
+            onEnvelope: () => detach,
+        });
+
+        await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
+        expect(detach).toHaveBeenCalledOnce();
+        expect(sent.filter((envelope) => envelope.v === 1 && envelope.frame.kind === 'close')).toHaveLength(1);
+    });
+
+    it('preserves an exact CLOSE transport failure when subscription retirement also fails', async () => {
+        const mod = await loadModule('./relayStream');
+        const openRelayStream = mod.openPeerTcpTunnelRelayStream;
+        expect(openRelayStream).toBeTypeOf('function');
+        if (typeof openRelayStream !== 'function') return;
+
+        const closeFailure = Object.assign(new Error('relay close unavailable'), {
+            code: 'relay_close_unavailable',
+        });
+        const detach = vi.fn(() => {
+            throw new Error('subscription detach failed');
+        });
+        const stream = await openRelayStream({
+            scopeUserId: 'user_1',
+            relaySocketId: 'relay_socket_1',
+            open,
+            send: (_event: string, envelope: PeerTcpTunnelRelayEnvelope) => {
+                if (envelope.v === 1 && envelope.frame.kind === 'close') throw closeFailure;
+            },
+            onEnvelope: () => detach,
+        }) as TestStream;
+
+        expect(() => stream.close()).toThrow(closeFailure);
+        expect(detach).toHaveBeenCalledOnce();
+        // Local retirement is final even when both transport and detach report
+        // failures; a repeated close cannot touch the shared socket/subscription.
+        expect(() => stream.close()).not.toThrow();
+        expect(detach).toHaveBeenCalledOnce();
+    });
+
     it('uses the generic relay socket event for explicit JSON/base64 fallback frames', async () => {
         const mod = await loadModule('./relayStream');
         const openRelayStream = mod.openPeerTcpTunnelRelayStream;

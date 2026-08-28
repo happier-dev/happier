@@ -37,23 +37,29 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     AcpConfigOptionOverridesV1Schema,
+    AgentExecutionTargetV1Schema,
     ComposerAttachmentDraftV1Schema,
     ExternalSessionRefreshCursorV1Schema,
     MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
     SessionModelSelectionV1Schema,
     SessionModelSelectionResolutionError,
     SessionMcpSelectionV1Schema,
+    SessionExecutionTargetV1Schema,
+    SessionOrganizationPlacementV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
     readBackendTargetRefV2,
     readPersistedAgentContributionIdentityV1,
-    writePersistedBackendTargetRefV2,
     normalizeCodexBackendMode,
-    type CodexBackendMode,
+    readRuntimeDescriptorV1,
     type ComposerAttachmentDraftV1,
     type AcpConfigOptionOverridesV1,
+    type AgentExecutionTargetV1,
     type BackendTargetRefV2,
     type SessionMcpSelectionV1,
     type SessionModelSelectionV1,
+    type RuntimeDescriptorV1,
+    type SessionExecutionTargetV1,
+    type SessionOrganizationPlacementV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import { getPersistenceStorage } from './persistenceStorage';
@@ -156,6 +162,8 @@ export interface NewSessionDraft {
     selectedMachineId: string | null;
     selectedPath: string | null;
     targetServerId?: string | null;
+    executionTarget?: SessionExecutionTargetV1 | null;
+    organizationPlacement?: SessionOrganizationPlacementV1;
     windowsRemoteSessionLaunchModeOverride?: Readonly<{
         machineId: string;
         mode: WindowsRemoteSessionLaunchMode;
@@ -175,6 +183,8 @@ export interface NewSessionDraft {
      */
     sessionOnlySecretValueEncByProfileIdByEnvVarName?: Record<string, Record<string, SecretString | null | undefined>> | null;
     agentType: AgentId;
+    agentTarget?: AgentExecutionTargetV1 | null;
+    /** Released predecessor read input. New authoring writes `agentTarget`. */
     backendTarget?: BackendTargetRefV2 | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
@@ -187,7 +197,7 @@ export interface NewSessionDraft {
      */
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
-    codexBackendMode?: CodexBackendMode | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
     resumeSessionId?: string;
     /**
@@ -325,8 +335,24 @@ function parseDraftBackendNewSessionOptionStateByTargetKey(
     return normalizeBackendNewSessionOptionStateByTargetKey(out);
 }
 
-function parseDraftCodexBackendMode(value: unknown): CodexBackendMode | null {
-    return normalizeCodexBackendMode(value);
+function parseDraftRuntimeDescriptorV1(record: Readonly<Record<string, unknown>>): RuntimeDescriptorV1 | null {
+    const canonical = readRuntimeDescriptorV1(record.runtimeDescriptorV1);
+    const releasedCodexBackendMode = normalizeCodexBackendMode(record.codexBackendMode);
+    if (!releasedCodexBackendMode) return canonical;
+
+    const released = readRuntimeDescriptorV1({
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: releasedCodexBackendMode },
+    });
+    if (!canonical) return released;
+    if (
+        canonical.agentId !== 'codex'
+        || normalizeCodexBackendMode(canonical.agent.backendMode) !== releasedCodexBackendMode
+    ) {
+        return null;
+    }
+    return canonical;
 }
 
 function parseDraftEntryIntent(value: unknown): NewSessionDraft['entryIntent'] {
@@ -570,6 +596,18 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
         const targetServerId = parseDraftTrimmedString((parsed as any).targetServerId);
+        const parsedExecutionTarget = SessionExecutionTargetV1Schema.safeParse((parsed as any).executionTarget);
+        const executionTarget = parsedExecutionTarget.success
+            ? parsedExecutionTarget.data
+            : targetServerId && selectedMachineId
+                ? SessionExecutionTargetV1Schema.parse({ serverId: targetServerId, machineId: selectedMachineId })
+                : null;
+        const parsedOrganizationPlacement = SessionOrganizationPlacementV1Schema.safeParse((parsed as any).organizationPlacement);
+        const organizationPlacement = parsedOrganizationPlacement.success
+            ? parsedOrganizationPlacement.data
+            : { folderId: null, tagIds: [] };
+        const parsedAgentTarget = AgentExecutionTargetV1Schema.safeParse((parsed as any).agentTarget);
+        const agentTarget = parsedAgentTarget.success ? parsedAgentTarget.data : null;
         const windowsRemoteSessionLaunchModeOverride = parseWindowsRemoteSessionLaunchModeOverride(
             (parsed as any).windowsRemoteSessionLaunchModeOverride,
         );
@@ -587,6 +625,9 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         );
         const backendTarget = (() => {
             try {
+                if (agentTarget) {
+                    return readBackendTargetRefV2(agentTarget);
+                }
                 if ((parsed as any).backendTarget !== undefined) {
                     return readBackendTargetRefV2((parsed as any).backendTarget);
                 }
@@ -683,7 +724,11 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ? (parsed as any).auggieAllowIndexing
             : undefined;
         const automationDraft = sanitizeNewSessionAutomationDraft((parsed as any).automationDraft);
-        const codexBackendMode = parseDraftCodexBackendMode((parsed as any).codexBackendMode);
+        // Released remote-dev local `new-session-draft-v1` records stored Codex
+        // selection at top level. Normalize it once at this named persistence
+        // ingress; current writers carry only the Agent-owned descriptor. Remove
+        // when those device-local predecessor drafts are no longer supported.
+        const runtimeDescriptorV1 = parseDraftRuntimeDescriptorV1(parsed as Record<string, unknown>);
         const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now();
 
         const migratedAgentOptions: BackendNewSessionOptionStateByTargetKey = {
@@ -706,6 +751,8 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             selectedMachineId,
             selectedPath,
             ...(targetServerId ? { targetServerId } : {}),
+            executionTarget,
+            organizationPlacement,
             ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
             ...(entryIntent ? { entryIntent } : {}),
             ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
@@ -714,13 +761,14 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             selectedSecretIdByProfileIdByEnvVarName,
             sessionOnlySecretValueEncByProfileIdByEnvVarName,
             agentType,
+            ...(agentTarget ? { agentTarget } : {}),
             ...(backendTarget ? { backendTarget } : {}),
             ...(transcriptStorage ? { transcriptStorage } : {}),
             permissionMode,
             modelSelection,
             acpSessionModeId,
             ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-            ...(codexBackendMode ? { codexBackendMode } : {}),
+            ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
             ...(mcpSelection ? { mcpSelection } : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(Object.keys(migratedAgentOptions).length > 0 ? { backendNewSessionOptionStateByTargetKey: migratedAgentOptions } : {}),
@@ -736,28 +784,24 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
     const { modelMode: _legacyModelMode, ...canonicalDraft } = draft;
-    const persistedBackendTarget = canonicalDraft.backendTarget
-        ? writePersistedBackendTargetRefV2(canonicalDraft.backendTarget)
-        : null;
-    const writesStructuredAgentIdentity = persistedBackendTarget?.kind === 'agent';
     const {
         agentType: _runtimeAgentType,
         backendTarget: _runtimeBackendTarget,
         ...persistedDraft
     } = canonicalDraft;
-    const modelSelection = canonicalDraft.modelSelection && canonicalDraft.backendTarget
+    const modelSelection = canonicalDraft.modelSelection && canonicalDraft.agentTarget
         ? {
             ...canonicalDraft.modelSelection,
             ref: {
                 ...canonicalDraft.modelSelection.ref,
-                agentTargetKey: resolveBackendTargetKeyV2(canonicalDraft.backendTarget),
+                agentTargetKey: resolveBackendTargetKeyV2(canonicalDraft.agentTarget),
             },
         }
         : canonicalDraft.modelSelection ?? null;
     mmkv.set(newSessionDraftKey(scope), JSON.stringify({
         ...persistedDraft,
-        ...(!writesStructuredAgentIdentity ? { agentType: canonicalDraft.agentType } : {}),
-        ...(persistedBackendTarget ? { backendTarget: persistedBackendTarget } : {}),
+        ...(canonicalDraft.agentTarget ? { agentTarget: canonicalDraft.agentTarget } : {}),
+        ...(!canonicalDraft.agentTarget ? { agentType: canonicalDraft.agentType } : {}),
         modelSelection,
     }));
 }

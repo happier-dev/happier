@@ -131,6 +131,43 @@ describe('warmCachePersistence', () => {
         });
     });
 
+    it('normalizes released external-session Codex affinity before rehydrating the cache', () => {
+        store.set(
+            'session-list-warm-cache-v1:server-a:account-a',
+            JSON.stringify({
+                s1: {
+                    sessionId: 's1',
+                    metadataVersion: 2,
+                    agentStateVersion: 3,
+                    updatedAt: 20,
+                    createdAt: 10,
+                    active: true,
+                    activeAt: 20,
+                    archivedAt: null,
+                    path: '/home/u/repo',
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        machineId: 'machine-1',
+                        remoteSessionId: 'remote-1',
+                        source: { kind: 'codexHome', home: 'user' },
+                        codexBackendMode: 'mcp',
+                    },
+                },
+            }),
+        );
+
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a').s1?.externalSessionV1).toMatchObject({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer', providerSessionId: 'remote-1' },
+            },
+        });
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a').s1?.externalSessionV1)
+            .not.toHaveProperty('codexBackendMode');
+    });
+
     it('rehydrates rollback eligibility from persisted session list entries', () => {
         store.set(
             'session-list-warm-cache-v1:server-a:account-a',

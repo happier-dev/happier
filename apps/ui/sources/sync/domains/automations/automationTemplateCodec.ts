@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import {
     AcpConfigOptionOverridesV1Schema,
+    AgentExecutionTargetV1Schema,
     BackendTargetRefV2Schema,
     normalizeCodexBackendMode,
+    readRuntimeDescriptorV1,
+    RuntimeDescriptorV1Schema,
     SessionAuthoringCheckoutCreationDraftV1Schema,
+    SessionExecutionTargetV1Schema,
+    SessionOrganizationPlacementV1Schema,
     SessionModelSelectionV1Schema,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
@@ -13,11 +18,14 @@ import {
 import type { AutomationTemplate } from './automationTypes';
 
 const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
+    executionTarget: SessionExecutionTargetV1Schema.optional(),
     directory: z.string().trim().min(1),
     checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.optional(),
+    organizationPlacement: SessionOrganizationPlacementV1Schema.optional(),
     prompt: z.string().optional(),
     displayText: z.string().optional(),
     agent: z.string().optional(),
+    agentTarget: AgentExecutionTargetV1Schema.optional(),
     backendTarget: BackendTargetRefV2Schema.optional(),
     connectedServices: z.unknown().optional(),
     transcriptStorage: z.enum(['persisted', 'direct']).optional(),
@@ -35,7 +43,14 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     windowsTerminalWindowName: WindowsTerminalWindowNameSchema.optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+    /**
+     * Released remote-dev V2 account-template ingress only. Current writers
+     * use runtimeDescriptorV1. Remove when those stored templates are no longer
+     * a supported input to the Automation editor.
+     */
     experimentalCodexAcp: z.boolean().optional(),
+    /** Same released remote-dev V2 account-template ingress as above. */
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
     agentModeId: z.string().optional(),
     existingSessionId: z.string().optional(),
@@ -44,13 +59,25 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     sessionEncryptionVariant: z.literal('dataKey').optional(),
 }).strict().transform(({ experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...template }) => {
     const normalizedCodexBackendMode = normalizeCodexBackendMode(codexBackendMode);
+    const legacyRuntimeDescriptorV1 = normalizedCodexBackendMode || _experimentalCodexAcp === true
+        ? readRuntimeDescriptorV1({
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: normalizedCodexBackendMode ?? 'acp' },
+        }) ?? undefined
+        : undefined;
+    if (template.runtimeDescriptorV1 && legacyRuntimeDescriptorV1 && (
+        template.runtimeDescriptorV1.agentId !== 'codex'
+        || normalizeCodexBackendMode(template.runtimeDescriptorV1.agent.backendMode)
+            !== normalizeCodexBackendMode(legacyRuntimeDescriptorV1.agent.backendMode)
+    )) {
+        throw new Error('Conflicting legacy Codex runtime selection');
+    }
     return {
         ...template,
-        ...(normalizedCodexBackendMode
-            ? { codexBackendMode: normalizedCodexBackendMode }
-            : _experimentalCodexAcp === true
-                ? { codexBackendMode: 'acp' as const }
-                : {}),
+        ...(template.runtimeDescriptorV1 ?? legacyRuntimeDescriptorV1
+            ? { runtimeDescriptorV1: template.runtimeDescriptorV1 ?? legacyRuntimeDescriptorV1 }
+            : {}),
     };
 });
 

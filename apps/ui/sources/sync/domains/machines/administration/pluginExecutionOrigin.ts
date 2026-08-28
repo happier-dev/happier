@@ -1,5 +1,5 @@
 import {
-    isExactPluginMachineMaterializationRefV1,
+    arePluginMachineMaterializationRefsEqual,
     isPluginMachineMaterializationOnServerIdentityV1,
     type PluginMachineExecutionOriginV1,
     type PluginMachineMaterializationV1,
@@ -155,7 +155,7 @@ function candidateMatchesOrigin(
     return isPluginMachineMaterializationOnServerIdentityV1(
         candidate.materialization,
         origin.serverIdentityId,
-    ) && isExactPluginMachineMaterializationRefV1(
+    ) && arePluginMachineMaterializationRefsEqual(
         candidate.materialization,
         origin.materializationRef,
     );

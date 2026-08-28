@@ -43,6 +43,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     areServerProfileIdentifiersEquivalent: (left: string, right: string) => left === right,
+    getServerProfileLegacyServerIds: () => [],
     getServerProfileById: () => ({ serverIdentityId: 'server-identity-a' }),
     resolveServerProfileForPortableIdentity: () => ({
         kind: 'resolved',

@@ -1,3 +1,5 @@
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol';
+
 /**
  * The platform a local-service preview / browser surface is presented on.
  *
@@ -30,18 +32,6 @@ function isNativePlatform(platform: LocalServicePreviewPlatform): boolean {
     return platform === "ios" || platform === "android";
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-    const normalized = hostname.toLowerCase().replace(/^\[/u, "").replace(/\]$/u, "");
-    return (
-        normalized === "localhost" ||
-        normalized === "0.0.0.0" ||
-        normalized === "::1" ||
-        /^127(?:\.|$)/u.test(normalized) ||
-        /^::ffff:127\./u.test(normalized) ||
-        /^::ffff:7f[0-9a-f]{2}:/u.test(normalized)
-    );
-}
-
 export function resolveLocalServicePreviewLoadUrl(
     input: ResolveLocalServicePreviewLoadUrlInput,
 ): LocalServicePreviewLoadUrlResult {
@@ -52,7 +42,13 @@ export function resolveLocalServicePreviewLoadUrl(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         return { ok: false, reasonCode: "unsupported_scheme" };
     }
-    if (isNativePlatform(input.platform) && isLoopbackHostname(parsed.hostname)) {
+    if (
+        isNativePlatform(input.platform)
+        && (
+            isLoopbackHostname(parsed.hostname)
+            || normalizeHostnameForLoopbackCheck(parsed.hostname) === "0.0.0.0"
+        )
+    ) {
         return { ok: false, reasonCode: "native_loopback_not_allowed" };
     }
     return { ok: true, url: parsed.toString() };

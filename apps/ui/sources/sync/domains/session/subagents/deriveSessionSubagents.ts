@@ -67,9 +67,12 @@ export function deriveSessionSubagents(params: Readonly<{
 }>): readonly SessionSubagent[] {
     const metadata = readSessionOwnerMetadataView(params.session);
     const rawFlavor = metadata?.flavor;
-    const flavor = typeof rawFlavor === 'string' && rawFlavor.trim().length > 0
-        ? rawFlavor
-        : resolveAgentIdFromSessionMetadata(metadata);
+    // The runtime descriptor is the exact Session owner. A legacy flavor is
+    // only a compatibility identity when no descriptor exists; allowing it to
+    // win would lend a bundled Agent's labels and behavior to an external
+    // Agent that happens to retain that old scalar field.
+    const flavor = resolveAgentIdFromSessionMetadata(metadata)
+        ?? (typeof rawFlavor === 'string' && rawFlavor.trim().length > 0 ? rawFlavor : null);
 
     const executionRuns = deriveExecutionRunSubagents({
         messages: params.messages,
@@ -77,6 +80,7 @@ export function deriveSessionSubagents(params: Readonly<{
     });
     const providerSubagents = deriveProviderSessionSubagents({
         flavor,
+        metadata,
         messages: params.messages,
     });
     const excludedSidechainIds = new Set<string>();

@@ -127,6 +127,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                     host: 'machine.local',
                     path: '/workspace',
                     runtimeDescriptorV1,
+                    nativeResumeIdentityV1: { v: 1, vendorResumeId: 'external_vendor_session' },
                 } satisfies Metadata,
                 sessionStorageMode: 'persisted',
             }),
@@ -158,6 +159,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                     providerSessionId: 'thread_runtime',
                 },
             },
+            codexSessionId: 'thread_runtime',
         } as Metadata;
 
         expect(
@@ -320,12 +322,16 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         });
     });
 
-    it('re-envelopes legacy Codex backend metadata before publishing the generic recovery plan', () => {
-        const legacyCodexBackendMode = '  mcp_resume  ' as unknown as Metadata['codexBackendMode'];
+    it('preserves the canonical Codex runtime descriptor in the generic recovery plan', () => {
         const sourceMetadata = {
             flavor: 'codex',
+            host: 'machine.local',
             path: '/repo',
-            codexBackendMode: legacyCodexBackendMode,
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
         } as Metadata;
 
         expect(

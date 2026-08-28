@@ -9,6 +9,7 @@ import {
     createSessionFolder,
     deleteSessionFolder,
     buildSessionFolderMoveTargets,
+    buildSessionFolderWorkspaceTargets,
     moveSessionFolder,
     normalizeSessionFolderName,
     normalizeSessionFolders,
@@ -271,6 +272,39 @@ describe('session folder domain helpers', () => {
                 disabled: true,
             },
         ]);
+    });
+
+    it('shares normalized workspace folder targets with creation-draft pickers', () => {
+        const normalized = normalizeSessionFolders({
+            v: 1,
+            folders: [
+                folder({
+                    id: 'windows-folder',
+                    name: 'Windows project',
+                    workspace: {
+                        t: 'workspaceScope',
+                        serverId: 'server-a',
+                        machineId: 'machine-a',
+                        rootPath: 'C:\\Users\\Lee\\repo\\',
+                    },
+                }),
+                folder({ id: 'other-workspace', name: 'Other', workspace: workspaceB }),
+            ],
+        });
+
+        expect(buildSessionFolderWorkspaceTargets({
+            folders: normalized,
+            workspace: {
+                t: 'workspaceScope',
+                serverId: 'server-a',
+                machineId: 'machine-a',
+                rootPath: 'c:/users/lee/repo',
+            },
+        })).toEqual([{
+            folderId: 'windows-folder',
+            title: 'Windows project',
+            depth: 0,
+        }]);
     });
 
     it('keeps an assigned locked folder as a typed folder group without using its id as a name', () => {

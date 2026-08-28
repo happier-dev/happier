@@ -122,3 +122,47 @@ describe('machines domain: contribution projection currentness', () => {
         expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline);
     });
 });
+
+describe('machines domain: presence currentness', () => {
+    it('does not let a late snapshot regress a newer machine activity update', async () => {
+        const { createMachinesDomain } = await loadMachinesDomain();
+        const { get, domain } = createHarness(createMachinesDomain);
+
+        domain.applyMachines([
+            makeMachine({ active: true, activeAt: 200, updatedAt: 200 }),
+        ], true, { sourceServerId: 'server_a' });
+
+        domain.replaceMachineDisplays([
+            makeMachine({ active: false, activeAt: 100, updatedAt: 300 }),
+        ], { sourceServerId: 'server_a' });
+
+        expect(get().machineDisplayById['m-1']).toMatchObject({ active: true, activeAt: 200 });
+
+        domain.applyMachines([
+            makeMachine({
+                active: false,
+                activeAt: 100,
+                updatedAt: 300,
+                metadataVersion: 2,
+                metadata: { ...BASE_MACHINE_METADATA, displayName: 'Renamed dev box' },
+            }),
+        ], true, { sourceServerId: 'server_a' });
+
+        expect(get().machines['m-1']).toMatchObject({
+            active: true,
+            activeAt: 200,
+            metadataVersion: 2,
+            metadata: { displayName: 'Renamed dev box' },
+        });
+        expect(get().machineDisplayById['m-1']).toMatchObject({ active: true, activeAt: 200 });
+        expect(get().machineListByServerId.server_a[0]).toMatchObject({ active: true, activeAt: 200 });
+
+        domain.applyMachines([
+            makeMachine({ active: false, activeAt: 400, updatedAt: 400 }),
+        ], false, { sourceServerId: 'server_a' });
+
+        expect(get().machines['m-1']).toMatchObject({ active: false, activeAt: 400 });
+        expect(get().machineDisplayById['m-1']).toMatchObject({ active: false, activeAt: 400 });
+        expect(get().machineListByServerId.server_a[0]).toMatchObject({ active: false, activeAt: 400 });
+    });
+});

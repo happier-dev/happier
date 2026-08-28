@@ -223,7 +223,11 @@ describe('uploadComposerMediaStageFromReader', () => {
                 eof: false,
             },
         });
-        await expect(releaseComposerContent(handle)).resolves.toEqual({ success: true });
+        const claimant = {
+            composer: { kind: 'session' as const, sessionId: 'session-1' },
+            attachmentInstanceId: 'attachment-1',
+        };
+        await expect(releaseComposerContent(handle, { claimant })).resolves.toEqual({ success: true });
         expect(calls.find((call) => call.method === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)).toEqual(expect.objectContaining({
             payload: expect.objectContaining({
                 t: 'composer_media_stage_inspect_v1',
@@ -234,7 +238,7 @@ describe('uploadComposerMediaStageFromReader', () => {
             }),
         }));
         expect(calls.find((call) => call.method === RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE)).toEqual(expect.objectContaining({
-            payload: { handle },
+            payload: { handle, claimant },
         }));
     });
 });

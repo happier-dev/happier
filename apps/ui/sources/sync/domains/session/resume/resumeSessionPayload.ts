@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { CodexBackendMode } from '@happier-dev/protocol';
 import {
+    AgentExecutionTargetV1Schema,
     BackendTargetRefV2Schema,
     buildBackendTargetKeyV2,
     normalizeBackendTargetRefV2InputToV2,
@@ -14,22 +14,24 @@ import {
     type SessionAttachMetadataIdentityPolicy,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type AgentExecutionTargetV1,
     type RuntimeDescriptorV1,
     type SessionAuthoringValueV1,
     type SessionInitialGoalRequestV1,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import {
     buildBackendTransportFieldsFromUiState,
-    type AgentBackendTransportFields,
 } from '@/agents/registry/registryUiBehavior';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
 
-export type ResumeHappySessionRpcParams = AgentBackendTransportFields & {
+export type ResumeHappySessionRpcParams = {
     type: 'resume-session';
     sessionId: string;
     directory: string;
-    backendTarget: BackendTargetRefV2;
+    agentTarget?: AgentExecutionTargetV1;
+    backendTarget?: BackendTargetRefV2;
     resume?: string;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     environmentVariables?: Record<string, string>;
@@ -49,19 +51,19 @@ export type ResumeHappySessionRpcParams = AgentBackendTransportFields & {
     initialGoal?: SessionInitialGoalRequestV1;
 };
 
-type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | 'backendTarget' | 'codexBackendMode'> & {
+type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | 'agentTarget' | 'backendTarget'> & {
     /** Builder-only target identity; daemon wire payloads never carry it. */
     machineId: string;
-    backendTarget: BackendTargetRefV2Input;
-    codexBackendMode?: CodexBackendMode;
-    experimentalCodexAcp?: boolean;
+    agentTarget?: AgentExecutionTargetV1;
+    backendTarget?: BackendTargetRefV2Input;
 };
 
 const ResumeHappySessionRpcParamsSchema = z.object({
     type: z.literal('resume-session'),
     sessionId: z.string().min(1),
     directory: z.string().min(1),
-    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
+    agentTarget: AgentExecutionTargetV1Schema.optional(),
+    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema.optional()),
     resume: z.string().min(1).optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
@@ -76,8 +78,14 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     initialTranscriptAfterSeq: z.number().int().nonnegative().optional(),
     executionAuthorization: SpawnSessionExecutionAuthorizationSchema.optional(),
     initialGoal: SessionInitialGoalRequestV1Schema.optional(),
-    experimentalCodexAcp: z.literal(true).optional(),
-    codexBackendMode: z.enum(['acp', 'appServer']).optional(),
+}).superRefine((value, context) => {
+    if (!value.agentTarget && !value.backendTarget) {
+        context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['agentTarget'],
+            message: 'agentTarget or configured backendTarget is required',
+        });
+    }
 });
 
 export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionRpcInput): ResumeHappySessionRpcParams {
@@ -86,35 +94,64 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         modelSelection,
         modelId: _legacyModelId,
         modelUpdatedAt: _legacyModelUpdatedAt,
-        codexBackendMode,
-        experimentalCodexAcp,
         runtimeDescriptorV1,
         connectedServices,
         connectedServicesUpdatedAt,
+        agentTarget: agentTargetInput,
+        backendTarget: backendTargetInput,
         ...rest
     } = input as BuildResumeHappySessionRpcInput & { modelId?: unknown; modelUpdatedAt?: unknown };
-    const backendTransportFields = buildBackendTransportFieldsFromUiState({
-        machineId,
-        backendTarget: rest.backendTarget,
-        providerMode: codexBackendMode,
-        legacyExperimentalMode: experimentalCodexAcp,
-        runtimeDescriptorV1,
-        providerSessionId: rest.resume,
-    });
-    const canonicalBackendTarget = readBackendTargetRefV2(rest.backendTarget);
+    const agentTarget = agentTargetInput
+        ? AgentExecutionTargetV1Schema.parse(agentTargetInput)
+        : undefined;
+    const explicitBackendTarget = backendTargetInput !== undefined
+        ? readBackendTargetRefV2(backendTargetInput)
+        : undefined;
+    const predecessorBundledAgentId = agentTarget
+        ? resolveBundledAgentIdFromContributionIdentity(agentTarget.identity)
+        : null;
+    // Exact `cli-v0.2.1` egress: old daemons strip `agentTarget`, so bundled
+    // resumes also carry the released backend target. External Agents have no
+    // predecessor representation and remain canonical-only. Remove with that
+    // daemon compatibility floor.
+    const predecessorBackendTarget = predecessorBundledAgentId
+        ? readBackendTargetRefV2({
+            kind: 'backend',
+            backendId: predecessorBundledAgentId,
+            sourceKind: 'built_in',
+        })
+        : undefined;
+    const canonicalBackendTarget = explicitBackendTarget ?? predecessorBackendTarget;
+    const backendTransportFields = canonicalBackendTarget
+        ? buildBackendTransportFieldsFromUiState({
+            machineId,
+            backendTarget: canonicalBackendTarget,
+            runtimeDescriptorV1,
+            providerSessionId: rest.resume,
+        })
+        : {};
     const canonicalModelSelection = modelSelection
         ? SessionModelSelectionV1Schema.parse(modelSelection)
         : null;
+    const canonicalTargetKey = agentTarget
+        ? buildBackendTargetKeyV2(agentTarget)
+        : canonicalBackendTarget
+            ? buildBackendTargetKeyV2(canonicalBackendTarget)
+            : null;
+    const predecessorTargetKey = predecessorBackendTarget
+        ? buildBackendTargetKeyV2(predecessorBackendTarget)
+        : null;
     if (canonicalModelSelection
-        && canonicalModelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(canonicalBackendTarget)) {
+        && canonicalModelSelection.ref.agentTargetKey !== canonicalTargetKey
+        && canonicalModelSelection.ref.agentTargetKey !== predecessorTargetKey) {
         throw new Error('Resume model selection target mismatch');
     }
 
     const params: ResumeHappySessionRpcParams = {
         type: 'resume-session',
         ...rest,
-        backendTarget: canonicalBackendTarget,
-        ...(backendTransportFields.codexBackendMode ? { codexBackendMode: backendTransportFields.codexBackendMode } : {}),
+        ...(agentTarget ? { agentTarget } : {}),
+        ...(canonicalBackendTarget ? { backendTarget: canonicalBackendTarget } : {}),
         ...(connectedServices === undefined || connectedServices === null ? {} : { connectedServices }),
         ...(connectedServices === undefined || connectedServices === null ? {} : (
             typeof connectedServicesUpdatedAt === 'number' && Number.isFinite(connectedServicesUpdatedAt)
@@ -123,7 +160,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         )),
         ...(runtimeDescriptorV1
             ? { runtimeDescriptorV1 }
-            : backendTransportFields.runtimeDescriptorV1
+            : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
                 ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
                 : {}),
         ...(canonicalModelSelection ? { modelSelection: canonicalModelSelection } : {}),

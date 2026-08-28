@@ -13,6 +13,7 @@ import {
 import type { ProviderParticipantSnapshot, SessionProviderBehavior } from './sessionProviderBehaviorTypes';
 import { createSessionProviderBehaviorFromDescriptor } from './sessionProviderBehaviorDescriptors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveProjectedAgentUiBehaviorEntry } from '@/agents/registry/agentUiBehaviorProjection';
 
 const SESSION_PROVIDER_BEHAVIORS: Readonly<Partial<Record<AgentId, SessionProviderBehavior>>> = Object.freeze(
     Object.fromEntries(
@@ -45,23 +46,38 @@ const SESSION_PROVIDER_BEHAVIORS: Readonly<Partial<Record<AgentId, SessionProvid
     ),
 );
 
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Readonly<Record<string, unknown>>
+        : null;
+}
+
+function readMetadataMachineId(metadata: unknown): string | null {
+    const machineId = readRecord(metadata)?.machineId;
+    return typeof machineId === 'string' && machineId.trim().length > 0 ? machineId.trim() : null;
+}
+
+function declaresProjectedSessionProviderBehavior(descriptor: Readonly<Record<string, unknown>>): boolean {
+    const session = readRecord(descriptor.session);
+    return session !== null
+        && Object.hasOwn(session, 'providerBehavior');
+}
+
 function listSessionProviderBehaviors(params: Readonly<{ flavor: string | null; metadata?: unknown }>): readonly SessionProviderBehavior[] {
     const primaryAgentId = resolveAgentIdFromSessionMetadata(params.metadata) ?? resolveAgentIdFromFlavor(params.flavor);
-    const orderedBehaviors: SessionProviderBehavior[] = [];
+    if (!primaryAgentId) return [];
 
-    if (primaryAgentId && isBundledAgentId(primaryAgentId)) {
-        const primaryBehavior = SESSION_PROVIDER_BEHAVIORS[primaryAgentId];
-        if (primaryBehavior) orderedBehaviors.push(primaryBehavior);
+    const machineId = readMetadataMachineId(params.metadata);
+    const projected = machineId
+        ? resolveProjectedAgentUiBehaviorEntry(primaryAgentId, machineId)
+        : null;
+    if (projected && declaresProjectedSessionProviderBehavior(projected.descriptor)) {
+        return [createSessionProviderBehaviorFromDescriptor(projected.descriptor).behavior];
     }
 
-    for (const agentId of AGENT_IDS) {
-        if (agentId === primaryAgentId) continue;
-        const behavior = SESSION_PROVIDER_BEHAVIORS[agentId];
-        if (!behavior) continue;
-        orderedBehaviors.push(behavior);
-    }
-
-    return orderedBehaviors;
+    if (!isBundledAgentId(primaryAgentId)) return [];
+    const primaryBehavior = SESSION_PROVIDER_BEHAVIORS[primaryAgentId];
+    return primaryBehavior ? [primaryBehavior] : [];
 }
 
 function readSessionProviderBehaviorFlavor(metadata: unknown): string | null {
@@ -77,10 +93,11 @@ function readSessionProviderBehaviorFlavor(metadata: unknown): string | null {
 
 export function deriveProviderParticipantSnapshot(params: Readonly<{
     flavor: string | null;
+    metadata?: unknown;
     messages: readonly Message[];
 }>): ProviderParticipantSnapshot {
     const snapshots: Record<string, unknown> = {};
-    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor })) {
+    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor, metadata: params.metadata })) {
         let snapshot: ProviderParticipantSnapshot | null | undefined;
         try {
             snapshot = behavior.participants?.deriveSnapshot?.(params);
@@ -95,10 +112,11 @@ export function deriveProviderParticipantSnapshot(params: Readonly<{
 
 export function deriveProviderParticipantSidechainIds(params: Readonly<{
     flavor: string | null;
+    metadata?: unknown;
     messages: readonly Message[];
 }>): readonly string[] {
     const sidechainIds = new Set<string>();
-    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor })) {
+    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor, metadata: params.metadata })) {
         let ids: readonly string[] = [];
         try {
             ids = behavior.participants?.deriveSidechainIds?.(params) ?? [];
@@ -142,10 +160,11 @@ export function deriveProviderParticipantTargets(params: Readonly<{
 
 export function deriveProviderSessionSubagents(params: Readonly<{
     flavor: string | null;
+    metadata?: unknown;
     messages: readonly Message[];
 }>): readonly SessionSubagent[] {
     const subagents: SessionSubagent[] = [];
-    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor })) {
+    for (const behavior of listSessionProviderBehaviors({ flavor: params.flavor, metadata: params.metadata })) {
         let derived: readonly SessionSubagent[] = [];
         try {
             derived = behavior.subagents?.deriveSubagents?.(params) ?? [];
@@ -177,8 +196,10 @@ export function resolveProviderSessionSubagentAutoRecipient(
 export function shouldIgnoreProviderSessionSubagentActivityPreviewText(params: Readonly<{
     subagent: SessionSubagent;
     text: string;
+    metadata?: unknown;
 }>): boolean {
-    for (const behavior of listSessionProviderBehaviors({ flavor: null })) {
+    const flavor = readSessionProviderBehaviorFlavor(params.metadata);
+    for (const behavior of listSessionProviderBehaviors({ flavor, metadata: params.metadata })) {
         let shouldIgnore = false;
         try {
             shouldIgnore = behavior.subagents?.shouldIgnoreActivityPreviewText?.(params) === true;

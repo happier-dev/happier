@@ -1,4 +1,5 @@
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { AgentUiSessionDeclarationV1 } from '@happier-dev/protocol';
 import {
     createUiProjectionDiagnostic,
     isRecord,
@@ -15,33 +16,9 @@ import type {
 import { createAgentTeamSessionProviderBehavior } from './agent/team/behavior';
 import type { AgentTeamSessionProviderDescriptor } from './agent/team/types';
 
-type ToolCallInputStringSidechainDescriptor = Readonly<{
-    kind: 'toolCallInputString';
-    toolNames: readonly string[];
-    inputKey: string;
-}>;
-
-type UnsupportedSidechainDescriptor = Readonly<{
-    kind: 'providerCallback';
-    callbackId: string;
-}>;
-
-type JsonEventTypePreviewDescriptor = Readonly<{
-    kind: 'jsonEventType';
-    recipientKinds: readonly string[];
-    eventTypes: readonly string[];
-}>;
-
-export type SessionProviderBehaviorDescriptor = Readonly<{
-    kind: 'session.providerBehavior.v1';
-    agentTeam?: AgentTeamSessionProviderDescriptor;
-    participants?: Readonly<{
-        sidechainIds?: ToolCallInputStringSidechainDescriptor | UnsupportedSidechainDescriptor;
-    }>;
-    subagents?: Readonly<{
-        ignoreActivityPreviewText?: JsonEventTypePreviewDescriptor;
-    }>;
-}>;
+export type SessionProviderBehaviorDescriptor = NonNullable<
+    AgentUiSessionDeclarationV1['providerBehavior']
+>;
 
 export type SessionProviderBehaviorDescriptorResult = Readonly<{
     behavior: SessionProviderBehavior;
@@ -55,7 +32,6 @@ type PluginUiSessionDescriptor = Readonly<{
     version: number;
     session?: Readonly<{
         providerBehavior?: SessionProviderBehaviorDescriptor;
-        providerBehaviorDescriptorId?: string;
     }>;
 }>;
 
@@ -101,15 +77,6 @@ function readSessionProviderBehaviorDescriptor(
             'Unsupported session provider behavior descriptor kind.',
         ));
         return null;
-    }
-
-    const descriptorId = readString(pluginDescriptor.session?.providerBehaviorDescriptorId);
-    if (descriptorId) {
-        diagnostics.push(createUiProjectionDiagnostic(
-            'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-            'session.providerBehaviorDescriptorId',
-            `Unsupported session provider behavior descriptor id '${descriptorId}'.`,
-        ));
     }
 
     return null;
@@ -218,7 +185,7 @@ export function createSessionProviderBehaviorFromDescriptor(value: unknown): Ses
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
             'participants.sidechainIds',
-            `Unsupported sidechain id descriptor kind '${String(sidechainIds.kind)}'.`,
+            `Unsupported sidechain id descriptor kind '${String((sidechainIds as unknown as { kind?: unknown }).kind)}'.`,
         ));
     }
 
@@ -239,7 +206,7 @@ export function createSessionProviderBehaviorFromDescriptor(value: unknown): Ses
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
             'subagents.ignoreActivityPreviewText',
-            `Unsupported preview text descriptor kind '${String(previewText.kind)}'.`,
+            `Unsupported preview text descriptor kind '${String((previewText as unknown as { kind?: unknown }).kind)}'.`,
         ));
     }
 

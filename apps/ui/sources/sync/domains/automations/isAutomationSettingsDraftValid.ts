@@ -1,11 +1,16 @@
 import type { NewSessionAutomationDraft } from './automationDraft';
+import { AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol';
 
 export function isAutomationSettingsDraftValid(
     draft: NewSessionAutomationDraft | null | undefined,
 ): boolean {
     const nameOk = (draft?.name ?? '').trim().length > 0;
-    const scheduleOk = draft?.scheduleKind === 'interval'
-        ? Number.isFinite(draft.everyMinutes) && draft.everyMinutes >= 1
-        : (draft?.cronExpr ?? '').trim().length > 0;
-    return !!draft && nameOk && scheduleOk;
+    if (!draft || !nameOk) return false;
+    const clientIds = new Set<string>();
+    return draft.triggers.every((row) => {
+        const clientId = row.clientId.trim();
+        if (!clientId || clientIds.has(clientId)) return false;
+        clientIds.add(clientId);
+        return AutomationTriggerDefinitionInputSchema.safeParse(row.definition).success;
+    });
 }

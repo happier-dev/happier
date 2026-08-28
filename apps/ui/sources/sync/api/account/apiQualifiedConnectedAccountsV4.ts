@@ -4,6 +4,7 @@ import {
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountGroupActiveAccountV4Schema,
   QualifiedConnectedAccountGroupCreateV4Schema,
+  QualifiedConnectedAccountGroupDeleteV4Schema,
   QualifiedConnectedAccountGroupListResponseV4Schema,
   QualifiedConnectedAccountGroupMemberDeleteV4Schema,
   QualifiedConnectedAccountGroupMemberMutationV4Schema,
@@ -221,25 +222,23 @@ export async function patchQualifiedConnectedAccountGroupV4(
 
 export async function deleteQualifiedConnectedAccountGroupV4(
   credentials: AuthCredentials,
-  params: Readonly<{
-    group: QualifiedConnectedAccountGroupRef;
-    expectedIncarnation: string;
-    expectedRuntimeStateRevision?: number;
-  }>,
+  params: z.input<typeof QualifiedConnectedAccountGroupDeleteV4Schema>,
 ): Promise<boolean> {
+  const mutation = QualifiedConnectedAccountGroupDeleteV4Schema.parse(params);
   const query = new URLSearchParams();
   query.set(
     'group',
     encodeQualifiedConnectedAccountV4StructuredQueryValue(
       QualifiedConnectedAccountGroupRefSchema,
-      params.group,
+      mutation.group,
     ),
   );
-  query.set('expectedIncarnation', params.expectedIncarnation);
-  if (params.expectedRuntimeStateRevision !== undefined) {
+  query.set('expectedIncarnation', mutation.expectedIncarnation);
+  query.set('expectedGeneration', String(mutation.expectedGeneration));
+  if (mutation.expectedRuntimeStateRevision !== undefined) {
     query.set(
       'expectedRuntimeStateRevision',
-      String(params.expectedRuntimeStateRevision),
+      String(mutation.expectedRuntimeStateRevision),
     );
   }
   await mutateQualifiedSnapshot({

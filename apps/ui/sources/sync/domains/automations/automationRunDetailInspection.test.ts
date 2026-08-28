@@ -62,16 +62,20 @@ if (parsedEventEvidence.kind !== 'pluginEvent') {
     throw new Error('Expected plugin-event evidence fixture');
 }
 const EVENT_EVIDENCE = parsedEventEvidence;
+const EVENT_TRIGGER_ID = 'trigger-event-1';
 
 function deriveOccurrenceKey(): string {
     return deriveAutomationOccurrenceKeyV1({
-        v: EVENT_EVIDENCE.v,
-        kind: EVENT_EVIDENCE.kind,
-        eventRef: EVENT_EVIDENCE.eventRef,
-        sourceSelectorId: EVENT_EVIDENCE.sourceSelectorId,
-        occurrenceId: EVENT_EVIDENCE.occurrenceId,
-        occurredAt: EVENT_EVIDENCE.occurredAt,
-        payload: EVENT_EVIDENCE.payload,
+        triggerId: EVENT_TRIGGER_ID,
+        evidence: {
+            v: EVENT_EVIDENCE.v,
+            kind: EVENT_EVIDENCE.kind,
+            eventRef: EVENT_EVIDENCE.eventRef,
+            sourceSelectorId: EVENT_EVIDENCE.sourceSelectorId,
+            occurrenceId: EVENT_EVIDENCE.occurrenceId,
+            occurredAt: EVENT_EVIDENCE.occurredAt,
+            payload: EVENT_EVIDENCE.payload,
+        },
     });
 }
 
@@ -111,12 +115,21 @@ function createDetail(params: Readonly<{
     return AutomationV3RunDetailSchema.parse({
         id: 'run-1',
         automationId: 'automation-1',
+        revision: 1,
         state: 'succeeded',
-        origin: {
-            kind: 'pluginEvent',
+        triggerId: EVENT_TRIGGER_ID,
+        triggerRetired: false,
+        cause: {
+            kind: 'trigger',
+            triggerId: EVENT_TRIGGER_ID,
+            triggerRevision: 1,
+            triggerKind: 'pluginEvent',
             occurrenceKey: deriveOccurrenceKey(),
-            sourceSelectorId: EVENT_EVIDENCE.sourceSelectorId,
             occurredAt: EVENT_EVIDENCE.occurredAt,
+            evidence: {
+                eventRef: EVENT_EVIDENCE.eventRef,
+                sourceSelectorId: EVENT_EVIDENCE.sourceSelectorId,
+            },
         },
         dueAt: EVENT_EVIDENCE.occurredAt,
         claimedAt: EVENT_EVIDENCE.occurredAt,
@@ -132,7 +145,6 @@ function createDetail(params: Readonly<{
         replyHandoffState: 'none',
         replyHandoffAttempt: 0,
         replyHandoffDueAt: null,
-        contentRemovedAt: null,
         createdAt: EVENT_EVIDENCE.occurredAt,
         updatedAt: EVENT_EVIDENCE.occurredAt + 1,
         triggerEvidenceEnvelope: params.triggerEvidenceEnvelope
@@ -180,18 +192,23 @@ describe('inspectAutomationRunDetailPrivateContent', () => {
         if (!parsedTriggerEvidence.success || parsedTriggerEvidence.data.kind !== 'pluginEvent') {
             throw new Error('Expected strict plugin-event trigger evidence');
         }
-        const origin = detail.origin;
-        expect(origin.kind).toBe('pluginEvent');
-        if (origin.kind !== 'pluginEvent') throw new Error('Expected plugin-event origin');
+        const cause = detail.cause;
+        expect(cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent' });
+        if (cause.kind !== 'trigger' || cause.triggerKind !== 'pluginEvent') {
+            throw new Error('Expected plugin-event cause');
+        }
         expect(deriveAutomationOccurrenceKeyV1({
-            v: parsedTriggerEvidence.data.v,
-            kind: parsedTriggerEvidence.data.kind,
-            eventRef: parsedTriggerEvidence.data.eventRef,
-            sourceSelectorId: parsedTriggerEvidence.data.sourceSelectorId,
-            occurrenceId: parsedTriggerEvidence.data.occurrenceId,
-            occurredAt: parsedTriggerEvidence.data.occurredAt,
-            payload: parsedTriggerEvidence.data.payload,
-        })).toBe(origin.occurrenceKey);
+            triggerId: cause.triggerId,
+            evidence: {
+                v: parsedTriggerEvidence.data.v,
+                kind: parsedTriggerEvidence.data.kind,
+                eventRef: parsedTriggerEvidence.data.eventRef,
+                sourceSelectorId: parsedTriggerEvidence.data.sourceSelectorId,
+                occurrenceId: parsedTriggerEvidence.data.occurrenceId,
+                occurredAt: parsedTriggerEvidence.data.occurredAt,
+                payload: parsedTriggerEvidence.data.payload,
+            },
+        })).toBe(cause.occurrenceKey);
         expect(materializeAutomationRunPromptV1({
             template: parsedRecipe.recipe.template.t === 'plain'
                 ? parsedRecipe.recipe.template.v
@@ -200,7 +217,7 @@ describe('inspectAutomationRunDetailPrivateContent', () => {
         })).toMatchObject({ kind: 'available' });
         expect(materializeAutomationRunExecutionRecipeV1({
             recipe: parsedRecipe.recipe,
-            origin: detail.origin,
+            cause: detail.cause,
             accountCurrentness: {
                 mode: ACCOUNT_CURRENTNESS_PLAIN.mode,
                 version: ACCOUNT_CURRENTNESS_PLAIN.version,

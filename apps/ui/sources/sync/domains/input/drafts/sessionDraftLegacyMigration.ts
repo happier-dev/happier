@@ -24,7 +24,10 @@ import {
     writeSessionDraftLocalSupplement,
     type ExistingSessionDraftPatch,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { SESSION_DRAFT_VALUE_SCHEMAS } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    parseComposerStructuredInputMentionsForText,
+    SESSION_DRAFT_VALUE_SCHEMAS,
+} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 import { projectSyncedSessionAuthoringFields } from './sessionAuthoringDraftProjection';
@@ -56,14 +59,22 @@ function buildExistingPatch(
             continue;
         }
         const typedFieldId = fieldId as keyof typeof SESSION_DRAFT_VALUE_SCHEMAS;
+        if (typedFieldId === 'structuredInput.mentions') {
+            if (text === undefined || !Array.isArray(envelope.value)) {
+                fullyProjected = false;
+                continue;
+            }
+            const mentions = parseComposerStructuredInputMentionsForText(envelope.value, text);
+            patch.mentions = mentions.mentions.map(asStrictJsonValue);
+            if (!mentions.fullyDecoded) fullyProjected = false;
+            continue;
+        }
         const parsed = SESSION_DRAFT_VALUE_SCHEMAS[typedFieldId].safeParse(envelope.value);
         if (!parsed.success) {
             fullyProjected = false;
             continue;
         }
-        if (typedFieldId === 'structuredInput.mentions') {
-            patch.mentions = (parsed.data as readonly unknown[]).map(asStrictJsonValue);
-        } else if (typedFieldId === 'structuredInput.composerAttachments') {
+        if (typedFieldId === 'structuredInput.composerAttachments') {
             patch.attachments = (parsed.data as readonly unknown[]).map(asStrictJsonValue);
         } else if (typedFieldId === 'routing.recipient') {
             routing.recipient = asStrictJsonValue({ mode: 'manual', recipient: parsed.data });
@@ -105,7 +116,7 @@ function buildNewPatch(draft: NewSessionDraft): Readonly<{
                     ? { modelId: draft.modelMode === 'default' ? null : draft.modelMode }
                     : {}),
             ...(draft.mcpSelection !== undefined ? { mcpSelection: draft.mcpSelection } : {}),
-            ...(draft.codexBackendMode !== undefined ? { codexBackendMode: draft.codexBackendMode } : {}),
+            ...(draft.runtimeDescriptorV1 !== undefined ? { runtimeDescriptorV1: draft.runtimeDescriptorV1 } : {}),
             acpSessionModeId: draft.acpSessionModeId,
             ...(draft.automationDraft ? { automation: draft.automationDraft } : {}),
         }),

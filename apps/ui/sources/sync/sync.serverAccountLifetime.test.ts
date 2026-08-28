@@ -2,13 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
     AutomationDefinitionDetailSchema,
-    AutomationPluginEventDefinitionCreateRequestSchema,
-    AutomationPluginEventDefinitionPatchRequestSchema,
     AutomationV3RunListItemSchema,
     AutomationV3RunDetailSchema,
     type AutomationDefinitionDetail,
-    type AutomationPluginEventDefinitionCreateRequest,
-    type AutomationPluginEventDefinitionPatchRequest,
     type AutomationV3Settings,
 } from '@happier-dev/protocol';
 
@@ -45,11 +41,10 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const retireLifetime = vi.hoisted(() => vi.fn());
-const createPluginEventAutomationDefinition = vi.hoisted(() => vi.fn());
-const updatePluginEventAutomationDefinition = vi.hoisted(() => vi.fn());
 const getAutomationRunDetail = vi.hoisted(() => vi.fn());
 const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const cancelAutomationRun = vi.hoisted(() => vi.fn());
+const retryAutomationReplyHandoff = vi.hoisted(() => vi.fn());
 const deleteAutomationDefinition = vi.hoisted(() => vi.fn());
 const runAutomationDefinitionNow = vi.hoisted(() => vi.fn());
 const getAutomationSettings = vi.hoisted(() => vi.fn());
@@ -114,10 +109,9 @@ vi.mock('./api/automations/apiAutomations', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./api/automations/apiAutomations')>();
     return {
         ...actual,
-        createPluginEventAutomationDefinition,
-        updatePluginEventAutomationDefinition,
         getAutomationRunDetail,
         cancelAutomationRun,
+        retryAutomationReplyHandoff,
         deleteAutomationDefinition,
         runAutomationDefinitionNow,
         getAutomationSettings,
@@ -139,15 +133,9 @@ type SyncResetOwnerTestSeam = {
     ): Promise<unknown>;
 } & {
     credentials: AuthCredentials | undefined;
-    createPluginEventAutomationDefinition(
-        input: AutomationPluginEventDefinitionCreateRequest,
-    ): Promise<unknown>;
-    updatePluginEventAutomationDefinition(
-        automationId: string,
-        input: AutomationPluginEventDefinitionPatchRequest,
-    ): Promise<unknown>;
     getAutomationRunDetailInspection(automationId: string, runId: string): Promise<unknown>;
     cancelAutomationRun(runId: string): Promise<unknown>;
+    retryAutomationReplyHandoff(runId: string): Promise<unknown>;
     deleteAutomation(automationId: string): Promise<void>;
     runAutomationNow(automationId: string): Promise<unknown>;
     getAutomationSettings(): Promise<AutomationV3Settings>;
@@ -156,65 +144,24 @@ type SyncResetOwnerTestSeam = {
     fetchAutomationRuns(automationId: string, limit?: number, cursor?: string): Promise<unknown>;
 };
 
-const eventCreateRequest = AutomationPluginEventDefinitionCreateRequestSchema.parse({
-    name: 'Repository updates',
-    description: 'Review incoming repository activity',
-    enabled: true,
-    trigger: {
-        kind: 'pluginEvent',
-        eventRef: {
-            pluginId: 'happier.scm.github',
-            localId: 'repository-event-v1',
-        },
-        sourceInstanceId: 'github:repository:1234',
-        sourceContractVersion: 1,
-        sourceConfig: {
-            repository: 'happier-dev/happier',
-        },
-        displayLabel: 'happier-dev/happier',
-        observationTransport: {
-            kind: 'checkpointedPull',
-            watcherMaterializationRef: {
-                machineId: 'machine-1',
-                pluginId: 'happier.scm.github',
-                materializationId: 'materialization-1',
-            },
-        },
-        filter: null,
-        maximumObservationAgeMs: 60_000,
-    },
-    executionRecipe: {
-        v: 1,
-        templateVersion: 3,
-        template: {
-            t: 'plain',
-            v: {
-                v: 1,
-                prompt: 'Review {{input}}',
-            },
-        },
-        triggerEvidence: null,
-        target: {
-            kind: 'existingSession',
-            sessionId: 'session-event-1',
-        },
-    },
-    assignments: [{ machineId: 'machine-1' }],
-});
-
 function eventDetail(templateVersion: number): AutomationDefinitionDetail {
     return AutomationDefinitionDetailSchema.parse({
         id: 'automation-event-owner',
         name: 'Repository updates',
         description: 'Review incoming repository activity',
         enabled: true,
-        trigger: {
+        triggers: [{
+            id: '11111111-1111-4111-8111-111111111111',
+            revision: 2,
+            enabled: true,
+            createdAt: 1,
+            updatedAt: templateVersion,
             kind: 'pluginEvent',
             eventRef: {
                 pluginId: 'happier.scm.github',
-                localId: 'repository-event-v1',
+                localId: 'push',
             },
-            sourceSelectorId: 'selector-event-1',
+            sourceSelectorId: '22222222-2222-4222-8222-222222222222',
             sourceContractVersion: 1,
             observation: {
                 kind: 'checkpointedPull',
@@ -225,19 +172,24 @@ function eventDetail(templateVersion: number): AutomationDefinitionDetail {
                     materializationId: 'materialization-1',
                 },
             },
-        },
+            sourceStatus: null,
+            sourceCatalogStatus: null,
+            triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+        }],
         targetType: 'existingSession',
         existingSessionId: 'session-event-1',
         templateVersion,
-        nextRunAt: null,
         lastRunAt: null,
         createdAt: 1,
         updatedAt: templateVersion,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: null }],
-        triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+        retiredTriggers: [],
         executionRecipe: {
-            ...eventCreateRequest.executionRecipe,
+            v: 1,
             templateVersion,
+            template: { t: 'plain', v: { v: 1, prompt: 'Review {{input}}' } },
+            triggerEvidence: null,
+            target: { kind: 'existingSession', sessionId: 'session-event-1' },
         },
     });
 }
@@ -245,12 +197,21 @@ function eventDetail(templateVersion: number): AutomationDefinitionDetail {
 const eventRunDetail = AutomationV3RunDetailSchema.parse({
     id: 'automation-event-run-owner',
     automationId: 'automation-event-owner',
+    revision: 2,
     state: 'queued',
-    origin: {
-        kind: 'pluginEvent',
+    triggerId: '11111111-1111-4111-8111-111111111111',
+    triggerRetired: false,
+    cause: {
+        kind: 'trigger',
+        triggerId: '11111111-1111-4111-8111-111111111111',
+        triggerRevision: 2,
+        triggerKind: 'pluginEvent',
         occurrenceKey: 'occurrence-event-owner',
-        sourceSelectorId: 'selector-event-1',
         occurredAt: 1,
+        evidence: {
+            eventRef: { pluginId: 'happier.scm.github', localId: 'push' },
+            sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+        },
     },
     dueAt: 1,
     claimedAt: null,
@@ -266,7 +227,6 @@ const eventRunDetail = AutomationV3RunDetailSchema.parse({
     replyHandoffState: 'none',
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
-    contentRemovedAt: null,
     createdAt: 1,
     updatedAt: 1,
     triggerEvidenceEnvelope: null,
@@ -309,8 +269,11 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         const run = AutomationV3RunListItemSchema.parse({
             id: eventRunDetail.id,
             automationId: eventRunDetail.automationId,
+            revision: eventRunDetail.revision,
             state: eventRunDetail.state,
-            origin: eventRunDetail.origin,
+            triggerId: eventRunDetail.triggerId,
+            triggerRetired: eventRunDetail.triggerRetired,
+            cause: eventRunDetail.cause,
             dueAt: eventRunDetail.dueAt,
             claimedAt: eventRunDetail.claimedAt,
             startedAt: eventRunDetail.startedAt,
@@ -325,7 +288,6 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             replyHandoffState: eventRunDetail.replyHandoffState,
             replyHandoffAttempt: eventRunDetail.replyHandoffAttempt,
             replyHandoffDueAt: eventRunDetail.replyHandoffDueAt,
-            contentRemovedAt: eventRunDetail.contentRemovedAt,
             createdAt: eventRunDetail.createdAt,
             updatedAt: eventRunDetail.updatedAt,
         });
@@ -377,12 +339,17 @@ describe('Sync Server/Account lifetime reset boundary', () => {
     it('does not return a direct Automation definition after its server-account scope expires', async () => {
         const owner = sync as unknown as SyncResetOwnerTestSeam;
         let scopeCurrent = true;
-        const detail = {
+        const detail = AutomationDefinitionDetailSchema.parse({
             id: 'automation-stale-scope',
             name: 'Stale scope',
             description: null,
             enabled: true,
-            trigger: {
+            triggers: [{
+                id: '33333333-3333-4333-8333-333333333333',
+                revision: 0,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 1,
                 kind: 'schedule',
                 schedule: {
                     kind: 'interval',
@@ -390,74 +357,30 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                     everyMs: 60_000,
                     timezone: null,
                 },
-            },
-            targetType: 'newSession',
-            existingSessionId: null,
+                nextRunAt: null,
+                triggerDefinitionEnvelope: null,
+            }],
+            targetType: 'existingSession',
+            existingSessionId: 'session-1',
             templateVersion: 1,
-            nextRunAt: null,
             lastRunAt: null,
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-            triggerDefinitionEnvelope: null,
-            templateCiphertext: '{"t":"plain","v":{"directory":"/repo"}}',
-        } satisfies AutomationDefinitionDetail;
+            retiredTriggers: [],
+            executionRecipe: {
+                v: 1,
+                templateVersion: 1,
+                template: { t: 'plain', v: { v: 1, prompt: 'Review work' } },
+                triggerEvidence: null,
+                target: { kind: 'existingSession', sessionId: 'session-1' },
+            },
+        });
 
         const operation = owner.projectAndUpsertAutomationDefinition(detail, () => scopeCurrent);
         scopeCurrent = false;
 
         await expect(operation).rejects.toThrow('Automation server-account scope changed');
-    });
-
-    it('projects strict Event create and versioned patch results through the incumbent Automation store owner', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-owner', secret: 'secret-event-owner' };
-        const previousCredentials = owner.credentials;
-        const createdDetail = eventDetail(3);
-        const updatedDetail = eventDetail(4);
-        const patchRequest = AutomationPluginEventDefinitionPatchRequestSchema.parse({
-            ...eventCreateRequest,
-            expectedTemplateVersion: 3,
-            executionRecipe: {
-                ...eventCreateRequest.executionRecipe,
-                templateVersion: 4,
-            },
-        });
-        createPluginEventAutomationDefinition.mockReset();
-        updatePluginEventAutomationDefinition.mockReset();
-        createPluginEventAutomationDefinition.mockResolvedValue(createdDetail);
-        updatePluginEventAutomationDefinition.mockResolvedValue(updatedDetail);
-        owner.credentials = credentials;
-
-        try {
-            const created = await owner.createPluginEventAutomationDefinition(eventCreateRequest);
-            const updated = await owner.updatePluginEventAutomationDefinition(createdDetail.id, patchRequest);
-
-            expect(createPluginEventAutomationDefinition).toHaveBeenCalledWith(credentials, eventCreateRequest);
-            expect(updatePluginEventAutomationDefinition).toHaveBeenCalledWith(
-                credentials,
-                createdDetail.id,
-                patchRequest,
-            );
-            expect(created).toMatchObject({
-                id: createdDetail.id,
-                detail: {
-                    kind: 'available',
-                    templateVersion: 3,
-                },
-                linkedExistingSessionId: 'session-event-1',
-            });
-            expect(updated).toMatchObject({
-                id: updatedDetail.id,
-                detail: {
-                    kind: 'available',
-                    templateVersion: 4,
-                },
-                linkedExistingSessionId: 'session-event-1',
-            });
-        } finally {
-            owner.credentials = previousCredentials;
-        }
     });
 
     it('fences a direct Run-detail inspection when its server-account scope changes', async () => {
@@ -548,6 +471,32 @@ describe('Sync Server/Account lifetime reset boundary', () => {
                 state: 'cancelled',
             });
             expect(cancelAutomationRun).toHaveBeenCalledWith(credentials, eventRunDetail.id);
+        } finally {
+            owner.credentials = previousCredentials;
+        }
+    });
+
+    it('projects reply handoff recovery through the incumbent Automation Run cache owner', async () => {
+        const owner = sync as unknown as SyncResetOwnerTestSeam;
+        const credentials: AuthCredentials = { token: 'token-handoff-retry', secret: 'secret-handoff-retry' };
+        const previousCredentials = owner.credentials;
+        const readyRun = {
+            ...eventRunDetail,
+            revision: eventRunDetail.revision + 1,
+            replyHandoffState: 'ready' as const,
+            replyHandoffDueAt: 2,
+            updatedAt: 2,
+        };
+        retryAutomationReplyHandoff.mockReset();
+        retryAutomationReplyHandoff.mockResolvedValue(readyRun);
+        owner.credentials = credentials;
+
+        try {
+            await expect(owner.retryAutomationReplyHandoff(eventRunDetail.id)).resolves.toMatchObject({
+                id: eventRunDetail.id,
+                replyHandoffState: 'ready',
+            });
+            expect(retryAutomationReplyHandoff).toHaveBeenCalledWith(credentials, eventRunDetail.id);
         } finally {
             owner.credentials = previousCredentials;
         }

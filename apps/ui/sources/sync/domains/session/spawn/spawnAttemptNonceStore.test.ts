@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import {
+    deriveSessionCreationTagV1,
+    buildSessionSpawnInitialInputLocalIdV1,
+} from '@happier-dev/protocol';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const attempt = {
@@ -28,6 +32,12 @@ describe('spawnAttemptNonceStore persistence', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-07-13T20:00:00.000Z'));
         const firstStore = await import('./spawnAttemptNonceStore');
+        const expectedMessageLocalId = buildSessionSpawnInitialInputLocalIdV1({
+            sessionCreationTag: deriveSessionCreationTagV1({
+                callerCreationNamespace: 'user',
+                creationKey: 'manual:attempt-a',
+            }),
+        });
         expect(await firstStore.acquireSpawnAttemptCustody({
             ...attempt,
             seedNonce: 'nonce-before-hard-reload',
@@ -42,8 +52,8 @@ describe('spawnAttemptNonceStore persistence', () => {
                 nonce: 'nonce-before-hard-reload',
                 submissionState: 'prepared',
                 createdSessionId: null,
-                firstTurnLocalId: 'spawn-first-turn:nonce-before-hard-reload',
-                attachmentMessageLocalId: 'spawn-attachment:nonce-before-hard-reload',
+                firstTurnLocalId: expectedMessageLocalId,
+                attachmentMessageLocalId: expectedMessageLocalId,
             },
             reused: false,
         });
@@ -426,11 +436,17 @@ describe('spawnAttemptNonceStore persistence', () => {
             ...attempt,
             seedNonce: 'nonce-lifecycle',
         });
+        const expectedMessageLocalId = buildSessionSpawnInitialInputLocalIdV1({
+            sessionCreationTag: deriveSessionCreationTagV1({
+                callerCreationNamespace: 'user',
+                creationKey: 'manual:attempt-a',
+            }),
+        });
         expect(acquired).toMatchObject({
             status: 'acquired',
             record: {
-                firstTurnLocalId: 'spawn-first-turn:nonce-lifecycle',
-                attachmentMessageLocalId: 'spawn-attachment:nonce-lifecycle',
+                firstTurnLocalId: expectedMessageLocalId,
+                attachmentMessageLocalId: expectedMessageLocalId,
                 createdSessionId: null,
             },
         });

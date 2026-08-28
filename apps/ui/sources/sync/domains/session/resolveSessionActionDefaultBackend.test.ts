@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaultBackend';
+import {
+  resolveSessionActionDefaultBackend,
+  resolveSessionActionDefaultTarget,
+} from './resolveSessionActionDefaultBackend';
 
 	describe('resolveSessionActionDefaultBackend', () => {
 	  it('returns configured ACP backend targets from session metadata while keeping a built-in fallback id', () => {
@@ -22,15 +25,18 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
 	    });
 
 	    expect(resolved).toEqual({
+	      agentTarget: null,
 	      backendTarget: {
 	        kind: 'backend',
 	        backendId: 'acp-backend',
 	        configuredBackendId: 'acp-backend',
 	        sourceKind: 'configured',
 	      },
+	      defaultAgentId: null,
 	      defaultBackendId: 'claude',
 	      displayAgentType: 'claude',
 	    });
+	    expect(resolveSessionActionDefaultTarget(resolved)).toEqual(resolved?.backendTarget);
 	  });
 
   it('keeps the concrete configured backend target while exposing canonical built-in session defaults for configured ACP sessions', () => {
@@ -53,12 +59,14 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
 	    });
 
 	    expect(resolved).toEqual({
+	      agentTarget: null,
 	      backendTarget: {
 	        kind: 'backend',
 	        backendId: 'review-bot',
 	        configuredBackendId: 'review-bot',
 	        sourceKind: 'configured',
 	      },
+	      defaultAgentId: null,
 	      defaultBackendId: 'claude',
 	      displayAgentType: 'claude',
 	    });
@@ -76,10 +84,16 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
 	    });
 
 	    expect(resolved).toEqual({
-	      backendTarget: { kind: 'backend', backendId: 'codex' },
+	      agentTarget: {
+	        kind: 'agent',
+	        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+	      },
+	      backendTarget: null,
+	      defaultAgentId: 'codex',
 	      defaultBackendId: 'codex',
 	      displayAgentType: 'codex',
 	    });
+	    expect(resolveSessionActionDefaultTarget(resolved)).toEqual(resolved?.agentTarget);
 	  });
 
   it('treats a built-in metadata.agent as the default built-in target when no enabled-agent filter is provided', () => {
@@ -93,13 +107,18 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
 	    });
 
 	    expect(resolved).toEqual({
-	      backendTarget: { kind: 'backend', backendId: 'codex' },
+	      agentTarget: {
+	        kind: 'agent',
+	        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+	      },
+	      backendTarget: null,
+	      defaultAgentId: 'codex',
 	      defaultBackendId: 'codex',
 	      displayAgentType: 'codex',
 	    });
 	  });
 
-  it('preserves raw metadata.agent for id-based review defaults while keeping a built-in target', () => {
+  it('keeps the canonical Agent identity when a legacy review alias is present', () => {
     const resolved = resolveSessionActionDefaultBackend({
       session: {
         id: 's1',
@@ -112,8 +131,13 @@ import { resolveSessionActionDefaultBackend } from './resolveSessionActionDefaul
 	    });
 
 	    expect(resolved).toEqual({
-	      backendTarget: { kind: 'backend', backendId: 'claude' },
-	      defaultBackendId: 'coderabbit',
+	      agentTarget: {
+	        kind: 'agent',
+	        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+	      },
+	      backendTarget: null,
+	      defaultAgentId: 'claude',
+	      defaultBackendId: 'claude',
 	      displayAgentType: 'claude',
 	    });
 	  });

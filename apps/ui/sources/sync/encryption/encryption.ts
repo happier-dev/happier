@@ -22,8 +22,13 @@ import {
     openAccountScopedBlobCiphertext,
     openEncryptedDataKeyEnvelopeV1,
     sealAccountScopedBlobCiphertext,
+    sealAutomationTriggerDefinitionStoredEnvelopeV1,
     sealEncryptedDataKeyEnvelopeV1,
+    AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
     type AccountScopedCryptoMaterial,
+    type AutomationEncryptedTriggerDefinitionEnvelopeV1,
+    type AutomationEventTriggerDefinitionStoredPayloadV1,
+    type AutomationTriggerDefinitionBindingV1,
 } from '@happier-dev/protocol';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { createNativeCryptoWorker } from './nativeCryptoWorker/nativeCryptoWorker';
@@ -497,6 +502,26 @@ export class Encryption {
                     randomBytes: getRandomBytes,
                 });
             },
+        );
+    }
+
+    /**
+     * Seals one private Event definition through the canonical Account-scoped
+     * Automation trigger envelope. Callers provide the exact persisted-row
+     * binding; this owner supplies the current Account material and entropy.
+     */
+    sealAutomationTriggerDefinition(params: Readonly<{
+        binding: AutomationTriggerDefinitionBindingV1;
+        definition: AutomationEventTriggerDefinitionStoredPayloadV1;
+    }>): AutomationEncryptedTriggerDefinitionEnvelopeV1 {
+        return AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.parse(
+            sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'e2ee',
+                material: this.accountScopedCryptoMaterial,
+                randomBytes: getRandomBytes,
+                binding: params.binding,
+                definition: params.definition,
+            }),
         );
     }
 

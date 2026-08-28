@@ -98,7 +98,7 @@ describe('sessionDeleteWithServerScope', () => {
     // the wrapper; matching a plain `{ Authorization }` bag never can, so an
     // assertion shaped that way is incapable of failing for the right reason.
     const deleteCalls = mockRuntimeFetch.mock.calls.filter(
-      ([, init]: [string, RequestInit]) => init?.method === 'DELETE',
+      (call) => (call[1] as RequestInit | undefined)?.method === 'DELETE',
     );
     expect(deleteCalls).toHaveLength(1);
     const [deleteUrl, deleteInit] = deleteCalls[0] as [string, RequestInit];

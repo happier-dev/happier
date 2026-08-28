@@ -202,7 +202,7 @@ function inspectRecipe(params: Readonly<{
 
     const materialized = materializeAutomationRunExecutionRecipeV1({
         recipe,
-        origin: params.detail.origin,
+        cause: params.detail.cause,
         accountCurrentness,
         runId: params.detail.id,
         ...(openedContent ? { openedContent } : {}),

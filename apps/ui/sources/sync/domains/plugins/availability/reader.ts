@@ -62,6 +62,11 @@ export type PluginAccountAvailabilityArtifactSlot = Readonly<{
     contributionId: string;
     tier: 'declarative' | 'hostedWeb' | 'reactNative';
     platform: 'web' | 'ios' | 'android';
+    /** Exact selected daemon materialization; required for bundled-first-party admission. */
+    materializationOrigin?: Readonly<{
+        serverIdentityId: string;
+        materializationRef: PluginMachineMaterializationRefV1;
+    }>;
 }>;
 
 /** Immutable release-selected bytes facts, independent of any source link. */
@@ -678,12 +683,12 @@ function classifyMaterializationRelease(
  * not fail-closed, it is fail-always — it withheld every React Native surface
  * of every host-bundled plugin, on every client.
  *
- * The app build's generated immutable inventory is therefore the coordinate
- * authority for exactly those slots, mirroring the host-bundled provenance arm
- * the UI projection union already owns. It is consulted only where an Account
- * intent can never exist: the moment the Account holds any intent read for the
- * plugin, that intent stays the sole authority and app-package bytes can
- * neither override nor revive it.
+ * The daemon's exact bundled-first-party machine materialization is the
+ * coordinate/currentness authority for these slots. The generated app
+ * inventory supplies only the matching packaged bytes after that admission.
+ * This arm is consulted only where an Account intent can never exist: the
+ * moment the Account holds any intent read for the plugin, that intent stays
+ * the sole authority and app-package bytes can neither override nor revive it.
  */
 function readHostBundledArtifactAdmission(
     state: AvailabilityProjectionState | null,
@@ -696,11 +701,33 @@ function readHostBundledArtifactAdmission(
     if (snapshot.intentReads.some((projection) => projection.pluginId === slot.pluginId)) {
         return null;
     }
+    const origin = slot.materializationOrigin;
+    if (!origin || origin.materializationRef.pluginId !== slot.pluginId) return null;
+    const materializations = snapshot.materializations.filter((materialization) => (
+        materialization.serverIdentityId === origin.serverIdentityId
+        && materialization.machineId === origin.materializationRef.machineId
+        && materialization.materializationId === origin.materializationRef.materializationId
+        && materialization.pluginId === origin.materializationRef.pluginId
+        && materialization.sourceClass === 'bundledFirstParty'
+        && materialization.enabled
+        && materialization.trustState === 'trusted'
+    ));
+    if (materializations.length !== 1) return null;
+    const materialization = materializations[0]!;
+    const admittedSlots = materialization.uiArtifacts.filter((candidate) => (
+        candidate.contributionId === slot.contributionId
+        && candidate.tier === slot.tier
+        && candidate.platform === slot.platform
+    ));
+    if (admittedSlots.length !== 1) return null;
+    const admittedSlot = admittedSlots[0]!;
     const candidates = HOST_BUNDLED_PLUGIN_UI_ARTIFACTS.filter((candidate) => (
         candidate.pluginId === slot.pluginId
         && candidate.contributionId === slot.contributionId
         && candidate.tier === slot.tier
         && candidate.platform === slot.platform
+        && candidate.releaseVersion === materialization.version
+        && candidate.digest === admittedSlot.artifactDigest
     ));
     if (candidates.length === 0) return null;
     if (candidates.length !== 1) {

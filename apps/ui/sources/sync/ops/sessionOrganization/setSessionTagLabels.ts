@@ -9,8 +9,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 
 import { setSessionTagAssignments } from './setSessionTagAssignments';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
-import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
-import { upsertSessionTag } from './upsertSessionTag';
+import { createSessionOrganizationTagWithLabel } from './upsertSessionTag';
 
 function readCurrentServerTags(serverId: string): UiSessionOrganizationTag[] {
     const state = getStorage().getState();
@@ -96,19 +95,14 @@ export async function setSessionTagLabels(params: Readonly<{
             resolvedTags.push(existing);
             continue;
         }
-        const tagId = createSessionOrganizationOpaqueId({ prefix: 'tag', usedIds });
-        usedIds.add(tagId);
-        const created = await upsertSessionTag({
+        const created = await createSessionOrganizationTagWithLabel({
             credentials: params.credentials,
             serverId: params.serverId,
             serverUrl: params.serverUrl,
-            request: {
-                tagId,
-                tagKey: tagId,
-                sortKey: null,
-                display: { t: 'plain', v: { label } },
-            },
+            label,
+            usedIds,
         });
+        usedIds.add(created.tagId);
         resolvedTags.push(created);
     }
 

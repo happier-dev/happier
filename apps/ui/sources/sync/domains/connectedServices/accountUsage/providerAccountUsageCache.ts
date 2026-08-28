@@ -17,6 +17,12 @@ let providerAccountUsageCacheState: ProviderAccountUsageCacheState = {
 };
 
 const providerAccountUsageCacheListeners = new Set<() => void>();
+const providerAccountUsageCacheRetainCounts = new Map<string, Map<string, number>>();
+
+function publishProviderAccountUsageCacheState(next: ProviderAccountUsageCacheState): void {
+    providerAccountUsageCacheState = next;
+    for (const listener of providerAccountUsageCacheListeners) listener();
+}
 
 export function getProviderAccountUsageCacheState(): ProviderAccountUsageCacheState {
     return providerAccountUsageCacheState;
@@ -26,6 +32,50 @@ export function subscribeProviderAccountUsageCache(listener: () => void): () => 
     providerAccountUsageCacheListeners.add(listener);
     return () => {
         providerAccountUsageCacheListeners.delete(listener);
+    };
+}
+
+/**
+ * Retains the exact usage rows required by a mounted surface. The cache is a
+ * last-known-good presentation owner, not a session-history archive, so the
+ * final release removes rows that no live consumer can render.
+ */
+export function retainProviderAccountUsageCacheEntries(
+    credentialScope: string,
+    recordIds: ReadonlyArray<string>,
+): () => void {
+    if (!credentialScope || recordIds.length === 0) return () => {};
+    const uniqueRecordIds = [...new Set(recordIds)];
+    const counts = providerAccountUsageCacheRetainCounts.get(credentialScope)
+        ?? new Map<string, number>();
+    providerAccountUsageCacheRetainCounts.set(credentialScope, counts);
+    for (const recordId of uniqueRecordIds) {
+        counts.set(recordId, (counts.get(recordId) ?? 0) + 1);
+    }
+
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        for (const recordId of uniqueRecordIds) {
+            const nextCount = (counts.get(recordId) ?? 0) - 1;
+            if (nextCount > 0) counts.set(recordId, nextCount);
+            else counts.delete(recordId);
+        }
+        if (counts.size === 0) providerAccountUsageCacheRetainCounts.delete(credentialScope);
+
+        const currentEntries = providerAccountUsageCacheState
+            .entriesByCredentialScope[credentialScope];
+        if (!currentEntries) return;
+        const nextEntries = Object.fromEntries(
+            Object.entries(currentEntries).filter(([recordId]) => counts.has(recordId)),
+        );
+        if (Object.keys(nextEntries).length === Object.keys(currentEntries).length) return;
+        publishProviderAccountUsageCacheState({
+            entriesByCredentialScope: Object.keys(nextEntries).length === 0
+                ? {}
+                : { [credentialScope]: nextEntries },
+        });
     };
 }
 
@@ -51,9 +101,14 @@ export function updateProviderAccountUsageCacheEntries(
 ): void {
     if (!credentialScope) return;
     const currentEntries = providerAccountUsageCacheState.entriesByCredentialScope[credentialScope] ?? {};
-    const nextEntries = updater(currentEntries);
-    providerAccountUsageCacheState = {
+    const updatedEntries = updater(currentEntries);
+    const retained = providerAccountUsageCacheRetainCounts.get(credentialScope);
+    const nextEntries = retained && retained.size > 0
+        ? Object.fromEntries(
+            Object.entries(updatedEntries).filter(([recordId]) => retained.has(recordId)),
+        )
+        : updatedEntries;
+    publishProviderAccountUsageCacheState({
         entriesByCredentialScope: { [credentialScope]: nextEntries },
-    };
-    for (const listener of providerAccountUsageCacheListeners) listener();
+    });
 }

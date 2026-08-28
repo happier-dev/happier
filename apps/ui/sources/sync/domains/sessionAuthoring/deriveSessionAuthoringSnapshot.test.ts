@@ -18,7 +18,11 @@ describe('deriveSessionAuthoringSnapshot', () => {
                     profileId: 'profile-1',
                     flavor: 'codex',
                     codexSessionId: 'codex-session-1',
-                    codexBackendMode: 'acp',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'acp', providerSessionId: 'codex-session-1' },
+                    },
                     permissionMode: 'read-only',
                     permissionModeUpdatedAt: 10,
                     acpConfiguredBackendV1: {
@@ -87,7 +91,11 @@ describe('deriveSessionAuthoringSnapshot', () => {
                 },
             },
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp', providerSessionId: 'codex-session-1' },
+            },
             existingSessionId: 'session-1',
             sessionEncryptionMode: 'e2ee',
             sessionEncryptionKeyBase64: 'dek-base64',
@@ -117,14 +125,14 @@ describe('deriveSessionAuthoringSnapshot', () => {
         expect(snapshot.directory).toBe('/home/leeroy');
         expect(snapshot.backendTarget?.kind).toBe('backend');
         expect(snapshot.agentId).toBe(snapshot.backendTarget?.kind === 'backend' ? snapshot.backendTarget.backendId : null);
-        expect(snapshot.codexBackendMode).toBeNull();
+        expect(snapshot.runtimeDescriptorV1).toBeNull();
         expect(snapshot.existingSessionId).toBe('session-2');
         expect(snapshot.sessionEncryptionMode).toBe('plain');
         expect(snapshot.sessionEncryptionKeyBase64).toBeNull();
         expect(snapshot.sessionEncryptionVariant).toBeNull();
     });
 
-    it('normalizes legacy codex backend aliases from session metadata', () => {
+    it('normalizes Codex backend aliases from the plugin-owned runtime descriptor', () => {
         const snapshot = deriveSessionAuthoringSnapshot({
             session: {
                 id: 'session-3',
@@ -132,7 +140,11 @@ describe('deriveSessionAuthoringSnapshot', () => {
                 metadata: {
                     path: '/tmp/project',
                     host: 'qa-host',
-                    codexBackendMode: legacyCodexBackendMode,
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: legacyCodexBackendMode },
+                    },
                 },
                 permissionMode: 'default',
                 permissionModeUpdatedAt: null,
@@ -142,7 +154,31 @@ describe('deriveSessionAuthoringSnapshot', () => {
             sessionDekBase64: null,
         });
 
-        expect(snapshot.codexBackendMode).toBe('acp');
+        expect(snapshot.runtimeDescriptorV1).toMatchObject({
+            agentId: 'codex',
+            agent: { backendMode: 'acp' },
+        });
+    });
+
+    it('does not treat the released top-level Codex selector as current authoring state', () => {
+        const snapshot = deriveSessionAuthoringSnapshot({
+            session: {
+                id: 'session-released-codex-mode',
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'qa-host',
+                    codexBackendMode: 'appServer',
+                },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: null,
+                modelMode: 'default',
+                modelModeUpdatedAt: null,
+            },
+            sessionDekBase64: null,
+        });
+
+        expect(snapshot.runtimeDescriptorV1).toBeNull();
     });
 
     it('reads permission mode through the canonical metadata resolver', () => {

@@ -186,8 +186,10 @@ export interface ResumeSessionOptions {
     machineId: string;
     /** The directory where the session was running */
     directory: string;
-    /** The backend target to resume */
-    backendTarget: import('@happier-dev/protocol').BackendTargetRefV2Input;
+    /** Canonical manifest-qualified Agent to resume. */
+    agentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
+    /** Released configured-ACP/daemon compatibility target. */
+    backendTarget?: import('@happier-dev/protocol').BackendTargetRefV2Input;
     /** Optional vendor resume id (e.g. Claude/Codex session id). */
     resume?: string;
     environmentVariables?: Record<string, string>;
@@ -205,12 +207,6 @@ export interface ResumeSessionOptions {
     permissionModeUpdatedAt?: number;
     /** Optional explicit target-bound model selection. Omission means keep the persisted session intent. */
     modelSelection?: SessionModelSelectionV1;
-    /**
-     * Legacy transport fallback for older daemon boundaries.
-     * Prefer codexBackendMode for new resume callers.
-     */
-    experimentalCodexAcp?: boolean;
-    codexBackendMode?: import('@happier-dev/protocol').CodexBackendMode;
     runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
     /**
      * Transcript cursor to use when the resume request is caused by a just-committed
@@ -270,6 +266,7 @@ async function runResumeSession(
             sessionId,
             machineId: rawMachineId,
             directory: rawDirectory,
+            agentTarget,
             backendTarget,
             resume,
             environmentVariables,
@@ -280,8 +277,6 @@ async function runResumeSession(
             permissionMode,
             permissionModeUpdatedAt,
             modelSelection,
-            experimentalCodexAcp,
-            codexBackendMode,
             runtimeDescriptorV1,
             accountSettingsVersionHint,
             initialTranscriptAfterSeq,
@@ -327,6 +322,7 @@ async function runResumeSession(
             sessionId,
             machineId,
             directory,
+            ...(agentTarget ? { agentTarget } : {}),
             backendTarget,
             ...(resume ? { resume } : {}),
             ...(environmentVariables ? { environmentVariables } : {}),
@@ -344,8 +340,6 @@ async function runResumeSession(
             ...(executionAuthorization ? { executionAuthorization } : {}),
             ...(initialGoal ? { initialGoal } : {}),
             ...preparation,
-            experimentalCodexAcp,
-            codexBackendMode,
             ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         });
 

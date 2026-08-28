@@ -238,20 +238,28 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).not.toHaveProperty('workspaceCheckoutId');
     });
 
-    it('includes agent mode fields without workspace linkage in the machine spawn request', () => {
+    it('includes agent mode and runtime descriptor fields without workspace linkage in the machine spawn request', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'm1',
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             agentModeId: 'plan',
             agentModeUpdatedAt: 321,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         } satisfies SpawnSessionOptions);
 
         expect(params).toMatchObject({
             agentModeId: 'plan',
             agentModeUpdatedAt: 321,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         });
         expect(params).not.toHaveProperty('workspaceId');
         expect(params).not.toHaveProperty('workspaceLocationId');

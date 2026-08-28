@@ -21,6 +21,7 @@ type TestWebSocket = {
     onopen?: () => void;
     onmessage?: (event: { data: unknown }) => void;
     onclose?: () => void;
+    onerror?: (event: unknown) => void;
     send: (payload: unknown) => void;
     close: () => void;
 };
@@ -73,6 +74,95 @@ const binaryResponse: PeerTcpTunnelOpenResponseV1 = {
 };
 
 describe('openPeerTcpTunnelLoopbackStream', () => {
+    it('closes exactly once when opening times out and ignores a late open event', async () => {
+        const mod = await loadModule('./loopbackStream');
+        const openLoopbackStream = mod.openPeerTcpTunnelLoopbackStream;
+        expect(openLoopbackStream).toBeTypeOf('function');
+        if (typeof openLoopbackStream !== 'function') return;
+
+        vi.useFakeTimers();
+        try {
+            const { getSocket, WebSocketCtor } = createWebSocketFixture();
+            const streamPromise = openLoopbackStream({
+                endpointUrl: 'http://127.0.0.1:1234/base',
+                open,
+                response: jsonResponse,
+                WebSocketCtor,
+                openTimeoutMs: 10,
+            }) as Promise<TestStream>;
+            const lateOpen = getSocket().onopen;
+            const rejection = expect(streamPromise).rejects.toThrow('open timed out');
+
+            await vi.advanceTimersByTimeAsync(10);
+            await rejection;
+            expect(getSocket().close).toHaveBeenCalledOnce();
+
+            lateOpen?.();
+            expect(getSocket().close).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('closes an opening or active websocket exactly once when its caller aborts', async () => {
+        const mod = await loadModule('./loopbackStream');
+        const openLoopbackStream = mod.openPeerTcpTunnelLoopbackStream;
+        expect(openLoopbackStream).toBeTypeOf('function');
+        if (typeof openLoopbackStream !== 'function') return;
+
+        const openingFixture = createWebSocketFixture();
+        const openingAbort = new AbortController();
+        const opening = openLoopbackStream({
+            endpointUrl: 'http://127.0.0.1:1234/base',
+            open,
+            response: jsonResponse,
+            WebSocketCtor: openingFixture.WebSocketCtor,
+            signal: openingAbort.signal,
+        }) as Promise<TestStream>;
+        openingAbort.abort();
+        await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
+        expect(openingFixture.getSocket().close).toHaveBeenCalledOnce();
+
+        const activeFixture = createWebSocketFixture();
+        const activeAbort = new AbortController();
+        const active = openLoopbackStream({
+            endpointUrl: 'http://127.0.0.1:1234/base',
+            open,
+            response: jsonResponse,
+            WebSocketCtor: activeFixture.WebSocketCtor,
+            signal: activeAbort.signal,
+        }) as Promise<TestStream>;
+        activeFixture.getSocket().onopen?.();
+        const stream = await active;
+        activeAbort.abort();
+        await stream.close();
+        expect(activeFixture.getSocket().close).toHaveBeenCalledOnce();
+    });
+
+    it('does not publish a closed stream when abort wins after open settlement', async () => {
+        const mod = await loadModule('./loopbackStream');
+        const openLoopbackStream = mod.openPeerTcpTunnelLoopbackStream;
+        expect(openLoopbackStream).toBeTypeOf('function');
+        if (typeof openLoopbackStream !== 'function') return;
+
+        const fixture = createWebSocketFixture();
+        const controller = new AbortController();
+        const opening = openLoopbackStream({
+            endpointUrl: 'http://127.0.0.1:1234/base',
+            open,
+            response: jsonResponse,
+            WebSocketCtor: fixture.WebSocketCtor,
+            signal: controller.signal,
+        }) as Promise<TestStream>;
+
+        fixture.getSocket().onopen?.();
+        controller.abort();
+
+        await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
+        expect(fixture.getSocket().close).toHaveBeenCalledOnce();
+        expect(fixture.getSocket().onmessage).toBeUndefined();
+    });
+
     it('opens the daemon loopback websocket and relays explicit JSON/base64 fallback frames', async () => {
         const mod = await loadModule('./loopbackStream');
         const openLoopbackStream = mod.openPeerTcpTunnelLoopbackStream;

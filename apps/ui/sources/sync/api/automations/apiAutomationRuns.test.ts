@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { listAutomationDefinitionRuns, listAutomationRuns } from './apiAutomationRuns';
+import { listAutomationDefinitionRuns } from './apiAutomationRuns';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
@@ -17,12 +17,21 @@ const credentials: AuthCredentials = { token: 'token-1', secret: 'secret-1' };
 const eventRun = {
     id: 'run-event-1',
     automationId: 'automation-event-1',
+    revision: 1,
     state: 'queued' as const,
-    origin: {
-        kind: 'pluginEvent' as const,
+    triggerId: '11111111-1111-4111-8111-111111111111',
+    triggerRetired: false,
+    cause: {
+        kind: 'trigger' as const,
+        triggerId: '11111111-1111-4111-8111-111111111111',
+        triggerRevision: 1,
+        triggerKind: 'pluginEvent' as const,
         occurrenceKey: 'occurrence-1',
-        sourceSelectorId: 'selector-1',
         occurredAt: 1_786_257_600_000,
+        evidence: {
+            eventRef: { pluginId: 'example.github', localId: 'push' },
+            sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+        },
     },
     dueAt: 1_786_257_600_200,
     claimedAt: null,
@@ -38,7 +47,6 @@ const eventRun = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
-    contentRemovedAt: null,
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
 };
@@ -48,37 +56,6 @@ describe('apiAutomationRuns', () => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });
-
-	    it('requests run history with clamped limit and optional cursor', async () => {
-	        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<any>>(async () => ({
-	            ok: true,
-	            status: 200,
-            json: async () => ({
-                runs: [],
-                nextCursor: null,
-            }),
-        }));
-
-        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
-
-	        await listAutomationRuns({
-	            credentials,
-	            automationId: 'auto-1',
-	            limit: 999,
-	            cursor: 'next-1',
-	        });
-
-	        const runsCall = fetchSpy.mock.calls.find(([input]) =>
-	            String(input).includes('/v2/automations/auto-1/runs?'),
-	        );
-	        expect(runsCall).toBeTruthy();
-	        const requestUrl = String(runsCall?.[0] ?? '');
-	        const request = runsCall?.[1];
-	        const headers = new Headers(request?.headers);
-
-	        expect(requestUrl).toContain('/v2/automations/auto-1/runs?limit=100&cursor=next-1');
-	        expect(headers.get('Authorization')).toBe('Bearer token-1');
-	});
 
     it('reads Event run summaries only through the current owner', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => ({

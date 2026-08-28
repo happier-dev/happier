@@ -137,10 +137,47 @@ describe('Plugin Account Availability reader', () => {
         contributionId: 'fixture-list-page-native',
         tier: 'reactNative' as const,
         platform: 'web' as const,
+        materializationOrigin: {
+            serverIdentityId: 'srv_fixture',
+            materializationRef: {
+                machineId: 'machine-1',
+                materializationId: 'bundled-fixture',
+                pluginId: 'happier.fixture',
+            },
+        },
     };
 
-    it('admits the app-package coordinate for a host-bundled plugin the Account can never hold a release for', () => {
-        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot() });
+    it('admits app-package bytes only from the exact bundled machine materialization coordinate', () => {
+        const bundled = PluginMachineMaterializationV1Schema.parse({
+            serverIdentityId: 'srv_fixture',
+            machineId: 'machine-1',
+            materializationId: 'bundled-fixture',
+            pluginId: 'happier.fixture',
+            version: '0.0.0',
+            sourceClass: 'bundledFirstParty',
+            portableRelease: false,
+            uiArtifacts: [{
+                contributionId: 'fixture-list-page-native',
+                tier: 'reactNative',
+                platform: 'web',
+                artifactDigest: `sha256:${'d'.repeat(64)}`,
+            }],
+            enabled: true,
+            trustState: 'trusted',
+            observedAt: 1_700_000_000_000,
+        });
+        const reader = createPluginAccountAvailabilityReader({
+            scope,
+            snapshot: snapshot({
+                materializations: [bundled],
+                snapshots: [{
+                    serverIdentityId: bundled.serverIdentityId,
+                    machineId: bundled.machineId,
+                    revision: 1,
+                    materializations: [bundled],
+                }],
+            }),
+        });
 
         expect(reader.readCurrentArtifact(hostBundledSlot)).toEqual({
             kind: 'available',
@@ -153,6 +190,15 @@ describe('Plugin Account Availability reader', () => {
                 digest: `sha256:${'d'.repeat(64)}`,
                 releaseVersion: '0.0.0',
             },
+        });
+    });
+
+    it('does not let a generated app inventory authorize a bundled coordinate without its exact machine materialization', () => {
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: snapshot() });
+
+        expect(reader.readCurrentArtifact(hostBundledSlot)).toEqual({
+            kind: 'unavailable',
+            code: 'artifact_not_current',
         });
     });
 

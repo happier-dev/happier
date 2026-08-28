@@ -3,14 +3,13 @@ import type { ResumeSessionOptions } from '@/sync/ops';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { canResumeOrContinueSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { deriveAcpBackendIdFromFlavor } from '@/agents/runtime/acpFlavor';
-import { getAgentCore, isBundledAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { normalizeOptionalNumber, normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 
 export type ResumeSessionBaseOptions = ResumeSessionOptions;
 
@@ -75,8 +74,10 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         };
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
-    if (!agentId) return null;
+    const defaultTarget = resolveSessionActionDefaultBackend({ session });
+    const agentId = defaultTarget?.defaultAgentId ?? null;
+    const agentTarget = defaultTarget?.agentTarget ?? null;
+    if (!agentId || !agentTarget) return null;
 
     const resume = getAgentVendorResumeId(metadata, agentId, resumeCapabilityOptions);
     const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
@@ -85,9 +86,7 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         sessionId,
         machineId,
         directory,
-        backendTarget: isBundledAgentId(agentId)
-            ? { kind: 'builtInAgent', agentId: getAgentCore(agentId).cli.spawnAgent }
-            : { kind: 'backend', backendId: agentId },
+        agentTarget,
         ...(resume ? { resume } : {}),
         ...(connectedServices ? { connectedServices } : {}),
         ...(connectedServices && connectedServicesUpdatedAt !== null ? { connectedServicesUpdatedAt } : {}),

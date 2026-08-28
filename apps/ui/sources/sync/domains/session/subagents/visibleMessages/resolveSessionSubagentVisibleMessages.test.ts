@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 function createToolMessage(params: {
     id: string;
@@ -55,6 +59,10 @@ async function resolveVisibleMessages(params: {
 }
 
 describe('resolveSessionSubagentVisibleMessages', () => {
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
     it('filters ignored Claude teammate lifecycle events from focused transcript messages', async () => {
         const focusedMessages = [
             createAgentTextMessage('m1', 'Meaningful teammate output'),
@@ -114,5 +122,81 @@ describe('resolveSessionSubagentVisibleMessages', () => {
         });
 
         expect(visibleMessages).toEqual(focusedMessages);
+    });
+
+    it('does not apply Claude lifecycle filtering to an external Agent that uses the Agent tool name', async () => {
+        const focusedMessages = [
+            createAgentTextMessage('m1', '{"type":"idle_notification","from":"worker"}'),
+            createAgentTextMessage('m2', '{"type":"shutdown_approved","from":"worker"}'),
+        ] satisfies readonly Message[];
+        const agentMessage = createToolMessage({
+            id: 'tool-agent-external',
+            name: 'Agent',
+            state: 'completed',
+            input: { name: 'worker' },
+            children: focusedMessages,
+        });
+
+        const visibleMessages = await resolveVisibleMessages({
+            session: {
+                metadata: {
+                    machineId: 'machine-external',
+                    runtimeDescriptorV1: { v: 1, agentId: 'acme.agent', agent: {} },
+                },
+            },
+            tool: agentMessage.tool,
+            focusedMessages,
+            messages: [agentMessage],
+        });
+
+        expect(visibleMessages).toEqual(focusedMessages);
+    });
+
+    it('applies an external Agent visible-message declaration only on its owning machine', async () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-external',
+            descriptorsByAgentId: {
+                'acme.agent': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: 'acme.agent',
+                    version: 1,
+                    session: {
+                        visibleMessages: {
+                            kind: 'session.visibleMessages.v1',
+                            subagentKinds: ['generic'],
+                            fallbackToolNames: ['AcmeWorker'],
+                            excludeJsonEventTypes: ['acme_internal'],
+                        },
+                    },
+                },
+            },
+        });
+        const focusedMessages = [
+            createAgentTextMessage('m1', 'Visible output'),
+            createAgentTextMessage('m2', '{"type":"acme_internal"}'),
+        ] satisfies readonly Message[];
+        const tool = createToolMessage({
+            id: 'tool-acme',
+            name: 'AcmeWorker',
+            state: 'completed',
+            children: focusedMessages,
+        }).tool;
+        const sessionMetadata = {
+            runtimeDescriptorV1: { v: 1, agentId: 'acme.agent', agent: {} },
+        };
+
+        expect(await resolveVisibleMessages({
+            session: { metadata: { ...sessionMetadata, machineId: 'machine-external' } },
+            tool,
+            focusedMessages,
+            messages: [],
+        })).toEqual([expect.objectContaining({ id: 'm1' })]);
+        expect(await resolveVisibleMessages({
+            session: { metadata: { ...sessionMetadata, machineId: 'different-machine' } },
+            tool,
+            focusedMessages,
+            messages: [],
+        })).toEqual(focusedMessages);
     });
 });

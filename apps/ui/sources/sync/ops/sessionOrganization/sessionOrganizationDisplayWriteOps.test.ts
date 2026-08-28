@@ -158,8 +158,8 @@ describe('session organization display write ops', () => {
 
     it('allocates stable ids before folder and tag create requests that omit them', async () => {
         const {
+            createSessionOrganizationTagWithLabel,
             upsertSessionFolder,
-            upsertSessionTag,
         } = await import('./index');
         const folderId = 'folder_11111111222243338444555555555555';
         const tagId = 'tag_11111111222243338444555555555555';
@@ -200,14 +200,10 @@ describe('session organization display write ops', () => {
                 display: { t: 'plain', v: { name: 'Created' } },
             },
         });
-        await upsertSessionTag({
+        await createSessionOrganizationTagWithLabel({
             credentials,
             serverId: 'server-a',
-            request: {
-                tagKey: 'tag-created',
-                sortKey: null,
-                display: { t: 'plain', v: { label: 'Created' } },
-            },
+            label: 'Created',
         });
 
         expect(mocks.upsertSessionOrganizationFolder.mock.calls[0]?.[0].request).toEqual(expect.objectContaining({
@@ -217,7 +213,7 @@ describe('session organization display write ops', () => {
         }));
         expect(mocks.upsertSessionOrganizationTag.mock.calls[0]?.[0].request).toEqual(expect.objectContaining({
             tagId,
-            tagKey: 'tag-created',
+            tagKey: tagId,
             display: expect.objectContaining({ t: 'encrypted' }),
         }));
     });

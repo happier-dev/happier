@@ -6,8 +6,12 @@ import {
     AutomationDeleteResponseSchema,
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListResponseSchema,
-    AutomationPluginEventDefinitionCreateRequestSchema,
-    AutomationPluginEventDefinitionPatchRequestSchema,
+    AutomationDefinitionCreateRequestSchema,
+    AutomationDefinitionPatchRequestSchema,
+    AutomationDefinitionReconcileRequestSchema,
+    AutomationTriggerCreateRequestSchema,
+    AutomationTriggerPatchRequestSchema,
+    AutomationTriggerDeleteRequestSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunMutationResponseSchema,
     AutomationV3SettingsSchema,
@@ -15,8 +19,12 @@ import {
     type AutomationV3ClearRunHistoryResponse,
     type AutomationDefinitionDetail,
     type AutomationDefinitionListItem,
-    type AutomationPluginEventDefinitionCreateRequest,
-    type AutomationPluginEventDefinitionPatchRequest,
+    type AutomationDefinitionCreateRequest,
+    type AutomationDefinitionPatchRequest,
+    type AutomationDefinitionReconcileRequest,
+    type AutomationTriggerCreateRequest,
+    type AutomationTriggerPatchRequest,
+    type AutomationTriggerDeleteRequest,
     type AutomationV3RunDetail,
     type AutomationV3RunListItem,
     type AutomationV3Settings,
@@ -24,39 +32,17 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-    ApiAutomationRunNowResponseSchema,
-    ApiAutomationSchema,
-    type ApiAutomation,
-    type ApiAutomationRun,
-} from './apiAutomationTypes';
-import {
     getAutomationAuthHeaders,
     readAutomationJsonOrThrow,
 } from './apiAutomationHttp';
 
 export { AutomationApiError, isAutomationApiErrorCode } from './apiAutomationHttp';
 
-export type AutomationScheduleInput =
-    | Readonly<{ kind: 'interval'; everyMs: number; scheduleExpr?: undefined; timezone?: string | null }>
-    | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>;
-
 export type AutomationAssignmentInput = Readonly<{
     machineId: string;
     enabled?: boolean;
     priority?: number;
 }>;
-
-export type AutomationCreateInput = Readonly<{
-    name: string;
-    description?: string | null;
-    enabled: boolean;
-    schedule: AutomationScheduleInput;
-    targetType: 'new_session' | 'existing_session';
-    templateCiphertext: string;
-    assignments?: ReadonlyArray<AutomationAssignmentInput>;
-}>;
-
-export type AutomationPatchInput = Readonly<Partial<AutomationCreateInput>>;
 
 /**
  * Current list items deliberately exclude private definition and recipe
@@ -110,15 +96,11 @@ export async function getAutomationDefinition(
     return AutomationDefinitionDetailSchema.parse(raw);
 }
 
-/**
- * First Event writer. The Protocol schema is re-applied at the UI boundary so
- * a caller cannot accidentally send server-owned fields or a legacy V2 shape.
- */
-export async function createPluginEventAutomationDefinition(
+export async function createAutomationDefinition(
     credentials: AuthCredentials,
-    input: AutomationPluginEventDefinitionCreateRequest,
+    input: AutomationDefinitionCreateRequest,
 ): Promise<AutomationDefinitionDetail> {
-    const body = AutomationPluginEventDefinitionCreateRequestSchema.parse(input);
+    const body = AutomationDefinitionCreateRequestSchema.parse(input);
     const response = await serverFetch('/v3/automations', {
         method: 'POST',
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
@@ -128,13 +110,12 @@ export async function createPluginEventAutomationDefinition(
     return AutomationDefinitionDetailSchema.parse(raw);
 }
 
-/** Event edits are full replacement requests guarded by the displayed current template version. */
-export async function updatePluginEventAutomationDefinition(
+export async function updateAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
-    input: AutomationPluginEventDefinitionPatchRequest,
+    input: AutomationDefinitionPatchRequest,
 ): Promise<AutomationDefinitionDetail> {
-    const body = AutomationPluginEventDefinitionPatchRequestSchema.parse(input);
+    const body = AutomationDefinitionPatchRequestSchema.parse(input);
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}`, {
         method: 'PATCH',
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
@@ -142,6 +123,76 @@ export async function updatePluginEventAutomationDefinition(
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
     return AutomationDefinitionDetailSchema.parse(raw);
+}
+
+/** One visible full-editor Save, committed by the canonical server owner. */
+export async function reconcileAutomationDefinition(
+    credentials: AuthCredentials,
+    automationId: string,
+    input: AutomationDefinitionReconcileRequest,
+): Promise<AutomationDefinitionDetail> {
+    const body = AutomationDefinitionReconcileRequestSchema.parse(input);
+    const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}`, {
+        method: 'PUT',
+        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify(body),
+    }, { includeAuth: false });
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationDefinitionDetailSchema.parse(raw);
+}
+
+async function mutateAutomationTrigger(
+    credentials: AuthCredentials,
+    automationId: string,
+    method: 'POST' | 'PATCH' | 'DELETE',
+    body: AutomationTriggerCreateRequest | AutomationTriggerPatchRequest | AutomationTriggerDeleteRequest,
+): Promise<AutomationDefinitionDetail> {
+    const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/triggers`, {
+        method,
+        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify(body),
+    }, { includeAuth: false });
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationDefinitionDetailSchema.parse(raw);
+}
+
+export async function createAutomationTrigger(
+    credentials: AuthCredentials,
+    automationId: string,
+    input: AutomationTriggerCreateRequest,
+): Promise<AutomationDefinitionDetail> {
+    return mutateAutomationTrigger(
+        credentials,
+        automationId,
+        'POST',
+        AutomationTriggerCreateRequestSchema.parse(input),
+    );
+}
+
+export async function updateAutomationTrigger(
+    credentials: AuthCredentials,
+    automationId: string,
+    input: AutomationTriggerPatchRequest,
+): Promise<AutomationDefinitionDetail> {
+    return mutateAutomationTrigger(
+        credentials,
+        automationId,
+        'PATCH',
+        AutomationTriggerPatchRequestSchema.parse(input),
+    );
+}
+
+export async function deleteAutomationTrigger(
+    credentials: AuthCredentials,
+    automationId: string,
+    input: AutomationTriggerDeleteRequest,
+): Promise<AutomationDefinitionDetail> {
+    return mutateAutomationTrigger(
+        credentials,
+        automationId,
+        'DELETE',
+        AutomationTriggerDeleteRequestSchema.parse(input),
+    );
 }
 
 /** Lifecycle mutations remain on the definition owner for Event Automations. */
@@ -237,6 +288,23 @@ export async function cancelAutomationRun(
     return AutomationV3RunMutationResponseSchema.parse(raw).run;
 }
 
+/** Requeues the existing frozen reply handoff; the server preserves its custody identity. */
+export async function retryAutomationReplyHandoff(
+    credentials: AuthCredentials,
+    runId: string,
+): Promise<AutomationV3RunListItem> {
+    const response = await serverFetch(
+        `/v3/automations/runs/${encodeURIComponent(runId)}/retry-reply-handoff`,
+        {
+            method: 'POST',
+            headers: getAutomationAuthHeaders(credentials),
+        },
+        { includeAuth: false },
+    );
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationV3RunMutationResponseSchema.parse(raw).run;
+}
+
 export async function deleteAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
@@ -247,96 +315,4 @@ export async function deleteAutomationDefinition(
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
     AutomationDeleteResponseSchema.parse(raw);
-}
-
-export async function listAutomations(credentials: AuthCredentials): Promise<ApiAutomation[]> {
-    const response = await serverFetch('/v2/automations', {
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.array().parse(raw);
-}
-
-export async function getAutomation(credentials: AuthCredentials, automationId: string): Promise<ApiAutomation> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}`, {
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function createAutomation(
-    credentials: AuthCredentials,
-    input: AutomationCreateInput,
-): Promise<ApiAutomation> {
-    const response = await serverFetch('/v2/automations', {
-        method: 'POST',
-        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
-        body: JSON.stringify(input),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function updateAutomation(
-    credentials: AuthCredentials,
-    automationId: string,
-    input: AutomationPatchInput,
-): Promise<ApiAutomation> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}`, {
-        method: 'PATCH',
-        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
-        body: JSON.stringify(input),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function replaceAutomationAssignments(
-    credentials: AuthCredentials,
-    automationId: string,
-    assignments: ReadonlyArray<AutomationAssignmentInput>,
-): Promise<ApiAutomation> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}/assignments`, {
-        method: 'POST',
-        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
-        body: JSON.stringify({ assignments }),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function deleteAutomation(credentials: AuthCredentials, automationId: string): Promise<void> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}`, {
-        method: 'DELETE',
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    await readAutomationJsonOrThrow(response);
-}
-
-export async function pauseAutomation(credentials: AuthCredentials, automationId: string): Promise<ApiAutomation> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}/pause`, {
-        method: 'POST',
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function resumeAutomation(credentials: AuthCredentials, automationId: string): Promise<ApiAutomation> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}/resume`, {
-        method: 'POST',
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationSchema.parse(raw);
-}
-
-export async function runAutomationNow(credentials: AuthCredentials, automationId: string): Promise<ApiAutomationRun> {
-    const response = await serverFetch(`/v2/automations/${encodeURIComponent(automationId)}/run-now`, {
-        method: 'POST',
-        headers: getAutomationAuthHeaders(credentials),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return ApiAutomationRunNowResponseSchema.parse(raw).run;
 }

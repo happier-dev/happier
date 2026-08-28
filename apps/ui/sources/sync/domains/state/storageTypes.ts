@@ -22,6 +22,8 @@ import {
     createSessionRollbackRangesV1Schema,
     createSessionTerminalMetadataSchema,
     createSessionSystemSessionV1Schema,
+    normalizeCodexBackendMode,
+    readRuntimeDescriptorV1,
     readRuntimeDescriptorV1FromMetadata,
     RuntimeDescriptorV1Schema,
     SessionActiveModelSelectionV1Schema,
@@ -94,7 +96,6 @@ const MetadataObjectSchema = z.object({
     }).optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
-    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     agentRuntimeCapabilitiesV1: z.unknown().optional(),
     agentRuntimeFacetsV1: createAgentRuntimeFacetsV1Schema(z).optional(),
@@ -321,8 +322,43 @@ export const MetadataSchema = z.preprocess((value) => {
     if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
         return parsedValue;
     }
-    const metadata = normalizeLegacyAgentVocabularySessionMetadata(parsedValue as Record<string, unknown>);
-    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
+    const legacyVocabularyMetadata = normalizeLegacyAgentVocabularySessionMetadata(
+        parsedValue as Record<string, unknown>,
+    );
+    const {
+        codexBackendMode: releasedCodexBackendModeInput,
+        ...metadata
+    } = legacyVocabularyMetadata;
+    const releasedCodexBackendMode = Object.hasOwn(legacyVocabularyMetadata, 'codexBackendMode')
+        ? normalizeCodexBackendMode(releasedCodexBackendModeInput)
+        : null;
+    if (Object.hasOwn(legacyVocabularyMetadata, 'codexBackendMode') && !releasedCodexBackendMode) {
+        return { ...metadata, runtimeDescriptorV1: null };
+    }
+    const explicitRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
+    if (
+        releasedCodexBackendMode
+        && explicitRuntimeDescriptorV1
+        && (
+            explicitRuntimeDescriptorV1.agentId !== 'codex'
+            || normalizeCodexBackendMode(explicitRuntimeDescriptorV1.agent.backendMode)
+                !== releasedCodexBackendMode
+        )
+    ) {
+        return { ...metadata, runtimeDescriptorV1: null };
+    }
+    const runtimeDescriptorV1 = explicitRuntimeDescriptorV1 ?? (releasedCodexBackendMode
+        ? readRuntimeDescriptorV1({
+            v: 1,
+            agentId: 'codex',
+            agent: {
+                backendMode: releasedCodexBackendMode,
+                ...(typeof metadata.codexSessionId === 'string' && metadata.codexSessionId.trim()
+                    ? { providerSessionId: metadata.codexSessionId.trim() }
+                    : {}),
+            },
+        })
+        : null);
     if (runtimeDescriptorV1 === null && Object.prototype.hasOwnProperty.call(metadata, 'runtimeDescriptorV1')) {
         const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = metadata;
         return rest;

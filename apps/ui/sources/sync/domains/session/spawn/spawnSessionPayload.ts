@@ -1,16 +1,16 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import type {
-    AgentSessionStartupInstructionsV1,
-    CodexBackendMode,
-} from '@happier-dev/protocol';
+import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 import {
+    AgentExecutionTargetV1Schema,
     buildBackendTargetKeyV2,
     readBackendTargetRefV2,
     SessionModelSelectionV1Schema,
     type BackendTargetRefV2Input,
     type BackendTargetRefV2,
+    type AgentExecutionTargetV1,
 } from '@happier-dev/protocol';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import type {
     AcpConfigOptionOverridesV1,
     RuntimeDescriptorV1,
@@ -20,7 +20,6 @@ import type {
 } from '@happier-dev/protocol';
 import {
     buildBackendTransportFieldsFromUiState,
-    type AgentBackendTransportFields,
 } from '@/agents/registry/registryUiBehavior';
 
 // Options for spawning a session
@@ -30,7 +29,10 @@ export interface SpawnSessionOptions {
     directory: string;
     transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
-    backendTarget: BackendTargetRefV2Input;
+    /** Canonical manifest-qualified Agent target. */
+    agentTarget?: AgentExecutionTargetV1;
+    /** Configured ACP and released daemon compatibility. */
+    backendTarget?: BackendTargetRefV2Input;
     spawnNonce?: string;
     /** Opaque UI-local identity for one explicit user launch attempt. */
     userAttemptId?: string;
@@ -52,12 +54,6 @@ export interface SpawnSessionOptions {
      */
     modelSelection?: SessionModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
-    /**
-     * Experimental: route Codex through ACP (codex-acp).
-     * When enabled, Codex sessions use ACP instead of MCP.
-     */
-    experimentalCodexAcp?: boolean;
-    codexBackendMode?: CodexBackendMode;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     terminal?: TerminalSpawnOptions | null;
     /**
@@ -82,12 +78,13 @@ export interface SpawnSessionOptions {
     accountSettingsVersionHint?: number;
 }
 
-export type SpawnHappySessionRpcParams = AgentBackendTransportFields & {
+export type SpawnHappySessionRpcParams = {
     type: 'spawn-in-directory'
     directory: string
     transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
-    backendTarget: BackendTargetRefV2
+    agentTarget?: AgentExecutionTargetV1
+    backendTarget?: BackendTargetRefV2
     spawnNonce?: string
     profileId?: string
     environmentVariables?: Record<string, string>
@@ -121,6 +118,7 @@ function buildSpawnHappySessionRpcParamsInternal(
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation = false,
+        agentTarget,
         backendTarget,
         spawnNonce,
         environmentVariables,
@@ -132,8 +130,6 @@ function buildSpawnHappySessionRpcParamsInternal(
         agentModeUpdatedAt,
         modelSelection,
         sessionConfigOptionOverrides,
-        experimentalCodexAcp,
-        codexBackendMode,
         runtimeDescriptorV1,
         terminal,
         windowsRemoteSessionLaunchMode,
@@ -145,29 +141,59 @@ function buildSpawnHappySessionRpcParamsInternal(
     } = options;
 
     const normalizedSpawnNonce = typeof spawnNonce === 'string' ? spawnNonce.trim() : '';
-    const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
+    const canonicalAgentTarget = agentTarget
+        ? AgentExecutionTargetV1Schema.parse(agentTarget)
+        : undefined;
+    const explicitBackendTarget = backendTarget !== undefined
+        ? readBackendTargetRefV2(backendTarget)
+        : undefined;
+    const predecessorBundledAgentId = canonicalAgentTarget
+        ? resolveBundledAgentIdFromContributionIdentity(canonicalAgentTarget.identity)
+        : null;
+    // Exact `cli-v0.2.1` egress: old daemons strip `agentTarget`. Bundled
+    // Agents therefore keep their predecessor routing projection at this wire
+    // seam only. Remove with that daemon compatibility floor.
+    const predecessorBackendTarget = predecessorBundledAgentId
+        ? readBackendTargetRefV2({
+            kind: 'backend',
+            backendId: predecessorBundledAgentId,
+            sourceKind: 'built_in',
+        })
+        : undefined;
+    const canonicalBackendTarget = explicitBackendTarget ?? predecessorBackendTarget;
+    if (!canonicalAgentTarget && !canonicalBackendTarget) {
+        throw new Error('Spawn requires an Agent or configured backend target');
+    }
     const canonicalModelSelection = modelSelection
         ? SessionModelSelectionV1Schema.parse(modelSelection)
         : null;
+    const canonicalTargetKey = canonicalAgentTarget
+        ? buildBackendTargetKeyV2(canonicalAgentTarget)
+        : buildBackendTargetKeyV2(canonicalBackendTarget!);
+    const predecessorTargetKey = predecessorBackendTarget
+        ? buildBackendTargetKeyV2(predecessorBackendTarget)
+        : null;
     if (canonicalModelSelection
-        && canonicalModelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(canonicalBackendTarget)) {
+        && canonicalModelSelection.ref.agentTargetKey !== canonicalTargetKey
+        && canonicalModelSelection.ref.agentTargetKey !== predecessorTargetKey) {
         throw new Error('Spawn model selection target mismatch');
     }
-    const backendTransportFields = buildBackendTransportFieldsFromUiState({
-        machineId,
-        backendTarget: canonicalBackendTarget,
-        providerMode: codexBackendMode,
-        legacyExperimentalMode: experimentalCodexAcp,
-        runtimeDescriptorV1,
-        providerSessionId: resume,
-    });
+    const backendTransportFields = canonicalBackendTarget
+        ? buildBackendTransportFieldsFromUiState({
+            machineId,
+            backendTarget: canonicalBackendTarget,
+            runtimeDescriptorV1,
+            providerSessionId: resume,
+        })
+        : {};
 
     const params: SpawnHappySessionRpcParams = {
         type: 'spawn-in-directory',
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation,
-        backendTarget: canonicalBackendTarget,
+        ...(canonicalAgentTarget ? { agentTarget: canonicalAgentTarget } : {}),
+        ...(canonicalBackendTarget ? { backendTarget: canonicalBackendTarget } : {}),
         ...(normalizedSpawnNonce ? { spawnNonce: normalizedSpawnNonce } : {}),
         profileId,
         environmentVariables,
@@ -187,10 +213,9 @@ function buildSpawnHappySessionRpcParamsInternal(
             : {}),
         ...(canonicalModelSelection ? { modelSelection: canonicalModelSelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-        ...(backendTransportFields.codexBackendMode ? { codexBackendMode: backendTransportFields.codexBackendMode } : {}),
         ...(runtimeDescriptorV1
             ? { runtimeDescriptorV1 }
-            : backendTransportFields.runtimeDescriptorV1
+            : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
                 ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
                 : {}),
         connectedServices,

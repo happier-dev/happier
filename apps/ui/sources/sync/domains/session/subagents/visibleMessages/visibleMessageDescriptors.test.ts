@@ -51,7 +51,7 @@ describe('createVisibleMessagesResolverFromDescriptor', () => {
         })).toEqual([focusedMessages[0]]);
     });
 
-    it('does not materialize legacy descriptor ids without inline descriptor data', () => {
+    it('fails closed for unsupported inline descriptor kinds', () => {
         const { resolveVisibleMessages, diagnostics } = createVisibleMessagesResolverFromDescriptor({
             kind: 'plugin.ui.v1',
             pluginId: 'claude',
@@ -59,7 +59,7 @@ describe('createVisibleMessagesResolverFromDescriptor', () => {
             version: 1,
             display: {},
             session: {
-                visibleMessageFilterDescriptorId: 'claude.visibleMessages.v1',
+                visibleMessages: { kind: 'session.visibleMessages.future' },
             },
             message: {},
             components: { slots: [] },
@@ -75,37 +75,8 @@ describe('createVisibleMessagesResolverFromDescriptor', () => {
             subagent: { kind: 'agent_team_member' } as any,
         })).toBeNull();
         expect(diagnostics).toContainEqual(expect.objectContaining({
-            code: 'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-            path: 'session.visibleMessageFilterDescriptorId',
-        }));
-    });
-
-    it('fails closed for unsupported descriptor kinds', () => {
-        const { resolveVisibleMessages, diagnostics } = createVisibleMessagesResolverFromDescriptor({
-            kind: 'plugin.ui.v1',
-            pluginId: 'claude',
-            agentId: 'claude',
-            version: 1,
-            display: {},
-            session: {
-                visibleMessageFilterDescriptorId: 'claude.unknownVisibleMessages.v1',
-            },
-            message: {},
-            components: { slots: [] },
-        });
-
-        const focusedMessages = [message('m1', 'keep me')];
-        expect(resolveVisibleMessages({
-            session: {} as any,
-            tool: {} as any,
-            messages: [],
-            focusedMessages,
-            subagents: [],
-            subagent: { kind: 'agent_team_member' } as any,
-        })).toBeNull();
-        expect(diagnostics).toContainEqual(expect.objectContaining({
-            code: 'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-            path: 'session.visibleMessageFilterDescriptorId',
+            code: 'A16X1_UNSUPPORTED_DESCRIPTOR_KIND',
+            path: 'session.visibleMessages.kind',
         }));
     });
 });

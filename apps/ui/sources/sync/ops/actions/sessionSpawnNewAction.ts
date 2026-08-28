@@ -1,11 +1,21 @@
 import {
     RPC_ERROR_CODES,
+    SessionCreationKeyV1Schema,
     SessionSpawnNewResultV1Schema,
     type ActionExecuteResult,
     type ActionExecutorContext,
     type SessionSpawnNewInputV2,
     type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createSpawnAttemptKeyForSessionSpawnNewInput } from '@/sync/domains/session/spawn/spawnAttemptKey';
+import {
+    acquireSpawnAttemptCustody,
+    clearSpawnAttemptCustody,
+    markSpawnAttemptCreated,
+    markSpawnAttemptSubmitted,
+    type PersistedSpawnAttempt,
+} from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 
@@ -16,6 +26,19 @@ export type StrictSessionSpawnNewInput = SessionSpawnNewInputV2 & Readonly<{
 export type SessionSpawnNewActionResult =
     | Readonly<{ ok: true; result: SessionSpawnNewResultV1 }>
     | Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
+
+export type ManualSessionSpawnNewActionCustody = PersistedSpawnAttempt;
+
+export type ManualSessionSpawnNewActionExecutionResult =
+    | Readonly<{
+        status: 'executed';
+        action: SessionSpawnNewActionResult;
+        custody: ManualSessionSpawnNewActionCustody;
+    }>
+    | Readonly<{
+        status: 'custody_unavailable';
+        reason: 'corrupt' | 'lock_unavailable';
+    }>;
 
 export type SessionSpawnNewActionFailurePresentation =
     | 'update_required'
@@ -84,4 +107,110 @@ export async function executeSessionSpawnNewAction(
         ok: true,
         result: SessionSpawnNewResultV1Schema.parse(result.result),
     };
+}
+
+/**
+ * Namespaces one present-user click without conflating it with the transport
+ * nonce retained by the existing manual-launch custody store.
+ */
+export function buildManualSessionCreationKey(userAttemptId: string) {
+    const normalized = userAttemptId.trim();
+    if (!normalized) throw new Error('Manual Session user-attempt identity is unavailable');
+    return SessionCreationKeyV1Schema.parse(`manual:${normalized}`);
+}
+
+/**
+ * Runs the canonical manual Action through the existing crash-stable custody
+ * owner. The store is local recovery state only: Action request identity and
+ * `creationKey` remain the sole executable/durable Session identities.
+ */
+export async function executeManualSessionSpawnNewAction(
+    input: StrictSessionSpawnNewInput,
+    context: ActionExecutorContext,
+    params: Readonly<{
+        scope: ServerAccountScope;
+        machineHomeDir: string;
+        userAttemptId: string;
+        seedNonce?: string | null;
+    }>,
+): Promise<ManualSessionSpawnNewActionExecutionResult> {
+    const userAttemptId = params.userAttemptId.trim();
+    const expectedCreationKey = buildManualSessionCreationKey(userAttemptId);
+    if (input.creationKey !== expectedCreationKey) {
+        throw new Error('Manual Session creation identity does not match launch custody');
+    }
+    if (context.actionRequestId !== userAttemptId) {
+        throw new Error('Manual Session Action request identity does not match launch custody');
+    }
+    if (
+        input.executionTarget.machineId !== input.executionTarget.machineId.trim()
+        || input.executionTarget.serverId !== params.scope.serverId
+    ) {
+        throw new Error('Manual Session execution target does not match launch custody');
+    }
+    const targetFingerprint = createSpawnAttemptKeyForSessionSpawnNewInput(
+        input,
+        params.machineHomeDir,
+    );
+    const acquired = await acquireSpawnAttemptCustody({
+        scope: params.scope,
+        machineId: input.executionTarget.machineId,
+        targetFingerprint,
+        userAttemptId,
+        seedNonce: params.seedNonce,
+    });
+    if (acquired.status !== 'acquired') {
+        return { status: 'custody_unavailable', reason: acquired.status };
+    }
+    const submitted = await markSpawnAttemptSubmitted({
+        scope: params.scope,
+        machineId: input.executionTarget.machineId,
+        targetFingerprint,
+        userAttemptId,
+        nonce: acquired.record.nonce,
+    });
+    if (!submitted) {
+        return { status: 'custody_unavailable', reason: 'lock_unavailable' };
+    }
+
+    const action = await executeSessionSpawnNewAction(input, context);
+    let custody = submitted;
+    if (action.ok && action.result.type === 'success') {
+        custody = await markSpawnAttemptCreated({
+            scope: params.scope,
+            machineId: input.executionTarget.machineId,
+            targetFingerprint,
+            userAttemptId,
+            nonce: submitted.nonce,
+            createdSessionId: action.result.sessionId,
+        }) ?? submitted;
+    }
+    const terminalWithoutCommittedSession = (
+        !action.ok && action.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+    ) || (
+        action.ok && action.result.type === 'error' && action.result.retryable === false
+    );
+    if (terminalWithoutCommittedSession) {
+        await clearSpawnAttemptCustody({
+            scope: submitted.scope,
+            machineId: submitted.machineId,
+            targetFingerprint: submitted.targetFingerprint,
+            userAttemptId: submitted.userAttemptId,
+            nonce: submitted.nonce,
+        });
+    }
+    return { status: 'executed', action, custody };
+}
+
+/** Clears custody only after the caller has durably consumed the Action result. */
+export async function completeManualSessionSpawnNewActionCustody(
+    custody: ManualSessionSpawnNewActionCustody,
+): Promise<boolean> {
+    return await clearSpawnAttemptCustody({
+        scope: custody.scope,
+        machineId: custody.machineId,
+        targetFingerprint: custody.targetFingerprint,
+        userAttemptId: custody.userAttemptId,
+        nonce: custody.nonce,
+    });
 }

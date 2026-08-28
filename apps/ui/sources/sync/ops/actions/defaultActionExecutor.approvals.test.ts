@@ -19,6 +19,13 @@ const sessionStopWithServerScope = vi.fn(async () => ({ success: true as const }
 const updateArtifactWithHeader = vi.fn(async () => {});
 const sessionExecutionRunStart = vi.fn(async () => ({}));
 const reviewCommentExecute = vi.fn(async () => ({ items: [], cursor: null }));
+const pluginPermissionGrantExecute = vi.fn(async () => ({ grants: [], pendingRequests: [] }));
+const pluginWebhookExecute = vi.fn(async () => ({
+    webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
+    revision: 1,
+    publicUrl: 'https://example.test/v1/plugins/webhooks/opaque-route',
+    readiness: 'ready' as const,
+}));
 const executeAccountPluginDataEraseAction = vi.fn(async () => ({
     status: 'completed' as const,
     settings: { status: 'completed' as const, changed: true },
@@ -181,6 +188,14 @@ vi.mock('@/sync/domains/reviews/comments/api', () => ({
     createReviewCommentsHttpActionExecutor: vi.fn(() => reviewCommentExecute),
 }));
 
+vi.mock('@/sync/domains/plugins/permissions/api', () => ({
+    createPluginPermissionGrantHttpActionExecutor: vi.fn(() => pluginPermissionGrantExecute),
+}));
+
+vi.mock('@/sync/api/plugins/webhooks/endpointActions', () => ({
+    createPluginWebhookEndpointHttpActionExecutor: vi.fn(() => pluginWebhookExecute),
+}));
+
 vi.mock('@/sync/domains/plugins/settings/accountPluginDataEraseAction', () => ({
     executeAccountPluginDataEraseAction,
 }));
@@ -248,6 +263,8 @@ describe('createDefaultActionExecutor approvals', () => {
         patchSessionMetadataWithRetry.mockClear();
         updateArtifactWithHeader.mockClear();
         reviewCommentExecute.mockClear();
+        pluginPermissionGrantExecute.mockClear();
+        pluginWebhookExecute.mockClear();
         executeAccountPluginDataEraseAction.mockClear();
         signOutEverywhere.mockClear();
         createCurrentAccountApiToken.mockClear();
@@ -270,6 +287,45 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(reviewCommentExecute).toHaveBeenCalledWith(
             'reviews.comments.list',
             { projectId: 'project-1', states: ['open'], includeHistory: false, limit: 50 },
+        );
+    });
+
+    it('routes permission grants and webhook endpoints through the Action front door dependencies', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const controller = new AbortController();
+
+        await expect(executor.execute(
+            'plugins.permissions.grants.list' as any,
+            { pluginId: 'example.plugin' },
+            { surface: 'ui', signal: controller.signal },
+        )).resolves.toEqual({ ok: true, result: { grants: [], pendingRequests: [] } });
+        expect(pluginPermissionGrantExecute).toHaveBeenCalledWith(
+            'plugins.permissions.grants.list',
+            expect.objectContaining({ pluginId: 'example.plugin' }),
+            { signal: controller.signal },
+        );
+
+        const ensureInput = {
+            webhookContribution: { pluginId: 'example.github', localId: 'events' },
+            targetMaterialization: {
+                machineId: 'machine-1',
+                materializationId: 'materialization-1',
+                pluginId: 'example.github',
+            },
+            sourceInstanceId: 'channel:github:primary',
+            setup: { kind: 'githubAccountEndpointV1', credential: 'serverGenerated' },
+            idempotencyKey: 'ensure-github-primary-0001',
+        } as const;
+        await expect(executor.execute(
+            'plugin.webhook.endpoint.ensure' as any,
+            ensureInput,
+            { surface: 'ui', signal: controller.signal },
+        )).resolves.toEqual({ ok: true, result: expect.objectContaining({ readiness: 'ready' }) });
+        expect(pluginWebhookExecute).toHaveBeenCalledWith(
+            'plugin.webhook.endpoint.ensure',
+            ensureInput,
+            { signal: controller.signal },
         );
     });
 
@@ -669,7 +725,7 @@ describe('createDefaultActionExecutor approvals', () => {
                         kind: 'agent',
                         identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
                     },
-                    initialMessage: 'Inspect this repository.',
+                    initialInput: { text: 'Inspect this repository.' },
                 },
                 sessionCreationDirectoryApproval: {
                     v: 1,

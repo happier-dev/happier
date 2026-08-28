@@ -722,7 +722,7 @@ describe('sessions ops server-scoped routing', () => {
         expect(call?.payload as Record<string, unknown>).not.toHaveProperty('connectedServices');
     });
 
-    it('passes codexBackendMode through resumeSession when requested', async () => {
+    it('projects the Codex authoring mode into runtimeDescriptorV1 before resume RPC', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;
         await resumeSession({
@@ -734,9 +734,37 @@ describe('sessions ops server-scoped routing', () => {
             serverId: 'server-b',
         } as any);
 
+        const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as { payload?: unknown } | undefined;
+        expect(call?.payload).toEqual(expect.objectContaining({
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                agentId: 'codex',
+                agent: expect.objectContaining({ backendMode: 'appServer' }),
+            }),
+        }));
+        expect(call?.payload as Record<string, unknown>).not.toHaveProperty('codexBackendMode');
+    });
+
+    it('passes the canonical Agent target through resumeSession', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
+        const { resumeSession } = await sessionsModulePromise;
+        await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'example.external', localId: 'reviewer' },
+            },
+            serverId: 'server-b',
+        } as any);
+
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({
-                codexBackendMode: 'appServer',
+                agentTarget: {
+                    kind: 'agent',
+                    identity: { pluginId: 'example.external', localId: 'reviewer' },
+                },
             }),
         }));
     });

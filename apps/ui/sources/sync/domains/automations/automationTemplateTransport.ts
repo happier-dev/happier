@@ -129,8 +129,8 @@ export async function encodeAutomationTemplateForTransport(params: {
     }
 
     const requiresSensitiveEncryption =
-        typeof (parsed as any).sessionEncryptionKeyBase64 === 'string' &&
-        String((parsed as any).sessionEncryptionKeyBase64).trim().length > 0;
+        typeof parsed.sessionEncryptionKeyBase64 === 'string' &&
+        parsed.sessionEncryptionKeyBase64.trim().length > 0;
 
     if (params.accountMode === 'plain' && !requiresSensitiveEncryption) {
         const envelope: PlainAutomationTemplateEnvelope = {

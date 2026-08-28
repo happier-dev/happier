@@ -1,6 +1,6 @@
-import type { RuntimeActionExecute } from '@happier-dev/protocol';
+import type { ActionId, RuntimeActionExecute } from '@happier-dev/protocol';
 
-import { createDefaultActionExecutor } from './defaultActionExecutor';
+import type { createDefaultActionExecutor } from './defaultActionExecutor';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
 
@@ -20,8 +20,34 @@ export function createFrontDoorActionExecute(
   // renders nothing) never eagerly builds the full executor dependency graph.
   let resolved: ActionExecutorLike | null = executor ?? null;
   return async (actionId, input, context) => {
-    const target = resolved ?? (resolved = createDefaultActionExecutor());
+    const target = resolved ?? (resolved = (await import('./defaultActionExecutor')).createDefaultActionExecutor());
     return target.execute(actionId, input, context);
+  };
+}
+
+/**
+ * Product-UI adapter for existing domain clients whose leaf contract is
+ * `(actionId, input) => value`. Policy, approval, provenance and failure
+ * settlement remain owned by the one Action front door; HTTP executors stay
+ * below `createDefaultActionExecutor` as transport dependencies only.
+ */
+export function createFrontDoorUiActionExecutor(
+  executor?: ActionExecutorLike,
+): (
+  actionId: ActionId,
+  input: unknown,
+  options?: Readonly<{ signal?: AbortSignal }>,
+) => Promise<unknown> {
+  const execute = createFrontDoorActionExecute(executor);
+  return async (actionId, input, options) => {
+    const result = await execute(actionId, input, {
+      surface: 'ui',
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return result.result;
   };
 }
 

@@ -14,6 +14,8 @@ const baseSubagent: SessionSubagent = {
     timestamps: {},
 };
 
+const claudeSession = { metadata: { flavor: 'claude' } } as any;
+
 describe('deriveSessionSubagentActivityPreview', () => {
     it('returns the latest normal text preview for standard subagent transcripts', () => {
         const preview = deriveSessionSubagentActivityPreview({
@@ -44,6 +46,7 @@ describe('deriveSessionSubagentActivityPreview', () => {
     it('skips raw shutdown lifecycle payloads and keeps the latest meaningful Claude teammate output', () => {
         const preview = deriveSessionSubagentActivityPreview({
             subagent: baseSubagent,
+            session: claudeSession,
             reducerState: {
                 sidechains: new Map([
                     ['toolu_beta', [
@@ -61,6 +64,7 @@ describe('deriveSessionSubagentActivityPreview', () => {
     it('skips double-encoded lifecycle payloads when scanning from newest to oldest', () => {
         const preview = deriveSessionSubagentActivityPreview({
             subagent: baseSubagent,
+            session: claudeSession,
             reducerState: {
                 sidechains: new Map([
                     ['toolu_beta', [
@@ -72,5 +76,26 @@ describe('deriveSessionSubagentActivityPreview', () => {
         });
 
         expect(preview).toBe('Beta finished scanning headings.');
+    });
+
+    it('does not hide Claude-shaped lifecycle text for an external Agent', () => {
+        const preview = deriveSessionSubagentActivityPreview({
+            subagent: baseSubagent,
+            session: {
+                metadata: {
+                    machineId: 'machine-external',
+                    runtimeDescriptorV1: { v: 1, agentId: 'acme.agent', agent: {} },
+                },
+            } as any,
+            reducerState: {
+                sidechains: new Map([
+                    ['toolu_beta', [
+                        { text: '{"type":"shutdown_approved","from":"beta"}' },
+                    ]],
+                ]),
+            },
+        });
+
+        expect(preview).toBe('{"type":"shutdown_approved","from":"beta"}');
     });
 });

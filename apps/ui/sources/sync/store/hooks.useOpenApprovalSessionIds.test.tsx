@@ -39,7 +39,6 @@ type AutomationFixture = Readonly<{
     enabled?: boolean;
     targetType: AutomationDefinition['targetType'];
     templateVersion?: number;
-    nextRunAt?: number | null;
     lastRunAt?: number | null;
     createdAt?: number;
     updatedAt?: number;
@@ -54,14 +53,10 @@ function automation(params: AutomationFixture): AutomationDefinition {
         name: params.name ?? params.id,
         description: params.description ?? null,
         enabled: params.enabled ?? true,
-        trigger: {
-            kind: 'schedule',
-            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
-        },
+        triggers: [],
         targetType: params.targetType,
         existingSessionId: params.linkedExistingSessionId ?? null,
         templateVersion,
-        nextRunAt: params.nextRunAt ?? null,
         lastRunAt: params.lastRunAt ?? null,
         createdAt: params.createdAt ?? 1,
         updatedAt: params.updatedAt ?? 1,

@@ -97,14 +97,17 @@ export async function openPeerTcpTunnel(input: Readonly<{
     loopbackEndpointUrl?: string;
     WebSocketCtor?: PeerTcpTunnelWebSocketCtor;
     openStreamTimeoutMs?: number;
+    signal?: AbortSignal | null;
     serverRelayScopeUserId?: string;
     serverRelaySocket?: PeerTcpTunnelRelaySocketClient;
     openLoopbackStream?: (request: Readonly<{
         open: PeerTcpTunnelDirectOpen;
         response: PeerTcpTunnelOpenResponseV1;
+        signal: AbortSignal | null;
     }>) => Promise<PeerTcpTunnelClientStream>;
     openServerRelayStream?: (request: Readonly<{
         open: PeerTcpTunnelOpenV1;
+        signal: AbortSignal | null;
     }>) => Promise<PeerTcpTunnelClientStream>;
 }>): Promise<OpenPeerTcpTunnelClientResult> {
     const loopback = await input.resolveLoopback({
@@ -142,6 +145,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                         open: request.open,
                         send: relaySocket.send,
                         onEnvelope: relaySocket.onEnvelope,
+                        signal: request.signal,
                     })
                     : null
             );
@@ -174,7 +178,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                 maxFrameBytes: selectedOpen.relayAuthorization?.payload.maxFrameBytes
                     ?? PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
             },
-            stream: await openServerRelayStream({ open: selectedOpen }),
+            stream: await openServerRelayStream({ open: selectedOpen, signal: input.signal ?? null }),
         };
     }
 
@@ -193,6 +197,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                     response: request.response,
                     WebSocketCtor: input.WebSocketCtor,
                     openTimeoutMs: input.openStreamTimeoutMs,
+                    signal: request.signal,
                 })
                 : null
         );
@@ -207,6 +212,6 @@ export async function openPeerTcpTunnel(input: Readonly<{
         ok: true,
         routeKind: 'loopback_direct',
         response,
-        stream: await openLoopbackStream({ open: selectedOpen, response }),
+        stream: await openLoopbackStream({ open: selectedOpen, response, signal: input.signal ?? null }),
     };
 }

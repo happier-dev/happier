@@ -28,3 +28,7 @@ export function serializeExternalSessionSourceForComparison(
 ): string {
     return serializeBoundedJsonValue(source);
 }
+
+export function serializeExternalSessionJsonForComparison(value: unknown): string {
+    return serializeBoundedJsonValue(value);
+}

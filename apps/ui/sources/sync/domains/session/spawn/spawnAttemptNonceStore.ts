@@ -3,7 +3,12 @@ import {
     serverAccountScopedStorageKey,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
+import {
+    SessionCreationKeyV1Schema,
+    buildSpawnedFirstTurnLocalId,
+    deriveSessionCreationTagV1,
+    buildSessionSpawnInitialInputLocalIdV1,
+} from '@happier-dev/protocol';
 import { withTimeout } from '@/utils/timing/time';
 
 import { createUiSessionSpawnNonce, normalizeSpawnSessionNonce } from './spawnSessionNonce';
@@ -299,8 +304,13 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
         }
 
         const nonce = normalizeSpawnSessionNonce(params.seedNonce) ?? createUiSessionSpawnNonce();
-        const firstTurnLocalId = buildSpawnedFirstTurnLocalId(nonce);
-        if (!firstTurnLocalId) throw new Error('Spawn attempt first-turn identity is unavailable');
+        const creationKey = SessionCreationKeyV1Schema.parse(`manual:${userAttemptId}`);
+        const firstTurnLocalId = buildSessionSpawnInitialInputLocalIdV1({
+            sessionCreationTag: deriveSessionCreationTagV1({
+                callerCreationNamespace: 'user',
+                creationKey,
+            }),
+        });
         const record: PersistedSpawnAttempt = {
             v: 3,
             scope: params.scope,
@@ -311,7 +321,9 @@ export async function acquireSpawnAttemptCustody(params: Readonly<{
             submissionState: 'prepared',
             createdSessionId: null,
             firstTurnLocalId,
-            attachmentMessageLocalId: `spawn-attachment:${nonce}`,
+            // Attachment preparation and text admission compose one Message;
+            // both phases use its sole creation-derived retry identity.
+            attachmentMessageLocalId: firstTurnLocalId,
         };
         writeAttempts(params.scope, { ...attempts, [id]: record });
         return { status: 'acquired', record, reused: false };
@@ -398,6 +410,66 @@ export async function clearSpawnAttemptCustody(params: Readonly<{
             || existing.userAttemptId !== userAttemptId
             || (nonce !== null && existing.nonce !== nonce)
         ) return false;
+        const next = { ...state.attempts };
+        delete next[id];
+        writeAttempts(params.scope, next);
+        return true;
+    });
+    return locked.status === 'completed' ? locked.value : false;
+}
+
+/**
+ * Settles the one crash-stable manual launch record after a rehydrated Action
+ * operation has delivered its created Session to the UI.
+ */
+export async function clearCreatedSpawnAttemptCustodyForSession(params: Readonly<{
+    scope: ServerAccountScope;
+    sessionId: string;
+}>): Promise<boolean | null> {
+    const sessionId = normalizeRequired(params.sessionId);
+    if (!sessionId) return null;
+    const state = readSpawnAttemptCustodyState(params.scope);
+    if (state.status === 'missing') return null;
+    if (state.status !== 'valid') return false;
+    const matchingRecords = Object.values(state.attempts)
+        .filter((record) => record.createdSessionId === sessionId);
+    if (matchingRecords.length === 0) return null;
+    if (matchingRecords.length !== 1) return false;
+    const [record] = matchingRecords;
+    return await clearSpawnAttemptCustody({
+        scope: record.scope,
+        machineId: record.machineId,
+        targetFingerprint: record.targetFingerprint,
+        userAttemptId: record.userAttemptId,
+        nonce: record.nonce,
+    });
+}
+
+/**
+ * Completes custody after Action-operation rehydration. The operation request
+ * ID is the persisted manual user-attempt ID, so this can settle a submitted
+ * record even when the initiating process stopped before recording Session ID.
+ */
+export async function settleSpawnAttemptCustodyFromActionOperation(params: Readonly<{
+    scope: ServerAccountScope;
+    userAttemptId: string;
+    createdSessionId: string;
+}>): Promise<boolean | null> {
+    const userAttemptId = normalizeRequired(params.userAttemptId);
+    const createdSessionId = normalizeRequired(params.createdSessionId);
+    if (!userAttemptId || !createdSessionId) return null;
+
+    const locked = await withSpawnAttemptMutationLock(params.scope, () => {
+        const state = readSpawnAttemptCustodyState(params.scope);
+        if (state.status === 'missing') return null;
+        if (state.status !== 'valid') return false;
+        const matches = Object.entries(state.attempts).filter(([, record]) => (
+            record.userAttemptId === userAttemptId
+            && (record.createdSessionId === null || record.createdSessionId === createdSessionId)
+        ));
+        if (matches.length === 0) return null;
+        if (matches.length !== 1) return false;
+        const [id] = matches[0];
         const next = { ...state.attempts };
         delete next[id];
         writeAttempts(params.scope, next);

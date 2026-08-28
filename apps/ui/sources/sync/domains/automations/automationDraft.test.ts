@@ -2,31 +2,91 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
-    MAX_AUTOMATION_INTERVAL_MINUTES,
+    materializeNewSessionAutomationEditorDraft,
     sanitizeNewSessionAutomationDraft,
 } from './automationDraft';
 
+const schedule = {
+    kind: 'schedule' as const,
+    enabled: true,
+    schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null },
+};
+
 describe('automationDraft', () => {
-    it('defaults new-session automation names to an empty value so the placeholder can render', () => {
-        expect(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.name).toBe('');
-        expect(sanitizeNewSessionAutomationDraft(null).name).toBe('');
+    it('keeps zero or multiple strict trigger rows with stable client identities', () => {
+        expect(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.triggers).toEqual([]);
+        expect(sanitizeNewSessionAutomationDraft({
+            enabled: true,
+            name: 'Daily summary',
+            description: '',
+            triggers: [
+                { clientId: 'schedule-a', definition: schedule },
+                {
+                    clientId: 'turn-b',
+                    definition: {
+                        kind: 'sessionLifecycle',
+                        enabled: false,
+                        event: 'parentTurnCompleted',
+                        scope: { kind: 'exactTurn', sourceSessionId: 'session-1', sourceTurnId: 'turn-1' },
+                        consumption: 'once',
+                    },
+                },
+            ],
+        }).triggers.map((row) => row.clientId)).toEqual(['schedule-a', 'turn-b']);
     });
 
-    it('preserves a multi-day cadence so reopening an automation cannot narrow it', () => {
-        // The sanitizer sits on both sides of the editor round trip: the edit
-        // screen seeds through it (buildAutomationEditTemplateSeed) and the new
-        // session screen re-runs it on every interval-picker change
-        // (useNewSessionAgentInputPresentation.handleAutomationSettingsChange).
-        // A ceiling here narrower than the picker's silently rewrites a stored
-        // weekly cadence to a daily one on open.
+    it('drops malformed and duplicate rows instead of choosing a first trigger', () => {
         expect(sanitizeNewSessionAutomationDraft({
-            scheduleKind: 'interval',
-            everyMinutes: 7 * 24 * 60,
-        }).everyMinutes).toBe(7 * 24 * 60);
+            enabled: true,
+            name: 'Automation',
+            description: '',
+            triggers: [
+                { clientId: 'same', definition: schedule },
+                { clientId: 'same', definition: schedule },
+                { clientId: 'invalid', definition: { kind: 'manual', enabled: true } },
+            ],
+        }).triggers).toEqual([{ clientId: 'same', definition: schedule }]);
+    });
 
-        expect(sanitizeNewSessionAutomationDraft({
-            scheduleKind: 'interval',
-            everyMinutes: MAX_AUTOMATION_INTERVAL_MINUTES + 1,
-        }).everyMinutes).toBe(MAX_AUTOMATION_INTERVAL_MINUTES);
+    it('materializes every trigger into the one canonical editor draft', () => {
+        const executionRecipe = {
+            v: 1 as const,
+            templateVersion: 1,
+            template: { t: 'plain' as const, v: { v: 1 as const, prompt: 'Run.' } },
+            triggerEvidence: null,
+            target: {
+                kind: 'executionRun' as const,
+                request: {
+                    intent: 'task' as const,
+                    backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' },
+                    permissionMode: 'read_only' as const,
+                    retentionPolicy: 'ephemeral' as const,
+                    runClass: 'bounded' as const,
+                    ioMode: 'request_response' as const,
+                },
+            },
+        };
+        const result = materializeNewSessionAutomationEditorDraft({
+            draft: {
+                pendingAutomationId: 'automation-stable-retry-id',
+                enabled: true,
+                name: '  Daily summary  ',
+                description: '  Description  ',
+                triggers: [{ clientId: 'schedule-a', definition: schedule }],
+            },
+            executionRecipe,
+            assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
+        });
+        expect(result).toMatchObject({
+            automationId: null,
+            pendingAutomationId: 'automation-stable-retry-id',
+            expectedTemplateVersion: null,
+            name: 'Daily summary',
+            description: 'Description',
+            enabled: true,
+            executionRecipe,
+            assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
+            triggers: [{ clientId: 'schedule-a', persisted: null, definition: schedule }],
+        });
     });
 });

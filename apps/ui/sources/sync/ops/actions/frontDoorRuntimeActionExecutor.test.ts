@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 
-import { createFrontDoorRuntimeActionExecutor } from './frontDoorRuntimeActionExecutor';
+import {
+    createFrontDoorRuntimeActionExecutor,
+    createFrontDoorUiActionExecutor,
+} from './frontDoorRuntimeActionExecutor';
 
 type ExecuteFn = (actionId: string, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 
@@ -43,5 +46,34 @@ describe('createFrontDoorRuntimeActionExecutor', () => {
         const result = await bridge({ actionId: 'browser.diagnostics.eval' as never, input: {}, context: { surface: 'agent' } });
 
         expect(result).toEqual({ ok: false, errorCode: 'action_disabled', error: 'action_disabled' });
+    });
+});
+
+describe('createFrontDoorUiActionExecutor', () => {
+    it('adapts product UI Action clients to the canonical front door with cancellation', async () => {
+        const execute = vi.fn<ExecuteFn>(async () => ({ ok: true, result: { items: [] } }));
+        const action = createFrontDoorUiActionExecutor(fakeExecutor(execute));
+        const controller = new AbortController();
+
+        await expect(action('reviews.comments.list', { projectId: 'project-1' }, {
+            signal: controller.signal,
+        })).resolves.toEqual({ items: [] });
+        expect(execute).toHaveBeenCalledExactlyOnceWith(
+            'reviews.comments.list',
+            { projectId: 'project-1' },
+            { surface: 'ui', signal: controller.signal },
+        );
+    });
+
+    it('rejects front-door failures instead of returning a value that can look successful', async () => {
+        const action = createFrontDoorUiActionExecutor(fakeExecutor(async () => ({
+            ok: false,
+            errorCode: 'action_disabled',
+            error: 'action_disabled',
+        })));
+
+        await expect(action('reviews.comments.list', {})).rejects.toMatchObject({
+            message: 'action_disabled',
+        });
     });
 });

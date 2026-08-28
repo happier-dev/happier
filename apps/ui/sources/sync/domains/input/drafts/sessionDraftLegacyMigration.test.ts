@@ -57,7 +57,7 @@ describe('migrateLegacySessionDrafts', () => {
     });
 
     it('projects all legacy owners into the repository while preserving local sources until remote acknowledgement', async () => {
-        state.sessionDrafts = { 'session-a': 'legacy text' };
+        state.sessionDrafts = { 'session-a': '@a legacy text' };
         state.draftValues = {
             'session-a': {
                 'routing.recipient': { v: 1, lastEditedAt: 1, value: null },
@@ -103,8 +103,8 @@ describe('migrateLegacySessionDrafts', () => {
             scope,
             sessionId: 'session-a',
             patch: {
-                text: 'legacy text',
-                mentions: [{ kind: 'session', tokenText: '@a', sessionId: 'a' }],
+                text: '@a legacy text',
+                mentions: [],
                 attachments: [expect.objectContaining({ instanceId: 'issue-42', key: '42' })],
                 routing: { recipient: { mode: 'manual', recipient: null } },
             },
@@ -139,7 +139,7 @@ describe('migrateLegacySessionDrafts', () => {
                 }),
             }),
         }));
-        expect(state.sessionDrafts).toEqual({ 'session-a': 'legacy text' });
+        expect(state.sessionDrafts).toEqual({ 'session-a': '@a legacy text' });
         expect(state.draftValues).toHaveProperty('session-a');
         expect(state.newDraft).not.toBeNull();
     });

@@ -97,6 +97,35 @@ function normalizeMachineServerId(serverId: string | null | undefined): string {
     return String(serverId ?? '').trim();
 }
 
+type MachinePresence = Readonly<{
+    active: boolean;
+    activeAt: number;
+}>;
+
+function preserveNewestMachinePresence<T extends MachinePresence>(
+    incoming: T,
+    currentValues: readonly (MachinePresence | null | undefined)[],
+): T {
+    let newestCurrent: MachinePresence | null = null;
+    for (const current of currentValues) {
+        if (
+            current
+            && Number.isFinite(current.activeAt)
+            && (!newestCurrent || current.activeAt > newestCurrent.activeAt)
+        ) {
+            newestCurrent = current;
+        }
+    }
+    if (!newestCurrent || newestCurrent.activeAt <= incoming.activeAt) {
+        return incoming;
+    }
+    return {
+        ...incoming,
+        active: newestCurrent.active,
+        activeAt: newestCurrent.activeAt,
+    };
+}
+
 function resolveServerIdsForMachineTransferRouteInvalidation(
     state: Pick<MachinesDomain, 'machineListByServerId'>,
     machineId: string,
@@ -132,12 +161,21 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const activeServerId = normalizeMachineServerId(getActiveServerSnapshot().serverId);
                 const sourceServerId = normalizeMachineServerId(options?.sourceServerId) || activeServerId;
                 const shouldUpdateActiveProjection = !sourceServerId || areServerProfileIdentifiersEquivalent(sourceServerId, activeServerId);
+                const currentScopedMachines = sourceServerId
+                    ? state.machineListByServerId[sourceServerId]
+                    : null;
+                const normalizedMachines = machines.map((machine) => preserveNewestMachinePresence(machine, [
+                    Array.isArray(currentScopedMachines)
+                        ? currentScopedMachines.find((current) => current.id === machine.id)
+                        : null,
+                    shouldUpdateActiveProjection ? state.machines[machine.id] : null,
+                ]));
                 const machineListByServerId = sourceServerId
                     ? {
                         ...state.machineListByServerId,
                         [sourceServerId]: mergeMachineListById(
-                            state.machineListByServerId[sourceServerId],
-                            machines,
+                            currentScopedMachines,
+                            normalizedMachines,
                             { replace },
                         ),
                     }
@@ -172,7 +210,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 if (replace) {
                     mergedMachines = {};
                     mergedMachineDisplays = {};
-                    machines.forEach((machine) => {
+                    normalizedMachines.forEach((machine) => {
                         const previousMachine = state.machines[machine.id];
                         if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
                             machinesWithAdvancedDaemonState.add(machine.id);
@@ -183,7 +221,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 } else {
                     mergedMachines = state.machines;
                     mergedMachineDisplays = state.machineDisplayById;
-                    machines.forEach((machine) => {
+                    normalizedMachines.forEach((machine) => {
                         const previousMachine = state.machines[machine.id];
                         if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
                             machinesWithAdvancedDaemonState.add(machine.id);
@@ -310,7 +348,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     return state;
                 }
 
-                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
+                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [
+                    machine.id,
+                    preserveNewestMachinePresence(machine, [
+                        state.machineDisplayById[machine.id],
+                        state.machines[machine.id],
+                    ]),
+                ]));
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
                 const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
                 const nextSessionListIndex = activeServerId

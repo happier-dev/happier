@@ -2,14 +2,13 @@ import {
     AcpConfigOptionOverridesV1Schema,
     buildBackendTargetKeyV2,
     BackendTargetKeyV2Schema,
-    parseBackendTargetKeyV2,
     readBackendTargetRefV2,
     SessionModelSelectionV1Schema,
     type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type BackendTargetKeyV2,
     type SessionModelSelectionV1,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -26,9 +25,8 @@ export type RememberedEngineSelectionV1 = z.infer<typeof RememberedEngineSelecti
 function normalizeTargetKey(rawTargetKey: string): BackendTargetKeyV2 | null {
     const parsedV2 = BackendTargetKeyV2Schema.safeParse(rawTargetKey);
     try {
-        const target = parsedV2.success
-            ? parseBackendTargetKeyV2(parsedV2.data)
-            : readBackendTargetRefV2(rawTargetKey as BackendTargetRefV2Input);
+        if (parsedV2.success) return parsedV2.data;
+        const target = readBackendTargetRefV2(rawTargetKey as BackendTargetRefV2Input);
         return buildBackendTargetKeyV2(target);
     } catch {
         return null;
@@ -159,7 +157,7 @@ export function buildRememberedEngineSelectionScopeKeyForTargetKey(params: Reado
 
 export function buildRememberedEngineSelectionScopeKey(params: Readonly<{
     serverId: string | null | undefined;
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
 }>): string {
     return buildRememberedEngineSelectionScopeKeyForTargetKey({
         serverId: params.serverId,
@@ -171,7 +169,7 @@ export function readRememberedEngineSelection(params: Readonly<{
     enabled: boolean;
     selectionsByScope: RememberedEngineSelectionsByScopeV1 | null | undefined;
     serverId: string | null | undefined;
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
 }>): RememberedEngineSelectionV1 | null {
     if (!params.enabled) return null;
     const scopeKey = buildRememberedEngineSelectionScopeKey({
@@ -198,7 +196,7 @@ export function readRememberedEngineSelectionForTargetKey(params: Readonly<{
 export function upsertRememberedEngineSelection(params: Readonly<{
     selectionsByScope: RememberedEngineSelectionsByScopeV1 | null | undefined;
     serverId: string | null | undefined;
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     selection: Readonly<{
         modelSelection: SessionModelSelectionV1 | null;
         acpSessionModeId?: string | null;

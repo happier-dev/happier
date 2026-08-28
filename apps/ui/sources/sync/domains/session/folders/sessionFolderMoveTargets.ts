@@ -9,21 +9,38 @@ export type SessionFolderMoveTarget = Readonly<{
     disabled: boolean;
 }>;
 
-function pushFolderTargets(
+export type SessionFolderWorkspaceTarget = Readonly<{
+    folderId: string;
+    title: string;
+    depth: number;
+}>;
+
+function pushFolderWorkspaceTargets(
     nodes: readonly SessionFolderTreeNode[],
-    currentFolderId: string | null,
-    out: SessionFolderMoveTarget[],
+    out: SessionFolderWorkspaceTarget[],
 ): void {
     for (const node of nodes) {
         out.push({
-            id: `session-folder-move-folder-${node.id}`,
             folderId: node.id,
             title: node.name,
             depth: node.depth,
-            disabled: node.id === currentFolderId,
         });
-        pushFolderTargets(node.children, currentFolderId, out);
+        pushFolderWorkspaceTargets(node.children, out);
     }
+}
+
+/**
+ * The one workspace-scoped folder target projection. Consumers may adapt these
+ * neutral targets into a move sheet or a creation-draft picker, but workspace
+ * normalization, containment and hierarchy stay owned by the folder domain.
+ */
+export function buildSessionFolderWorkspaceTargets(params: Readonly<{
+    folders: SessionFoldersV1;
+    workspace: SessionFolderWorkspaceRefV1;
+}>): readonly SessionFolderWorkspaceTarget[] {
+    const targets: SessionFolderWorkspaceTarget[] = [];
+    pushFolderWorkspaceTargets(buildSessionFolderTree(params.folders, params.workspace).rootNodes, targets);
+    return targets;
 }
 
 export function buildSessionFolderMoveTargets(params: Readonly<{
@@ -40,6 +57,13 @@ export function buildSessionFolderMoveTargets(params: Readonly<{
         depth: 0,
         disabled: currentFolderId === null,
     }];
-    pushFolderTargets(buildSessionFolderTree(params.folders, params.workspace).rootNodes, currentFolderId, targets);
+    targets.push(...buildSessionFolderWorkspaceTargets({
+        folders: params.folders,
+        workspace: params.workspace,
+    }).map((target) => ({
+        id: `session-folder-move-folder-${target.folderId}`,
+        ...target,
+        disabled: target.folderId === currentFolderId,
+    })));
     return targets;
 }

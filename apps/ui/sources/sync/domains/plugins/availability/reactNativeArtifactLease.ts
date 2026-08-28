@@ -1,9 +1,7 @@
 import {
     createCanonicalJsonSigningInput,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
-    isExactPluginMachineMaterializationRefV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
-    isPluginMachineMaterializationOnServerIdentityV1,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginUiArtifactBytesReadResponse,
     type PluginContributionIdentityV1,
@@ -33,6 +31,7 @@ import type {
 import {
     acquirePluginSelectedArtifactLease,
     createPluginArtifactPersistentSource,
+    isExactDaemonPluginArtifactOriginCurrent,
     isPluginArtifactPersistentScopeCurrent,
     persistVerifiedPluginArtifactLease,
     wrapPluginArtifactLeaseCurrentness,
@@ -208,40 +207,11 @@ function exactDaemonOriginIsCurrent(input: Readonly<{
     identity: PluginReactNativeBundleCacheIdentity;
 }>): boolean {
     if (!artifactMatchesCacheIdentity({ artifact: input.artifact, identity: input.identity })) return false;
-    if (input.origin.materializationRef.pluginId !== input.artifact.pluginId) return false;
-    const admission = input.reader.readMaterializations();
-    if (admission.kind !== 'available') return false;
-    const matching = admission.materializations.filter((materialization) => (
-        isPluginMachineMaterializationOnServerIdentityV1(materialization, input.origin.serverIdentityId)
-        && isExactPluginMachineMaterializationRefV1(materialization, input.origin.materializationRef)
-    ));
-    if (matching.length !== 1) return false;
-    const materialization = matching[0]!;
-    if (
-        !materialization.portableRelease
-        || !materialization.enabled
-        || materialization.trustState !== 'trusted'
-        || materialization.version !== input.artifact.releaseVersion
-    ) {
-        return false;
-    }
-    const release = input.reader.classifyRelease(materialization);
-    if (
-        release.serverIdentityId !== input.origin.serverIdentityId
-        || release.materializationRef.machineId !== input.origin.materializationRef.machineId
-        || release.materializationRef.materializationId !== input.origin.materializationRef.materializationId
-        || release.materializationRef.pluginId !== input.origin.materializationRef.pluginId
-        || release.releaseContent !== 'matched'
-        || release.validation.kind !== 'admitted'
-    ) {
-        return false;
-    }
-    return materialization.uiArtifacts.some((slot) => (
-        slot.contributionId === input.artifact.contributionId
-        && slot.tier === input.artifact.tier
-        && slot.platform === input.artifact.platform
-        && slot.artifactDigest === input.artifact.digest
-    ));
+    return isExactDaemonPluginArtifactOriginCurrent({
+        reader: input.reader,
+        origin: input.origin,
+        artifact: input.artifact,
+    });
 }
 
 /**
@@ -558,6 +528,14 @@ export async function acquirePluginReactNativeArtifactLease(
                 : input.cacheIdentity.contributionId,
             tier: 'reactNative',
             platform,
+            ...(input.daemon
+                ? {
+                    materializationOrigin: Object.freeze({
+                        serverIdentityId: input.daemon.origin.serverIdentityId,
+                        materializationRef: input.daemon.origin.materializationRef,
+                    }),
+                }
+                : {}),
         }),
         artifactGraph: input.artifactGraph,
         sources,

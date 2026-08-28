@@ -8,6 +8,7 @@ import {
 import { parsePendingSettings } from '../state/persistence';
 import {
     readLocalConversationVoiceSettings,
+    voiceSettingsDefaults,
     voiceSettingsParse,
     writeLocalConversationVoiceSettings,
 } from './voiceSettings';
@@ -2369,5 +2370,69 @@ describe('Voice provider selection persistence compatibility', () => {
                 parsed.voiceSettingsV1.credentialBindings,
             );
         });
+    });
+});
+
+describe('Voice Agent selection target facts persistence', () => {
+    it('round-trips an exact external Agent selection with its backend target key and qualified identity', () => {
+        const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        const written = writeLocalConversationVoiceSettings(voiceSettingsDefaults, {
+            ...defaults,
+            agent: {
+                ...defaults.agent,
+                agentSource: 'agent',
+                agentId: 'acme-voice-agent',
+                agentTargetKey: 'agent:acme.voice/agent',
+                agentIdentity: { pluginId: 'acme.voice', localId: 'agent' },
+                agentProjectionGeneration: 7,
+            },
+        });
+
+        const roundTripped = readLocalConversationVoiceSettings(voiceSettingsParse(written));
+        expect(roundTripped.agent.agentTargetKey).toBe('agent:acme.voice/agent');
+        expect(roundTripped.agent.agentIdentity).toEqual({ pluginId: 'acme.voice', localId: 'agent' });
+        expect(roundTripped.agent.agentProjectionGeneration).toBe(7);
+        expect(roundTripped.agent.agentId).toBe('acme-voice-agent');
+    });
+
+    it('keeps a legacy persisted Agent selection valid when it carries no exact target facts', () => {
+        // A profile written before exact target facts existed parses unchanged
+        // so every existing bundled selection keeps working.
+        const parsed = readLocalConversationVoiceSettings(voiceSettingsParse({
+            providers: {
+                local_conversation: {
+                    schemaVersion: 1,
+                    config: {
+                        agent: {
+                            agentSource: 'agent',
+                            agentId: 'codex',
+                        },
+                    },
+                },
+            },
+        }));
+
+        expect(parsed.agent.agentId).toBe('codex');
+        expect(parsed.agent.agentTargetKey ?? null).toBeNull();
+        expect(parsed.agent.agentIdentity ?? null).toBeNull();
+        expect(parsed.agent.agentProjectionGeneration ?? null).toBeNull();
+    });
+
+    it('discards malformed exact target facts instead of persisting an invalid target key', () => {
+        const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        const written = writeLocalConversationVoiceSettings(voiceSettingsDefaults, {
+            ...defaults,
+            agent: {
+                ...defaults.agent,
+                agentSource: 'agent',
+                agentId: 'acme-voice-agent',
+                agentTargetKey: 'agent:missing-separator',
+                agentIdentity: { pluginId: '', localId: 'agent' },
+            },
+        });
+
+        const roundTripped = readLocalConversationVoiceSettings(voiceSettingsParse(written));
+        expect(roundTripped.agent.agentTargetKey ?? null).toBeNull();
+        expect(roundTripped.agent.agentIdentity ?? null).toBeNull();
     });
 });

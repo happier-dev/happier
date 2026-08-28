@@ -4,11 +4,6 @@ import {
 } from '@happier-dev/protocol';
 
 export type PluginContributionIdentity = Readonly<{ pluginId: string; localId: string }>;
-export type PluginMachineMaterializationRef = Readonly<{
-    pluginId: string;
-    machineId: string;
-    materializationId: string;
-}>;
 export type FreshPluginMachineExecutionOriginComparable = Readonly<{
     origin: PluginMachineExecutionOriginV1;
     machineTarget: Readonly<{
@@ -22,15 +17,6 @@ export function arePluginContributionIdentitiesEqual(
     right: PluginContributionIdentity,
 ): boolean {
     return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
-export function arePluginMachineMaterializationRefsEqual(
-    left: PluginMachineMaterializationRef,
-    right: PluginMachineMaterializationRef,
-): boolean {
-    return left.pluginId === right.pluginId
-        && left.machineId === right.machineId
-        && left.materializationId === right.materializationId;
 }
 
 export function areFreshPluginMachineExecutionOriginsCurrent(

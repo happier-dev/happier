@@ -20,18 +20,20 @@ import { serverFetch } from '@/sync/http/client';
 export type PluginWebhookEndpointUiActionExecutor = <TActionId extends PluginWebhookPresentUserActionIdV1>(
     actionId: TActionId,
     input: unknown,
+    options?: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<unknown>;
 
 export function createPluginWebhookEndpointHttpActionExecutor(params: Readonly<{
     request?: typeof serverFetch;
 }> = {}): PluginWebhookEndpointUiActionExecutor {
     const request = params.request ?? serverFetch;
-    return async (actionId, input) => {
+    return async (actionId, input, options) => {
         const parsedInput = PluginWebhookActionInputSchemasV1[actionId].parse(input);
         const response = await request(PluginWebhookActionHttpPathsV1[actionId], {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(parsedInput),
+            ...(options?.signal === undefined ? {} : { signal: options.signal }),
         }, { includeAuth: true });
         const payload: unknown = await response.json();
         if (!response.ok) {
@@ -70,10 +72,11 @@ export type PluginWebhookAdministrationHttpClient = Readonly<{
 
 export function createPluginWebhookAdministrationHttpClient(params: Readonly<{
     request?: typeof serverFetch;
+    executeAction?: PluginWebhookEndpointUiActionExecutor;
 }> = {}): PluginWebhookAdministrationHttpClient {
     const request = params.request ?? serverFetch;
     return Object.freeze({
-        executeAction: createPluginWebhookEndpointHttpActionExecutor({ request }),
+        executeAction: params.executeAction ?? createPluginWebhookEndpointHttpActionExecutor({ request }),
         readStatus: async (input: PluginWebhookAccountStatusRequestV1) => {
             const parsed = PluginWebhookAccountStatusRequestV1Schema.parse(input);
             return PluginWebhookAccountStatusResultV1Schema.parse(await requestWebhookJson(

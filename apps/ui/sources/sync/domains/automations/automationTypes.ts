@@ -1,23 +1,19 @@
 import type {
     AcpConfigOptionOverridesV1,
+    AgentExecutionTargetV1,
     AutomationDefinitionDetail as AutomationDefinitionDetailResponse,
     AutomationDefinitionListItem,
     AutomationV3RunListItem,
     BackendTargetRefV2,
     SessionMcpSelectionV1,
     SessionModelSelectionV1,
+    RuntimeDescriptorV1,
+    SessionExecutionTargetV1,
+    SessionOrganizationPlacementV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/protocol';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-
-export type AutomationSchedule = Readonly<{
-    kind: 'cron' | 'interval';
-    scheduleExpr: string | null;
-    everyMs: number | null;
-    timezone: string | null;
-}>;
 
 export type AutomationAssignment = Readonly<{
     machineId: string;
@@ -26,36 +22,7 @@ export type AutomationAssignment = Readonly<{
     updatedAt: number | null;
 }>;
 
-export type AutomationTargetType = 'new_session' | 'existing_session';
-
-export type Automation = Readonly<{
-    id: string;
-    name: string;
-    description: string | null;
-    enabled: boolean;
-    schedule: AutomationSchedule;
-    targetType: AutomationTargetType;
-    templateCiphertext: string;
-    /**
-     * Client-only, fail-closed association projected from the canonical
-     * decrypted template reader at Automation ingress. It is never sent to or
-     * persisted by the server.
-     */
-    linkedExistingSessionId: string | null;
-    templateVersion: number;
-    nextRunAt: number | null;
-    lastRunAt: number | null;
-    createdAt: number;
-    updatedAt: number;
-    assignments: ReadonlyArray<AutomationAssignment>;
-}>;
-
-/**
- * The current definition projection is deliberately separate from the
- * retained V2 shape above while the released schedule editor completes its
- * migration. It holds one safe summary plus, when directly requested, the
- * matching private detail in the same Automation store record.
- */
+/** One current plural summary plus its exact private detail, when loaded. */
 export type AutomationDefinitionDetail =
     | Readonly<{
         kind: 'unloaded';
@@ -72,47 +39,11 @@ export type AutomationDefinitionDetail =
         code: 'automation_stored_content_unavailable';
     }>;
 
-type AutomationDefinitionTriggerKind = AutomationDefinitionListItem['trigger']['kind'];
-
-export type AutomationDefinitionListItemForTrigger<
-    TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Extract<AutomationDefinitionListItem, Readonly<{
-    trigger: Readonly<{ kind: TTriggerKind }>;
-}>>;
-
-export type AutomationDefinitionDetailForTrigger<
-    TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Extract<AutomationDefinitionDetailResponse, Readonly<{
-    trigger: Readonly<{ kind: TTriggerKind }>;
-}>>;
-
-type AutomationDefinitionWithDetail<
-    TSummary extends AutomationDefinitionListItem,
-    TDetail extends AutomationDefinitionDetail,
-> = TSummary extends AutomationDefinitionListItem
-    ? Readonly<TSummary & {
-        detail: TDetail;
-        linkedExistingSessionId: string | null;
-    }>
-    : never;
-
-type AutomationDefinitionUnloaded = AutomationDefinitionWithDetail<
-    AutomationDefinitionListItem,
-    Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unloaded' }>>
->;
-
-type AutomationDefinitionUnavailable = AutomationDefinitionWithDetail<
-    AutomationDefinitionListItem,
-    Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unavailable' }>>
->;
-
-export type AutomationDefinitionAvailable<
-    TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Readonly<AutomationDefinitionListItemForTrigger<TTriggerKind> & {
+export type AutomationDefinitionAvailable = Readonly<AutomationDefinitionListItem & {
     detail: Readonly<{
         kind: 'available';
         templateVersion: number;
-        value: AutomationDefinitionDetailForTrigger<TTriggerKind>;
+        value: AutomationDefinitionDetailResponse;
     }>;
     /**
      * Client-only association derived only from the private direct detail.
@@ -127,33 +58,40 @@ export type AutomationDefinitionAvailable<
  * correlate yet, while available records retain the matching trigger arm.
  */
 export type AutomationDefinition =
-    | AutomationDefinitionUnloaded
-    | AutomationDefinitionUnavailable
-    | AutomationDefinitionAvailable<'schedule'>
-    | AutomationDefinitionAvailable<'manual'>
-    | AutomationDefinitionAvailable<'pluginEvent'>;
+    | Readonly<AutomationDefinitionListItem & {
+        detail: Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unloaded' }>>;
+        linkedExistingSessionId: string | null;
+    }>
+    | Readonly<AutomationDefinitionListItem & {
+        detail: Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unavailable' }>>;
+        linkedExistingSessionId: string | null;
+    }>
+    | AutomationDefinitionAvailable;
 
-/** Event-only consumers must retain the source-status/trigger correlation. */
-export type PluginEventAutomationDefinition = Extract<
-    AutomationDefinitionListItem,
-    Readonly<{ trigger: Readonly<{ kind: 'pluginEvent' }> }>
+export type PluginEventAutomationTrigger = Extract<
+    AutomationDefinitionListItem['triggers'][number],
+    Readonly<{ kind: 'pluginEvent' }>
 >;
 
-export function isPluginEventAutomationDefinition(
-    definition: AutomationDefinitionListItem | null | undefined,
-): definition is PluginEventAutomationDefinition {
-    return definition?.trigger.kind === 'pluginEvent';
+export function isPluginEventAutomationTrigger(
+    trigger: AutomationDefinitionListItem['triggers'][number] | null | undefined,
+): trigger is PluginEventAutomationTrigger {
+    return trigger?.kind === 'pluginEvent';
 }
 
 /** Bounded V3 Run projection held by the incumbent Automation run cache. */
 export type AutomationDefinitionRun = AutomationV3RunListItem;
 
 export type AutomationTemplate = Readonly<{
+    executionTarget?: SessionExecutionTargetV1;
     directory: string;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft;
+    organizationPlacement?: SessionOrganizationPlacementV1;
     prompt?: string;
     displayText?: string;
     agent?: string;
+    agentTarget?: AgentExecutionTargetV1;
+    /** Released predecessor read input. New templates write `agentTarget`. */
     backendTarget?: BackendTargetRefV2;
     connectedServices?: unknown;
     transcriptStorage?: 'persisted' | 'direct';
@@ -172,8 +110,7 @@ export type AutomationTemplate = Readonly<{
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
     windowsTerminalWindowName?: string;
-    experimentalCodexAcp?: boolean;
-    codexBackendMode?: CodexBackendMode;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     agentModeId?: string;
     existingSessionId?: string;
     sessionEncryptionMode?: 'e2ee' | 'plain';

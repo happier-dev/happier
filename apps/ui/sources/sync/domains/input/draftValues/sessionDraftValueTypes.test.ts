@@ -44,4 +44,38 @@ describe('session draft attachment bounds', () => {
             attachmentDraftIds: [...attachmentDraftIds, `attachment-${MAX_COMPOSER_ATTACHMENT_INSTANCES_V1}`],
         }).success).toBe(false);
     });
+
+    it('does not reconstruct an exact occurrence from a positionless continuation mention', () => {
+        const localId = 'continuation-message-1';
+        const parsed = SESSION_DRAFT_VALUE_SCHEMAS['routing.agentContinuation'].safeParse({
+            backendTargetKey: 'backend:codex',
+            intent: {
+                v: 1,
+                mode: 'same_session',
+                sourceAgentId: 'claude',
+                selection: { v: 1, agentId: 'codex' },
+            },
+            submission: {
+                localId,
+                input: {
+                    localId,
+                    text: '@same + @same',
+                    meta: {},
+                },
+                currentness: {
+                    text: '@same + @same',
+                    mentions: [
+                        { kind: 'mention', ref: 'first', tokenText: '@same' },
+                        { kind: 'mention', ref: 'second', tokenText: '@same' },
+                    ],
+                    composerAttachments: [],
+                    attachmentDraftIds: [],
+                },
+            },
+        });
+
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) return;
+        expect(parsed.data.submission?.currentness?.mentions).toEqual([]);
+    });
 });

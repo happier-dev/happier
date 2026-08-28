@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {
-    isExactPluginMachineMaterializationRefV1,
+    arePluginMachineMaterializationRefsEqual,
     isPluginMachineMaterializationOnServerIdentityV1,
     type PluginMachineExecutionOriginV1,
     type PluginMachineMaterializationV1,
@@ -42,7 +42,7 @@ function materializationMatchesOrigin(
     origin: PluginMachineExecutionOriginV1,
 ): boolean {
     return isPluginMachineMaterializationOnServerIdentityV1(materialization, origin.serverIdentityId)
-        && isExactPluginMachineMaterializationRefV1(materialization, origin.materializationRef);
+        && arePluginMachineMaterializationRefsEqual(materialization, origin.materializationRef);
 }
 
 /** Invocation-time closure over the current Availability and raw machine owners. */

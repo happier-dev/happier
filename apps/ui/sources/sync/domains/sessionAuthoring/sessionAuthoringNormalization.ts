@@ -1,8 +1,6 @@
 import {
-    normalizeCodexBackendMode as normalizeCanonicalCodexBackendMode,
     SessionAuthoringTerminalV1Schema,
     SessionAuthoringValueV1Schema,
-    type CodexBackendMode,
     type SessionAuthoringTerminalV1,
     type SessionAuthoringValueV1,
 } from '@happier-dev/protocol';
@@ -10,8 +8,6 @@ import {
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
-
-export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
 
 export function normalizeRequiredString(value: string): string {
     return value.trim();
@@ -25,17 +21,6 @@ export function normalizeOptionalString(value: string | null | undefined): strin
 
 export function normalizeOptionalNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-export function resolveCanonicalCodexBackendMode(params: Readonly<{
-    codexBackendMode?: unknown;
-    experimentalCodexAcp?: unknown;
-}>): CodexBackendMode | null {
-    const codexBackendMode = normalizeCodexBackendMode(params.codexBackendMode);
-    if (codexBackendMode) {
-        return codexBackendMode;
-    }
-    return params.experimentalCodexAcp === true ? 'acp' : null;
 }
 
 export function normalizeOptionalRecord(value: unknown): Record<string, unknown> | null {

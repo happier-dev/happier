@@ -24,6 +24,16 @@ describe("local service preview load url policy", () => {
             platform: "ios",
             url: "http://[::ffff:127.0.0.1]:5173/",
         })).toEqual({ ok: false, reasonCode: "native_loopback_not_allowed" });
+
+        expect(mod?.resolveLocalServicePreviewLoadUrl({
+            platform: "android",
+            url: "http://[::1]:5173/",
+        })).toEqual({ ok: false, reasonCode: "native_loopback_not_allowed" });
+
+        expect(mod?.resolveLocalServicePreviewLoadUrl({
+            platform: "ios",
+            url: "http://preview.localhost:5173/",
+        })).toEqual({ ok: false, reasonCode: "native_loopback_not_allowed" });
     });
 
     it("allows server preview urls on native and loopback fallback on web", async () => {

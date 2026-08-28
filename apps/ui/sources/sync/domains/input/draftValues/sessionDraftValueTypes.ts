@@ -41,16 +41,14 @@ export type ExecutionRunDeliveryMode = z.infer<typeof ExecutionRunDeliveryModeSc
  */
 
 /**
- * The textual half of a mention: the exact token the composer inserted. A mention belongs to
- * the draft for as long as the draft text still contains it, which is what the reconciler
- * enforces — there is deliberately no stored position (see `MentionRefV1Schema`).
- *
- * A draft written before positions were removed simply has two extra keys; the known-kind
- * arms are plain objects, so zod strips them, and the unknown-kind arm is passthrough and
- * carries them inertly.
+ * Editable Composer custody binds a mention to one exact UTF-16 `[start, end)` occurrence.
+ * The Message wire deliberately remains positionless: the send adapter validates this range
+ * against the exact draft snapshot, then projects only `{ kind, ref, token }` downstream.
  */
 const StructuredInputMentionBaseSchema = z.object({
     tokenText: z.string().min(1),
+    start: z.number().int().min(0),
+    end: z.number().int().min(1),
 });
 
 export const ComposerVendorPluginMentionSchema = StructuredInputMentionBaseSchema.extend({
@@ -118,24 +116,69 @@ export type ComposerUnknownMention = Readonly<{
      */
     composerReference?: ComposerReferenceMentionPayloadV1['composerReference'];
     tokenText: string;
+    start: number;
+    end: number;
 }>;
 
 /** The Protocol-owned provider payload plus the composer's own token. */
 export type ComposerReferenceMention = Readonly<
     ComposerReferenceMentionPayloadV1
-    & Pick<ComposerUnknownMention, 'tokenText'>
+    & Pick<ComposerUnknownMention, 'tokenText' | 'start' | 'end'>
 >;
 
 export const ComposerStructuredInputMentionSchema = z.union([
     ComposerVendorPluginMentionSchema,
     ComposerSkillMentionSchema,
     ComposerUnknownMentionSchema,
-]);
+]).refine((mention) => mention.end > mention.start, {
+    path: ['end'],
+    message: 'Mention end must be greater than start.',
+});
 export type ComposerStructuredInputMention =
     | ComposerVendorPluginMention
     | ComposerSkillMention
     | ComposerReferenceMention
     | ComposerUnknownMention;
+
+export type ComposerStructuredInputMentionsForText = Readonly<{
+    mentions: readonly ComposerStructuredInputMention[];
+    /** Every stored entry was a current, exact, canonically ordered occurrence. */
+    fullyDecoded: boolean;
+}>;
+
+/**
+ * Reads the persisted editable-draft shape against its exact text snapshot.
+ *
+ * Exact ranges are the only occurrence identity. A positionless, stale, overlapping, or
+ * out-of-order entry is dropped rather than silently rebound to another equal token.
+ */
+export function parseComposerStructuredInputMentionsForText(
+    value: unknown,
+    text: string,
+): ComposerStructuredInputMentionsForText {
+    if (!Array.isArray(value)) return { mentions: [], fullyDecoded: false };
+
+    const mentions: ComposerStructuredInputMention[] = [];
+    let boundary = 0;
+    let fullyDecoded = true;
+
+    for (const entry of value) {
+        const parsed = ComposerStructuredInputMentionSchema.safeParse(entry);
+        if (
+            !parsed.success
+            || parsed.data.start < boundary
+            || parsed.data.end > text.length
+            || text.slice(parsed.data.start, parsed.data.end) !== parsed.data.tokenText
+        ) {
+            fullyDecoded = false;
+            continue;
+        }
+        mentions.push(parsed.data);
+        boundary = parsed.data.end;
+    }
+
+    return { mentions, fullyDecoded };
+}
 
 /**
  * A composer mention WITHOUT its token — what a suggestion carries before it is
@@ -143,8 +186,8 @@ export type ComposerStructuredInputMention =
  * declared twice (SB-4).
  */
 export type ComposerStructuredInputMentionPayload =
-    | Omit<ComposerVendorPluginMention, 'tokenText'>
-    | Omit<ComposerSkillMention, 'tokenText'>
+    | Omit<ComposerVendorPluginMention, 'tokenText' | 'start' | 'end'>
+    | Omit<ComposerSkillMention, 'tokenText' | 'start' | 'end'>
     | ComposerReferenceMentionPayloadV1
     /**
      * The selection-time half of an open Protocol reference. It does not
@@ -194,12 +237,26 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
  * that cannot be reconstructed from a post-dispatch screen (notably raw text
  * and attachment draft identities) without introducing another draft record.
  */
-export const SessionArmedAgentContinuationSubmissionCurrentnessSchema = z.object({
+const SessionArmedAgentContinuationSubmissionCurrentnessSourceSchema = z.object({
     text: z.string(),
-    mentions: ComposerStructuredInputMentionsSchema,
+    // Read with the sibling exact text so stale ranges cannot regain custody.
+    mentions: z.array(z.unknown()),
     composerAttachments: z.array(ComposerAttachmentDraftV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
     attachmentDraftIds: z.array(z.string().trim().min(1)).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
 }).strict();
+
+/**
+ * The nested submission snapshot consumes the same exact-range reader as the
+ * top-level editable draft; it never reconstructs occurrence identity from text.
+ */
+export const SessionArmedAgentContinuationSubmissionCurrentnessSchema =
+    SessionArmedAgentContinuationSubmissionCurrentnessSourceSchema.transform((currentness) => ({
+        ...currentness,
+        mentions: parseComposerStructuredInputMentionsForText(
+            currentness.mentions,
+            currentness.text,
+        ).mentions,
+    }));
 export type SessionArmedAgentContinuationSubmissionCurrentness = DeepReadonly<
     z.infer<typeof SessionArmedAgentContinuationSubmissionCurrentnessSchema>
 >;

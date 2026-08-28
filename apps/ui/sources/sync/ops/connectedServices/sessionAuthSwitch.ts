@@ -2,7 +2,7 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from '@/sync/ops/accountSettingsDaemonSpawnPreparation';
 import type {
     ConnectedServiceBindingsV1,
-    ConnectedServiceId,
+    ConnectedAccountServiceKey,
     ConnectedServiceUxDiagnosticV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -99,7 +99,7 @@ export async function setSessionConnectedServiceAuthBinding(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     bindings: ConnectedServiceBindingsV1;
-    rematerializeServiceId?: ConnectedServiceId;
+    rematerializeServiceId?: ConnectedAccountServiceKey;
     expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
     accountSettingsVersionHint?: number;
 }>): Promise<SessionConnectedServiceAuthSwitchResult> {
@@ -111,7 +111,7 @@ export async function setSessionConnectedServiceAuthBinding(params: Readonly<{
         sessionId: string;
         agentId: string;
         bindings: ConnectedServiceBindingsV1;
-        rematerializeServiceId?: ConnectedServiceId;
+        rematerializeServiceId?: ConnectedAccountServiceKey;
         expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
         accountSettingsVersionHint?: number;
     }>({

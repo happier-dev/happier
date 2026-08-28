@@ -1,7 +1,10 @@
 import { resolveModelSelectionIntentFromSessionMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { buildBackendTargetKeyV2, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKeyV2,
+    readRuntimeDescriptorV1FromMetadata,
+    SessionMcpSelectionV1Schema,
+} from '@happier-dev/protocol';
 
-import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -14,7 +17,6 @@ import {
     normalizeRequiredString,
     normalizeTerminalFromSessionMetadata,
     normalizeTranscriptStorage,
-    resolveCanonicalCodexBackendMode,
 } from './sessionAuthoringNormalization';
 import type { SessionAuthoringSnapshot } from './sessionAuthoringSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -27,17 +29,17 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
     sessionDekBase64?: string | null;
 }>): SessionAuthoringSnapshot {
     const metadata = readSessionOwnerMetadataView(params.session as Session);
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: metadata?.codexBackendMode,
-        experimentalCodexAcp: metadata && Object.prototype.hasOwnProperty.call(metadata, 'experimentalCodexAcp')
-            ? (metadata as Record<string, unknown>).experimentalCodexAcp
-            : undefined,
-    });
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
     const defaultBackend = resolveSessionActionDefaultBackend({
         session: params.session as Session,
     });
     const backendTarget = defaultBackend?.backendTarget ?? null;
-    const agentTargetKey = backendTarget ? buildBackendTargetKeyV2(backendTarget) : null;
+    const agentTarget = defaultBackend?.agentTarget ?? null;
+    const agentTargetKey = agentTarget
+        ? buildBackendTargetKeyV2(agentTarget)
+        : backendTarget
+            ? buildBackendTargetKeyV2(backendTarget)
+            : null;
     const permissionOverride = getPermissionModeOverrideForSpawn(params.session as Session);
     const metadataPermission = resolvePermissionIntentFromSessionMetadata(metadata);
     const metadataPermissionMode = metadataPermission?.intent ?? null;
@@ -61,9 +63,8 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
             ?? normalizeOptionalString(metadata?.homeDir)
             ?? '/',
         ),
-        agentId: backendTarget && isBundledAgentId(backendTarget.backendId) && !backendTarget.configuredBackendId
-            ? backendTarget.backendId
-            : null,
+        agentId: defaultBackend?.defaultAgentId ?? null,
+        agentTarget,
         backendTarget,
         transcriptStorage: normalizeTranscriptStorage((metadata as Record<string, unknown> | null)?.transcriptStorage),
         profileId: normalizeOptionalString(metadata?.profileId),
@@ -79,7 +80,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
                 : null,
         ),
         terminal: normalizeTerminalFromSessionMetadata(params.session),
-        codexBackendMode,
+        runtimeDescriptorV1,
         existingSessionId: params.session.id,
         sessionEncryptionMode: params.session.encryptionMode === 'plain' ? 'plain' : 'e2ee',
         sessionEncryptionKeyBase64: params.session.encryptionMode === 'plain'

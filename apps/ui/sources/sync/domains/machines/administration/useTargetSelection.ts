@@ -20,6 +20,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import {
     useSetting,
+    useActiveServerAccountScope,
 } from '@/sync/store/hooks';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -52,6 +53,19 @@ export type FreshMachineAdministrationExecutionTargetV1 = Extract<
  */
 export type MachineAdministrationTargetPickerRowV1 =
     MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>;
+
+export function doesMachineAdministrationTargetMatchActiveAccount(params: Readonly<{
+    target: MachineAdministrationTargetV1 | null;
+    activeAccountServerId: string | null | undefined;
+}>): boolean {
+    const activeAccountServerId = String(params.activeAccountServerId ?? '').trim();
+    return params.target !== null
+        && activeAccountServerId.length > 0
+        && areServerProfileIdentifiersEquivalent(
+            params.target.serverIdentityId,
+            activeAccountServerId,
+        );
+}
 
 function areAllProfileInventoriesKnown(snapshots: readonly ServerMachineInventorySnapshotV1[]): boolean {
     return snapshots.every((snapshot) => snapshot.kind === 'resolved');
@@ -125,6 +139,12 @@ export type MachineAdministrationTargetSelectionV1 = Readonly<{
     pickerRows: readonly MachineAdministrationTargetPickerRowV1[];
     state: MachineAdministrationTargetStateV1;
     selectedTarget: MachineAdministrationTargetV1 | null;
+    /**
+     * Whether Account-owned settings may be composed with the selected
+     * target. Daemon inspection can still address a foreign server, but
+     * Account settings, groups, quotas, and Saved Secrets must fail closed.
+     */
+    selectedTargetServerMatchesActiveAccount: boolean;
     canExecute: boolean;
     selectTarget: (target: MachineAdministrationTargetV1) => void;
     clearTarget: () => void;
@@ -151,7 +171,12 @@ export function useMachineAdministrationTargetSelection(
     options: MachineAdministrationTargetSelectionOptions = {},
 ): MachineAdministrationTargetSelectionV1 {
     const selections = useSetting('machineAdministrationSelectionsV1');
+    const activeAccountScope = useActiveServerAccountScope();
     const storedTarget = selections.targetsByKey[selectionKey] ?? null;
+    const selectedTargetServerMatchesActiveAccount = doesMachineAdministrationTargetMatchActiveAccount({
+        target: storedTarget,
+        activeAccountServerId: activeAccountScope?.serverId,
+    });
     const snapshots = useAllProfileMachineInventorySnapshots();
     const candidates = React.useMemo(
         () => buildMachineAdministrationCandidatesFromSnapshots({ snapshots }),
@@ -205,9 +230,19 @@ export function useMachineAdministrationTargetSelection(
         pickerRows,
         state: targetState,
         selectedTarget: storedTarget,
+        selectedTargetServerMatchesActiveAccount,
         canExecute: resolveFreshMachineAdministrationExecutionTarget(storedTarget) !== null,
         selectTarget,
         clearTarget,
         resolveExecutionTarget,
-    }), [candidates, clearTarget, pickerRows, resolveExecutionTarget, selectTarget, storedTarget, targetState]);
+    }), [
+        candidates,
+        clearTarget,
+        pickerRows,
+        resolveExecutionTarget,
+        selectTarget,
+        selectedTargetServerMatchesActiveAccount,
+        storedTarget,
+        targetState,
+    ]);
 }

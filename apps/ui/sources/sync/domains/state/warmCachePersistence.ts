@@ -1,9 +1,12 @@
 import { MMKV } from 'react-native-mmkv';
 import {
     ExternalSessionsSourceSchema,
+    normalizeLinkedExternalSessionMetadataV1,
     parseSessionRuntimeActivityProjectionFields,
+    PluginAgentExternalSessionLinkDataSchema,
     PluginProjectionV2Schema,
     PrimaryTurnStatusV1Schema,
+    RuntimeDescriptorV1Schema,
     SessionRuntimeActivityStateSchema,
     SessionRuntimeIssueV1Schema,
 } from '@happier-dev/protocol';
@@ -258,14 +261,20 @@ export const SessionListCacheEntryV1Schema = z.object({
     host: z.string().nullable().optional(),
     machineId: z.string().nullable().optional(),
     flavor: z.string().nullable().optional(),
-    externalSessionV1: z.object({
-        v: z.literal(1),
-        agentId: z.string().min(1),
-        machineId: z.string().min(1),
-        remoteSessionId: z.string().min(1),
-        source: ExternalSessionsSourceSchema,
-        codexBackendMode: z.string().optional(),
-    }).passthrough().nullable().optional(),
+    externalSessionV1: z.preprocess(
+        (value) => normalizeLinkedExternalSessionMetadataV1({ externalSessionV1: value })
+            ?.externalSessionV1 ?? value,
+        z.object({
+            v: z.literal(1),
+            agentId: z.string().min(1),
+            machineId: z.string().min(1),
+            remoteSessionId: z.string().min(1),
+            source: ExternalSessionsSourceSchema,
+            runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+            linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
+            codexBackendMode: z.never().optional(),
+        }).passthrough(),
+    ).nullable().optional(),
     hiddenSystemSession: z.boolean().optional(),
     keepVisibleWhenInactive: z.boolean().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),

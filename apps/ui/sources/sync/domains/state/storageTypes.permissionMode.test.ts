@@ -31,4 +31,33 @@ describe('MetadataSchema (permissionMode forward compatibility)', () => {
     expect(parsed.host).toBe('');
     expect(parsed.path).toBe('');
   });
+
+  it('normalizes the released Codex selector into runtimeDescriptorV1', () => {
+    const parsed = MetadataSchema.parse({
+      path: '/tmp',
+      host: 'localhost',
+      codexSessionId: 'thread-1',
+      codexBackendMode: 'mcp',
+    } as any);
+
+    expect(parsed).not.toHaveProperty('codexBackendMode');
+    expect(parsed.runtimeDescriptorV1).toMatchObject({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'appServer', providerSessionId: 'thread-1' },
+    });
+  });
+
+  it('rejects conflicting released and canonical Codex selectors', () => {
+    expect(MetadataSchema.safeParse({
+      path: '/tmp',
+      host: 'localhost',
+      codexBackendMode: 'mcp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
+    }).success).toBe(false);
+  });
 });

@@ -22,7 +22,10 @@ import {
 } from '@happier-dev/protocol';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+    resolveSessionActionDefaultBackend,
+    resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 
 type LocalOutboundDeliveryStatus = 'queued' | 'accepted';
 
@@ -46,10 +49,11 @@ function resolveStructuredOutgoingModelSelection(sessionValue: unknown): Session
     if (!sessionValue || typeof sessionValue !== 'object' || Array.isArray(sessionValue)) return null;
     const session = sessionValue as Session;
     const defaultBackend = resolveSessionActionDefaultBackend({ session });
-    if (!defaultBackend) return null;
+    const defaultTarget = resolveSessionActionDefaultTarget(defaultBackend);
+    if (!defaultTarget) return null;
     const modelOverride = getModelOverrideForSpawn(
         session,
-        resolveBackendTargetKeyV2(defaultBackend.backendTarget),
+        resolveBackendTargetKeyV2(defaultTarget),
     );
     return modelOverride?.modelSelection ?? null;
 }

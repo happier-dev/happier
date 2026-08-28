@@ -148,6 +148,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
             connectedAccountId: 'backup',
             priority: 200,
             enabled: true,
+            expectedGeneration: 3,
             expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         });
@@ -155,6 +156,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
             service,
             groupId: 'primary',
             policy: { autoSwitch: true },
+            expectedGeneration: 3,
             expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         });
@@ -175,6 +177,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     connectedAccountId: 'backup',
                     priority: 200,
                     enabled: true,
+                    expectedGeneration: 3,
                     expectedIncarnation: 'qualified-group-row-primary',
                     expectedRuntimeStateRevision: 7,
                 },
@@ -186,6 +189,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     service,
                     groupId: 'primary',
                     policy: expect.objectContaining({ autoSwitch: true }),
+                    expectedGeneration: 3,
                     expectedIncarnation: 'qualified-group-row-primary',
                     expectedRuntimeStateRevision: 7,
                 }),
@@ -217,6 +221,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     QualifiedConnectedAccountGroupRefSchema,
                     encoded,
                 )).toEqual(groupRef);
+                expect(url.searchParams.get('expectedGeneration')).toBe('3');
             }
             return {
                 ok: false,
@@ -232,6 +237,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         const { deleteQualifiedConnectedAccountGroupV4 } = await import('./apiQualifiedConnectedAccountsV4');
         await expect(deleteQualifiedConnectedAccountGroupV4(credentials, {
             group: groupRef,
+            expectedGeneration: 3,
             expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         })).rejects.toMatchObject({

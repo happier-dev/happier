@@ -3,11 +3,14 @@ import {
     ComposerContentHandleV1Schema,
     ComposerContentInspectRequestV1Schema,
     ComposerContentInspectWireResultV1Schema,
+    ComposerInstanceIdSchema,
+    ComposerRefV1Schema,
     type ComposerContentHandleV1,
     type ComposerContentInspectRequestV1,
     type ComposerContentInspectWireResultV1,
     type ComposerContentMediaKindV1,
     type ComposerContentMimeTypeV1,
+    type ComposerRefV1,
     type PluginContributionIdentityV1,
     type SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
@@ -316,17 +319,37 @@ export async function inspectComposerContent(
 /** Idempotent completed-stage release for post-transaction draft cleanup. */
 export async function releaseComposerContent(
     rawHandle: ComposerContentHandleV1,
-    options?: Readonly<{ signal?: AbortSignal | null }>,
+    options?: Readonly<{
+        signal?: AbortSignal | null;
+        claimant?: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>,
 ): Promise<Readonly<{ success: true }> | TransferFailureResponse> {
     const handle = ComposerContentHandleV1Schema.safeParse(rawHandle);
     if (!handle.success) return transferFailure('Invalid Composer media release request');
+    const composer = options?.claimant
+        ? ComposerRefV1Schema.safeParse(options.claimant.composer)
+        : null;
+    const attachmentInstanceId = options?.claimant
+        ? ComposerInstanceIdSchema.safeParse(options.claimant.attachmentInstanceId)
+        : null;
+    if ((composer && !composer.success) || (attachmentInstanceId && !attachmentInstanceId.success)) {
+        return transferFailure('Invalid Composer media release request');
+    }
     const transferClient = createWorkspaceFileTransferRpcCaller({
         machineId: handle.data.executionTarget.machineId,
         serverId: handle.data.executionTarget.serverId,
     });
-    return await transferClient.call<ComposerMediaStageReleaseResponse, Readonly<{ handle: ComposerContentHandleV1 }>>({
+    return await transferClient.call<ComposerMediaStageReleaseResponse, Readonly<{
+        handle: ComposerContentHandleV1;
+        claimant?: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>>({
         machineMethod: RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE,
-        request: { handle: handle.data },
+        request: {
+            handle: handle.data,
+            ...(composer?.success && attachmentInstanceId?.success
+                ? { claimant: { composer: composer.data, attachmentInstanceId: attachmentInstanceId.data } }
+                : {}),
+        },
         signal: options?.signal ?? null,
     });
 }

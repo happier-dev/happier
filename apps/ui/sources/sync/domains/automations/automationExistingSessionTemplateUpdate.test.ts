@@ -149,7 +149,11 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
                         profileId: 'profile-1',
                         flavor: 'codex',
                         codexSessionId: 'codex-session-1',
-                        codexBackendMode: 'acp',
+                        runtimeDescriptorV1: {
+                            v: 1,
+                            agentId: 'codex',
+                            agent: { backendMode: 'acp' },
+                        },
                         acpConfiguredBackendV1: {
                             v: 1,
                             updatedAt: 20,
@@ -187,7 +191,11 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
                     modelId: 'gpt-5',
                 },
             },
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             sessionEncryptionMode: 'e2ee',
             sessionEncryptionVariant: 'dataKey',
             sessionEncryptionKeyBase64: 'dek',

@@ -2,10 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    AutomationApiError,
     cancelAutomationRun,
     clearAutomationRunHistory,
-    createPluginEventAutomationDefinition,
     getAutomationSettings,
     deleteAutomationDefinition,
     getAutomationDefinition,
@@ -13,11 +11,10 @@ import {
     listAutomationDefinitions,
     pauseAutomationDefinition,
     replaceAutomationDefinitionAssignments,
+    retryAutomationReplyHandoff,
     resumeAutomationDefinition,
     runAutomationDefinitionNow,
     updateAutomationSettings,
-    runAutomationNow,
-    updatePluginEventAutomationDefinition,
 } from './apiAutomations';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -36,13 +33,18 @@ const eventSummary = {
     name: 'Repository updates',
     description: null,
     enabled: true,
-    trigger: {
+    triggers: [{
+        id: '11111111-1111-4111-8111-111111111111',
+        revision: 2,
+        enabled: true,
+        createdAt: 1_786_257_600_000,
+        updatedAt: 1_786_257_600_000,
         kind: 'pluginEvent' as const,
         eventRef: {
             pluginId: 'happier.scm.github',
-            localId: 'repository-event-v1',
+            localId: 'push',
         },
-        sourceSelectorId: 'selector-1',
+        sourceSelectorId: '22222222-2222-4222-8222-222222222222',
         sourceContractVersion: 1,
         observation: {
             kind: 'checkpointedPull' as const,
@@ -53,15 +55,17 @@ const eventSummary = {
                 materializationId: 'materialization-1',
             },
         },
-    },
+        sourceStatus: null,
+        sourceCatalogStatus: null,
+    }],
     targetType: 'existingSession' as const,
     existingSessionId: 'session-1',
     templateVersion: 3,
-    nextRunAt: null,
     lastRunAt: null,
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
     assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: 1_786_257_600_000 }],
+    retiredTriggers: [],
 };
 
 const eventExecutionRecipe = {
@@ -78,52 +82,26 @@ const eventExecutionRecipe = {
     },
 };
 
-const eventCreate = {
-    name: 'Repository updates',
-    description: null,
-    enabled: true,
-    trigger: {
-        kind: 'pluginEvent' as const,
-        eventRef: {
-            pluginId: 'happier.scm.github',
-            localId: 'repository-event-v1',
-        },
-        sourceInstanceId: 'github:repository:1234',
-        sourceContractVersion: 1,
-        sourceConfig: {
-            credentialRef: 'github:account:1',
-            repository: 'happier-dev/happier',
-        },
-        displayLabel: 'happier-dev/happier',
-        observationTransport: {
-            kind: 'checkpointedPull' as const,
-            watcherMaterializationRef: {
-                machineId: 'machine-1',
-                materializationId: 'materialization-1',
-                pluginId: 'happier.scm.github',
-            },
-        },
-        filter: null,
-        maximumObservationAgeMs: 60_000,
-    },
-    executionRecipe: eventExecutionRecipe,
-    assignments: [{ machineId: 'machine-1' }],
-};
-
 const eventDetail = {
     ...eventSummary,
     executionRecipe: eventExecutionRecipe,
-    triggerDefinitionEnvelope: JSON.stringify({
-        t: 'plain',
-        v: { sourceInstanceId: 'github:repository:1234' },
-    }),
+    triggers: eventSummary.triggers.map((trigger) => ({
+        ...trigger,
+        triggerDefinitionEnvelope: JSON.stringify({
+            t: 'plain',
+            v: { sourceInstanceId: 'github:repository:1234' },
+        }),
+    })),
 };
 
 const runSummary = {
     id: 'run-1',
     automationId: 'automation-event-1',
+    revision: 1,
+    triggerId: null,
+    triggerRetired: false,
     state: 'queued' as const,
-    origin: {
+    cause: {
         kind: 'manual' as const,
         invokedAt: 1_786_257_600_000,
     },
@@ -141,7 +119,6 @@ const runSummary = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
-    contentRemovedAt: null,
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
 };
@@ -175,35 +152,15 @@ describe('apiAutomations', () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<any>>(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({
-                run: {
-                    id: 'run-1',
-                    automationId: 'auto-1',
-                    state: 'queued',
-                    scheduledAt: Date.now(),
-                    dueAt: Date.now(),
-                    claimedAt: null,
-                    startedAt: null,
-                    finishedAt: null,
-                    claimedByMachineId: null,
-                    leaseExpiresAt: null,
-                    attempt: 0,
-                    summaryCiphertext: null,
-                    errorCode: null,
-                    errorMessage: null,
-                    producedSessionId: null,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                },
-            }),
+            json: async () => ({ run: { ...runSummary, automationId: 'auto-1' } }),
         }));
 
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await runAutomationNow(credentials, 'auto-1');
+        await runAutomationDefinitionNow(credentials, 'auto-1');
 
         const runNowCall = fetchSpy.mock.calls.find(
-            ([input]) => toUrlString(input).includes('/v2/automations/auto-1/run-now'),
+            ([input]) => toUrlString(input).includes('/v3/automations/auto-1/run-now'),
         );
 
         expect(runNowCall).toBeTruthy();
@@ -240,7 +197,7 @@ describe('apiAutomations', () => {
         expect(summaries[0]).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(detail).toMatchObject({
             id: 'automation-event-1',
-            triggerDefinitionEnvelope: expect.any(String),
+            triggers: [expect.objectContaining({ triggerDefinitionEnvelope: expect.any(String) })],
             executionRecipe: expect.objectContaining({ templateVersion: 3 }),
         });
         expect(fetchSpy.mock.calls.map(([input]) => toUrlString(input))).toEqual(expect.arrayContaining([
@@ -282,6 +239,28 @@ describe('apiAutomations', () => {
         ]);
     });
 
+    it('requeues a blocked reply handoff through the canonical Run mutation route', async () => {
+        const readyRun = {
+            ...runSummary,
+            replyHandoffState: 'ready' as const,
+            replyHandoffDueAt: 1_786_257_601_000,
+        };
+        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+            async (input, init) => {
+                expect(toUrlString(input)).toContain('/v3/automations/runs/run-1/retry-reply-handoff');
+                expect(init?.method).toBe('POST');
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ run: readyRun }),
+                } as Response;
+            },
+        );
+        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+        await expect(retryAutomationReplyHandoff(credentials, 'run-1')).resolves.toEqual(readyRun);
+    });
+
     it('reads and replaces strict account Automation settings, then clears one definition history', async () => {
         const settings = {
             maxActiveRunsPerMachine: 4,
@@ -289,6 +268,9 @@ describe('apiAutomations', () => {
         };
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
             const url = toUrlString(input);
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return new Response('{}', { status: 200 });
+            }
             if (url.endsWith('/v3/automations/settings')) {
                 return {
                     ok: true,
@@ -316,7 +298,7 @@ describe('apiAutomations', () => {
             method: init?.method,
             body: init?.body,
             headers: new Headers(init?.headers),
-        }));
+        })).filter((call) => call.url.includes('/v3/automations/'));
         expect(calls).toEqual([
             expect.objectContaining({
                 url: expect.stringContaining('/v3/automations/settings'),
@@ -344,69 +326,13 @@ describe('apiAutomations', () => {
             json: async () => ({
                 automations: [{
                     ...eventSummary,
-                    triggerDefinitionEnvelope: eventDetail.triggerDefinitionEnvelope,
+                    triggers: eventDetail.triggers,
                 }],
             }),
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
         await expect(listAutomationDefinitions(credentials)).rejects.toThrow();
-    });
-
-    it('posts a strict Event create and full versioned patch only to the current owner', async () => {
-        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => eventDetail,
-        }) as Response);
-        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
-
-        await createPluginEventAutomationDefinition(credentials, eventCreate);
-        await updatePluginEventAutomationDefinition(credentials, 'automation-event-1', {
-            ...eventCreate,
-            expectedTemplateVersion: 3,
-        });
-
-        const createCall = fetchSpy.mock.calls.find(([input, init]) =>
-            toUrlString(input).includes('/v3/automations') && init?.method === 'POST',
-        );
-        const patchCall = fetchSpy.mock.calls.find(([input, init]) =>
-            toUrlString(input).includes('/v3/automations/automation-event-1') && init?.method === 'PATCH',
-        );
-        expect(createCall).toBeTruthy();
-        expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(eventCreate);
-        expect(patchCall).toBeTruthy();
-        expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
-            ...eventCreate,
-            expectedTemplateVersion: 3,
-        });
-    });
-
-    it('keeps stale-version and stored-content failures typed for the composer', async () => {
-        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (_input, init) => ({
-            ok: false,
-            status: 409,
-            json: async () => ({
-                error: init?.method === 'PATCH'
-                    ? 'automation_template_version_conflict'
-                    : 'automation_stored_content_unavailable',
-            }),
-        }) as Response);
-        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
-
-        await expect(updatePluginEventAutomationDefinition(credentials, 'automation-event-1', {
-            ...eventCreate,
-            expectedTemplateVersion: 3,
-        })).rejects.toMatchObject({
-            name: 'AutomationApiError',
-            code: 'automation_template_version_conflict',
-            status: 409,
-        } satisfies Partial<AutomationApiError>);
-        await expect(createPluginEventAutomationDefinition(credentials, eventCreate)).rejects.toMatchObject({
-            name: 'AutomationApiError',
-            code: 'automation_stored_content_unavailable',
-            status: 409,
-        } satisfies Partial<AutomationApiError>);
     });
 
     it('keeps Event lifecycle mutations in the incumbent owner', async () => {

@@ -31,11 +31,11 @@ import { createUiSessionSpawnUserAttemptId, normalizeSpawnSessionNonce } from '.
 import { createSpawnAttemptKeyForFreshSpawnOptions } from '../domains/session/spawn/spawnAttemptKey';
 import {
     acquireSpawnAttemptCustody,
+    clearCreatedSpawnAttemptCustodyForSession,
     clearSpawnAttemptCustody,
     markSpawnAttemptCreated,
     markSpawnAttemptSubmitted,
     normalizeSpawnUserAttemptId,
-    readSpawnAttemptCustodyState,
     type PersistedSpawnAttempt,
 } from '../domains/session/spawn/spawnAttemptNonceStore';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
@@ -232,21 +232,7 @@ export async function completePendingMachineSpawnAttemptCustodyForSession(
         serverId: params.serverId?.trim() || profileScope.serverId,
         accountId: profileScope.accountId,
     };
-    const custodyState = readSpawnAttemptCustodyState(scope);
-    if (custodyState.status === 'missing') return null;
-    if (custodyState.status !== 'valid') return false;
-    const matchingRecords = Object.values(custodyState.attempts)
-        .filter((record) => record.createdSessionId === sessionId);
-    if (matchingRecords.length === 0) return null;
-    if (matchingRecords.length !== 1) return false;
-    const [record] = matchingRecords;
-    return await clearSpawnAttemptCustody({
-        scope: record.scope,
-        machineId: record.machineId,
-        targetFingerprint: record.targetFingerprint,
-        userAttemptId: record.userAttemptId,
-        nonce: record.nonce,
-    });
+    return await clearCreatedSpawnAttemptCustodyForSession({ scope, sessionId });
 }
 
 function isInterruptedSpawnRpcTransportError(error: unknown): boolean {

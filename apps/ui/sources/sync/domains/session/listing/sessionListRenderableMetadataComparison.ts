@@ -7,7 +7,10 @@ import {
     readExternalSessionLink,
     type ExternalSessionLink,
 } from '@/sync/domains/session/external/readExternalSessionLink';
-import { serializeExternalSessionSourceForComparison } from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
+import {
+    serializeExternalSessionJsonForComparison,
+    serializeExternalSessionSourceForComparison,
+} from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
 import type { SessionListRenderableMetadata } from './sessionListRenderable';
 
 export type SessionListRenderableExternalSessionIdentity = Readonly<{
@@ -17,7 +20,8 @@ export type SessionListRenderableExternalSessionIdentity = Readonly<{
     remoteSessionId: string;
     linkedAtMs?: number;
     source: ExternalSessionLink['source'];
-    codexBackendMode?: string;
+    runtimeDescriptorV1?: ExternalSessionLink['runtimeDescriptorV1'];
+    linkData?: ExternalSessionLink['linkData'];
 }>;
 
 export type SessionListRenderableMetadataComparison = Readonly<{
@@ -70,7 +74,8 @@ function readExternalSessionRenderableMetadata(
             ? { linkedAtMs: candidate.linkedAtMs }
             : {}),
         source: candidate.source,
-        ...(candidate.codexBackendMode ? { codexBackendMode: candidate.codexBackendMode } : {}),
+        ...(candidate.runtimeDescriptorV1 ? { runtimeDescriptorV1: candidate.runtimeDescriptorV1 } : {}),
+        ...(candidate.linkData ? { linkData: candidate.linkData } : {}),
     };
 
     if (previous && areSessionListRenderableExternalSessionIdentitiesEqual(previous, next)) {
@@ -91,7 +96,10 @@ export function areSessionListRenderableExternalSessionIdentitiesEqual(
         && previous.machineId === next.machineId
         && previous.remoteSessionId === next.remoteSessionId
         && previous.linkedAtMs === next.linkedAtMs
-        && previous.codexBackendMode === next.codexBackendMode
+        && serializeExternalSessionJsonForComparison(previous.runtimeDescriptorV1)
+            === serializeExternalSessionJsonForComparison(next.runtimeDescriptorV1)
+        && serializeExternalSessionJsonForComparison(previous.linkData)
+            === serializeExternalSessionJsonForComparison(next.linkData)
         && serializeExternalSessionSourceForComparison(previous.source)
             === serializeExternalSessionSourceForComparison(next.source);
 }

@@ -149,6 +149,34 @@ describe('deriveSessionSubagents', () => {
         );
     });
 
+    it('does not lend a legacy bundled flavor label or team behavior to an external Agent owner', async () => {
+        const subagents = await deriveSubagents({
+            session: {
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine-external',
+                    runtimeDescriptorV1: { v: 1, agentId: 'acme.agent', agent: {} },
+                },
+            },
+            messages: [
+                createToolMessage({
+                    id: 'message_external_agent',
+                    name: 'Agent',
+                    state: 'running',
+                    input: { name: 'worker' },
+                    toolExtras: { id: 'tool_external_agent' },
+                }),
+            ],
+        });
+
+        expect(subagents).toHaveLength(1);
+        expect(subagents[0]).toMatchObject({
+            kind: 'subagent_sidechain',
+            display: { title: 'worker' },
+        });
+        expect(subagents[0]?.display).not.toHaveProperty('providerLabel');
+    });
+
     it('keeps a newly launched Claude teammate visible from subagent_launch.v1 meta even after the session already has team tool history', async () => {
         const subagents = await deriveSubagents({
             session: { metadata: { flavor: 'claude' } },

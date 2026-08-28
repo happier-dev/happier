@@ -1,4 +1,5 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { AgentUiSessionDeclarationV1 } from '@happier-dev/protocol';
 import {
     createUiProjectionDiagnostic,
     isRecord,
@@ -9,12 +10,9 @@ import {
 
 import type { SessionSubagentVisibleMessagesResolver } from './types';
 
-export type VisibleMessagesDescriptor = Readonly<{
-    kind: 'session.visibleMessages.v1';
-    subagentKinds: readonly string[];
-    fallbackToolNames?: readonly string[];
-    excludeJsonEventTypes?: readonly string[];
-}>;
+export type VisibleMessagesDescriptor = NonNullable<
+    AgentUiSessionDeclarationV1['visibleMessages']
+>;
 
 export type VisibleMessagesDescriptorResult = Readonly<{
     resolveVisibleMessages: SessionSubagentVisibleMessagesResolver;
@@ -28,7 +26,6 @@ type PluginUiVisibleMessagesDescriptor = Readonly<{
     version: number;
     session?: Readonly<{
         visibleMessages?: VisibleMessagesDescriptor;
-        visibleMessageFilterDescriptorId?: string;
     }>;
 }>;
 
@@ -83,14 +80,6 @@ function readVisibleMessagesDescriptor(
         return null;
     }
 
-    const descriptorId = readString(pluginDescriptor.session?.visibleMessageFilterDescriptorId);
-    if (!descriptorId) return null;
-
-    diagnostics.push(createUiProjectionDiagnostic(
-        'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-        'session.visibleMessageFilterDescriptorId',
-        `Unsupported visible-message descriptor id '${descriptorId}'.`,
-    ));
     return null;
 }
 

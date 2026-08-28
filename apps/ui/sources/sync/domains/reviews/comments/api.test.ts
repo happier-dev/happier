@@ -164,4 +164,51 @@ describe('review comments HTTP action executor', () => {
         })).rejects.toThrow('review_comment_encryption_material_unavailable');
         expect(serverFetchSpy).not.toHaveBeenCalled();
     });
+
+    it('claims one publication dispatch without manufacturing a comment mutation event', async () => {
+        const claim = {
+            disposition: 'dispatch' as const,
+            publicationPlanId: 'P'.repeat(43),
+            entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: 'A'.repeat(43) }],
+            verdict: null,
+        };
+        serverFetchSpy.mockResolvedValueOnce(jsonResponse(claim));
+        const { createReviewCommentsHttpActionExecutor } = await import('./api');
+
+        const execute = createReviewCommentsHttpActionExecutor();
+        const target = {
+            providerId: 'github',
+            configuredAccountId: 'account-1',
+            entryRef: {
+                sourceId: 'github',
+                kindId: 'pull-request-comment',
+                collisionScope: 'repo-1',
+                entryId: 'comment-1',
+            },
+            subtarget: null,
+        };
+        const publicationPlan = {
+            target,
+            baseRevision: 'base-1',
+            headRevision: 'head-1',
+            entries: [{
+                happierCommentId: 'comment-1',
+                expectedServerRevision: 1,
+                anchor: { kind: 'file' as const, filePath: 'src/a.ts' },
+                snapshot: { kind: 'too_large' as const, filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+                body: 'body',
+            }],
+            verdict: null,
+        };
+        await expect(execute('reviews.comments.claimPublicationDispatch', publicationPlan)).resolves.toEqual(claim);
+
+        expect(serverFetchSpy).toHaveBeenCalledWith(
+            '/v1/reviews/comments/publication/claim',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify(publicationPlan),
+            }),
+            { includeAuth: true },
+        );
+    });
 });

@@ -254,7 +254,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         });
     });
 
-    it('prefers persisted codex backend mode over account settings when resuming codex sessions', () => {
+    it('prefers the persisted Codex runtime descriptor over account settings when resuming', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: {
@@ -263,7 +263,14 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                     path: '/tmp',
                     flavor: 'openai',
                     codexSessionId: 'x1',
-                    codexBackendMode: 'appServer',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'x1',
+                        },
+                    },
                 },
             } as any,
             resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'mcp' } },
@@ -273,6 +280,14 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             resume: 'x1',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: {
+                    backendMode: 'appServer',
+                    providerSessionId: 'x1',
+                },
+            },
         });
     });
 

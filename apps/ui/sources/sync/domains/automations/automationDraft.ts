@@ -1,23 +1,36 @@
-import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol';
+import {
+    AUTOMATION_INT_COLUMN_MAX,
+    AutomationTriggerDefinitionInputSchema,
+    type AutomationAssignmentInput,
+    type AutomationStoredDefinitionExecutionRecipeV1,
+    type AutomationTriggerDefinitionInput,
+} from '@happier-dev/protocol';
+import {
+    createAutomationEditorAutomationId,
+    createAutomationEditorSourceSelectorId,
+    type AutomationEditorDraft,
+} from './automationEditorDraft';
+
+export type NewSessionAutomationTriggerDraft = Readonly<{
+    clientId: string;
+    definition: AutomationTriggerDefinitionInput;
+}>;
 
 export type NewSessionAutomationDraft = Readonly<{
+    /** Stable definition identity retained with the inline draft across save retries. */
+    pendingAutomationId?: string | null;
     enabled: boolean;
     name: string;
     description: string;
-    scheduleKind: 'interval' | 'cron';
-    everyMinutes: number;
-    cronExpr: string;
-    timezone: string | null;
+    triggers: ReadonlyArray<NewSessionAutomationTriggerDraft>;
 }>;
-
-export const LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME = 'Scheduled Session';
 
 const MINUTES_PER_DAY = 24 * 60;
 
 /**
  * The authored interval cadence ceiling, expressed in the unit the interval
  * picker edits: the widest whole-day cadence the Protocol's shared
- * `Automation.everyMs` column ceiling can hold. Offering a wider cadence would
+ * `AutomationTrigger.everyMs` column ceiling can hold. Offering a wider cadence would
  * only produce a save the canonical server schedule admission rejects.
  */
 export const MAX_AUTOMATION_INTERVAL_MINUTES =
@@ -35,42 +48,28 @@ export function clampAutomationIntervalMinutes(value: number): number {
 }
 
 export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
+    pendingAutomationId: null,
     enabled: false,
     name: '',
     description: '',
-    scheduleKind: 'interval',
-    everyMinutes: 60,
-    cronExpr: '0 * * * *',
-    timezone: null,
+    triggers: [],
 };
 
-function normalizeString(input: unknown, fallback: string): string {
-    const value = typeof input === 'string' ? input.trim() : '';
-    if (value === LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME) {
-        return fallback;
+function sanitizeTriggerRows(input: unknown): ReadonlyArray<NewSessionAutomationTriggerDraft> {
+    if (!Array.isArray(input)) return [];
+    const seen = new Set<string>();
+    const rows: NewSessionAutomationTriggerDraft[] = [];
+    for (const candidate of input) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+        const record = candidate as Record<string, unknown>;
+        const clientId = typeof record.clientId === 'string' ? record.clientId.trim() : '';
+        if (!clientId || seen.has(clientId)) continue;
+        const definition = AutomationTriggerDefinitionInputSchema.safeParse(record.definition);
+        if (!definition.success) continue;
+        seen.add(clientId);
+        rows.push({ clientId, definition: definition.data });
     }
-    return value.length > 0 ? value : fallback;
-}
-
-function normalizeOptionalString(input: unknown): string | null {
-    const value = typeof input === 'string' ? input.trim() : '';
-    return value.length > 0 ? value : null;
-}
-
-function normalizeEveryMinutes(input: unknown): number {
-    if (typeof input !== 'number' || !Number.isFinite(input)) {
-        return DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.everyMinutes;
-    }
-    return clampAutomationIntervalMinutes(input);
-}
-
-function normalizeScheduleKind(input: unknown): 'interval' | 'cron' {
-    return input === 'cron' ? 'cron' : 'interval';
-}
-
-function normalizeCronExpr(input: unknown): string {
-    const value = typeof input === 'string' ? input.trim() : '';
-    return value.length > 0 ? value : DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.cronExpr;
+    return rows;
 }
 
 export function sanitizeNewSessionAutomationDraft(input: unknown): NewSessionAutomationDraft {
@@ -79,15 +78,50 @@ export function sanitizeNewSessionAutomationDraft(input: unknown): NewSessionAut
     }
 
     const record = input as Record<string, unknown>;
-    const scheduleKind = normalizeScheduleKind(record.scheduleKind);
-
+    const enabled = record.enabled === true;
+    const pendingAutomationId = typeof record.pendingAutomationId === 'string'
+        ? record.pendingAutomationId.trim() || null
+        : null;
     return {
-        enabled: record.enabled === true,
-        name: normalizeString(record.name, DEFAULT_NEW_SESSION_AUTOMATION_DRAFT.name),
+        pendingAutomationId: pendingAutomationId ?? (enabled ? createAutomationEditorAutomationId() : null),
+        enabled,
+        name: typeof record.name === 'string' ? record.name : '',
         description: typeof record.description === 'string' ? record.description : '',
-        scheduleKind,
-        everyMinutes: normalizeEveryMinutes(record.everyMinutes),
-        cronExpr: normalizeCronExpr(record.cronExpr),
-        timezone: normalizeOptionalString(record.timezone),
+        triggers: sanitizeTriggerRows(record.triggers),
+    };
+}
+
+/**
+ * The sole conversion from Session-inline Automation state into the canonical
+ * plural editor/writer draft. Recipe and assignment materialization remain at
+ * their incumbent Session authoring owners and are injected here unchanged.
+ */
+export function materializeNewSessionAutomationEditorDraft(params: Readonly<{
+    draft: NewSessionAutomationDraft;
+    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1;
+    assignments: ReadonlyArray<AutomationAssignmentInput>;
+}>): AutomationEditorDraft {
+    return {
+        automationId: null,
+        pendingAutomationId: params.draft.pendingAutomationId ?? createAutomationEditorAutomationId(),
+        expectedTemplateVersion: null,
+        removedTriggers: [],
+        name: params.draft.name.trim(),
+        description: params.draft.description.trim() || null,
+        enabled: params.draft.enabled,
+        recipeDirty: true,
+        executionRecipe: params.executionRecipe,
+        assignments: params.assignments,
+        triggers: params.draft.triggers.map((row) => ({
+            clientId: row.clientId,
+            persisted: null,
+            definition: row.definition,
+            ...(row.definition.kind === 'pluginEvent' && 'sourceInstanceId' in row.definition ? {
+                eventSourceBinding: {
+                    sourceSelectorId: createAutomationEditorSourceSelectorId(row.clientId),
+                    sourceInstanceId: row.definition.sourceInstanceId,
+                },
+            } : {}),
+        })),
     };
 }

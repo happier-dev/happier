@@ -87,7 +87,7 @@ describe('automationTemplateCodec', () => {
         }));
     });
 
-    it('maps legacy experimentalCodexAcp payloads onto canonical codexBackendMode on decode', () => {
+    it('maps legacy experimentalCodexAcp payloads onto runtimeDescriptorV1 on decode', () => {
         const decoded = decodeAutomationTemplate(JSON.stringify({
             directory: '/tmp/project',
             agent: 'codex',
@@ -97,9 +97,12 @@ describe('automationTemplateCodec', () => {
         expect(decoded).toEqual(expect.objectContaining({
             directory: '/tmp/project',
             agent: 'codex',
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
         }));
-        expect(decoded?.experimentalCodexAcp).toBeUndefined();
     });
 
     it('preserves an authored existing-branch checkout draft through encode and decode', () => {

@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    AutomationDefinitionListItemSchema,
+    AutomationV3RunListItemSchema,
+} from '@happier-dev/protocol';
 
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
@@ -25,43 +29,62 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: getActiveServerSnapshotMock,
 }));
 
-const eventSummary = {
+const eventSummary = AutomationDefinitionListItemSchema.parse({
     id: 'event-1',
     name: 'Repository updates',
     description: null,
     enabled: true,
-    trigger: {
-        kind: 'pluginEvent' as const,
+    triggers: [{
+        id: 'event-trigger-1',
+        revision: 1,
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 1,
+        kind: 'pluginEvent',
         eventRef: {
             pluginId: 'happier.scm.github',
             localId: 'repository-event-v1',
         },
-        sourceSelectorId: 'selector-1',
+        sourceSelectorId: '11111111-1111-4111-8111-111111111111',
         sourceContractVersion: 1,
         observation: {
-            kind: 'checkpointedPull' as const,
+            kind: 'checkpointedPull',
             watcher: null,
         },
-    },
-    targetType: 'existingSession' as const,
+        sourceStatus: null,
+        sourceCatalogStatus: null,
+    }],
+    targetType: 'existingSession',
     existingSessionId: 'session-1',
     templateVersion: 3,
-    nextRunAt: null,
     lastRunAt: null,
     createdAt: 1,
     updatedAt: 1,
     assignments: [],
-};
+    retiredTriggers: [],
+});
 
-const eventRun = {
+const eventRun = AutomationV3RunListItemSchema.parse({
     id: 'run-event-1',
     automationId: 'event-1',
-    state: 'succeeded' as const,
-    origin: {
-        kind: 'pluginEvent' as const,
-        occurrenceKey: 'occurrence-1',
-        sourceSelectorId: 'selector-1',
+    revision: 1,
+    triggerId: 'event-trigger-1',
+    triggerRetired: false,
+    state: 'succeeded',
+    cause: {
+        kind: 'trigger',
+        triggerId: 'event-trigger-1',
+        triggerRevision: 1,
+        triggerKind: 'pluginEvent',
+        occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         occurredAt: 10,
+        evidence: {
+            eventRef: {
+                pluginId: 'happier.scm.github',
+                localId: 'repository-event-v1',
+            },
+            sourceSelectorId: '11111111-1111-4111-8111-111111111111',
+        },
     },
     dueAt: 10,
     claimedAt: null,
@@ -77,10 +100,9 @@ const eventRun = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
-    contentRemovedAt: null,
     createdAt: 10,
     updatedAt: 12,
-};
+});
 
 describe('fetchAndApplyAutomations', () => {
     beforeEach(() => {
@@ -110,7 +132,7 @@ describe('fetchAndApplyAutomations', () => {
 
         expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
             id: 'event-1',
-            trigger: eventSummary.trigger,
+            triggers: eventSummary.triggers,
             detail: { kind: 'unloaded', templateVersion: 3 },
             // The bounded list carries the owner-projected association, so a
             // session-scoped consumer never reads private detail to find it.

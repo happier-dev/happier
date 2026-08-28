@@ -1,4 +1,9 @@
 import {
+    arePluginMachineMaterializationRefsEqual,
+    isPluginMachineMaterializationOnServerIdentityV1,
+    type PluginMachineExecutionOriginV1,
+} from '@happier-dev/protocol';
+import {
     PluginUiArtifactsManifestEntryV1Schema,
     verifyPluginUiArtifactBytesIntegrityV1,
     verifyPluginUiArtifactFileSetIntegrityV1,
@@ -135,6 +140,51 @@ function sameArtifactIdentity(
         && left.platform === right.artifact.platform
         && left.digest === right.artifact.digest
         && left.releaseVersion === right.artifact.releaseVersion;
+}
+
+/**
+ * The one exact daemon-origin currentness decision shared by every Artifact
+ * family. Family adapters first prove their cache identity, then delegate the
+ * Account/materialization/release/slot facts here instead of maintaining
+ * lockstep hosted-web and React-Native copies.
+ */
+export function isExactDaemonPluginArtifactOriginCurrent(input: Readonly<{
+    reader: PluginAccountAvailabilityReader;
+    origin: PluginMachineExecutionOriginV1;
+    artifact: PluginSelectedArtifactIdentity;
+}>): boolean {
+    if (input.origin.materializationRef.pluginId !== input.artifact.pluginId) return false;
+    const admission = input.reader.readMaterializations();
+    if (admission.kind !== 'available') return false;
+    const matching = admission.materializations.filter((materialization) => (
+        isPluginMachineMaterializationOnServerIdentityV1(materialization, input.origin.serverIdentityId)
+        && arePluginMachineMaterializationRefsEqual(materialization, input.origin.materializationRef)
+    ));
+    if (matching.length !== 1) return false;
+    const materialization = matching[0]!;
+    if (
+        !materialization.portableRelease
+        || !materialization.enabled
+        || materialization.trustState !== 'trusted'
+        || materialization.version !== input.artifact.releaseVersion
+    ) {
+        return false;
+    }
+    const release = input.reader.classifyRelease(materialization);
+    if (
+        release.serverIdentityId !== input.origin.serverIdentityId
+        || !arePluginMachineMaterializationRefsEqual(materialization, release.materializationRef)
+        || release.releaseContent !== 'matched'
+        || release.validation.kind !== 'admitted'
+    ) {
+        return false;
+    }
+    return materialization.uiArtifacts.some((slot) => (
+        slot.contributionId === input.artifact.contributionId
+        && slot.tier === input.artifact.tier
+        && slot.platform === input.artifact.platform
+        && slot.artifactDigest === input.artifact.digest
+    ));
 }
 
 function isGraphCompatible(

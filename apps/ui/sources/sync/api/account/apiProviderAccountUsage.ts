@@ -9,6 +9,7 @@ import { backoff } from '@/utils/timing/time';
 import {
     ProviderAccountUsageRecordIdSchema,
     ProviderAccountUsageSnapshotV1Schema,
+    QualifiedProviderAccountUsageReadErrorV4Schema,
     QualifiedProviderAccountUsageRecordResponseV4Schema,
     type ProviderAccountUsageRecordId,
     type ProviderAccountUsageSnapshotV1,
@@ -55,6 +56,7 @@ function parseQualifiedProviderAccountUsageRecordResponse(
 
 function rejectContentModeMismatch(
     recordId: ProviderAccountUsageRecordId,
+    status?: number,
 ): never {
     throw new HappyError(
         `Provider account usage content does not match the Account encryption mode for ${recordId}`,
@@ -62,7 +64,33 @@ function rejectContentModeMismatch(
         {
             kind: 'server',
             code: 'provider_account_usage_content_mode_mismatch',
+            ...(status === undefined ? {} : { status }),
         },
+    );
+}
+
+async function rejectQualifiedProviderAccountUsageReadFailure(
+    response: Response,
+    recordId: ProviderAccountUsageRecordId,
+    fallbackMessage: string,
+): Promise<never> {
+    let json: unknown = null;
+    try {
+        json = await response.json();
+    } catch {
+        // The generic HTTP failure below remains the boundary for malformed
+        // or unrelated error responses.
+    }
+    if (
+        response.status === 409
+        && QualifiedProviderAccountUsageReadErrorV4Schema.safeParse(json).success
+    ) {
+        return rejectContentModeMismatch(recordId, response.status);
+    }
+    throw new HappyError(
+        extractErrorCode(json) ?? fallbackMessage,
+        false,
+        { status: response.status, kind: 'server' },
     );
 }
 
@@ -101,14 +129,11 @@ export async function getProviderAccountUsageSnapshotPlain(
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                let message = `Failed to load provider account usage for ${recordId}`;
-                try {
-                    const json = await response.json();
-                    message = extractErrorCode(json) ?? message;
-                } catch {
-                    // ignore
-                }
-                throw new HappyError(message, false, { status: response.status, kind: 'server' });
+                return await rejectQualifiedProviderAccountUsageReadFailure(
+                    response,
+                    recordId,
+                    `Failed to load provider account usage for ${recordId}`,
+                );
             }
             throw new Error(`Failed to load provider account usage for ${recordId}: ${response.status}`);
         }
@@ -161,14 +186,11 @@ export async function getProviderAccountUsageSnapshotSealed(
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                let message = `Failed to load sealed provider account usage for ${recordId}`;
-                try {
-                    const json = await response.json();
-                    message = extractErrorCode(json) ?? message;
-                } catch {
-                    // ignore
-                }
-                throw new HappyError(message, false, { status: response.status, kind: 'server' });
+                return await rejectQualifiedProviderAccountUsageReadFailure(
+                    response,
+                    recordId,
+                    `Failed to load sealed provider account usage for ${recordId}`,
+                );
             }
             throw new Error(`Failed to load sealed provider account usage for ${recordId}: ${response.status}`);
         }

@@ -115,48 +115,6 @@ describe('createSessionProviderBehaviorFromDescriptor', () => {
         }));
     });
 
-    it('fails closed for unsupported provider behavior descriptor ids', () => {
-        const { behavior, diagnostics } = createSessionProviderBehaviorFromDescriptor({
-            kind: 'plugin.ui.v1',
-            pluginId: 'claude',
-            agentId: 'claude',
-            version: 1,
-            display: {},
-            session: {
-                providerBehaviorDescriptorId: 'claude.unknownSessionProviderBehavior.v1',
-            },
-            message: {},
-            components: { slots: [] },
-        });
-
-        expect(behavior).toEqual({});
-        expect(diagnostics).toContainEqual(expect.objectContaining({
-            code: 'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-            path: 'session.providerBehaviorDescriptorId',
-        }));
-    });
-
-    it('does not materialize executable provider behavior from descriptor ids alone', () => {
-        const { behavior, diagnostics } = createSessionProviderBehaviorFromDescriptor({
-            kind: 'plugin.ui.v1',
-            pluginId: 'claude',
-            agentId: 'claude',
-            version: 1,
-            display: {},
-            session: {
-                providerBehaviorDescriptorId: 'claude.sessionProviderBehavior.v1',
-            },
-            message: {},
-            components: { slots: [] },
-        });
-
-        expect(behavior).toEqual({});
-        expect(diagnostics).toContainEqual(expect.objectContaining({
-            code: 'A16X1_UNSUPPORTED_DESCRIPTOR_ADAPTER',
-            path: 'session.providerBehaviorDescriptorId',
-        }));
-    });
-
     it('builds agent team participant and subagent behavior from descriptor data', () => {
         const { behavior, diagnostics } = createSessionProviderBehaviorFromDescriptor({
             kind: 'plugin.ui.v1',

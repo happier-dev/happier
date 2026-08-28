@@ -3,12 +3,12 @@ import type { FavoriteModelBackendIdentity } from './favoriteModelSelections';
 
 export function buildFavoriteBackendIdentity(entry: Pick<
     ResolvedBackendCatalogEntry,
-    'backendTargetKey' | 'catalogAgentId' | 'builtInAgentId' | 'backendTarget'
+    'backendTargetKey' | 'catalogAgentId' | 'builtInAgentId' | 'backendId' | 'kind'
 >): FavoriteModelBackendIdentity {
     return {
         backendTargetKey: entry.backendTargetKey,
         catalogAgentId: entry.catalogAgentId,
         builtInAgentId: entry.builtInAgentId,
-        configuredBackendId: entry.backendTarget.configuredBackendId ?? null,
+        configuredBackendId: entry.kind === 'configuredBackend' ? entry.backendId : null,
     };
 }

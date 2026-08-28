@@ -1,11 +1,11 @@
 import type {
-    PluginContributionIdentityV1,
     PluginUiDestinationContainerV1,
     PluginUiDestinationReferenceV1,
     PluginUiInlineSurfaceRoleV1,
     PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type {
     PluginUiProjectionModel,

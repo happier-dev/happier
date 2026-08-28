@@ -132,6 +132,45 @@ describe('apiProviderAccountUsage', () => {
         );
     });
 
+    it('normalizes canonical storage-mode conflicts for plain and sealed reads', async () => {
+        mockServerConfig();
+        const snapshot = makeSnapshot();
+        const fetchMock = vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return {
+                ok: false,
+                status: 409,
+                json: async () => ({
+                    error: 'provider_account_usage_storage_mode_mismatch',
+                }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const {
+            getProviderAccountUsageSnapshotPlain,
+            getProviderAccountUsageSnapshotSealed,
+        } = await loadApi();
+        const expected = {
+            code: 'provider_account_usage_content_mode_mismatch',
+            status: 409,
+            kind: 'server',
+            canTryAgain: false,
+        };
+
+        await expect(getProviderAccountUsageSnapshotPlain(
+            credentials,
+            { recordId: snapshot.recordId },
+        )).rejects.toMatchObject(expected);
+        await expect(getProviderAccountUsageSnapshotSealed(
+            credentials,
+            { recordId: snapshot.recordId },
+        )).rejects.toMatchObject(expected);
+    });
+
     it('requests a provider account usage refresh through the V4 record owner', async () => {
         mockServerConfig();
         const snapshot = makeSnapshot();

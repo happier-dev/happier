@@ -1263,7 +1263,7 @@ describe('persistence', () => {
             }));
         });
 
-        it('roundtrips codexBackendMode when persisted', () => {
+        it('normalizes released codexBackendMode into runtimeDescriptorV1', () => {
             store.set(
                 'new-session-draft-v1',
                 JSON.stringify({
@@ -1281,7 +1281,10 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect((draft as any)?.codexBackendMode).toBe('appServer');
+            expect(draft?.runtimeDescriptorV1).toMatchObject({
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            });
         });
 
         it('normalizes legacy codexBackendMode aliases and whitespace when hydrating drafts', () => {
@@ -1302,7 +1305,10 @@ describe('persistence', () => {
             );
 
             const draft = loadNewSessionDraft();
-            expect((draft as any)?.codexBackendMode).toBe('acp');
+            expect(draft?.runtimeDescriptorV1).toMatchObject({
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            });
         });
 
         it('ignores the legacy sessionType field when hydrating a canonical draft', () => {
@@ -1441,15 +1447,41 @@ describe('persistence', () => {
                     permissionMode: 'default',
                     modelMode: 'default',
                     sessionType: 'simple',
-	                    automationDraft: {
-	                        enabled: true,
-	                        name: 'Nightly',
-	                        description: 'sync',
-	                        scheduleKind: 'interval',
-	                        everyMinutes: 30,
-	                        cronExpr: '0 * * * *',
-	                        timezone: 'UTC',
-	                    },
+                    automationDraft: {
+                        pendingAutomationId: 'automation-nightly',
+                        enabled: true,
+                        name: 'Nightly',
+                        description: 'sync',
+                        triggers: [
+                            {
+                                clientId: 'nightly-schedule',
+                                definition: {
+                                    kind: 'schedule',
+                                    enabled: true,
+                                    schedule: {
+                                        kind: 'interval',
+                                        scheduleExpr: null,
+                                        everyMs: 30 * 60_000,
+                                        timezone: null,
+                                    },
+                                },
+                            },
+                            {
+                                clientId: 'nightly-turn-completed',
+                                definition: {
+                                    kind: 'sessionLifecycle',
+                                    enabled: false,
+                                    event: 'parentTurnCompleted',
+                                    scope: {
+                                        kind: 'exactTurn',
+                                        sourceSessionId: 'session-1',
+                                        sourceTurnId: 'turn-1',
+                                    },
+                                    consumption: 'once',
+                                },
+                            },
+                        ],
+                    },
                     updatedAt: Date.now(),
                 }),
             );
@@ -1457,7 +1489,21 @@ describe('persistence', () => {
             const draft = loadNewSessionDraft();
             expect(draft?.automationDraft?.enabled).toBe(true);
             expect(draft?.automationDraft?.name).toBe('Nightly');
-            expect(draft?.automationDraft?.everyMinutes).toBe(30);
+            expect(draft?.automationDraft?.pendingAutomationId).toBe('automation-nightly');
+            expect(draft?.automationDraft?.triggers.map((trigger) => trigger.clientId)).toEqual([
+                'nightly-schedule',
+                'nightly-turn-completed',
+            ]);
+            expect(draft?.automationDraft?.triggers[0]?.definition).toMatchObject({
+                kind: 'schedule',
+                enabled: true,
+                schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+            });
+            expect(draft?.automationDraft?.triggers[1]?.definition).toMatchObject({
+                kind: 'sessionLifecycle',
+                enabled: false,
+                event: 'parentTurnCompleted',
+            });
         });
 
         it('isolates new session launch drafts by server account scope', () => {

@@ -1,9 +1,10 @@
 import {
-    resolveAgentConfiguredRuntimeKind,
     resolveAgentRuntimeControlSurface,
     type AgentCoreRuntimeControlSurface,
     type AgentId,
 } from '@happier-dev/agents';
+import { resolveConfiguredAgentRuntimeKindFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 type RuntimeSurfaceSessionContext = Readonly<{
     agentId: AgentId;
@@ -26,9 +27,9 @@ type RuntimeSurfaceSessionContext = Readonly<{
 export function resolveEffectiveConfiguredRuntimeControlSurface(
     params: RuntimeSurfaceSessionContext,
 ): AgentCoreRuntimeControlSurface | null {
-    const runtimeKind = resolveAgentConfiguredRuntimeKind({
+    const runtimeKind = resolveConfiguredAgentRuntimeKindFromUiBehavior({
         agentId: params.agentId,
-        accountSettings: params.accountSettings ?? null,
+        settings: settingsParse(params.accountSettings ?? {}),
     });
 
     return resolveAgentRuntimeControlSurface(params.agentId, runtimeKind);

@@ -206,6 +206,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             service,
             groupId: 'team',
             policy: { ...policy, autoSwitch: true },
+            expectedGeneration: 4,
             expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
         });
@@ -275,6 +276,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             connectedAccountId: 'account-b',
             priority: 200,
             enabled: true,
+            expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
@@ -283,20 +285,75 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             connectedAccountId: 'account-b',
             enabled: false,
             priority: 200,
+            expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
         expect(removeMemberV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
+            expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
         expect(deleteV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
+            expectedGeneration: 4,
             expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
+    });
+
+    it('rejects a mutation response bound to another group id', async () => {
+        patchV4Mock.mockResolvedValueOnce({
+            group: {
+                ...qualifiedGroup,
+                ref: { service, groupId: 'other-team' },
+            },
+        });
+        const client = createQualifiedConnectedAccountGroupsClient({
+            credentials,
+            service,
+            source: { protocol: 'v4' },
+        });
+        const group = {
+            ref: qualifiedGroup.ref,
+            displayName: qualifiedGroup.displayName,
+            policy: qualifiedGroup.policy,
+            activeAccountId: qualifiedGroup.activeConnectedAccountId,
+            revision: {
+                protocol: 'v4' as const,
+                incarnation: qualifiedGroup.incarnation,
+                generation: qualifiedGroup.generation,
+                runtimeStateRevision: qualifiedGroup.runtimeStateRevision,
+            },
+            state: qualifiedGroup.state,
+            members: [],
+        };
+
+        await expect(client.patch({ group, displayName: 'Renamed' }))
+            .rejects.toMatchObject({
+                code: 'qualified_connected_accounts_inconsistent_peer',
+            });
+    });
+
+    it('rejects a create response bound to another group id', async () => {
+        createV4Mock.mockResolvedValueOnce({
+            group: {
+                ...qualifiedGroup,
+                ref: { service, groupId: 'other-team' },
+            },
+        });
+        const client = createQualifiedConnectedAccountGroupsClient({
+            credentials,
+            service,
+            source: { protocol: 'v4' },
+        });
+
+        await expect(client.create({ groupId: 'team', displayName: 'Team' }))
+            .rejects.toMatchObject({
+                code: 'qualified_connected_accounts_inconsistent_peer',
+            });
     });
 
 });

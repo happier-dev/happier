@@ -290,8 +290,6 @@ import { getUserProfile } from './api/social/apiFriends';
 import {
     cancelAutomationRun,
     clearAutomationRunHistory,
-    createAutomation as createAutomationApi,
-    createPluginEventAutomationDefinition,
     deleteAutomationDefinition,
     getAutomationDefinition,
     getAutomationRunDetail,
@@ -299,14 +297,13 @@ import {
     isAutomationApiErrorCode,
     pauseAutomationDefinition,
     replaceAutomationDefinitionAssignments,
+    retryAutomationReplyHandoff,
     resumeAutomationDefinition,
     runAutomationDefinitionNow,
-    type AutomationCreateInput,
-    type AutomationPatchInput,
-    updatePluginEventAutomationDefinition,
     updateAutomationSettings,
-    updateAutomation as updateAutomationApi,
 } from './api/automations/apiAutomations';
+import type { AutomationEditorDraft } from './domains/automations/automationEditorDraft';
+import { saveAutomationEditorDraft as saveAutomationEditorDraftOwner } from './domains/automations/automationEditorWriter';
 import { kvBulkGet } from './api/account/apiKv';
 import { FeedItem } from './domains/social/feedTypes';
 import { UserProfile } from './domains/social/friendTypes';
@@ -507,8 +504,6 @@ import {
     type ExternalSessionTranscriptRawMessageV1,
     type SessionMetadataInactiveModelIntentExpectationV1,
     type AutomationV3ClearRunHistoryResponse,
-    type AutomationPluginEventDefinitionCreateRequest,
-    type AutomationPluginEventDefinitionPatchRequest,
     type AutomationV3Settings,
 } from '@happier-dev/protocol';
 import { serverFetch } from './http/client';
@@ -5666,55 +5661,25 @@ class Sync {
         });
     }
 
-    /**
-     * Retained schedule writer compatibility. Its V2 response is never put in
-     * the store; the canonical direct reader immediately projects it.
-     */
-    public async createAutomation(input: AutomationCreateInput): Promise<AutomationDefinition> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-        const shouldContinue = this.createServerScopeGuard();
-        const created = await createAutomationApi(this.credentials, input);
-        return await this.readAndUpsertAutomationDefinition(created.id, shouldContinue);
-    }
-
-    /** Retained schedule patch compatibility; Event edits never use this V2 writer. */
-    public async updateAutomation(automationId: string, input: AutomationPatchInput): Promise<AutomationDefinition> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-        const shouldContinue = this.createServerScopeGuard();
-        const updated = await updateAutomationApi(this.credentials, automationId, input);
-        return await this.readAndUpsertAutomationDefinition(updated.id, shouldContinue);
-    }
-
-    /**
-     * Strict Event creation stays on the incumbent Automation owner: its
-     * direct result is projected into the same summary/detail record rather
-     * than creating an Event-specific cache or writer.
-     */
-    public async createPluginEventAutomationDefinition(
-        input: AutomationPluginEventDefinitionCreateRequest,
+    /** One plural writer serves every Automation and Session authoring surface. */
+    public async saveAutomationEditorDraft(
+        draft: AutomationEditorDraft,
+        options: Readonly<{ isCurrent?: () => boolean }> = {},
     ): Promise<AutomationDefinition> {
         if (!this.credentials) {
             throw new Error('Not authenticated');
         }
         const shouldContinue = this.createServerScopeGuard();
-        const created = await createPluginEventAutomationDefinition(this.credentials, input);
-        return this.projectAndUpsertAutomationDefinition(created, shouldContinue, { replaceEqualRevision: true });
-    }
-
-    /** Strict Event edits use the full, version-guarded request only. */
-    public async updatePluginEventAutomationDefinition(
-        automationId: string,
-        input: AutomationPluginEventDefinitionPatchRequest,
-    ): Promise<AutomationDefinition> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-        const shouldContinue = this.createServerScopeGuard();
-        const updated = await updatePluginEventAutomationDefinition(this.credentials, automationId, input);
+        const updated = await saveAutomationEditorDraftOwner({
+            credentials: this.credentials,
+            draft,
+            isCurrent: () => shouldContinue() && (options.isCurrent?.() ?? true),
+            ...(this.encryption ? {
+                sealAutomationTriggerDefinition: (params) => (
+                    this.encryption!.sealAutomationTriggerDefinition(params)
+                ),
+            } : {}),
+        });
         return this.projectAndUpsertAutomationDefinition(updated, shouldContinue, { replaceEqualRevision: true });
     }
 
@@ -5795,15 +5760,7 @@ class Sync {
         if (projected === current) {
             return current;
         }
-        const linked = await projectAutomationDefinitionSessionLink({
-            automation: projected,
-            ...(this.encryption
-                ? {
-                    decryptRaw: (payloadCiphertext: string) =>
-                        this.encryption!.decryptAutomationTemplateRaw(payloadCiphertext),
-                }
-                : {}),
-        });
+        const linked = projectAutomationDefinitionSessionLink({ automation: projected });
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
@@ -5919,6 +5876,17 @@ class Sync {
         if (!shouldContinue()) {
             throw new Error('Automation server-account scope changed');
         }
+        storage.getState().upsertAutomationRun(run);
+        return run;
+    }
+
+    /** Requeues one blocked reply handoff and patches the incumbent bounded Run cache. */
+    public async retryAutomationReplyHandoff(runId: string): Promise<AutomationDefinitionRun> {
+        const credentials = this.credentials;
+        if (!credentials) throw new Error('Not authenticated');
+        const shouldContinue = this.createServerScopeGuard();
+        const run = await retryAutomationReplyHandoff(credentials, runId);
+        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
         storage.getState().upsertAutomationRun(run);
         return run;
     }

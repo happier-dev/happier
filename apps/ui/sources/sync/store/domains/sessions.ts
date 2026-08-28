@@ -61,7 +61,10 @@ import {
     resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+    resolveSessionActionDefaultBackend,
+    resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { applyReachableTargetsToSessionListRenderables } from '../../domains/session/listing/applyReachableTargetsToSessionListRenderables';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -947,10 +950,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
                 const resolvedAgentId = resolveAgentIdFromSessionMetadata(ownerMetadataView);
                 const resolvedBackend = resolveSessionActionDefaultBackend({ session: session as Session });
-                const modelIntent = resolvedBackend
+                const resolvedTarget = resolveSessionActionDefaultTarget(resolvedBackend);
+                const modelIntent = resolvedTarget
                     ? resolveModelSelectionIntentFromSessionMetadata(
                         ownerMetadataView,
-                        buildBackendTargetKeyV2(resolvedBackend.backendTarget),
+                        buildBackendTargetKeyV2(resolvedTarget),
                     )
                     : null;
                 const metadataModelId = modelIntent

@@ -21,8 +21,6 @@ import type {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { buildBackendTransportFieldsFromUiState } from '@/agents/registry/registryUiBehavior';
-
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { sync } from '../sync';
 import { storage } from '../domains/state/storage';
@@ -194,10 +192,9 @@ function resolveTargetPreparePathForCrossPlatformHandoff(params: Readonly<{
     ].join(targetHomeDir.separator);
 }
 
-const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 15_000;
-const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
+const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 600_000;
 const DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS = 500;
-const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 15_000;
+const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 600_000;
 const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
 
 function defaultSleep(delayMs: number): Promise<void> {
@@ -520,7 +517,7 @@ async function startSessionHandoffOnSourceWithMachineRpcTimeout(
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: sourceMachineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
             payload: {
                 sessionId: options.sessionId,
                 sourceMachineId,
@@ -648,7 +645,7 @@ async function prepareTargetSessionHandoffWithMachineRpcTimeout(
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: params.targetMachineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
             payload: {
                 handoffId: params.handoffId,
                 sourceMachineId: params.sourceMachineId,
@@ -766,7 +763,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
         try {
             const rawResult = await machineRpcWithServerScope<unknown, unknown>({
                 machineId: params.targetMachineId,
-                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET,
+                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3,
                 payload: {
                     handoffId: params.handoffId,
                 },
@@ -809,7 +806,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
         try {
             const rawStatus = await machineRpcWithServerScope<unknown, unknown>({
                 machineId: params.targetMachineId,
-                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET,
+                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
                 payload: {
                     handoffId: params.handoffId,
                 },
@@ -958,7 +955,7 @@ async function commitSessionHandoff(params: Readonly<{
         }
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: params.machineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
             payload,
             serverId: normalizeId(params.serverId) || null,
             timeoutMs: runtimeConfig.machineRpcTimeoutMs,
@@ -996,7 +993,7 @@ async function abortSessionHandoff(params: Readonly<{
     const abortOnMachine = async (machineId: string): Promise<void> => {
         await machineRpcWithServerScope<unknown, unknown>({
             machineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3,
             payload: {
                 handoffId: params.handoffId,
                 reason: params.reason,
@@ -1261,11 +1258,6 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         ...(preparedResponse.resume.environmentVariables ? { environmentVariables: preparedResponse.resume.environmentVariables } : {}),
         ...(resumeConnectedServices !== undefined ? { connectedServices: resumeConnectedServices } : {}),
         transcriptStorage: preparedResponse.resume.transcriptStorage,
-        ...buildBackendTransportFieldsFromUiState({
-            machineId: options.targetMachineId,
-            backendTarget: { kind: 'backend', backendId: preparedResponse.resume.agent },
-            runtimeDescriptorV1: preparedRuntimeDescriptorV1,
-        }),
         ...(normalizeId(options.serverId) ? { serverId: normalizeId(options.serverId) } : {}),
     });
     if (resumeResult.type === 'error') {
@@ -1515,11 +1507,6 @@ export async function performSessionHandoffRecoveryAction(params: Readonly<{
         ...(sourceRuntimeDescriptorV1 ? { runtimeDescriptorV1: sourceRuntimeDescriptorV1 } : {}),
         ...(sourceResume.environmentVariables ? { environmentVariables: sourceResume.environmentVariables } : {}),
         transcriptStorage: sourceResume.transcriptStorage,
-        ...buildBackendTransportFieldsFromUiState({
-            machineId: sourceResume.machineId,
-            backendTarget: { kind: 'backend', backendId: sourceResume.agent },
-            runtimeDescriptorV1: sourceRuntimeDescriptorV1,
-        }),
         ...(sourceResume.serverId ? { serverId: sourceResume.serverId } : {}),
     });
     if (resumed.type === 'error') {

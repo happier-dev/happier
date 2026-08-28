@@ -2,7 +2,6 @@ import {
     projectSessionMetadataForAgentHandoff,
     resolveAgentIdFromSessionMetadata,
     resolveVendorHandoffIdFromSessionMetadata,
-    isBundledAgentId,
 } from '@happier-dev/agents';
 import {
     ExternalSessionAgentIdSchema,
@@ -66,23 +65,11 @@ export type SessionHandoffRecoveryPlan = Readonly<{
     }>;
 }>;
 
-function resolveRuntimeDescriptorVendorResumeId(
-    runtimeDescriptor: RuntimeDescriptorV1 | null,
-): string | undefined {
-    const providerSessionId = runtimeDescriptor?.agent.providerSessionId;
-    if (typeof providerSessionId !== 'string') return undefined;
-    const normalized = providerSessionId.trim();
-    return normalized || undefined;
-}
-
 function resolveVendorResumeId(
     agentId: ExternalSessionAgentId,
-    metadata: ReturnType<typeof projectSessionMetadataForAgentHandoff>,
-    runtimeDescriptor: RuntimeDescriptorV1 | null,
+    metadata: Metadata,
 ): string | undefined {
-    const descriptorResumeId = resolveRuntimeDescriptorVendorResumeId(runtimeDescriptor);
-    if (!isBundledAgentId(agentId)) return descriptorResumeId;
-    return resolveVendorHandoffIdFromSessionMetadata(agentId, metadata) ?? descriptorResumeId;
+    return resolveVendorHandoffIdFromSessionMetadata(agentId, metadata) ?? undefined;
 }
 
 export function buildSessionHandoffRecoveryPlan(input: Readonly<{
@@ -109,7 +96,7 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
         metadata: agentMetadata,
         ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     });
-    const vendorResumeId = resolveVendorResumeId(agent, agentMetadata, runtimeDescriptorV1);
+    const vendorResumeId = resolveVendorResumeId(agent, input.sourceMetadata);
 
     return {
         handoffId: input.handoffId,

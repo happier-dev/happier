@@ -4,10 +4,10 @@ import type {
 } from '@/sync/domains/automations/automationTypes';
 import {
     attachAutomationDefinitionDetail,
-    hasMatchingAutomationDefinitionSummary,
+    hasMatchingAutomationDefinitionTriggerBindings,
     markAutomationDefinitionContentUnavailable,
 } from '@/sync/domains/automations/automationDefinitionProjection';
-import { getAutomationDefinitionRunOriginAt } from '@/sync/domains/automations/automationRunOrigin';
+import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 import type { StoreGet, StoreSet } from './_shared';
@@ -33,7 +33,7 @@ function retainCurrentDefinitionDetail(params: Readonly<{
     // decides whether the current summary can retain that private state.
     if (previous.detail.kind === 'unloaded') return incoming;
     if (previous.detail.kind === 'unavailable') {
-        return hasMatchingAutomationDefinitionSummary(previous, incoming)
+        return hasMatchingAutomationDefinitionTriggerBindings(previous, incoming)
             ? markAutomationDefinitionContentUnavailable(incoming)
             : incoming;
     }
@@ -76,10 +76,10 @@ function mergeRunsNewestFirst(runs: AutomationDefinitionRun[]): AutomationDefini
     }
     return Array.from(uniqueRuns.values())
         .sort((left, right) => {
-            const rightOriginAt = getAutomationDefinitionRunOriginAt(right);
-            const leftOriginAt = getAutomationDefinitionRunOriginAt(left);
-            if (rightOriginAt !== leftOriginAt) {
-                return rightOriginAt - leftOriginAt;
+            const rightCauseAt = getAutomationDefinitionRunCauseAt(right);
+            const leftCauseAt = getAutomationDefinitionRunCauseAt(left);
+            if (rightCauseAt !== leftCauseAt) {
+                return rightCauseAt - leftCauseAt;
             }
             return right.updatedAt - left.updatedAt;
         });
