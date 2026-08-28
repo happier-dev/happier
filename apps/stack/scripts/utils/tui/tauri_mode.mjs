@@ -14,6 +14,18 @@ function ensureTuiWatchArg(args) {
   return [...args, '--watch'];
 }
 
+function ensureTuiMobileArg(args) {
+  if (
+    !isTuiDevForwardedArgs(args)
+    || args.includes('--mobile')
+    || args.includes('--with-mobile')
+    || args.includes('--no-mobile')
+  ) {
+    return args;
+  }
+  return [...args, '--mobile'];
+}
+
 function isTuiDevForwardedArgs(argv) {
   const args = Array.isArray(argv) ? argv : [];
   if (!args.length) return false;
@@ -28,7 +40,7 @@ function isTuiDevForwardedArgs(argv) {
 
 export function buildTuiChildArgs({ forwardedArgs, withTauri } = {}) {
   const args = Array.isArray(forwardedArgs) ? forwardedArgs.map((arg) => String(arg ?? '')).filter(Boolean) : [];
-  const childArgs = ensureTuiWatchArg(args.length > 0 ? args : ['dev']);
+  const childArgs = ensureTuiMobileArg(ensureTuiWatchArg(args.length > 0 ? args : ['dev']));
   if (!withTauri) {
     return childArgs;
   }

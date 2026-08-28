@@ -191,12 +191,12 @@ async function main() {
 
   // Root script convenience:
   // `yarn tui` should work from monorepo checkout without additional args.
-  // Default to `hstack tui dev` while preserving explicit forwarded args.
+  // Default to `hstack tui dev --mobile` while preserving explicit forwarded args.
   let argv = argvWithoutDryRun;
   if (argvWithoutDryRun[0] === 'tui') {
     const forwarded = argvWithoutDryRun.slice(1);
     if (forwarded.length === 0) {
-      argv = ['tui', 'dev', ...forwarded];
+      argv = ['tui', 'dev', '--mobile'];
     }
   }
   const wantsTuiMobile = argv[0] === 'tui' && argv.some((arg) => String(arg ?? '').trim() === '--mobile' || String(arg ?? '').trim() === '--with-mobile');
