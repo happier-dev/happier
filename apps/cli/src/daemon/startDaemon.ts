@@ -4262,6 +4262,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
                     args,
                     daemonPid: process.pid,
+                    environment: childProcessEnv,
                     launchOptions: runnerLaunchOptions,
                   })
                   : null;

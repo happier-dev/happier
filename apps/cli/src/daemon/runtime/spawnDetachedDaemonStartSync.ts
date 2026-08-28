@@ -4,6 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import { configuration } from '@/configuration';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
+import {
+  buildSystemdUserCriticalScopedLaunchSpec,
+  isSystemdUserCriticalResourceGovernorReady,
+} from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import { toPowerShellStringLiteral } from '@/utils/powerShellCommand';
 import {
   parsePowerShellStartProcessPid,
@@ -137,7 +141,16 @@ export async function spawnDetachedDaemonStartSync(
     });
   }
 
-  return spawn(launchSpec.filePath, launchSpec.args, {
+  const scopedLaunchSpec = await isSystemdUserCriticalResourceGovernorReady({ environment: env })
+    ? buildSystemdUserCriticalScopedLaunchSpec({
+      launchSpec: {
+        filePath: launchSpec.filePath,
+        args: launchSpec.args,
+      },
+    })
+    : launchSpec;
+
+  return spawn(scopedLaunchSpec.filePath, scopedLaunchSpec.args, {
     ...spawnOptions,
     env,
     detached: true,

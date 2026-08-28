@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const spawnMock = vi.fn((..._args: any[]) => ({ unref() {} }));
+const execFileMock = vi.fn((...args: any[]) => {
+  const callback = args[3] as (error: Error | null, stdout: string, stderr: string) => void;
+  callback(null, '', '');
+});
 const resolveDaemonLaunchSpecMock = vi.fn(async (..._args: any[]) => ({
   filePath: '/usr/bin/node',
   args: ['--no-warnings', '--no-deprecation', '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'],
@@ -12,6 +16,7 @@ const resolveDaemonLaunchSpecMock = vi.fn(async (..._args: any[]) => ({
 
 vi.mock('child_process', () => ({
   spawn: (...args: any[]) => spawnMock(...args),
+  execFile: (...args: any[]) => execFileMock(...args),
 }));
 
 vi.mock('./resolveDaemonLaunchSpec', () => ({
@@ -40,12 +45,18 @@ describe('spawnDetachedDaemonStartSync', () => {
     'HAPPIER_HOME_DIR',
     'HAPPIER_DAEMON_STARTUP_SOURCE',
     'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT',
+    'DBUS_SESSION_BUS_ADDRESS',
   ]);
   const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
   afterEach(() => {
     envScope.restore();
     spawnMock.mockClear();
+    execFileMock.mockReset();
+    execFileMock.mockImplementation((...args: any[]) => {
+      const callback = args[3] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(null, '', '');
+    });
     resolveDaemonLaunchSpecMock.mockClear();
     vi.resetModules();
     if (originalPlatformDescriptor) {
@@ -59,6 +70,7 @@ describe('spawnDetachedDaemonStartSync', () => {
       HAPPIER_RELEASE_RING: 'dev',
       HAPPIER_PUBLIC_RELEASE_CHANNEL: undefined,
       HAPPIER_HOME_DIR: '/tmp/happier-cli-test-home',
+      DBUS_SESSION_BUS_ADDRESS: undefined,
     });
 
     const mod = await import('./spawnDetachedDaemonStartSync');
@@ -69,11 +81,81 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(options?.env?.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe('dev');
   });
 
+  it('launches a detached Linux daemon in the provisioned critical systemd slice', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+    const userBus = 'unix:path=/run/user/501/bus';
+    execFileMock.mockImplementationOnce((...args: any[]) => {
+      const callback = args[3] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(null, 'LoadState=loaded\nMemoryLow=4294967296\n', '');
+    });
+
+    const mod = await import('./spawnDetachedDaemonStartSync');
+    await mod.spawnDetachedDaemonStartSync({
+      env: { DBUS_SESSION_BUS_ADDRESS: userBus },
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'systemd-run',
+      [
+        '--user',
+        '--scope',
+        '--quiet',
+        '--slice=happier-critical.slice',
+        '--',
+        '/usr/bin/node',
+        '--no-warnings',
+        '--no-deprecation',
+        '/opt/happier/package-dist/index.mjs',
+        'daemon',
+        'start-sync',
+      ],
+      expect.objectContaining({
+        detached: true,
+        stdio: 'ignore',
+        env: expect.objectContaining({ DBUS_SESSION_BUS_ADDRESS: userBus }),
+      }),
+    );
+    expect(execFileMock).toHaveBeenCalledWith(
+      'systemctl',
+      [
+        '--user',
+        'show',
+        'happier-critical.slice',
+        '--property=LoadState',
+        '--property=MemoryLow',
+      ],
+      expect.objectContaining({
+        timeout: 1_000,
+        maxBuffer: 16 * 1024,
+        env: expect.objectContaining({ DBUS_SESSION_BUS_ADDRESS: userBus }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('keeps the direct launch when Linux has no user-systemd bus', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+
+    const mod = await import('./spawnDetachedDaemonStartSync');
+    await mod.spawnDetachedDaemonStartSync({ env: {} });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/usr/bin/node',
+      ['--no-warnings', '--no-deprecation', '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'],
+      expect.objectContaining({
+        detached: true,
+        stdio: 'ignore',
+      }),
+    );
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
   it('lets an explicit startup source override an inherited daemon startup source', async () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
     envScope.patch({
       HAPPIER_DAEMON_STARTUP_SOURCE: 'manual',
       HAPPIER_HOME_DIR: '/tmp/happier-cli-test-home',
+      DBUS_SESSION_BUS_ADDRESS: undefined,
     });
 
     const mod = await import('./spawnDetachedDaemonStartSync');
@@ -94,6 +176,7 @@ describe('spawnDetachedDaemonStartSync', () => {
     const successorEnv = {
       ...process.env,
       HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '2222222222222222',
+      DBUS_SESSION_BUS_ADDRESS: undefined,
     };
 
     const mod = await import('./spawnDetachedDaemonStartSync');

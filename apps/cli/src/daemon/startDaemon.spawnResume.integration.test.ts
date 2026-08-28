@@ -2478,6 +2478,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
       expect(spawnHappyCLI).not.toHaveBeenCalled();
       expect(buildCgroupSelfMigratingHappyCliLaunchSpec).toHaveBeenCalledTimes(1);
+      expect(buildCgroupSelfMigratingHappyCliLaunchSpec).toHaveBeenCalledWith(expect.objectContaining({
+        environment: expect.objectContaining({
+          HAPPIER_SESSION_REQUESTED_DIRECTORY: '/tmp',
+        }),
+      }));
       expect(spawnChildProcess).toHaveBeenCalledTimes(1);
       const spawnCall = spawnChildProcess.mock.calls[0] as unknown as [string, string[], { env?: NodeJS.ProcessEnv } | undefined] | undefined;
       const spawnFilePath = spawnCall?.[0];
