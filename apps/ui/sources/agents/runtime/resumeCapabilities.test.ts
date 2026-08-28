@@ -51,6 +51,7 @@ describe('projected external Agent resume capability', () => {
                 providerSessionId: 'acme-session-1',
             },
         },
+        nativeResumeIdentityV1: { v: 1, vendorResumeId: 'acme-session-1' },
     } as const;
 
     test('resumes through the exact current declaration and generic runtime descriptor', () => {

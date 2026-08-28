@@ -38,6 +38,8 @@ import {
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { getPreferredLanguage } from '@/text';
+import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 
 /**
  * One exact target/contributor mount plus the sole generation-retained input
@@ -575,6 +577,8 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             publishProjectedAgentUiBehaviorDescriptors({
                 machineId: normalizeKeyPart(params.machineId),
                 descriptorsByAgentId: readProjectedAgentUiBehaviorDescriptors(adapted.mergedProviderProjectionById),
+                pluginUiProjection: normalizePluginUiProjection(res.projection),
+                locale: getPreferredLanguage(),
             });
         }
         // This is the one moment a target-scoped admission is confirmed, so it

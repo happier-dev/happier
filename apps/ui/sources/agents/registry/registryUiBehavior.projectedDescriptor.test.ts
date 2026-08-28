@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveAgentUiBehavior, resolveAgentUiBehaviorFromSessionMetadata } from './registryUiBehavior';
+import {
+    canSelectAgentWithoutDetectedCli,
+    resolveAgentUiBehavior,
+    resolveAgentUiBehaviorFromSessionMetadata,
+} from './registryUiBehavior';
 import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
     readProjectedAgentUiBehaviorDiagnostics,
 } from './agentUiBehaviorProjection';
 import { makeSettings } from './registryUiBehavior.testHelpers';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { createSessionFixture } from '@/dev/testkit';
 
 const EXTERNAL_AGENT_ID = 'acme.agent';
 
@@ -110,6 +116,55 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID)).toBe(resolveAgentUiBehavior(EXTERNAL_AGENT_ID));
     });
 
+    it('resolves teammate details labels from the owning plugin projection locale', () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-a',
+            locale: 'es',
+            pluginUiProjection: {
+                ...EMPTY_PLUGIN_UI_PROJECTION,
+                translationsByPluginId: {
+                    acme: {
+                        id: 'translations:acme',
+                        pluginId: 'acme',
+                        contributionKind: 'translations',
+                        locales: ['en', 'es'],
+                        bundles: {
+                            en: { 'acme.subagents.launch.title': 'Launch teammate' },
+                            es: { 'acme.subagents.launch.title': 'Iniciar compañero' },
+                        },
+                    },
+                },
+            },
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: EXTERNAL_AGENT_ID,
+                    version: 1,
+                    components: {
+                        slots: [{
+                            id: 'acme.details',
+                            slot: 'sessionSubagents.teammateDetailsTab',
+                            surfaceId: 'subagent-details',
+                            resourceKind: 'acmeSubagentLauncher',
+                            iconName: 'users',
+                            tab: {
+                                keyPrefix: 'acme-subagent-launcher',
+                                titleKey: 'acme.subagents.launch.title',
+                            },
+                        }],
+                    },
+                },
+            },
+        });
+
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, 'machine-a')
+            .sessionSubagents?.createTeammateLauncherDetailsTab?.({
+                session: createSessionFixture(),
+                teamId: 'team-1',
+            })?.title).toBe('Iniciar compañero');
+    });
+
     it('keeps the unknown fallback for an external Agent that ships no descriptor', () => {
         const behavior = resolveAgentUiBehavior('acme.undeclared');
 
@@ -122,7 +177,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         expect(supportsStorageMode('acme.undeclared', 'persisted')).toBe(false);
     });
 
-    it('never lets a projected descriptor take over a bundled Agent', () => {
+    it('uses the exact machine projection for a bundled Agent without changing its machine-blind floor', () => {
         const before = resolveAgentUiBehavior('claude');
 
         publishProjectedAgentUiBehaviorDescriptors({
@@ -133,6 +188,10 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         });
 
         expect(resolveAgentUiBehavior('claude')).toBe(before);
+        expect(resolveAgentUiBehavior('claude', 'machine-a')).not.toBe(before);
+        expect(resolveAgentUiBehavior('claude', 'machine-a').permissions?.footer?.stopHandling)
+            .toBe('denyOnly');
+        expect(resolveAgentUiBehavior('claude', 'machine-b')).toBe(before);
     });
 
     it('resolves a Session against ITS machine, never another machine that also ships the Agent', async () => {
@@ -156,6 +215,32 @@ describe('daemon-projected agent UI behavior descriptors', () => {
             .toBe(false);
         expect(resolveAgentUiBehaviorFromSessionMetadata(sessionOnA)?.permissions?.footer?.usePermissionUpdates)
             .toBe(true);
+    });
+
+    it('uses the exact machine declaration for installed Agent CLI-less selectability', () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-a',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: { newSession: { canSelectWithoutDetectedCli: true } },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-b',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: { newSession: { canSelectWithoutDetectedCli: false } },
+            },
+        });
+
+        expect(canSelectAgentWithoutDetectedCli({
+            agentId: EXTERNAL_AGENT_ID,
+            machineId: 'machine-a',
+            settings: makeSettings(),
+        })).toBe(true);
+        expect(canSelectAgentWithoutDetectedCli({
+            agentId: EXTERNAL_AGENT_ID,
+            machineId: 'machine-b',
+            settings: makeSettings(),
+        })).toBe(false);
     });
 
     it('falls to the neutral floor rather than another machine when the owning machine ships none', async () => {

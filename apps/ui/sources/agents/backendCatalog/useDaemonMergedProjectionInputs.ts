@@ -90,6 +90,9 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     const refreshKeyRef = React.useRef(params.refreshKey);
     const projectionRevisionRef = React.useRef(projectionRevision);
     const machineIdRef = React.useRef(machineId);
+    const serverIdRef = React.useRef(serverId);
+    const hasProjectionScopeRef = React.useRef(hasProjectionScope);
+    const targetRequestRef = React.useRef(targetRequest);
 
     const [state, setState] = React.useState<DaemonMergedProjectionInputsState>(() => {
         if (!hasProjectionScope) {
@@ -143,11 +146,15 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         const forceReload = refreshKeyRef.current !== params.refreshKey
             || projectionRevisionRef.current !== projectionRevision;
         const previousMachineId = machineIdRef.current;
+        const previousServerId = serverIdRef.current;
         const accountLifetimeChanged = params.mountedTarget !== undefined
             && stateAccountLifetimeRef.current !== accountLifetime;
         refreshKeyRef.current = params.refreshKey;
         projectionRevisionRef.current = projectionRevision;
         machineIdRef.current = machineId;
+        serverIdRef.current = serverId;
+        hasProjectionScopeRef.current = hasProjectionScope;
+        targetRequestRef.current = targetRequest;
         if (!hasProjectionScope || !machineId) {
             stateAccountLifetimeRef.current = accountLifetime;
             setState({ phase: 'idle', inputs: null });
@@ -188,7 +195,10 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             setState((previous) => ({
                 phase: 'loading',
                 inputs: !accountLifetimeChanged
-                    && (params.retainInputsAcrossScopeChange === true || previousMachineId === machineId)
+                    && (
+                        params.retainInputsAcrossScopeChange === true
+                        || (previousMachineId === machineId && previousServerId === serverId)
+                    )
                     ? previous.inputs
                     : null,
             }));
@@ -239,7 +249,27 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         targetRequest,
     ]);
 
-    return params.mountedTarget && stateAccountLifetimeRef.current !== accountLifetime
-        ? { phase: 'loading', inputs: null }
-        : state;
+    if (params.mountedTarget && stateAccountLifetimeRef.current !== accountLifetime) {
+        return { phase: 'loading', inputs: null };
+    }
+    // Scope/revision changes are first visible during render; the effect that
+    // publishes their loading state runs after commit. Fence that render so a
+    // consumer cannot start work for B with A's still-ready projection.
+    const scopeChanged = hasProjectionScopeRef.current !== hasProjectionScope
+        || machineIdRef.current !== machineId
+        || serverIdRef.current !== serverId
+        || targetRequestRef.current !== targetRequest;
+    if (scopeChanged) {
+        return {
+            phase: 'loading',
+            inputs: params.retainInputsAcrossScopeChange === true ? state.inputs : null,
+        };
+    }
+    if (
+        refreshKeyRef.current !== params.refreshKey
+        || projectionRevisionRef.current !== projectionRevision
+    ) {
+        return { phase: 'loading', inputs: state.inputs };
+    }
+    return state;
 }

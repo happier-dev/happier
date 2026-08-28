@@ -8,6 +8,39 @@ const confirmSpy = vi.hoisted(() => vi.fn());
 const alertSpy = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 const commitSelectionSpy = vi.hoisted(() => vi.fn());
+type TestAccountLifetime = Readonly<{
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+}>;
+const activeAccountLifetime = vi.hoisted(() => {
+    const current: { value: TestAccountLifetime | null } = { value: null };
+    return {
+        current,
+        create() {
+            let retired = false;
+            const retirements = new Set<() => void>();
+            const lifetime: TestAccountLifetime = {
+                isCurrent: () => !retired,
+                onRetire(cancel) {
+                    if (retired) {
+                        cancel();
+                        return { dispose() {} };
+                    }
+                    retirements.add(cancel);
+                    return { dispose: () => retirements.delete(cancel) };
+                },
+            };
+            return {
+                lifetime,
+                retire() {
+                    retired = true;
+                    for (const cancel of [...retirements]) cancel();
+                    retirements.clear();
+                },
+            };
+        },
+    };
+});
 
 vi.mock('@/modal', () => ({
     Modal: {
@@ -17,6 +50,9 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
+}));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -39,6 +75,7 @@ describe('useConfirmExperimentalProviderModel', () => {
         alertSpy.mockReset();
         machineRpcWithServerScope.mockReset();
         commitSelectionSpy.mockReset();
+        activeAccountLifetime.current.value = null;
     });
 
     it('keeps authoring pending until the confirmed selection is committed', async () => {
@@ -101,6 +138,38 @@ describe('useConfirmExperimentalProviderModel', () => {
         await expect(pending).resolves.toBe(false);
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('does not dispatch Account A confirmation after Account B mounts with identical routing ids', async () => {
+        const accountA = activeAccountLifetime.create();
+        const accountB = activeAccountLifetime.create();
+        activeAccountLifetime.current.value = accountA.lifetime;
+        const modalResult = createDeferred<boolean>();
+        confirmSpy.mockReturnValueOnce(modalResult.promise);
+        const refresh = vi.fn(async () => {});
+        const { useConfirmExperimentalProviderModel } = await import('./useConfirmExperimentalProviderModel');
+        const hook = await renderHook(() => useConfirmExperimentalProviderModel({
+            enabled: true,
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            agentTargetKey: 'backend:codex',
+            refresh,
+        }));
+
+        let pending!: Promise<boolean>;
+        act(() => { pending = hook.getCurrent().confirm(confirmation, commitSelectionSpy); });
+        await act(async () => {
+            activeAccountLifetime.current.value = accountB.lifetime;
+            accountA.retire();
+            await hook.rerender();
+        });
+        await act(async () => modalResult.resolve(true));
+
+        await expect(pending).resolves.toBe(false);
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        expect(refresh).not.toHaveBeenCalled();
+        expect(commitSelectionSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent().pending).toBe(false);
     });
 
     it('does not mutate after the exact Agent target scope changes while confirmation is open', async () => {

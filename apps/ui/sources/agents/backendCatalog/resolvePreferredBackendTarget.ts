@@ -1,25 +1,27 @@
 import {
+    PersistedBackendTargetRefV2Schema,
     readBackendTargetRefV2,
-    type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId, type BundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from './legacyCompatAgents';
-import { backendTargetsMatch, formatBackendTargetKeyV2 } from './backendTargetKeyV2';
+import { formatBackendTargetKeyV2 } from './backendTargetKeyV2';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
 
 export type BackendTargetPreferenceInput = Readonly<{
     candidateBackendTargets?: ReadonlyArray<unknown>;
     preferredBuiltInAgentIds?: ReadonlyArray<unknown>;
-    availableBackendTargets?: ReadonlyArray<BackendTargetRefV2>;
+    availableBackendTargets?: ReadonlyArray<PersistedBackendTargetRefV2>;
     lastUsedAgent: unknown;
     lastUsedBackendTarget?: unknown;
     defaultBuiltInAgentId?: AgentId;
 }>;
 
 function isAvailableBackendTarget(
-    target: BackendTargetRefV2,
-    availableTargets: ReadonlyArray<BackendTargetRefV2> | undefined,
+    target: PersistedBackendTargetRefV2,
+    availableTargets: ReadonlyArray<PersistedBackendTargetRefV2> | undefined,
 ): boolean {
     if (!availableTargets || availableTargets.length === 0) {
         return true;
@@ -30,21 +32,26 @@ function isAvailableBackendTarget(
 
 function resolveParseableBackendTarget(
     value: unknown,
-    availableTargets: ReadonlyArray<BackendTargetRefV2> | undefined,
-): BackendTargetRefV2 | null {
-    let parsed: BackendTargetRefV2;
-    try {
-        parsed = readBackendTargetRefV2(value as BackendTargetRefV2Input);
-    } catch {
-        return null;
+    availableTargets: ReadonlyArray<PersistedBackendTargetRefV2> | undefined,
+): PersistedBackendTargetRefV2 | null {
+    const canonical = PersistedBackendTargetRefV2Schema.safeParse(value);
+    let parsed: PersistedBackendTargetRefV2;
+    if (canonical.success) {
+        parsed = canonical.data;
+    } else {
+        try {
+            parsed = readBackendTargetRefV2(value as BackendTargetRefV2Input);
+        } catch {
+            return null;
+        }
     }
-    if (isLegacyCompatAgentType(parsed.backendId)) {
+    if (parsed.kind === 'backend' && isLegacyCompatAgentType(parsed.backendId)) {
         return null;
     }
     return isAvailableBackendTarget(parsed, availableTargets) ? parsed : null;
 }
 
-export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInput): BackendTargetRefV2 {
+export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInput): PersistedBackendTargetRefV2 {
     for (const candidateTarget of params.candidateBackendTargets ?? []) {
         const resolvedCandidate = resolveParseableBackendTarget(candidateTarget, params.availableBackendTargets);
         if (resolvedCandidate) {
@@ -62,13 +69,15 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
 
     const hasStoredBackendTargetPreference = params.lastUsedBackendTarget !== undefined && params.lastUsedBackendTarget !== null;
     if (!hasStoredBackendTargetPreference) {
-        const preferredConfiguredBackendTarget = params.availableBackendTargets?.find((target) => !!target.configuredBackendId) ?? null;
+        const preferredConfiguredBackendTarget = params.availableBackendTargets?.find(
+            (target) => target.kind === 'backend' && !!target.configuredBackendId,
+        ) ?? null;
         if (preferredConfiguredBackendTarget) {
             return preferredConfiguredBackendTarget;
         }
     }
 
-    const preferredBuiltInAgentIds: AgentId[] = [];
+    const preferredBuiltInAgentIds: BundledAgentId[] = [];
     for (const preferredCandidate of params.preferredBuiltInAgentIds ?? []) {
         if (!isBundledAgentId(preferredCandidate)) {
             continue;
@@ -81,13 +90,18 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
         preferredBuiltInAgentIds.push(params.lastUsedAgent);
     }
 
-    const defaultBuiltInAgentId = params.defaultBuiltInAgentId ?? DEFAULT_AGENT_ID;
+    const defaultBuiltInAgentId = isBundledAgentId(params.defaultBuiltInAgentId)
+        ? params.defaultBuiltInAgentId
+        : DEFAULT_AGENT_ID;
     if (!preferredBuiltInAgentIds.includes(defaultBuiltInAgentId)) {
         preferredBuiltInAgentIds.push(defaultBuiltInAgentId);
     }
 
     for (const preferredBuiltInAgentId of preferredBuiltInAgentIds) {
-        const builtInTarget: BackendTargetRefV2 = { kind: 'backend', backendId: preferredBuiltInAgentId };
+        const builtInTarget: PersistedBackendTargetRefV2 = {
+            kind: 'agent',
+            identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[preferredBuiltInAgentId],
+        };
         if (isAvailableBackendTarget(builtInTarget, params.availableBackendTargets)) {
             return builtInTarget;
         }
@@ -97,5 +111,8 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
         return params.availableBackendTargets[0];
     }
 
-    return { kind: 'backend', backendId: defaultBuiltInAgentId };
+    return {
+        kind: 'agent',
+        identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[defaultBuiltInAgentId],
+    };
 }

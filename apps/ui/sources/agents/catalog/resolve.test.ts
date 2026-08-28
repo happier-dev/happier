@@ -58,8 +58,8 @@ describe('agents/resolve', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'OpenCodeBash' })).toBe('opencode');
     });
 
-    it('falls back to default agent when no flavor or codex tool hint exists', () => {
-        expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'Bash' })).toBe('claude');
-        expect(resolveAgentIdForPermissionUi({ flavor: undefined, toolName: '' })).toBe('claude');
+    it('leaves genuinely unidentified prompts neutral instead of borrowing the default Agent', () => {
+        expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'Bash' })).toBeNull();
+        expect(resolveAgentIdForPermissionUi({ flavor: undefined, toolName: '' })).toBeNull();
     });
 });

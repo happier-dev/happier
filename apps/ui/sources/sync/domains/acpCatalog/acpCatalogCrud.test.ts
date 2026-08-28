@@ -15,7 +15,6 @@ const baseSettings = {
             command: 'kiro-cli',
             args: ['acp'],
             env: {},
-            transportProfile: 'kiro' as const,
             capabilities: {
                 supportsLoadSession: true,
                 supportsModes: 'yes' as const,
@@ -38,7 +37,6 @@ describe('acpCatalogCrud', () => {
             command: 'custom-cli',
             args: ['acp'],
             env: {},
-            transportProfile: 'generic',
             capabilities: {
                 supportsLoadSession: false,
                 supportsModes: 'unknown',

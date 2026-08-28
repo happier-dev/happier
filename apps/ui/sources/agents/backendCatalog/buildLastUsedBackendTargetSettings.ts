@@ -1,6 +1,5 @@
 import {
     writePersistedBackendTargetRefV2,
-    type BackendTargetRefV2,
     type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
@@ -16,17 +15,23 @@ export type LastUsedBackendTargetSettingsDelta = Readonly<{
  * Oh My Pi persists only its qualified contribution identity.
  */
 export function buildLastUsedBackendTargetSettings(params: Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     selectedBuiltInAgentId: AgentId | null;
 }>): LastUsedBackendTargetSettingsDelta {
-    const lastUsedBackendTarget = writePersistedBackendTargetRefV2(params.backendTarget);
+    const lastUsedBackendTarget = params.backendTarget.kind === 'agent'
+        ? params.backendTarget
+        : writePersistedBackendTargetRefV2(params.backendTarget);
     if (lastUsedBackendTarget.kind === 'agent') {
         return {
-            lastUsedAgent: null,
+            lastUsedAgent: params.selectedBuiltInAgentId,
             lastUsedBackendTarget,
         };
     }
-    if (!params.backendTarget.configuredBackendId && isBundledAgentId(params.backendTarget.backendId)) {
+    if (
+        params.backendTarget.kind === 'backend'
+        && !params.backendTarget.configuredBackendId
+        && isBundledAgentId(params.backendTarget.backendId)
+    ) {
         return {
             lastUsedAgent: params.selectedBuiltInAgentId ?? params.backendTarget.backendId,
             lastUsedBackendTarget,

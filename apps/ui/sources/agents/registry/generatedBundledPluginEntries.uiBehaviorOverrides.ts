@@ -3,20 +3,17 @@
  * GENERATED FILE CONTRACT (PS-04)
  *
  * This file is the UI-side generated bundled entry map for first-party bundled
- * agent UI behavior overrides.
+ * Agent UI descriptors and predecessor-scoped message metadata writers.
  *
  * It is split out from `generatedBundledPluginEntries.ts` to avoid import cycles
- * between agent UI behavior graphs and the core registry maps.
+ * between agent UI behavior graphs, message compatibility, and registry maps.
  *
  * This file is emitted by:
  * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`
  */
 
 import type { CanonicalAgentId } from './registryCore';
-import type { AgentUiBehavior } from './registryUiBehavior';
-import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-auggie/ui/behavior';
-import { CLAUDE_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-claude/ui/behavior';
-import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-codex/ui/behavior';
+import { CLAUDE_PREDECESSOR_MESSAGE_META_WRITER } from '@happier-dev/plugins-claude/ui/predecessor-message-meta';
 
 export type BundledAgentUiBehaviorDescriptor = Readonly<{
     agentId: CanonicalAgentId;
@@ -67,6 +64,84 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     claude: Object.freeze({
         agentId: 'claude' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "askUserQuestion": {
+    "dialogs": [
+      {
+        "dialogId": "switch_model",
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "usage_limit",
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "resume_choice",
+        "settingMutation": {
+          "allowedValues": [
+            "resume_from_summary",
+            "resume_full_session"
+          ],
+          "settingId": "claudeUnifiedTerminalResumeChoice"
+        },
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "safeguard_pause",
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "effort_change",
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "trust_folder",
+        "settingMutation": {
+          "allowedValues": [
+            "always_trust_happier_workspaces",
+            "always_reject_happier_workspaces"
+          ],
+          "settingId": "claudeUnifiedTerminalWorkspaceTrust"
+        },
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      },
+      {
+        "dialogId": "unrecognized_confirmation",
+        "terminalNotice": {
+          "headerKey": "tools.askUserQuestion.attachedTerminalNotice.header",
+          "questionKey": "tools.askUserQuestion.attachedTerminalNotice.question"
+        },
+        "terminalSecondaryAction": {
+          "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
+          "kind": "openAttachedTerminal",
+          "labelKey": "tools.askUserQuestion.attachedTerminalNotice.openTerminal"
+        }
+      }
+    ]
+  },
   "attachedSessionTerminal": {
     "supported": true
   },
@@ -287,8 +362,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
               "appServer"
             ]
           },
-          "legacyModeOutputKey": "codexBackendMode",
-          "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
           "sourceFields": [
             "home",
             "connectedServiceId",
@@ -350,7 +423,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
               "any": [
                 {
                   "aliases": {
-                    "mcp": "appServer",
+                    "mcp": "mcp",
                     "mcp_resume": "acp"
                   },
                   "kind": "settingEquals",
@@ -377,7 +450,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       },
       "backendMode": {
         "aliases": {
-          "mcp": "appServer",
+          "mcp": "mcp",
           "mcp_resume": "acp"
         },
         "legacyExperimentalValue": "acp",
@@ -386,8 +459,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "appServer"
         ]
       },
-      "legacyModeOutputKey": "codexBackendMode",
-      "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
       "runtimeHandleFields": [
         "backendMode",
         "providerSessionId",
@@ -399,7 +470,13 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       ]
     },
     "sessionExtras": {
+      "aliases": {
+        "mcp": "mcp",
+        "mcp_resume": "acp"
+      },
+      "defaultValue": "appServer",
       "outputKey": "codexBackendMode",
+      "settingKey": "codexBackendMode",
       "values": [
         "acp",
         "appServer"
@@ -420,7 +497,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "id": "resumeAcp",
         "when": {
           "aliases": {
-            "mcp": "appServer",
+            "mcp": "mcp",
             "mcp_resume": "acp"
           },
           "kind": "settingEquals",
@@ -660,10 +737,13 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     }),
 });
 
-export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Readonly<
-    Partial<Record<CanonicalAgentId, AgentUiBehavior>>
+export type BundledAgentPredecessorMessageMetaWriter = Readonly<{
+    buildPredecessorMessageMeta(settings: Readonly<Record<string, unknown>>):
+        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;
+}>;
+
+export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<
+    Partial<Record<CanonicalAgentId, BundledAgentPredecessorMessageMetaWriter>>
 > = Object.freeze({
-    auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
-    claude: CLAUDE_UI_BEHAVIOR_OVERRIDE,
-    codex: CODEX_UI_BEHAVIOR_OVERRIDE,
+    claude: CLAUDE_PREDECESSOR_MESSAGE_META_WRITER,
 });

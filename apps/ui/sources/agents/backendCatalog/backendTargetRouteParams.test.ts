@@ -58,6 +58,23 @@ describe('buildBackendTargetRouteParams', () => {
         });
     });
 
+    it('round-trips a qualified external Agent identity without a backend alias', () => {
+        const target = {
+            kind: 'agent' as const,
+            identity: { pluginId: 'acme.review', localId: 'review' },
+        };
+        const route = buildBackendTargetRouteParams({ fallbackTarget: target });
+
+        expect(route).toEqual({
+            backendTarget: JSON.stringify(target),
+            backendTargetKey: 'agent:acme.review/review',
+        });
+        expect(resolveBackendTargetFromRouteParams(route)).toEqual(target);
+        expect(resolveBackendTargetFromRouteParams({
+            backendTargetKey: 'agent:acme.review/review',
+        })).toEqual(target);
+    });
+
     it('does not reconstruct unknown backend ids from agentType route compatibility alone anymore', () => {
         expect(resolveBackendTargetFromRouteParams({
             agentType: 'acme.review.backend',

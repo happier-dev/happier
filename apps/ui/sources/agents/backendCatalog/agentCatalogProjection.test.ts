@@ -53,6 +53,7 @@ describe('agentCatalogProjection', () => {
                         install: { manual: { kind: 'none' } },
                         auth: {
                             support: 'login_terminal',
+                            nonInteractiveStatusProbe: true,
                             loginLaunches: [
                                 { kind: 'primary', args: ['login'] },
                                 { kind: 'device_code', args: ['login', '--device-code'] },
@@ -68,6 +69,88 @@ describe('agentCatalogProjection', () => {
             support: 'login_terminal',
             loginLaunchKinds: ['primary', 'device_code'],
         });
+        expect(projection.cli).toEqual(expect.objectContaining({
+            executable: expect.objectContaining({ binaryName: 'acme' }),
+        }));
+        expect(projection.cliAuthBackgroundCheckSafe).toBe(true);
+    });
+
+    it('retains exact qualified Connected Account purposes for external Agent settings', () => {
+        const projection = resolveAgentCatalogProjection('acme.native', {
+            enabledAgentIds: ['acme.native'],
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                'acme.native': {
+                    agentId: 'acme.native',
+                    identity: { pluginId: 'acme.agent', localId: 'native' },
+                    connectedAccounts: [{
+                        purpose: 'primary',
+                        service: { pluginId: 'acme.agent', localId: 'account' },
+                        required: false,
+                    }],
+                },
+            },
+        });
+
+        expect(projection.connectedAccounts).toEqual([{
+            purpose: 'primary',
+            service: { pluginId: 'acme.agent', localId: 'account' },
+            required: false,
+        }]);
+    });
+
+    it('does not inherit bundled auth-probe safety for an installed plugin Agent with a colliding local id', () => {
+        const projection = resolveAgentCatalogProjection('claude', {
+            enabledAgentIds: ['claude'],
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                claude: {
+                    agentId: 'claude',
+                    identity: { pluginId: 'acme.voice', localId: 'claude' },
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                    cli: null,
+                },
+            },
+        });
+
+        expect(projection.identity).toEqual({ pluginId: 'acme.voice', localId: 'claude' });
+        expect(projection.cliAuthBackgroundCheckSafe).toBe(false);
+    });
+
+    it('retains the exact qualified V2 identity, package brand, and generation for host presentation', () => {
+        const installedPackage = {
+            id: 'acme.voice',
+            displayName: 'Acme Voice',
+            version: '1.0.0',
+            enabled: true,
+            immutableGenerationId: 'generation-12',
+            source: { kind: 'localPath', locator: '/plugins/acme-voice' },
+            brand: { state: 'missing' as const },
+        };
+        const projection = resolveAgentCatalogProjection('acme.voice.claude', {
+            enabledAgentIds: [],
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                'acme.voice.claude': {
+                    agentId: 'acme.voice.claude',
+                    qualifiedId: 'acme.voice.claude',
+                    identity: { pluginId: 'acme.voice', localId: 'claude' },
+                    installedPackage,
+                    projectionGeneration: 12,
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                },
+            },
+        });
+
+        expect(projection).toEqual(expect.objectContaining({
+            agentId: 'acme.voice.claude',
+            qualifiedId: 'acme.voice.claude',
+            identity: { pluginId: 'acme.voice', localId: 'claude' },
+            installedPackage,
+            projectionGeneration: 12,
+        }));
     });
 
     it('derives plugin providers from merged backend truth instead of treating plugin backend ids as provider ids', () => {
@@ -341,19 +424,19 @@ describe('agentCatalogProjection', () => {
 
         expect(resolveAgentCatalogProjection('antigravity', params)).toEqual(expect.objectContaining({
             agentId: 'antigravity',
-            backendTargetKey: 'backend:antigravity',
+            backendTargetKey: 'agent:happier.agent.antigravity/antigravity',
             enabled: false,
         }));
 
         expect(resolveAgentCatalogProjection('antigravity', {
             ...params,
             backendEnabledByTargetKey: {
-                'backend:antigravity': true,
+                'agent:happier.agent.antigravity/antigravity': true,
                 'backend:antigravity-localharness': false,
             },
         })).toEqual(expect.objectContaining({
             agentId: 'antigravity',
-            backendTargetKey: 'backend:antigravity',
+            backendTargetKey: 'agent:happier.agent.antigravity/antigravity',
             enabled: true,
         }));
     });

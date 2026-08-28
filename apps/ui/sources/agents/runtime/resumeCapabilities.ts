@@ -10,12 +10,12 @@ import {
     evaluateVendorResumeEligibility,
     getAgentResumeConfig,
     isBundledAgentId,
-    readNormalizedRuntimeDescriptor,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
     resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
+    readRuntimeDescriptorV1FromMetadata,
     resolveLinkedExternalSessionMetadataV1,
     type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
@@ -127,7 +127,7 @@ function readFiniteNumber(value: unknown): number | null {
 }
 
 function resolveDeclaredAgentIdForResume(metadata: SessionMetadata | null | undefined): string | null {
-    const runtimeProviderId = readNormalizedRuntimeDescriptor(metadata)?.providerId;
+    const runtimeProviderId = readRuntimeDescriptorV1FromMetadata(metadata)?.agentId;
     if (runtimeProviderId) return runtimeProviderId;
 
     const linkedAgentId = readExternalSessionLink(metadata)?.agentId;
@@ -168,8 +168,8 @@ function resolveCurrentExternalAgentResumeCapability(
     const currentAgent = options?.currentAgentCapabilities ?? null;
     if (!currentAgent || currentAgent.agentId !== agentId) return null;
 
-    const descriptor = readNormalizedRuntimeDescriptor(metadata);
-    if (!descriptor || descriptor.providerId !== agentId) return null;
+    const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+    if (!descriptor || descriptor.agentId !== agentId) return null;
     // One owner decides what a Session's native resume id is. Re-deriving it
     // from the descriptor here is how this view and the daemon's spawn path
     // could disagree about whether a Session is resumable.

@@ -2,7 +2,6 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { AgentId } from '@/agents/registry/registryCore';
 import {
     AGENT_IDS,
-    DEFAULT_AGENT_ID,
     getAgentCore,
     resolveAgentIdFromFlavor,
 } from '@/agents/registry/registryCore';
@@ -29,7 +28,7 @@ export function resolveAgentIdForPermissionUi(params: {
     metadata?: unknown;
     flavor: string | null | undefined;
     toolName: string;
-}): string {
+}): string | null {
     const byMetadata = resolveAgentIdFromSessionMetadata(params.metadata);
     if (byMetadata) return byMetadata;
 
@@ -52,5 +51,5 @@ export function resolveAgentIdForPermissionUi(params: {
             }
         }
     }
-    return DEFAULT_AGENT_ID;
+    return null;
 }

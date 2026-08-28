@@ -1,10 +1,11 @@
 import {
+    PersistedBackendTargetRefV2Schema,
     readBackendTargetRefV2,
-    type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId, type BundledAgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from './getResolvedBackendCatalogEntries';
@@ -12,6 +13,7 @@ import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
 
 function hasNonEmptyRecord(value: Readonly<Record<string, boolean>> | null | undefined): boolean {
     return !!(value && Object.keys(value).length > 0);
@@ -28,14 +30,14 @@ function hasNonEmptyAcpCatalogBackends(value: unknown): boolean {
 function buildEnabledBuiltInAgentIds(params: Readonly<{
     enabledAgentIds?: ReadonlyArray<unknown>;
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
-}>): AgentId[] {
+}>): BundledAgentId[] {
     const explicitEnabledAgentIds = Array.isArray(params.enabledAgentIds)
-        ? params.enabledAgentIds.filter((agentId): agentId is AgentId => isBundledAgentId(agentId))
+        ? params.enabledAgentIds.filter((agentId): agentId is BundledAgentId => isBundledAgentId(agentId))
         : null;
 
     return explicitEnabledAgentIds ?? getEnabledAgentIds({
         backendEnabledByTargetKey: params.backendEnabledByTargetKey as Record<string, boolean> | null | undefined,
-    });
+    }).filter((agentId): agentId is BundledAgentId => isBundledAgentId(agentId));
 }
 
 function buildCanonicalProjectionBackendIdSet(inputs: DaemonMergedProjectionInputs): Set<string> {
@@ -84,11 +86,11 @@ function entryIsCanonicalProjectionEntry(
 
 function buildCanonicalAvailableTargetsFromResolvedEntries(
     entries: readonly ResolvedBackendCatalogEntry[],
-): ReadonlyArray<BackendTargetRefV2> {
-    const targets: BackendTargetRefV2[] = [];
+): ReadonlyArray<PersistedBackendTargetRefV2> {
+    const targets: PersistedBackendTargetRefV2[] = [];
     const seenTargetKeys = new Set<string>();
 
-    const pushTarget = (target: BackendTargetRefV2) => {
+    const pushTarget = (target: PersistedBackendTargetRefV2) => {
         const targetKey = resolveBackendTargetKeyV2(target);
         if (seenTargetKeys.has(targetKey)) {
             return;
@@ -110,7 +112,7 @@ function resolveAvailableBackendTargets(params: Readonly<{
     acpCatalogSettingsV1?: unknown;
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;
-}>): ReadonlyArray<BackendTargetRefV2> | undefined {
+}>): ReadonlyArray<PersistedBackendTargetRefV2> | undefined {
     const hasMergedProjectionInputs = Boolean(params.daemonMergedProjectionInputs);
     const hasCatalogBackends = hasNonEmptyAcpCatalogBackends(params.acpCatalogSettingsV1);
     const hasAvailabilityInputs =
@@ -124,7 +126,10 @@ function resolveAvailableBackendTargets(params: Readonly<{
     }
 
     if (!hasMergedProjectionInputs && !hasCatalogBackends) {
-        return params.enabledBuiltInAgentIds.map((agentId) => ({ kind: 'backend', backendId: agentId } satisfies BackendTargetRefV2));
+        return params.enabledBuiltInAgentIds.map((agentId) => ({
+            kind: 'agent',
+            identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId],
+        } satisfies PersistedBackendTargetRefV2));
     }
 
     const entries = getResolvedBackendCatalogEntries({
@@ -148,9 +153,9 @@ function resolveAvailableBackendTargets(params: Readonly<{
 }
 
 function resolveProjectedBuiltInBackendTarget(
-    target: BackendTargetRefV2,
+    target: PersistedBackendTargetRefV2,
     entries: readonly ResolvedBackendCatalogEntry[],
-): BackendTargetRefV2 {
+): PersistedBackendTargetRefV2 {
     const targetKey = resolveBackendTargetKeyV2(target);
     for (const entry of entries) {
         if (entry.backendTargetKey === targetKey) {
@@ -158,7 +163,7 @@ function resolveProjectedBuiltInBackendTarget(
         }
     }
 
-    if (!isBundledAgentId(target.backendId)) {
+    if (target.kind !== 'backend' || !isBundledAgentId(target.backendId)) {
         return target;
     }
 
@@ -170,11 +175,16 @@ function normalizePersistedBackendTargetFromProjection(
     value: unknown,
     entries: readonly ResolvedBackendCatalogEntry[],
 ): unknown {
-    let parsed: BackendTargetRefV2;
-    try {
-        parsed = readBackendTargetRefV2(value as BackendTargetRefV2Input);
-    } catch {
-        return value;
+    const canonical = PersistedBackendTargetRefV2Schema.safeParse(value);
+    let parsed: PersistedBackendTargetRefV2;
+    if (canonical.success) {
+        parsed = canonical.data;
+    } else {
+        try {
+            parsed = readBackendTargetRefV2(value as BackendTargetRefV2Input);
+        } catch {
+            return value;
+        }
     }
 
     const targetKey = resolveBackendTargetKeyV2(parsed);
@@ -192,7 +202,8 @@ function normalizePersistedBackendTargetFromProjection(
     return parsed;
 }
 
-function normalizeBackendTargetForUi(target: BackendTargetRefV2): BackendTargetRefV2 {
+function normalizeBackendTargetForUi(target: PersistedBackendTargetRefV2): PersistedBackendTargetRefV2 {
+    if (target.kind === 'agent') return target;
     return target.configuredBackendId
         ? { kind: 'backend', backendId: target.backendId, configuredBackendId: target.configuredBackendId }
         : { kind: 'backend', backendId: target.backendId };
@@ -206,7 +217,7 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     acpCatalogSettingsV1?: unknown;
     daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;
-}>): BackendTargetRefV2 {
+}>): PersistedBackendTargetRefV2 {
     const enabledBuiltInAgentIds = buildEnabledBuiltInAgentIds({
         enabledAgentIds: params.enabledAgentIds,
         backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,

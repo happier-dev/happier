@@ -9,6 +9,7 @@ import type {
 import { mutateProviderModelSettings, providerErrorFromRpcFailure } from '@/providers/rpc/client';
 import { providerErrorRequestsRetry } from '@/providers/connection/recovery';
 import { t } from '@/text';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export function useConfirmExperimentalProviderModel(input: Readonly<{
     enabled: boolean;
@@ -17,6 +18,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
     agentTargetKey: string | null;
     refresh: () => Promise<unknown>;
 }>): SessionModelPickerExperimentalConfirmationController {
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const scopeKey = JSON.stringify([
         input.enabled,
         input.machineId,
@@ -24,6 +26,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
         input.agentTargetKey,
     ]);
     const activeScopeKey = React.useRef(scopeKey);
+    const activeAccountLifetime = React.useRef(accountLifetime);
     const mounted = React.useRef(false);
     const pendingAttemptId = React.useRef(0);
     const [pending, setPending] = React.useState(false);
@@ -42,15 +45,22 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
         | null
     >(null);
     activeScopeKey.current = scopeKey;
+    activeAccountLifetime.current = accountLifetime;
     React.useEffect(() => {
         mounted.current = true;
         pendingAttemptId.current += 1;
         setPending(false);
         setFailure(null);
+        const registration = accountLifetime?.onRetire(() => {
+            pendingAttemptId.current += 1;
+            setPending(false);
+            setFailure(null);
+        });
         return () => {
             mounted.current = false;
+            registration?.dispose();
         };
-    }, [scopeKey]);
+    }, [accountLifetime, scopeKey]);
 
     const persist = React.useCallback(async (
         confirmation: SessionModelPickerExperimentalConfirmation,
@@ -63,7 +73,13 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
             || confirmation.agentTargetKey !== input.agentTargetKey
         ) return false;
         const requestScopeKey = scopeKey;
-        const isCurrentScope = () => mounted.current && activeScopeKey.current === requestScopeKey;
+        const requestAccountLifetime = accountLifetime;
+        const isCurrentScope = () => (
+            mounted.current
+            && activeScopeKey.current === requestScopeKey
+            && activeAccountLifetime.current === requestAccountLifetime
+            && (requestAccountLifetime?.isCurrent() ?? true)
+        );
         if (!isCurrentScope()) return false;
         let result: Awaited<ReturnType<typeof mutateProviderModelSettings>>;
         try {
@@ -116,7 +132,7 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
         if (!isCurrentScope()) return false;
         commitSelection();
         return true;
-    }, [input.agentTargetKey, input.enabled, input.machineId, input.refresh, input.serverId, scopeKey]);
+    }, [accountLifetime, input.agentTargetKey, input.enabled, input.machineId, input.refresh, input.serverId, scopeKey]);
 
     const runPending = React.useCallback(async (operation: () => Promise<boolean>): Promise<boolean> => {
         const attemptId = pendingAttemptId.current + 1;
@@ -146,10 +162,15 @@ export function useConfirmExperimentalProviderModel(input: Readonly<{
                 }),
                 { confirmText: t('settingsProviders.models.experimentalConfirmAction') },
             );
-            if (!confirmed || activeScopeKey.current !== scopeKey) return false;
+            if (
+                !confirmed
+                || activeScopeKey.current !== scopeKey
+                || activeAccountLifetime.current !== accountLifetime
+                || !(accountLifetime?.isCurrent() ?? true)
+            ) return false;
             return await persist(confirmation, commitSelection);
         });
-    }, [input.agentTargetKey, input.enabled, persist, runPending, scopeKey]);
+    }, [accountLifetime, input.agentTargetKey, input.enabled, persist, runPending, scopeKey]);
     const retry = React.useCallback(async (): Promise<boolean> => {
         if (!input.enabled || !failure?.retryAttempt) return false;
         return await runPending(() => persist(

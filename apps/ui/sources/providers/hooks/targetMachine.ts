@@ -36,6 +36,8 @@ export type ProviderSettingsTargetV1 = Readonly<{
     /** Exact machine the user selected, once it currently resolves. */
     machineId: string | null;
     serverId: string | null;
+    /** Canonical permission to compose active-Account settings with this target. */
+    selectedTargetServerMatchesActiveAccount: boolean;
     /**
      * Every Administration candidate observed under the selected target's
      * server identity. A Provider connection is Account-scoped to one server,
@@ -130,6 +132,7 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
         selection,
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
+        selectedTargetServerMatchesActiveAccount: selection.selectedTargetServerMatchesActiveAccount,
         machineRows,
         resolveCurrentTarget,
     }), [executionTarget, machineRows, resolveCurrentTarget, selection]);

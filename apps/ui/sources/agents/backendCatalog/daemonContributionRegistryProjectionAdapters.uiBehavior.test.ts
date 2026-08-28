@@ -36,6 +36,14 @@ function projectionWithExternalAgent(): PluginProjectionV2 {
                         },
                         newSession: { transcriptStorageModes: ['direct'] },
                     },
+                    session: {
+                        visibleMessages: {
+                            kind: 'session.visibleMessages.v1',
+                            subagentKinds: ['acme_worker'],
+                            fallbackToolNames: ['AcmeWorker'],
+                            excludeJsonEventTypes: ['acme_internal'],
+                        },
+                    },
                 },
             },
             'acme.plain': {
@@ -76,6 +84,14 @@ describe('daemon-projected Agent UI behavior descriptors', () => {
             pluginId: 'acme.tools',
             agentId: 'acme.agent',
             version: 1,
+            session: {
+                visibleMessages: {
+                    kind: 'session.visibleMessages.v1',
+                    subagentKinds: ['acme_worker'],
+                    fallbackToolNames: ['AcmeWorker'],
+                    excludeJsonEventTypes: ['acme_internal'],
+                },
+            },
         });
 
         publishProjectedAgentUiBehaviorDescriptors({ machineId: 'm1', descriptorsByAgentId });

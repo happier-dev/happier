@@ -8,8 +8,22 @@ vi.mock('@/text', async () => {
 });
 
 import { getResolvedBackendCatalogEntries, resolveCatalogAgentIdForBackendTarget } from './getResolvedBackendCatalogEntries';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
+import type { BundledAgentId } from '@/agents/catalog/catalog';
 
 type BackendCatalogParams = Parameters<typeof getResolvedBackendCatalogEntries>[0];
+
+function bundledAgentTarget(agentId: BundledAgentId) {
+    return {
+        kind: 'agent' as const,
+        identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId],
+    };
+}
+
+function bundledAgentTargetKey(agentId: BundledAgentId): string {
+    const identity = BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId];
+    return `agent:${identity.pluginId}/${identity.localId}`;
+}
 
 describe('getResolvedBackendCatalogEntries', () => {
     it('does not fabricate a customAcp provider id for non-built-in backend targets', () => {
@@ -31,7 +45,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'kiro-cli',
                         args: ['acp', '--agent', 'review'],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'sonnet',
                         capabilities: {
@@ -50,8 +63,8 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'claude' },
-                backendTargetKey: 'backend:claude',
+                backendTarget: bundledAgentTarget('claude'),
+                backendTargetKey: bundledAgentTargetKey('claude'),
                 kind: 'builtInAgent',
                 catalogAgentId: 'claude',
                 iconAgentId: 'claude',
@@ -87,7 +100,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'kiro-cli',
                         args: ['acp', '--agent', 'review'],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'sonnet',
                         capabilities: {
@@ -104,19 +116,19 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:claude']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude')]);
     });
 
     it('omits built-in agents disabled by target key even when enabledAgentIds includes them', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: ['claude', 'codex'],
             backendEnabledByTargetKey: {
-                'backend:claude': false,
+                [bundledAgentTargetKey('claude')]: false,
             },
             acpCatalogSettingsV1: { v: 2, backends: [] },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:codex']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('codex')]);
     });
 
     it('omits discovered built-in agents disabled by target key', () => {
@@ -124,12 +136,12 @@ describe('getResolvedBackendCatalogEntries', () => {
             enabledAgentIds: ['claude'],
             discoveredBackendIds: ['codex'],
             backendEnabledByTargetKey: {
-                'backend:codex': false,
+                [bundledAgentTargetKey('codex')]: false,
             },
             acpCatalogSettingsV1: { v: 2, backends: [] },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:claude']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude')]);
     });
 
     it('keeps configured ACP backends visible when sentinel collapsing is enabled', () => {
@@ -147,7 +159,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'kiro-cli',
                         args: ['acp', '--agent', 'review'],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'sonnet',
                         capabilities: {
@@ -164,7 +175,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:claude', 'backend:review-bot:configured:review-bot']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude'), 'backend:review-bot:configured:review-bot']);
         expect(entries[1]).toEqual(expect.objectContaining({
             kind: 'configuredBackend',
             catalogAgentId: null,
@@ -185,7 +196,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'kiro-cli',
                         args: ['acp', '--agent', 'review'],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'sonnet',
                         capabilities: {
@@ -236,26 +246,13 @@ describe('getResolvedBackendCatalogEntries', () => {
         ]));
     });
 
-    it('surfaces unknown backend ids as first-class plugin backend entries instead of collapsing to custom ACP', () => {
+    it('does not fabricate an Agent identity for an unprojected unknown id', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: ['claude', 'acme.review.backend'],
             acpCatalogSettingsV1: { v: 2, backends: [] },
         });
 
-        expect(entries).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
-                backendTargetKey: 'backend:acme.review.backend',
-                kind: 'pluginBackend',
-                agentId: 'acme.review.backend',
-                backendId: 'acme.review.backend',
-                builtInAgentId: null,
-                catalogAgentId: null,
-                iconAgentId: null,
-                title: 'Acme Review Backend',
-                subtitle: 'acme.review.backend',
-            }),
-        ]));
+        expect(entries.some((entry) => entry.agentId === 'acme.review.backend')).toBe(false);
     });
 
     it('uses merged plugin backend truth when provided instead of fabricating a custom ACP provider identity', () => {
@@ -273,6 +270,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             mergedProviderProjectionById: {
                 'acme.review.provider': {
                     agentId: 'acme.review.provider',
+                    identity: { pluginId: 'acme.review', localId: 'provider' },
                     title: 'Acme Review Provider',
                     subtitle: 'Plugin provider',
                     channel: 'plugin' as const,
@@ -285,8 +283,8 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
-                backendTargetKey: 'backend:acme.review.backend',
+                backendTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'provider' } },
+                backendTargetKey: 'agent:acme.review/provider',
                 kind: 'pluginBackend',
                 agentId: 'acme.review.provider',
                 backendId: 'acme.review.backend',
@@ -311,6 +309,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             mergedProviderProjectionById: {
                 'acme.review.provider': {
                     agentId: 'acme.review.provider',
+                    identity: { pluginId: 'acme.review', localId: 'provider' },
                     title: 'Acme Review Provider',
                     subtitle: 'Plugin provider',
                     channel: 'plugin' as const,
@@ -323,7 +322,7 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                backendTargetKey: 'backend:acme.review.backend',
+                backendTargetKey: 'agent:acme.review/provider',
                 agentId: 'acme.review.provider',
                 catalogAgentId: 'claude',
                 iconAgentId: 'codex',
@@ -331,7 +330,7 @@ describe('getResolvedBackendCatalogEntries', () => {
         ]));
     });
 
-    it('materializes backend-target-native discovered ids from canonical v2 backend target keys', () => {
+    it('does not materialize an unprojected arbitrary backend from target enablement alone', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: ['claude'],
             acpCatalogSettingsV1: { v: 2, backends: [] },
@@ -340,13 +339,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
-                backendTargetKey: 'backend:acme.review.backend',
-                kind: 'pluginBackend',
-            }),
-        ]));
+        expect(entries.some((entry) => entry.backendTargetKey === 'backend:acme.review.backend')).toBe(false);
     });
 
     it('collapses discovered provider-owned concrete backends behind the canonical provider row', () => {
@@ -387,8 +380,8 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'antigravity' },
-                backendTargetKey: 'backend:antigravity',
+                backendTarget: bundledAgentTarget('antigravity'),
+                backendTargetKey: bundledAgentTargetKey('antigravity'),
                 kind: 'builtInAgent',
                 backendId: 'antigravity',
                 agentId: 'antigravity',
@@ -415,7 +408,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'agy-localharness',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -436,7 +428,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'antigravity',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -484,10 +475,10 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:antigravity']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('antigravity')]);
         expect(entries[0]).toEqual(expect.objectContaining({
             kind: 'builtInAgent',
-            backendTarget: { kind: 'backend', backendId: 'antigravity' },
+            backendTarget: bundledAgentTarget('antigravity'),
             builtInAgentId: 'antigravity',
             title: 't:agentInput.agent.antigravity',
         }));
@@ -523,12 +514,12 @@ describe('getResolvedBackendCatalogEntries', () => {
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                'backend:antigravity': true,
+                [bundledAgentTargetKey('antigravity')]: true,
             },
         })).toEqual([
             expect.objectContaining({
-                backendTargetKey: 'backend:antigravity',
-                backendTarget: { kind: 'backend', backendId: 'antigravity' },
+                backendTargetKey: bundledAgentTargetKey('antigravity'),
+                backendTarget: bundledAgentTarget('antigravity'),
                 title: 't:agentInput.agent.antigravity',
             }),
         ]);
@@ -536,7 +527,7 @@ describe('getResolvedBackendCatalogEntries', () => {
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                'backend:antigravity': false,
+                [bundledAgentTargetKey('antigravity')]: false,
             },
         })).toEqual([]);
 
@@ -551,7 +542,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             ...baseParams,
             enabledAgentIds: [],
             backendEnabledByTargetKey: {
-                'backend:antigravity': false,
+                [bundledAgentTargetKey('antigravity')]: false,
                 'backend:antigravity-localharness': true,
             },
         })).toEqual([]);
@@ -579,7 +570,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'plugin-runtime',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -597,6 +587,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             mergedProviderProjectionById: {
                 'plugin-provider': {
                     agentId: 'plugin-provider',
+                    identity: { pluginId: 'acme.runtime', localId: 'provider' },
                     title: 'Plugin Provider',
                     subtitle: 'Provider settings',
                     settingsBackendId: 'plugin-runtime',
@@ -614,8 +605,8 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'plugin-runtime' },
-                backendTargetKey: 'backend:plugin-runtime',
+                backendTarget: { kind: 'agent', identity: { pluginId: 'acme.runtime', localId: 'provider' } },
+                backendTargetKey: 'agent:acme.runtime/provider',
                 kind: 'pluginBackend',
                 backendId: 'plugin-runtime',
                 agentId: 'plugin-provider',
@@ -640,7 +631,6 @@ describe('getResolvedBackendCatalogEntries', () => {
                         command: 'plugin-runtime',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -661,6 +651,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             mergedProviderProjectionById: {
                 'plugin-provider': {
                     agentId: 'plugin-provider',
+                    identity: { pluginId: 'acme.runtime', localId: 'provider' },
                     title: 'Plugin Provider',
                     subtitle: 'Provider settings',
                     settingsBackendId: 'plugin-runtime',
@@ -691,6 +682,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             mergedProviderProjectionById: {
                 'acme.review': {
                     agentId: 'acme.review',
+                    identity: { pluginId: 'acme.review', localId: 'review' },
                     title: 'Acme Review',
                     subtitle: 'Installed review Agent',
                     channel: 'plugin' as const,
@@ -702,8 +694,8 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'acme.review' },
-                backendTargetKey: 'backend:acme.review',
+                backendTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
+                backendTargetKey: 'agent:acme.review/review',
                 kind: 'pluginBackend',
                 agentId: 'acme.review',
                 backendId: 'acme.review',
@@ -715,16 +707,40 @@ describe('getResolvedBackendCatalogEntries', () => {
         ]));
     });
 
+    it('keeps an installed plugin Agent neutral when its projected CLI auth metadata is absent', () => {
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            collapseConfiguredBackendProviderSentinels: true,
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                claude: {
+                    agentId: 'claude',
+                    identity: { pluginId: 'acme.voice', localId: 'claude' },
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                    cli: null,
+                },
+            },
+            discoveredBackendIds: [],
+        });
+
+        expect(entries.find((entry) => entry.agentId === 'claude')).toEqual(expect.objectContaining({
+            cliAuthBackgroundCheckSafe: false,
+        }));
+    });
+
     it('omits an installed Session Agent the user disabled', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: ['claude'],
             acpCatalogSettingsV1: { v: 2, backends: [] },
             collapseConfiguredBackendProviderSentinels: true,
-            backendEnabledByTargetKey: { 'backend:acme.review': false },
+            backendEnabledByTargetKey: { 'agent:acme.review/review': false },
             mergedBackendProjectionById: {},
             mergedProviderProjectionById: {
                 'acme.review': {
                     agentId: 'acme.review',
+                    identity: { pluginId: 'acme.review', localId: 'review' },
                     title: 'Acme Review',
                     channel: 'plugin' as const,
                     isBuiltIn: false,
@@ -733,8 +749,8 @@ describe('getResolvedBackendCatalogEntries', () => {
             discoveredBackendIds: [],
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).not.toContain('backend:acme.review');
-        expect(entries.map((entry) => entry.backendTargetKey)).toContain('backend:claude');
+        expect(entries.map((entry) => entry.backendTargetKey)).not.toContain('agent:acme.review/review');
+        expect(entries.map((entry) => entry.backendTargetKey)).toContain(bundledAgentTargetKey('claude'));
     });
 
     it('does not resurrect a bundled Agent the enabled seed filtered out', () => {
@@ -752,6 +768,6 @@ describe('getResolvedBackendCatalogEntries', () => {
             discoveredBackendIds: [],
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:claude']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude')]);
     });
 });

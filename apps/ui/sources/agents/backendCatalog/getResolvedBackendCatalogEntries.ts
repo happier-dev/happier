@@ -3,11 +3,12 @@ import {
     type AcpCatalogSettingsV1,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID, LEGACY_COMPAT_PRIMARY_AGENT_ID_NORMALIZED } from './legacyCompatAgents';
 import { formatBackendTargetKeyV2, resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import {
@@ -21,9 +22,21 @@ import type {
 } from './mergedProjectionTypes';
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { t } from '@/text';
+import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
+import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';
+import {
+    resolveAgentCatalogProjection,
+    type ResolvedAgentCatalogEntry,
+} from './agentCatalogProjection';
 
 export type ResolvedBackendCatalogEntry = Readonly<{
-    backendTarget: BackendTargetRefV2;
+    /**
+     * The canonical Agent presentation/identity record for this selectable
+     * target. Consumers must not reconstruct visual identity from the runtime
+     * carrier fields below.
+     */
+    agentCatalogEntry: ResolvedAgentCatalogEntry;
+    backendTarget: PersistedBackendTargetRefV2;
     backendTargetKey: string;
     kind: 'builtInAgent' | 'configuredBackend' | 'pluginBackend';
     backendId: string;
@@ -41,6 +54,7 @@ export type ResolvedBackendCatalogEntry = Readonly<{
     compatibilityBackendTargets?: readonly BackendTargetRefV2[];
     title: string;
     subtitle: string | null;
+    cliAuthBackgroundCheckSafe: boolean;
 }>;
 
 function isBackendTargetEnabled(
@@ -68,6 +82,23 @@ type MergedProjectionInputs = Readonly<{
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
 }>;
+
+function resolveTargetAgentCatalogEntry(
+    agentId: string,
+    params: Readonly<{
+        enabledAgentIds?: readonly string[];
+        acpCatalogSettingsV1?: AcpCatalogSettingsV1;
+        backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
+    }> & MergedProjectionInputs,
+): ResolvedAgentCatalogEntry {
+    return resolveAgentCatalogProjection(agentId, {
+        enabledAgentIds: params.enabledAgentIds ?? [],
+        backendEnabledByTargetKey: params.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: params.acpCatalogSettingsV1,
+        mergedBackendProjectionById: params.mergedBackendProjectionById,
+        mergedProviderProjectionById: params.mergedProviderProjectionById,
+    });
+}
 
 function readPluginAgentSettingsBackendId(
     providerProjection: MergedProviderProjectionEntry | null,
@@ -229,6 +260,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             continue;
         }
         entriesByTargetKey.set(backendTargetKey, {
+            agentCatalogEntry: resolveTargetAgentCatalogEntry(agentId, params),
             backendTarget: canonicalTarget,
             backendTargetKey,
             kind: 'configuredBackend',
@@ -240,6 +272,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             capabilities: backendProjection?.capabilities ?? null,
             title: backendProjection?.title ?? providerProjection?.title ?? (backend.title || backend.name),
             subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? backend.name,
+            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, providerProjection),
         });
     }
 
@@ -283,7 +316,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
 }
 
 export function resolveCatalogAgentIdForBackendTarget(target: BackendTargetRefV2): AgentId | null {
-    return isBundledAgentId(target.backendId) ? target.backendId : null;
+    return target.kind === 'backend' && isBundledAgentId(target.backendId) ? target.backendId : null;
 }
 
 /**
@@ -292,17 +325,35 @@ export function resolveCatalogAgentIdForBackendTarget(target: BackendTargetRefV2
  * must not replace the projected Agent that owns the backend at runtime.
  */
 export function resolveBackendTargetOperationalAgentId(params: Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     selectedEntry?: Pick<ResolvedBackendCatalogEntry, 'agentId'> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
 }>): string | null {
     const projectedAgentId = typeof params.selectedEntry?.agentId === 'string'
         ? params.selectedEntry.agentId.trim()
         : '';
-    if (projectedAgentId && params.mergedProviderProjectionById?.[projectedAgentId]) {
-        return projectedAgentId;
+    if (projectedAgentId) return projectedAgentId;
+    if (params.backendTarget.kind === 'agent') {
+        const identity = params.backendTarget.identity;
+        const exactProjectedAgentId = Object.entries(params.mergedProviderProjectionById ?? {})
+            .find(([, projection]) => (
+                projection.identity?.pluginId === identity.pluginId
+                && projection.identity.localId === identity.localId
+            ))?.[0]?.trim();
+        if (exactProjectedAgentId) return exactProjectedAgentId;
+        return resolveBundledAgentIdFromContributionIdentity(identity);
     }
     return resolveCatalogAgentIdForBackendTarget(params.backendTarget);
+}
+
+export function resolveOperationalBackendTargetForAgentSelection(params: Readonly<{
+    backendTarget: PersistedBackendTargetRefV2;
+    selectedEntry?: Pick<ResolvedBackendCatalogEntry, 'agentId'> | null;
+    mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
+}>): BackendTargetRefV2 | null {
+    if (params.backendTarget.kind === 'backend') return params.backendTarget;
+    const agentId = resolveBackendTargetOperationalAgentId(params);
+    return agentId ? { kind: 'backend', backendId: agentId } : null;
 }
 
 function readMergedProviderProjection(
@@ -377,10 +428,19 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
     const agentProviderProjection = readMergedProviderProjection(backingAgentId, params);
     const settingsBackendId = readPluginAgentSettingsBackendId(agentProviderProjection);
     const targetBackendId = isBuiltInAgent ? agentId : settingsBackendId ?? agentId;
-    const canonicalTarget: BackendTargetRefV2 = {
+    const backendCarrierTarget: BackendTargetRefV2 = {
         kind: 'backend',
         backendId: targetBackendId,
     };
+    const agentTarget = resolveAgentExecutionTargetForBackendTarget({
+        backendTarget: backendCarrierTarget,
+        daemonMergedProjectionInputs: {
+            mergedProviderProjectionById: params.mergedProviderProjectionById ?? {},
+            mergedBackendProjectionById: params.mergedBackendProjectionById ?? {},
+        },
+    });
+    if (!agentTarget) return null;
+    const canonicalTarget: PersistedBackendTargetRefV2 = agentTarget;
     const usesPluginAgentSettingsBackend = settingsBackendId !== null;
     const backendTargetKey = formatBackendTargetKeyV2(canonicalTarget);
     const backendProjection = settingsBackendId
@@ -400,6 +460,7 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
     if (isBuiltInAgent) {
         const core = getAgentCore(agentId);
         return {
+            agentCatalogEntry: resolveTargetAgentCatalogEntry(resolvedAgentId, params),
             backendTarget: canonicalTarget,
             backendTargetKey,
             kind: 'builtInAgent',
@@ -412,10 +473,12 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
             ...(compatibilityBackendTargets.length > 0 ? { compatibilityBackendTargets } : {}),
             title: usesPluginAgentSettingsBackend ? t(core.displayNameKey) : backendProjection?.title ?? t(core.displayNameKey),
             subtitle: backendProjection?.subtitle ?? agentId,
+            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(resolvedAgentId, providerProjection),
         };
     }
 
     return {
+        agentCatalogEntry: resolveTargetAgentCatalogEntry(resolvedAgentId, params),
         backendTarget: canonicalTarget,
         backendTargetKey,
         kind: 'pluginBackend',
@@ -430,6 +493,7 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
             ? providerProjection?.title ?? formatAgentLikeIdForDisplay(agentId)
             : backendProjection?.title ?? providerProjection?.title ?? formatAgentLikeIdForDisplay(agentId),
         subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? agentId,
+        cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(resolvedAgentId, providerProjection),
     };
 }
 
@@ -441,6 +505,7 @@ function createDiscoveredTargetEntry(target: BackendTargetRefV2, params: MergedP
         const providerProjection = agentId ? readMergedProviderProjection(agentId, params) : null;
         const backendTargetKey = formatBackendTargetKeyV2(target);
         return {
+            agentCatalogEntry: resolveTargetAgentCatalogEntry(agentId, params),
             backendTarget: target,
             backendTargetKey,
             kind: 'configuredBackend',
@@ -452,6 +517,7 @@ function createDiscoveredTargetEntry(target: BackendTargetRefV2, params: MergedP
             capabilities: backendProjection?.capabilities ?? null,
             title: backendProjection?.title ?? providerProjection?.title ?? formatAgentLikeIdForDisplay(target.backendId),
             subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? target.backendId,
+            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, providerProjection),
         };
     }
 

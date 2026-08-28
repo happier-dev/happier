@@ -1,4 +1,10 @@
-import type { AcpCatalogSettingsV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type {
+    AcpCatalogSettingsV1,
+    PluginAgentCliMetadata,
+    PluginContributionIdentityV1,
+    PluginProjectedAgentConnectedAccountPurposeV2,
+    PluginProjectionInstalledPackageV2,
+} from '@happier-dev/protocol';
 
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
@@ -21,14 +27,19 @@ import {
     getAgentBackendCompatibilityTargetKeys,
     readBackendTargetEnabled,
 } from './backendTargetEnablement';
+import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
 
 export type ResolvedAgentCatalogEntry = Readonly<{
     agentId: string;
+    /** Exact daemon V2 registry key; never reconstructed from local identity. */
+    qualifiedId: string;
     /**
      * Exact daemon-projected identity for an external Agent. Consumers that
      * need an Agent route must retain this instead of parsing `agentId`.
      */
     identity: PluginContributionIdentityV1 | null;
+    installedPackage: PluginProjectionInstalledPackageV2 | null;
+    projectionGeneration: number | null;
     catalogAgentId: AgentId | null;
     iconAgentId: AgentId | null;
     backendTargetKey: string | null;
@@ -45,6 +56,11 @@ export type ResolvedAgentCatalogEntry = Readonly<{
     descriptor: BundledAgentUiBehaviorDescriptor | null;
     behavior: AgentUiBehavior | null;
     authPlugin: AgentLocalAuthPlugin | null;
+    /** Exact public CLI declaration from the same daemon projection. */
+    cli?: PluginAgentCliMetadata | null;
+    cliAuthBackgroundCheckSafe: boolean;
+    /** Exact Agent-owned account purposes from the same daemon generation. */
+    connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
 }>;
 
 const CANONICAL_AGENT_ID_BY_NORMALIZED = new Map<string, AgentId>(
@@ -332,7 +348,10 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
         const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(agentId, isBuiltIn, settingsBackendProjection);
         return {
             agentId,
+            qualifiedId: mergedProviderProjection?.qualifiedId ?? agentId,
             identity: mergedProviderProjection?.identity ?? null,
+            installedPackage: mergedProviderProjection?.installedPackage ?? null,
+            projectionGeneration: mergedProviderProjection?.projectionGeneration ?? null,
             catalogAgentId: behaviorProviderId,
             iconAgentId,
             backendTargetKey,
@@ -349,6 +368,9 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
             descriptor: behaviorProjection?.descriptor ?? null,
             behavior: behaviorProjection?.behavior ?? null,
             authPlugin: resolveAgentLocalAuthPlugin(agentId, behaviorProviderId, mergedProviderProjection),
+            cli: mergedProviderProjection?.cli ?? null,
+            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, mergedProviderProjection),
+            connectedAccounts: mergedProviderProjection?.connectedAccounts ?? [],
         };
     });
 }
@@ -379,7 +401,10 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(normalizedProviderId, isBuiltIn, settingsBackendProjection);
     return {
         agentId: normalizedProviderId,
+        qualifiedId: mergedProviderProjection?.qualifiedId ?? normalizedProviderId,
         identity: mergedProviderProjection?.identity ?? null,
+        installedPackage: mergedProviderProjection?.installedPackage ?? null,
+        projectionGeneration: mergedProviderProjection?.projectionGeneration ?? null,
         catalogAgentId: behaviorProviderId,
         iconAgentId,
         backendTargetKey,
@@ -396,5 +421,8 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
         descriptor: behaviorProjection?.descriptor ?? null,
         behavior: behaviorProjection?.behavior ?? null,
         authPlugin: resolveAgentLocalAuthPlugin(normalizedProviderId, behaviorProviderId, mergedProviderProjection),
+        cli: mergedProviderProjection?.cli ?? null,
+        cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(normalizedProviderId, mergedProviderProjection),
+        connectedAccounts: mergedProviderProjection?.connectedAccounts ?? [],
     };
 }

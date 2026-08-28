@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolvePreferredBackendTargetFromProjection } from './resolvePreferredBackendTargetFromProjection';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
+
+const CLAUDE_TARGET = { kind: 'agent' as const, identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES.claude };
+const ANTIGRAVITY_TARGET = { kind: 'agent' as const, identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES.antigravity };
 
 describe('resolvePreferredBackendTargetFromProjection', () => {
     it('routes an Antigravity provider default selection to the canonical provider backend', () => {
@@ -48,7 +52,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'antigravity' });
+        })).toEqual(ANTIGRAVITY_TARGET);
     });
 
     it('normalizes an old persisted Antigravity concrete target to the canonical provider backend', () => {
@@ -96,7 +100,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'antigravity' });
+        })).toEqual(ANTIGRAVITY_TARGET);
     });
 
     it('normalizes an old persisted configured Antigravity target to the canonical provider backend', () => {
@@ -173,7 +177,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'antigravity' });
+        })).toEqual(ANTIGRAVITY_TARGET);
     });
 
     it('keeps a daemon-projected plugin backend as the preferred target when it has no built-in runtime carrier', () => {
@@ -189,6 +193,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 mergedProviderProjectionById: {
                     'acme.review.provider': {
                         agentId: 'acme.review.provider',
+                        identity: { pluginId: 'acme.review', localId: 'provider' },
                         title: 'Acme Review Provider',
                         subtitle: 'Plugin provider',
                         isBuiltIn: false,
@@ -207,7 +212,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
+        })).toEqual({ kind: 'agent', identity: { pluginId: 'acme.review', localId: 'provider' } });
     });
 
     it('restores a standalone installed Session Agent as the preferred target', () => {
@@ -226,6 +231,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 mergedProviderProjectionById: {
                     'acme.review': {
                         agentId: 'acme.review',
+                        identity: { pluginId: 'acme.review', localId: 'review' },
                         title: 'Acme Review',
                         subtitle: 'Installed review Agent',
                         isBuiltIn: false,
@@ -236,7 +242,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'acme.review' });
+        })).toEqual({ kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } });
     });
 
     it('still refuses a settings-only configured backend the machine projection does not name', () => {
@@ -264,7 +270,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        } as never)).toEqual({ kind: 'backend', backendId: 'claude' });
+        } as never)).toEqual(CLAUDE_TARGET);
     });
 
     it('does not let a projected plugin settings backend hijack the built-in fallback for legacy customAcp', () => {
@@ -278,6 +284,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 mergedProviderProjectionById: {
                     'acme.review.provider': {
                         agentId: 'acme.review.provider',
+                        identity: { pluginId: 'acme.review', localId: 'provider' },
                         title: 'Acme Review Provider',
                         subtitle: 'Plugin provider',
                         isBuiltIn: false,
@@ -297,7 +304,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'claude' });
+        })).toEqual(CLAUDE_TARGET);
     });
 
     it('normalizes an old configured plugin provider-owned target to the collapsed provider settings backend', () => {
@@ -342,6 +349,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 mergedProviderProjectionById: {
                     'plugin-provider': {
                         agentId: 'plugin-provider',
+                        identity: { pluginId: 'acme.runtime', localId: 'provider' },
                         title: 'Plugin Provider',
                         subtitle: 'Provider settings',
                         isBuiltIn: false,
@@ -361,7 +369,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'backend', backendId: 'plugin-runtime' });
+        })).toEqual({ kind: 'agent', identity: { pluginId: 'acme.runtime', localId: 'provider' } });
     });
 
     it('preserves a configured custom backend target when daemon projection inputs are absent', () => {

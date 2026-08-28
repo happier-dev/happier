@@ -12,6 +12,46 @@ import {
 const projection = {
     generation: 42,
     agentsById: {
+        codex: {
+            id: 'codex',
+            identity: { pluginId: 'codex', localId: 'codex' },
+            capabilities: {
+                surfaces: ['terminal'],
+                sessions: {
+                    open: ['create', 'resume', 'fork'],
+                    delivery: ['newTurn', 'steer'],
+                    cancel: true,
+                    conversationRollback: true,
+                    usageLimitRecovery: {
+                        active: ['checkNow'],
+                        inactive: ['checkNow'],
+                    },
+                },
+            },
+        },
+        claude: {
+            id: 'claude',
+            identity: { pluginId: 'claude', localId: 'claude' },
+            capabilities: {
+                surfaces: ['terminal'],
+                sessions: {
+                    open: ['create', 'resume'],
+                    delivery: ['newTurn', 'steer', 'followUp'],
+                    cancel: true,
+                },
+            },
+        },
+        opencode: {
+            id: 'opencode',
+            identity: { pluginId: 'opencode', localId: 'opencode' },
+            capabilities: {
+                sessions: {
+                    open: ['create', 'resume', 'fork'],
+                    delivery: ['newTurn', 'steer'],
+                    cancel: true,
+                },
+            },
+        },
         'acme-lifecycle': {
             id: 'acme-lifecycle',
             identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
@@ -88,17 +128,26 @@ describe('supportsAgentLifecycleCapability', () => {
         agentId: 'acme-lifecycle',
     });
 
-    it('answers every Agent from one owner instead of an identity-class branch', () => {
-        // Bundled: Codex declares conversation fork/rollback, Claude does not.
+    it('answers bundled and external Agents from the same exact V2 projection', () => {
+        const currentCodex = readCurrentProjectedAgentCapabilities({
+            projection: projection as any,
+            agentId: 'codex',
+        });
+        const currentClaude = readCurrentProjectedAgentCapabilities({
+            projection: projection as any,
+            agentId: 'claude',
+        });
         expect(supportsAgentLifecycleCapability({
             agentId: 'codex',
             capability: 'sessionFork.conversation',
             metadata: {},
+            currentAgentCapabilities: currentCodex,
         })).toBe(true);
         expect(supportsAgentLifecycleCapability({
             agentId: 'claude',
             capability: 'sessionRollback.conversation',
             metadata: {},
+            currentAgentCapabilities: currentClaude,
         })).toBe(false);
 
         // External: the same question, answered from its exact V2 declaration.
@@ -116,19 +165,31 @@ describe('supportsAgentLifecycleCapability', () => {
         })).toBe(true);
     });
 
-    it('keeps the bundled per-session runtime-kind refinement that a static V2 declaration cannot express', () => {
-        // The same Codex Agent on its ACP runtime kind refuses conversation fork
-        // and rollback. A projection-only reading would re-advertise both.
-        const acpSessionMetadata = { codexBackendMode: 'acp', runtime: { provider: 'codex', backendMode: 'acp' } };
+    it('refines either origin with the exact Session runtime capability publication', () => {
+        const currentCodex = readCurrentProjectedAgentCapabilities({
+            projection: projection as any,
+            agentId: 'codex',
+        });
+        const acpSessionMetadata = {
+            runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { opaqueMode: 'private' } },
+            agentRuntimeCapabilitiesV1: {
+                sessionCapabilities: {
+                    sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+                    sessionRollback: { conversation: 'unsupported' },
+                },
+            },
+        };
         expect(supportsAgentLifecycleCapability({
             agentId: 'codex',
             capability: 'sessionFork.conversation',
             metadata: acpSessionMetadata,
+            currentAgentCapabilities: currentCodex,
         })).toBe(false);
         expect(supportsAgentLifecycleCapability({
             agentId: 'codex',
             capability: 'sessionRollback.conversation',
             metadata: acpSessionMetadata,
+            currentAgentCapabilities: currentCodex,
         })).toBe(false);
     });
 
@@ -137,12 +198,24 @@ describe('supportsAgentLifecycleCapability', () => {
             agentId: 'opencode',
             capability: 'surface.terminal',
             metadata: { opencodeBackendMode: 'acp' },
-            accountSettings: { opencodeBackendMode: 'server' },
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'opencode',
+            }),
         })).toBe(false);
         expect(supportsAgentLifecycleCapability({
             agentId: 'codex',
             capability: 'surface.terminal',
-            metadata: { codexBackendMode: 'mcp', runtime: { provider: 'codex', backendMode: 'mcp' } },
+            metadata: {
+                agentRuntimeCapabilitiesV1: {
+                    sessionCapabilities: {},
+                    localControl: { supported: false },
+                },
+            },
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'codex',
+            }),
         })).toBe(false);
         expect(supportsAgentLifecycleCapability({
             agentId: 'acme-lifecycle',
@@ -169,6 +242,23 @@ describe('supportsAgentLifecycleCapability', () => {
             capability: 'sessionRollback.conversation',
             metadata: {},
         })).toBe(false);
+        expect(supportsAgentLifecycleCapability({
+            agentId: 'acme-lifecycle',
+            capability: 'sessionFork.conversation',
+            metadata: {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'different-agent',
+                    agent: {},
+                },
+                agentRuntimeCapabilitiesV1: {
+                    sessionCapabilities: {
+                        sessionFork: { conversation: 'supported' },
+                    },
+                },
+            },
+            currentAgentCapabilities: externalAgent,
+        })).toBe(false);
     });
 
     it('separates active from inactive usage-limit recovery for an external Agent', () => {
@@ -179,43 +269,88 @@ describe('supportsAgentLifecycleCapability', () => {
             sessionActive: true,
             currentAgentCapabilities: externalAgent,
         })).toBe(true);
-        // Claude declares no V2 usage-limit recovery, but its bundled contribution does.
+        // A declaration without an executable readiness operation fails closed
+        // for either origin.
         expect(supportsAgentLifecycleCapability({
             agentId: 'claude',
             capability: 'usageLimitRecovery.checkNow',
-            metadata: {},
+            metadata: {
+                agentRuntimeCapabilitiesV1: {
+                    sessionCapabilities: {
+                        usageLimitRecovery: { checkNow: 'supported' },
+                    },
+                },
+            },
             sessionActive: true,
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'claude',
+            }),
+        })).toBe(false);
+        expect(supportsAgentLifecycleCapability({
+            agentId: 'codex',
+            capability: 'usageLimitRecovery.checkNow',
+            metadata: {
+                agentRuntimeCapabilitiesV1: {
+                    sessionCapabilities: {
+                        usageLimitRecovery: { checkNow: 'unsupported' },
+                    },
+                },
+            },
+            sessionActive: true,
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'codex',
+            }),
         })).toBe(true);
     });
 });
 
 describe('supportsAgentLifecycleCapability runtime-kind refinement', () => {
-    it('reads the terminal surface from the same Session runtime kind every other capability uses', () => {
-        // No runtime kind is recorded on this Session, so the Agent's configured
-        // runtime kind decides. Fork already answered from that kind; the
-        // terminal surface used to answer from the Agent's default kind instead,
-        // so one Session could be told "no native fork" and "yes terminal" about
-        // the very same OpenCode ACP runtime.
-        const acpAccountSettings = { opencodeBackendMode: 'acp' };
+    it('reads current Session capability and terminal facts from the live runtime publication', () => {
+        const currentAcpMetadata = {
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'opencode',
+                agent: { privatelyOwnedMode: 'acp' },
+            },
+            agentRuntimeCapabilitiesV1: {
+                sessionCapabilities: {
+                    sessionFork: { fromMessage: 'unsupported' },
+                },
+                localControl: null,
+            },
+        };
         expect(supportsAgentLifecycleCapability({
             agentId: 'opencode',
             capability: 'sessionFork.fromMessage',
-            metadata: {},
-            accountSettings: acpAccountSettings,
+            metadata: currentAcpMetadata,
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'opencode',
+            }),
         })).toBe(false);
         expect(supportsAgentLifecycleCapability({
             agentId: 'opencode',
             capability: 'surface.terminal',
-            metadata: {},
-            accountSettings: acpAccountSettings,
+            metadata: currentAcpMetadata,
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'opencode',
+            }),
         })).toBe(false);
-        // The configured server runtime keeps both.
+
+        // With no concrete Session runtime fact, both origins use their exact
+        // projected declaration; generic UI does not interpret Agent settings.
         expect(supportsAgentLifecycleCapability({
             agentId: 'opencode',
             capability: 'surface.terminal',
             metadata: {},
-            accountSettings: { opencodeBackendMode: 'server' },
-        })).toBe(true);
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'opencode',
+            }),
+        })).toBe(false);
     });
 
     it('keeps conversation fork and from-message fork distinct for a bundled Agent', () => {
@@ -226,11 +361,19 @@ describe('supportsAgentLifecycleCapability runtime-kind refinement', () => {
             agentId: 'codex',
             capability: 'sessionFork.conversation',
             metadata: {},
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'codex',
+            }),
         })).toBe(true);
         expect(supportsAgentLifecycleCapability({
             agentId: 'codex',
             capability: 'sessionFork.fromMessage',
             metadata: {},
+            currentAgentCapabilities: readCurrentProjectedAgentCapabilities({
+                projection: projection as any,
+                agentId: 'codex',
+            }),
         })).toBe(false);
     });
 });

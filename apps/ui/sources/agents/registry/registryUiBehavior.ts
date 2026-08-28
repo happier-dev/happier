@@ -14,7 +14,6 @@ import {
     ExternalSessionsSource,
     RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/protocol';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId, PermissionPromptProtocol } from './registryCore';
@@ -162,7 +161,6 @@ export type AgentContextWindowBehavior = Readonly<{
 }>;
 
 export type AgentBackendTransportFields = Readonly<{
-    codexBackendMode?: CodexBackendMode;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
 
@@ -277,6 +275,10 @@ export type AgentUiBehavior = Readonly<{
         }>) => Record<string, unknown> | undefined;
     }>;
     newSession?: Readonly<{
+        resolveConfiguredRuntimeKind?: (ctx: {
+            agentId: AgentLookupId;
+            settings: Settings;
+        }) => string | null;
         buildNewSessionOptions?: (ctx: {
             agentId: AgentLookupId;
             agentOptionState?: Record<string, unknown> | null;
@@ -398,6 +400,8 @@ export type NewSessionCliSelectabilityContext = Readonly<{
     agentId: AgentLookupId;
     settings: Settings;
     agentOptionState?: Record<string, unknown> | null;
+    /** The machine whose installed Agent declaration owns this decision. */
+    machineId?: string | null;
 }>;
 
 export type NewSessionRelevantInstallableDepsContext = Readonly<{
@@ -407,8 +411,8 @@ export type NewSessionRelevantInstallableDepsContext = Readonly<{
     resumeSessionId: string;
     /**
      * The machine whose installables are being resolved. Omitted by the
-     * cross-machine picker counts, where every machine's declaration is equally
-     * applicable; supplied whenever the answer is about one machine's Agent.
+     * explicitly machine-blind offline floor only; supplied whenever the
+     * answer is about one selected machine's Agent.
      */
     machineId?: string | null;
 }>;
@@ -606,6 +610,7 @@ function resolveKnownAgentUiBehavior(agentId: string | null | undefined): AgentU
  * result is retained per entry rather than rebuilt on every read.
  */
 const PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY = new WeakMap<ProjectedAgentUiBehaviorEntry, AgentUiBehavior>();
+const BUNDLED_PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY = new WeakMap<ProjectedAgentUiBehaviorEntry, AgentUiBehavior>();
 
 function resolveProjectedAgentUiBehavior(
     agentId: string | null | undefined,
@@ -634,11 +639,39 @@ export function resolveAgentUiBehavior(
 ): AgentUiBehavior {
     const behavior = resolveKnownAgentUiBehavior(agentId);
     if (behavior) {
+        // A bundled Agent dogfoods the same machine-/Account-qualified public
+        // descriptor seam as an installed Agent. The build-time declaration is
+        // the offline floor; an exact current machine projection can refresh
+        // localized/public declaration facts without granting a private UI
+        // callback or falling back to another machine.
+        const entry = machineId
+            ? resolveProjectedAgentUiBehaviorEntry(agentId, machineId)
+            : null;
+        if (entry) {
+            const retained = BUNDLED_PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY.get(entry);
+            if (retained) return retained;
+            const merged = Object.freeze(mergeAgentUiBehavior(behavior, entry.behavior));
+            BUNDLED_PROJECTED_AGENT_UI_BEHAVIOR_BY_ENTRY.set(entry, merged);
+            return merged;
+        }
         return behavior;
     }
     // An Agent that ships a descriptor is projected from it; the neutral
     // fallback is reserved for one that ships none.
     return resolveProjectedAgentUiBehavior(agentId, machineId) ?? UNKNOWN_AGENT_UI_BEHAVIOR;
+}
+
+export function resolveConfiguredAgentRuntimeKindFromUiBehavior(params: Readonly<{
+    agentId: string;
+    settings: Settings;
+    machineId?: string | null;
+}>): string | null {
+    return resolveAgentUiBehavior(params.agentId, params.machineId)
+        .newSession
+        ?.resolveConfiguredRuntimeKind?.({
+            agentId: params.agentId,
+            settings: params.settings,
+        }) ?? null;
 }
 
 export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavior | null {
@@ -824,7 +857,7 @@ export function buildNewSessionOptionsFromUiState(opts: {
 }
 
 export function canSelectAgentWithoutDetectedCli(ctx: NewSessionCliSelectabilityContext): boolean {
-    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.canSelectWithoutDetectedCli;
+    const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.canSelectWithoutDetectedCli;
     return fn ? fn(ctx) : false;
 }
 

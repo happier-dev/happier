@@ -3,6 +3,8 @@ import type {
     PluginAgentCliMetadata,
     AgentUiProjectedDeclarationV1,
     PluginContributionIdentityV1,
+    PluginProjectedAgentConnectedAccountPurposeV2,
+    PluginProjectionInstalledPackageV2,
 } from '@happier-dev/protocol';
 
 export type MergedBackendCapabilities = Readonly<{
@@ -14,7 +16,13 @@ export type MergedBackendCapabilities = Readonly<{
 
 export type MergedProviderProjectionEntry = Readonly<{
     agentId: string;
+    /** Exact V2 registry key; unlike a local id this remains collision-free. */
+    qualifiedId?: string | null;
     identity?: PluginContributionIdentityV1 | null;
+    /** Package facts captured from the same V2 projection as this Agent. */
+    installedPackage?: PluginProjectionInstalledPackageV2 | null;
+    /** Daemon projection generation paired with `installedPackage`. */
+    projectionGeneration?: number | null;
     title?: string | null;
     subtitle?: string | null;
     channel?: 'stable' | 'experimental' | 'plugin' | null;
@@ -23,6 +31,7 @@ export type MergedProviderProjectionEntry = Readonly<{
     catalogAgentId?: AgentId | null;
     iconAgentId?: AgentId | null;
     cli?: PluginAgentCliMetadata | null;
+    connectedAccounts?: readonly PluginProjectedAgentConnectedAccountPurposeV2[] | null;
     /**
      * The Agent's own UI-behavior descriptor as projected by the daemon. It
      * feeds the client's single descriptor interpreter; a bundled Agent keeps

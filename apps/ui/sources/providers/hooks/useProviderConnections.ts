@@ -9,6 +9,7 @@ import {
 
 type Success = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
 type ProviderConnectionsState = Readonly<{
+    scopeKey: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     data: Success | null;
     error: Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'error' }>['error'] | null;
@@ -23,6 +24,7 @@ export function useProviderConnections(input: Readonly<{
 }>) {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [state, setState] = React.useState<ProviderConnectionsState>({
+        scopeKey: null,
         accountLifetime: null,
         data: null,
         error: null,
@@ -31,18 +33,25 @@ export function useProviderConnections(input: Readonly<{
     const generation = React.useRef(0);
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
     currentAccountLifetimeRef.current = accountLifetime;
-    const stateMatchesAccountLifetime = state.accountLifetime === accountLifetime;
+    const scopeKey = JSON.stringify([
+        input.enabled,
+        input.machineId,
+        input.serverId,
+        input.connectionId ?? null,
+    ]);
+    const stateMatchesScope = state.scopeKey === scopeKey
+        && state.accountLifetime === accountLifetime;
     const scopeEnabled = Boolean(input.enabled && input.machineId);
-    const data = stateMatchesAccountLifetime ? state.data : null;
-    const error = stateMatchesAccountLifetime ? state.error : null;
-    const loading = scopeEnabled && (!stateMatchesAccountLifetime || state.loading);
+    const data = stateMatchesScope ? state.data : null;
+    const error = stateMatchesScope ? state.error : null;
+    const loading = scopeEnabled && (!stateMatchesScope || state.loading);
 
     React.useEffect(() => {
         const registration = accountLifetime?.onRetire(() => {
             if (currentAccountLifetimeRef.current !== accountLifetime) return;
             generation.current += 1;
             setState((current) => current.accountLifetime === accountLifetime
-                ? { accountLifetime: null, data: null, error: null, loading: false }
+                ? { scopeKey: null, accountLifetime: null, data: null, error: null, loading: false }
                 : current);
         });
         return () => registration?.dispose();
@@ -56,14 +65,15 @@ export function useProviderConnections(input: Readonly<{
         );
         if (!requestStillCurrent()) return;
         if (!input.enabled || !input.machineId) {
-            setState({ accountLifetime, data: null, error: null, loading: false });
+            setState({ scopeKey, accountLifetime, data: null, error: null, loading: false });
             return;
         }
         const machineId = input.machineId;
         const serverId = input.serverId;
-        setState((current) => current.accountLifetime === accountLifetime
+        setState((current) => current.scopeKey === scopeKey
+            && current.accountLifetime === accountLifetime
             ? { ...current, loading: true }
-            : { accountLifetime, data: null, error: null, loading: true });
+            : { scopeKey, accountLifetime, data: null, error: null, loading: true });
         try {
             const result = await describeProviderConnections({
                 machineId,
@@ -72,11 +82,14 @@ export function useProviderConnections(input: Readonly<{
             });
             if (requestGeneration !== generation.current || !requestStillCurrent()) return;
             if (result.status === 'success') {
-                setState({ accountLifetime, data: result, error: null, loading: true });
+                setState({ scopeKey, accountLifetime, data: result, error: null, loading: true });
             } else {
                 setState((current) => ({
                     accountLifetime,
-                    data: current.accountLifetime === accountLifetime ? current.data : null,
+                    scopeKey,
+                    data: current.scopeKey === scopeKey && current.accountLifetime === accountLifetime
+                        ? current.data
+                        : null,
                     error: result.error,
                     loading: true,
                 }));
@@ -85,7 +98,10 @@ export function useProviderConnections(input: Readonly<{
             if (requestGeneration !== generation.current || !requestStillCurrent()) return;
             setState((current) => ({
                 accountLifetime,
-                data: current.accountLifetime === accountLifetime ? current.data : null,
+                scopeKey,
+                data: current.scopeKey === scopeKey && current.accountLifetime === accountLifetime
+                    ? current.data
+                    : null,
                 error: providerErrorFromRpcFailure(caught, {
                     machineId,
                     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
@@ -94,18 +110,19 @@ export function useProviderConnections(input: Readonly<{
             }));
         } finally {
             if (requestGeneration === generation.current && requestStillCurrent()) {
-                setState((current) => current.accountLifetime === accountLifetime
+                setState((current) => current.scopeKey === scopeKey
+                    && current.accountLifetime === accountLifetime
                     ? { ...current, loading: false }
                     : current);
             }
         }
-    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId]);
+    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
 
     React.useEffect(() => {
-        setState({ accountLifetime, data: null, error: null, loading: false });
+        setState({ scopeKey, accountLifetime, data: null, error: null, loading: false });
         void refresh();
         return () => { generation.current += 1; };
-    }, [accountLifetime, refresh]);
+    }, [accountLifetime, refresh, scopeKey]);
 
     return { data, error, loading, refresh };
 }

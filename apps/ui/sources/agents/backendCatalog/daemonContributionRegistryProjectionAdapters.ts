@@ -455,13 +455,14 @@ export function readProjectedAgentUiBehaviorDescriptors(
     for (const [agentId, entry] of Object.entries(mergedProviderProjectionById)) {
         const ui = entry.ui;
         if (!ui) continue;
-        if (!ui.behavior && !ui.message && !ui.components) continue;
+        if (!ui.behavior && !ui.session && !ui.message && !ui.components) continue;
         descriptorsByAgentId[agentId] = {
             kind: 'plugin.ui.v1',
             pluginId: entry.identity?.pluginId ?? agentId,
             agentId,
             version: 1,
             ...(ui.behavior ? { behavior: ui.behavior } : {}),
+            ...(ui.session ? { session: ui.session } : {}),
             ...(ui.message ? { message: ui.message } : {}),
             ...(ui.components ? { components: ui.components } : {}),
         };
@@ -481,11 +482,21 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
     const mergedBackendProjectionById: Record<string, MergedBackendProjectionEntry> = {};
 
     for (const [agentEntryId, entry] of Object.entries(projection.agentsById ?? {})) {
+        const identity = isPluginProjectionV2(projection)
+            ? projection.agentsById[agentEntryId]?.identity ?? null
+            : null;
+        const installedPackageCandidate = identity && isPluginProjectionV2(projection)
+            ? projection.installedPackagesById[identity.pluginId] ?? null
+            : null;
+        const installedPackage = installedPackageCandidate?.id === identity?.pluginId
+            ? installedPackageCandidate
+            : null;
         mergedProviderProjectionById[agentEntryId] = {
             agentId: agentEntryId,
-            identity: isPluginProjectionV2(projection)
-                ? projection.agentsById[agentEntryId]?.identity ?? null
-                : null,
+            qualifiedId: isPluginProjectionV2(projection) ? agentEntryId : null,
+            identity,
+            installedPackage,
+            projectionGeneration: isPluginProjectionV2(projection) ? projection.generation : null,
             title: entry.title ?? null,
             subtitle: entry.subtitle ?? null,
             channel: entry.channel === 'stable' || entry.channel === 'experimental' || entry.channel === 'plugin'
@@ -499,6 +510,9 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
             iconAgentId: isProjectedAgentId(entry.iconAgentId) ? entry.iconAgentId : null,
             cli: isPluginProjectionV2(projection)
                 ? projection.agentsById[agentEntryId]?.cli ?? null
+                : null,
+            connectedAccounts: isPluginProjectionV2(projection)
+                ? projection.agentsById[agentEntryId]?.connectedAccounts ?? null
                 : null,
             ui: isPluginProjectionV2(projection)
                 ? projection.agentsById[agentEntryId]?.ui ?? null

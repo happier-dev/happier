@@ -135,6 +135,41 @@ describe('useProviderConnectionModels', () => {
         expect(value.current?.models[0]?.id).toBe('b');
     });
 
+    it('never exposes a prior catalog during the render that changes machine, server, or connection', async () => {
+        describeProviderConnectionModels
+            .mockResolvedValueOnce({
+                status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+                manualModelPolicy: 'allowed', modelLoadAction: 'available',
+                models: [{ id: 'model-a', source: 'probe', stale: false, loadState: 'unknown', visibility: 'visible' }],
+            })
+            .mockImplementation(() => new Promise(() => undefined));
+        const observations: Array<Readonly<{ scope: string; modelId: string | null }>> = [];
+        function Harness(props: Readonly<{ machineId: string; serverId: string; connectionId: string }>) {
+            const value = useProviderConnectionModels({ enabled: true, ...props });
+            observations.push({
+                scope: `${props.serverId}/${props.machineId}/${props.connectionId}`,
+                modelId: value.models[0]?.id ?? null,
+            });
+            return React.createElement('View');
+        }
+        const screen = await renderScreen(
+            <Harness machineId="machine-a" serverId="server-a" connectionId="pc_a" />,
+        );
+        expect(observations.at(-1)?.modelId).toBe('model-a');
+
+        for (const next of [
+            { machineId: 'machine-b', serverId: 'server-a', connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_b' },
+        ]) {
+            const scope = `${next.serverId}/${next.machineId}/${next.connectionId}`;
+            await screen.update(<Harness {...next} />);
+            expect(observations.some((entry) => (
+                entry.scope === scope && entry.modelId === 'model-a'
+            ))).toBe(false);
+        }
+    });
+
     it('clears the last catalog when the machine/server scope changes', async () => {
         describeProviderConnectionModels
             .mockResolvedValueOnce({

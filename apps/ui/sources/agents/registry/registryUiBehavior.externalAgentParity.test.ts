@@ -613,8 +613,6 @@ describe('external Agent runtime-descriptor declarations', () => {
                     defaultValue: 'classic',
                 },
                 backendTransport: {
-                    runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
-                    legacyModeOutputKey: 'acmeBackendMode',
                     backendMode: { values: ['turbo', 'classic'] },
                     runtimeHandleFields: ['backendMode', 'providerSessionId', 'workspaceId'],
                     agentExtra: { owner: 'acme', schemaId: 'acme.runtime', v: 1 },
@@ -630,8 +628,6 @@ describe('external Agent runtime-descriptor declarations', () => {
                 browse: {
                     linkEnsureRequestExtras: {
                         runtimeDescriptorFromCandidate: {
-                            runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
-                            legacyModeOutputKey: 'acmeBackendMode',
                             backendMode: { values: ['turbo', 'classic'] },
                             sourceFields: ['workspaceId'],
                         },
@@ -649,7 +645,9 @@ describe('external Agent runtime-descriptor declarations', () => {
             machineId: MACHINE_ID,
             settings: makeSettings({ acmeBackendMode: 'fast' }) as never,
             resumeSessionId: '',
-        })).toMatchObject({ acmeBackendMode: 'turbo' });
+        })).toMatchObject({
+            runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'turbo' } },
+        });
 
         // Unset falls to the declared default; an unreadable value never
         // escapes the declared value set.
@@ -658,7 +656,9 @@ describe('external Agent runtime-descriptor declarations', () => {
             machineId: MACHINE_ID,
             settings: makeSettings({ acmeBackendMode: 'nonsense' }) as never,
             resumeSessionId: '',
-        })).toMatchObject({ acmeBackendMode: 'classic' });
+        })).toMatchObject({
+            runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'classic' } },
+        });
     });
 
     it('reads the resume mode from the Agent’s canonical runtime descriptor', () => {
@@ -670,7 +670,9 @@ describe('external Agent runtime-descriptor declarations', () => {
             session: {
                 metadata: { machineId: MACHINE_ID, runtimeDescriptorV1: RUNTIME_DESCRIPTOR },
             } as never,
-        })).toEqual({ acmeBackendMode: 'turbo' });
+        })).toEqual({
+            runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'turbo' } },
+        });
     });
 
     it('builds backend transport fields from the declared runtime handle', () => {
@@ -684,7 +686,6 @@ describe('external Agent runtime-descriptor declarations', () => {
             });
 
         expect(fields).toEqual({
-            acmeBackendMode: 'turbo',
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: EXTERNAL_AGENT_ID,
@@ -716,7 +717,6 @@ describe('external Agent runtime-descriptor declarations', () => {
                 source: { kind: 'acmeWorkspace' } as never,
                 candidate: { details: { runtimeDescriptorV1: RUNTIME_DESCRIPTOR } },
             })).toMatchObject({
-            acmeBackendMode: 'turbo',
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: EXTERNAL_AGENT_ID,
@@ -767,6 +767,8 @@ describe('external Agent runtime-descriptor declarations', () => {
                     runtimeDescriptorV1: { ...RUNTIME_DESCRIPTOR, agentId: 'other.agent' },
                 },
             } as never,
-        })).toEqual({ acmeBackendMode: 'classic' });
+        })).toEqual({
+            runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'classic' } },
+        });
     });
 });

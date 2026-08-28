@@ -9,12 +9,16 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { tLoose, type TranslationKey } from '@/text';
 import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+    isSupportedRuntimeDescriptorProviderId,
     readMetadataAliasValue,
-    resolveAgentConfiguredRuntimeKind,
-    resolvePersistedProviderSessionBackendMode,
+    readSessionMetadataRuntimeDescriptor,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
-import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol';
+import {
+    mergeSpawnConfigOptionAliases,
+    type RuntimeDescriptorV1,
+    type SpawnConfigOptionValue,
+} from '@happier-dev/protocol';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
@@ -56,7 +60,7 @@ export function readOwnerMetadataFromSessionLike(session: unknown): Record<strin
 
 type StaticPayloadDescriptor = Readonly<{
     kind: 'static';
-    value: Record<string, unknown>;
+    value: Record<string, SpawnConfigOptionValue>;
 }>;
 
 type UnsupportedPayloadAdapterDescriptor = Readonly<{
@@ -329,7 +333,16 @@ type EditableGoalsDescriptor = Readonly<{
 function normalizePayloadDescriptor(value: unknown): PayloadDescriptor | null {
     if (!isRecord(value)) return null;
     if (value.kind === 'static' && isRecord(value.value)) {
-        return { kind: 'static', value: value.value };
+        const entries = Object.entries(value.value);
+        if (entries.every(([, entry]) => (
+            entry === null
+            || typeof entry === 'string'
+            || typeof entry === 'boolean'
+            || (typeof entry === 'number' && Number.isFinite(entry))
+        ))) {
+            return { kind: 'static', value: Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue> };
+        }
+        return null;
     }
     if (value.kind === 'adapter') {
         const adapterId = readString(value.adapterId);
@@ -510,27 +523,30 @@ function createSessionExtrasPayloadBehavior(
     descriptor: SessionExtrasDescriptor,
 ): NonNullable<AgentUiBehavior['payload']> {
     const buildExtras = (mode: string | null): Record<string, unknown> => (
-        mode ? { [descriptor.outputKey]: mode } : {}
+        mode
+            ? {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: descriptor.providerId,
+                    agent: { backendMode: mode },
+                } satisfies RuntimeDescriptorV1,
+            }
+            : {}
     );
-    const resolveSettingsMode = (settings: Readonly<Record<string, unknown>>) => (
-        readDeclaredSettingsMode(descriptor, settings)
-        // Only a BUNDLED Agent has released account-setting shapes older than
-        // this declaration; an installed Agent reaches the same outcome above.
-        ?? normalizeSessionExtraMode(descriptor, resolveAgentConfiguredRuntimeKind({
-            agentId: descriptor.providerId,
-            accountSettings: settings as Record<string, unknown>,
-        }))
-    );
+    const resolveSettingsMode = (settings: Readonly<Record<string, unknown>>) =>
+        readDeclaredSettingsMode(descriptor, settings);
     const resolveSessionMode = (session: { metadata?: Record<string, unknown> | null } | null | undefined) => {
         const metadata = readOwnerMetadataFromSessionLike(session);
         return readDeclaredPersistedMode(descriptor.providerId, descriptor.values, metadata)
             // Same rule for persisted shapes: the canonical envelope above is
             // the one an installed Agent can occupy; the reader below knows a
             // bundled Agent's released pre-envelope metadata and nothing else.
-            ?? normalizeSessionExtraMode(descriptor, resolvePersistedProviderSessionBackendMode({
-                agentId: descriptor.providerId,
-                metadata,
-            }));
+            ?? (isSupportedRuntimeDescriptorProviderId(descriptor.providerId)
+                ? normalizeSessionExtraMode(
+                    descriptor,
+                    readSessionMetadataRuntimeDescriptor(metadata, descriptor.providerId)?.runtimeKind,
+                )
+                : null);
     };
 
     return {
@@ -556,6 +572,16 @@ function createSessionExtrasPayloadBehavior(
             agentId === descriptor.providerId
                 ? buildExtras(resolveSessionMode(session) ?? resolveSettingsMode(resumeCapabilityOptions.accountSettings ?? ({} as Settings)))
                 : {}
+        ),
+    };
+}
+
+function createSessionExtrasNewSessionBehavior(
+    descriptor: SessionExtrasDescriptor,
+): NonNullable<AgentUiBehavior['newSession']> {
+    return {
+        resolveConfiguredRuntimeKind: ({ agentId, settings }) => (
+            agentId === descriptor.providerId ? readDeclaredSettingsMode(descriptor, settings) : null
         ),
     };
 }
@@ -710,10 +736,9 @@ function createWorkStateBehavior(
             // The canonical envelope above is what an installed Agent occupies;
             // the reader below knows a bundled Agent's released pre-envelope
             // metadata shapes and answers for nothing else.
-            ?? resolvePersistedProviderSessionBackendMode({
-                agentId: editableGoals.providerId,
-                metadata,
-            });
+            ?? (isSupportedRuntimeDescriptorProviderId(editableGoals.providerId)
+                ? readSessionMetadataRuntimeDescriptor(metadata, editableGoals.providerId)?.runtimeKind ?? null
+                : null);
         if (mode) return editableGoals.activeModeValues.includes(mode);
         if (editableGoals.activeWhenNoPersistedMode && session.active === true) return true;
         return hasPersistedGoalWorkState(metadata, editableGoals);
@@ -843,6 +868,7 @@ function createPayloadBehavior(
     agentId: string,
     diagnostics: UiProjectionDiagnostic[],
     agentOptions: readonly AgentOptionDescriptor[],
+    sessionExtrasDescriptor: SessionExtrasDescriptor | null,
 ): AgentUiBehavior['payload'] | undefined {
     const spawnSessionExtras = normalizePayloadDescriptor(descriptor.payload?.spawnSessionExtras);
     const staticPayload = (() => {
@@ -858,10 +884,15 @@ function createPayloadBehavior(
         }
 
         return {
-            buildSpawnSessionExtras: () => ({ ...spawnSessionExtras.value }),
+            buildSpawnSessionExtras: ({ sessionConfigOptionOverrides, updatedAt }) => ({
+                sessionConfigOptionOverrides: mergeSpawnConfigOptionAliases({
+                    sessionConfigOptionOverrides: sessionConfigOptionOverrides ?? undefined,
+                    configOptions: spawnSessionExtras.value,
+                    updatedAt,
+                }),
+            }),
         } satisfies AgentUiBehavior['payload'];
     })();
-    const sessionExtrasDescriptor = readSessionExtrasDescriptor(descriptor.payload?.sessionExtras, agentId, diagnostics);
     const sessionExtrasPayload = sessionExtrasDescriptor
         ? createSessionExtrasPayloadBehavior(sessionExtrasDescriptor)
         : undefined;
@@ -1212,6 +1243,7 @@ function createTeammateLauncherDetailsTab(
     pluginId: string,
     agentId: string,
     machineId: string | null,
+    resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): DetailsTab | null {
     const resourceKind = readString(descriptor.resourceKind);
     const keyPrefix = readString(descriptor.tab?.keyPrefix);
@@ -1224,8 +1256,13 @@ function createTeammateLauncherDetailsTab(
     return {
         key: normalizedTeamId ? `${keyPrefix}:member:${normalizedTeamId}` : `${keyPrefix}:member`,
         kind: resourceKind,
-        title: tLoose(titleKey),
-        ...(descriptor.tab?.subtitleKey ? { subtitle: tLoose(descriptor.tab.subtitleKey) } : {}),
+        title: resolvePluginTranslation?.(pluginId, titleKey) ?? tLoose(titleKey),
+        ...(descriptor.tab?.subtitleKey
+            ? {
+                subtitle: resolvePluginTranslation?.(pluginId, descriptor.tab.subtitleKey)
+                    ?? tLoose(descriptor.tab.subtitleKey),
+            }
+            : {}),
         resource: {
             kind: resourceKind,
             mode: 'member',
@@ -1246,6 +1283,7 @@ function createSessionSubagentsBehaviorFromComponents(
     diagnostics: UiProjectionDiagnostic[],
     pluginId: string,
     agentId: string,
+    resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): AgentUiBehavior['sessionSubagents'] | undefined {
     const slots = readComponentSlots(components);
     const launchCardSlots = slots.filter((slot) => slot.slot === 'sessionSubagents.launchCards');
@@ -1286,6 +1324,7 @@ function createSessionSubagentsBehaviorFromComponents(
                             pluginId,
                             agentId,
                             readString(metadata?.machineId),
+                            resolvePluginTranslation,
                         );
                         if (tab) return tab;
                     }
@@ -1550,6 +1589,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     agentId: string,
     pluginId: string,
     diagnostics: UiProjectionDiagnostic[],
+    resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): AgentUiBehavior {
     const relevantInstallableDepKeys = readStringArray(descriptor.newSession?.relevantInstallableDepKeys);
     const conditionalRelevantInstallableDeps = (descriptor.newSession?.relevantInstallableDeps ?? [])
@@ -1559,7 +1599,18 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         });
     const transcriptStorageModes = new Set(descriptor.newSession?.transcriptStorageModes ?? []);
     const agentOptions = readAgentOptionDescriptors(descriptor.newSession?.agentOptions, diagnostics);
-    const payload = createPayloadBehavior(descriptor, agentId, diagnostics, agentOptions);
+    const sessionExtrasDescriptor = readSessionExtrasDescriptor(
+        descriptor.payload?.sessionExtras,
+        agentId,
+        diagnostics,
+    );
+    const payload = createPayloadBehavior(
+        descriptor,
+        agentId,
+        diagnostics,
+        agentOptions,
+        sessionExtrasDescriptor,
+    );
     const permissions = createPermissionsBehavior(descriptor, diagnostics);
     const askUserQuestion = createAskUserQuestionBehavior(descriptor, diagnostics);
     const workState = createWorkStateBehavior(descriptor, agentId, diagnostics);
@@ -1568,6 +1619,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         diagnostics,
         pluginId,
         agentId,
+        resolvePluginTranslation,
     );
     const newSessionActionChips = createNewSessionActionChipsBehaviorFromComponents(descriptor.components, diagnostics);
     const sessionComposer = createSessionComposerBehavior(descriptor);
@@ -1613,6 +1665,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             ? { canSelectWithoutDetectedCli: () => descriptor.newSession?.canSelectWithoutDetectedCli === true }
             : {}),
         ...(createAgentOptionsNewSessionBehavior(agentOptions) ?? {}),
+        ...(sessionExtrasDescriptor ? createSessionExtrasNewSessionBehavior(sessionExtrasDescriptor) : {}),
         ...(newSessionActionChips ?? {}),
     };
 
@@ -1659,6 +1712,9 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
 export function createAgentUiBehaviorFromDescriptor(
     value: unknown,
     enclosingAgentId?: string,
+    options?: Readonly<{
+        resolvePluginTranslation?: (pluginId: string, key: string) => string | null;
+    }>,
 ): AgentUiBehaviorDescriptorResult {
     const diagnostics: UiProjectionDiagnostic[] = [];
     const normalizedEnclosingAgentId = readString(enclosingAgentId);
@@ -1670,6 +1726,7 @@ export function createAgentUiBehaviorFromDescriptor(
                     normalizedEnclosingAgentId ?? '',
                     normalizedEnclosingAgentId ?? '',
                     diagnostics,
+                    options?.resolvePluginTranslation,
                 ),
                 diagnostics,
             };
@@ -1713,6 +1770,7 @@ export function createAgentUiBehaviorFromDescriptor(
             agentId,
             readString(pluginDescriptor.pluginId) ?? agentId,
             diagnostics,
+            options?.resolvePluginTranslation,
         ),
         diagnostics,
     };

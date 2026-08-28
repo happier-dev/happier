@@ -57,8 +57,6 @@ type EnvironmentDescriptor = Readonly<{
 
 type BackendTransportDescriptor = Readonly<{
     providerId: string;
-    runtimeDescriptorOutputKey: string;
-    legacyModeOutputKey?: string;
     backendMode: Readonly<{
         values: readonly string[];
         aliases?: Readonly<Record<string, string>>;
@@ -108,8 +106,6 @@ type SourceFromCandidateLinkExtrasDescriptor = Readonly<{
 
 type RuntimeDescriptorLinkExtrasDescriptor = Readonly<{
     providerId: string;
-    runtimeDescriptorOutputKey: string;
-    legacyModeOutputKey?: string;
     backendMode: Readonly<{
         values: readonly string[];
     }>;
@@ -564,12 +560,10 @@ function readRuntimeDescriptorLinkExtrasDescriptor(
 ): RuntimeDescriptorLinkExtrasDescriptor | null {
     if (!isRecord(value)) return null;
     const providerId = agentId;
-    const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
-    const legacyModeOutputKey = readString(value.legacyModeOutputKey);
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
     const backendModeValues = readStringArray(backendMode?.values);
     const sourceFields = readStringArray(value.sourceFields);
-    if (!providerId || !runtimeDescriptorOutputKey || backendModeValues.length === 0) {
+    if (!providerId || backendModeValues.length === 0) {
         return null;
     }
 
@@ -582,8 +576,6 @@ function readRuntimeDescriptorLinkExtrasDescriptor(
     const runtimeHandleFields = readStringArray(agentExtraConfig?.runtimeHandleFields);
     return {
         providerId,
-        runtimeDescriptorOutputKey,
-        ...(legacyModeOutputKey ? { legacyModeOutputKey } : {}),
         backendMode: {
             values: backendModeValues,
         },
@@ -785,8 +777,7 @@ function buildRuntimeDescriptorLinkExtras(opts: Readonly<{
     } satisfies RuntimeDescriptorV1;
 
     return {
-        ...(opts.descriptor.legacyModeOutputKey ? { [opts.descriptor.legacyModeOutputKey]: backendMode } : {}),
-        [opts.descriptor.runtimeDescriptorOutputKey]: runtimeDescriptor,
+        runtimeDescriptorV1: runtimeDescriptor,
     };
 }
 
@@ -869,9 +860,6 @@ function buildHandoffRuntimeDescriptorFromLinkDescriptor(opts: Readonly<{
     };
 
     return {
-        metadataPatch: {
-            ...(opts.descriptor.legacyModeOutputKey ? { [opts.descriptor.legacyModeOutputKey]: backendMode } : {}),
-        },
         runtimeDescriptor,
         externalSessionRuntimeDescriptor: runtimeDescriptor,
     };
@@ -1211,6 +1199,14 @@ function createNewSessionBehavior(
     if (!environmentDescriptor || transcriptStorageModesByBackendMode.size === 0) return undefined;
 
     return {
+        resolveConfiguredRuntimeKind: ({ agentId, settings }) => (
+            agentId === environmentDescriptor.providerId
+                ? normalizeEnumValue(
+                    readSetting(settings, environmentDescriptor.backendMode.settingKey),
+                    environmentDescriptor.backendMode,
+                )
+                : null
+        ),
         supportsTranscriptStorageMode: ({ agentId, settings, storageMode }) => {
             if (agentId !== environmentDescriptor.providerId) return true;
             const backendMode = normalizeEnumValue(
@@ -1286,8 +1282,6 @@ function readBackendTransportDescriptor(
 ): BackendTransportDescriptor | null {
     if (!isRecord(value)) return null;
     const providerId = agentId;
-    const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
-    const legacyModeOutputKey = readString(value.legacyModeOutputKey);
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
     const backendModeValues = readStringArray(backendMode?.values);
     const runtimeHandleFields = readStringArray(value.runtimeHandleFields);
@@ -1312,8 +1306,6 @@ function readBackendTransportDescriptor(
         : null;
     return {
         providerId,
-        runtimeDescriptorOutputKey,
-        ...(legacyModeOutputKey ? { legacyModeOutputKey } : {}),
         backendMode: {
             values: backendModeValues,
             ...(aliases ? { aliases } : {}),
@@ -1394,16 +1386,7 @@ function createBackendTransportPayloadBehavior(
                 agent: attachRuntimeDescriptorAgentExtra(agentPayload, descriptor.agentExtra),
             } satisfies RuntimeDescriptorV1;
 
-            const fields: {
-                runtimeDescriptorV1?: RuntimeDescriptorV1;
-                [key: string]: unknown;
-            } = {};
-            const legacyMode = projectedRecord ? projectedMode : resolvedMode;
-            if (descriptor.legacyModeOutputKey && legacyMode) {
-                fields[descriptor.legacyModeOutputKey] = legacyMode;
-            }
-            fields[descriptor.runtimeDescriptorOutputKey] = runtimeDescriptor;
-            return fields;
+            return { runtimeDescriptorV1: runtimeDescriptor };
         },
     };
 }

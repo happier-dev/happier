@@ -6,6 +6,7 @@ import {
     createProviderConnectionsDescribeFixture,
     createProviderConnectionViewFixture,
     renderHook,
+    renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 
@@ -84,6 +85,42 @@ describe('useProviderConnections', () => {
 
         await hook.rerender({ machineId: 'machine-b' });
         expect(hook.getCurrent().data).toBeNull();
+    });
+
+    it('never exposes a prior exact target during the render that changes machine, server, or connection', async () => {
+        machineRpcWithServerScope
+            .mockResolvedValueOnce(createProviderConnectionsDescribeFixture({
+                connections: [createProviderConnectionViewFixture({ connectionId: 'pc_a' })],
+            }))
+            .mockImplementation(() => new Promise(() => undefined));
+        const observations: Array<Readonly<{
+            scope: string;
+            connectionId: string | null;
+        }>> = [];
+        function Harness(props: Readonly<{ machineId: string; serverId: string; connectionId: string }>) {
+            const value = useProviderConnections({ enabled: true, ...props });
+            observations.push({
+                scope: `${props.serverId}/${props.machineId}/${props.connectionId}`,
+                connectionId: value.data?.connections[0]?.connectionId ?? null,
+            });
+            return React.createElement('View');
+        }
+        const screen = await renderScreen(
+            <Harness machineId="machine-a" serverId="server-a" connectionId="pc_a" />,
+        );
+        expect(observations.at(-1)?.connectionId).toBe('pc_a');
+
+        for (const next of [
+            { machineId: 'machine-b', serverId: 'server-a', connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_a' },
+            { machineId: 'machine-b', serverId: 'server-b', connectionId: 'pc_b' },
+        ]) {
+            const scope = `${next.serverId}/${next.machineId}/${next.connectionId}`;
+            await screen.update(<Harness {...next} />);
+            expect(observations.some((entry) => (
+                entry.scope === scope && entry.connectionId === 'pc_a'
+            ))).toBe(false);
+        }
     });
 
     it('clears Account A, rejects its late read, and starts one Account B read when routing ids stay equal', async () => {

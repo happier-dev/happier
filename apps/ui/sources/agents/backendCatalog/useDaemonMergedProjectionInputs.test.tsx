@@ -250,6 +250,36 @@ describe('useDaemonMergedProjectionInputs', () => {
         await flushHookEffects({ cycles: 3, turns: 2 });
     });
 
+    it('does not expose a projection from another server when the machine id is unchanged', async () => {
+        const serverTwoLoad = createDeferred<ReturnType<typeof readyEntry>>();
+        loadDaemonMergedProjectionCacheEntryMock.mockImplementation(async (params: Readonly<{ serverId: string }>) => {
+            if (params.serverId === 'server-2') {
+                return await serverTwoLoad.promise;
+            }
+            return readyEntry(1);
+        });
+
+        const { useDaemonMergedProjectionInputs } = await import('./useDaemonMergedProjectionInputs');
+        const hook = await renderHook(
+            (serverId: string) => useDaemonMergedProjectionInputs({
+                machineId: 'machine-1',
+                serverId,
+            }),
+            { initialProps: 'server-1' },
+        );
+        await flushHookEffects({ cycles: 3, turns: 2 });
+
+        expect(hook.getCurrent().phase).toBe('ready');
+        await hook.rerender('server-2');
+        expect(hook.getCurrent()).toEqual({
+            phase: 'loading',
+            inputs: null,
+        });
+
+        serverTwoLoad.resolve(readyEntry(2));
+        await flushHookEffects({ cycles: 3, turns: 2 });
+    });
+
     it('can retain inert projection metadata across a route-driven authority change', async () => {
         const replacementLoad = createDeferred<ReturnType<typeof readyEntry>>();
         loadDaemonMergedProjectionCacheEntryMock.mockImplementation(async (params: Readonly<{ machineId: string }>) => {

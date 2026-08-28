@@ -22,6 +22,10 @@ import {
 } from './registryUiBehavior';
 import { makeSettings } from './registryUiBehavior.testHelpers';
 
+function codexRuntimeDescriptor(backendMode: 'acp' | 'appServer') {
+    return { v: 1 as const, agentId: 'codex', agent: { backendMode } };
+}
+
 describe('buildSpawnSessionExtrasFromUiState', () => {
     it('projects the normalized Codex backend mode into strict V2 configuration', () => {
         expect(buildSpawnSessionExtrasFromUiState({
@@ -30,7 +34,7 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             resumeSessionId: '',
             updatedAt: 123,
         })).toEqual({
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: codexRuntimeDescriptor('acp'),
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 123,
@@ -56,7 +60,7 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             resumeSessionId: 'x1',
             updatedAt: 456,
         })).toEqual({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: codexRuntimeDescriptor('appServer'),
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 456,
@@ -74,7 +78,7 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             resumeSessionId: 'x1',
             updatedAt: 789,
         })).toEqual({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: codexRuntimeDescriptor('appServer'),
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -104,7 +108,6 @@ describe('provider behavior runtime diagnostics', () => {
             providerMode: 'appServer',
             providerSessionId: 'codex-session-1',
         })).toEqual({
-            codexBackendMode: 'appServer',
             runtimeDescriptorV1: expect.objectContaining({
                 v: 1,
                 agentId: 'codex',
@@ -134,21 +137,21 @@ describe('buildResumeSessionExtrasFromUiState', () => {
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'acp' }),
         })).toEqual({
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: codexRuntimeDescriptor('acp'),
         });
 
         expect(buildResumeSessionExtrasFromUiState({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'mcp' }),
         })).toEqual({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: codexRuntimeDescriptor('appServer'),
         });
 
         expect(buildResumeSessionExtrasFromUiState({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'appServer' as any }),
         })).toEqual({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: codexRuntimeDescriptor('appServer'),
         });
     });
 
@@ -162,7 +165,7 @@ describe('buildResumeSessionExtrasFromUiState', () => {
                 },
             } as any,
         })).toEqual({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: codexRuntimeDescriptor('appServer'),
         });
     });
 
@@ -298,17 +301,17 @@ describe('buildWakeResumeExtras', () => {
             agentId: 'codex',
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'acp' }) },
             session: null,
-        })).toEqual({ codexBackendMode: 'acp' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('acp') });
         expect(buildWakeResumeExtras({
             agentId: 'codex',
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'mcp' }) },
             session: null,
-        })).toEqual({ codexBackendMode: 'appServer' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('appServer') });
         expect(buildWakeResumeExtras({
             agentId: 'codex',
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'appServer' as any }) },
             session: null,
-        })).toEqual({ codexBackendMode: 'appServer' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('appServer') });
     });
 
     it('prefers persisted codex backend metadata over account settings for wake resume', () => {
@@ -320,7 +323,7 @@ describe('buildWakeResumeExtras', () => {
                     codexBackendMode: 'appServer',
                 },
             } as any,
-        })).toEqual({ codexBackendMode: 'appServer' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('appServer') });
 
         expect(buildWakeResumeExtras({
             agentId: 'codex',
@@ -338,7 +341,7 @@ describe('buildWakeResumeExtras', () => {
                     codexBackendMode: 'acp',
                 },
             } as any,
-        })).toEqual({ codexBackendMode: 'appServer' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('appServer') });
 
         expect(buildWakeResumeExtras({
             agentId: 'codex',
@@ -348,7 +351,7 @@ describe('buildWakeResumeExtras', () => {
                     codexBackendMode: 'acp',
                 },
             } as any,
-        })).toEqual({ codexBackendMode: 'acp' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('acp') });
 
         expect(buildWakeResumeExtras({
             agentId: 'codex',
@@ -362,7 +365,7 @@ describe('buildWakeResumeExtras', () => {
                     },
                 },
             } as any,
-        })).toEqual({ codexBackendMode: 'appServer' });
+        })).toEqual({ runtimeDescriptorV1: codexRuntimeDescriptor('appServer') });
     });
 
     it('does not emit legacy experimentalCodexAcp for codex wake extras', () => {

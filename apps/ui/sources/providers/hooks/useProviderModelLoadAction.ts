@@ -4,6 +4,10 @@ import type { DaemonProviderModelLoadResponseV1 } from '@happier-dev/protocol/rp
 
 import { providerModelRowKey } from '@/providers/models/modelRowKey';
 import { cancelProviderModelLoad, loadProviderModel, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import {
+    captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
 
 export type ProviderModelLoadUiResult = DaemonProviderModelLoadResponseV1
     | Readonly<{ status: 'loaded'; source: 'reconciled' }>
@@ -38,6 +42,7 @@ export function useProviderModelLoadAction(input: Readonly<{
     /** Re-checks an owner-scoped target immediately before dispatching a model load. */
     resolveExecutionTarget?: () => ProviderModelExecutionTarget | null;
 }>) {
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [loadingModelKey, setLoadingModelKey] = React.useState<string | null>(null);
     const [cancelledProviderMayContinue, setCancelledProviderMayContinue] = React.useState(false);
     const inFlight = React.useRef(false);
@@ -46,18 +51,42 @@ export function useProviderModelLoadAction(input: Readonly<{
         modelId: string;
         executionTarget: ProviderModelExecutionTarget;
         controller: AbortController;
+        accountLifetime: ActiveServerAccountScopeLifetime | null;
     }> | null>(null);
     const mounted = React.useRef(true);
+    const currentAccountLifetime = React.useRef(accountLifetime);
+    currentAccountLifetime.current = accountLifetime;
 
     React.useEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
 
+    React.useEffect(() => {
+        const registration = accountLifetime?.onRetire(() => {
+            active.current?.controller.abort();
+            if (!mounted.current) return;
+            setLoadingModelKey(null);
+            setCancelledProviderMayContinue(false);
+        });
+        return () => registration?.dispose();
+    }, [accountLifetime]);
+
     const load = React.useCallback(async (
         connectionId: string,
         modelId: string,
     ): Promise<ProviderModelLoadUiResult> => {
+        const operationAccountLifetime = accountLifetime;
+        const accountStillCurrent = (): boolean => (
+            currentAccountLifetime.current === operationAccountLifetime
+            && (operationAccountLifetime?.isCurrent() ?? true)
+        );
+        if (!accountStillCurrent()) {
+            return {
+                status: 'error',
+                error: createProviderErrorV1('provider_authorization_changed', { connectionId }),
+            };
+        }
         if (!input.machineId) {
             return {
                 status: 'error',
@@ -75,6 +104,15 @@ export function useProviderModelLoadAction(input: Readonly<{
         // the same machine must be followed, exactly like every other Provider
         // effect. Comparing the routing id here would report a reconnected
         // server as an unavailable endpoint.
+        if (!accountStillCurrent()) {
+            return {
+                status: 'error',
+                error: createProviderErrorV1('provider_authorization_changed', {
+                    connectionId,
+                    machineId: initialExecutionTarget.machineId,
+                }),
+            };
+        }
         if (!executionTarget) {
             return {
                 status: 'error',
@@ -101,6 +139,7 @@ export function useProviderModelLoadAction(input: Readonly<{
             modelId,
             executionTarget,
             controller: new AbortController(),
+            accountLifetime: operationAccountLifetime,
         };
         active.current = operation;
         if (mounted.current) setLoadingModelKey(providerModelRowKey(connectionId, modelId));
@@ -142,6 +181,9 @@ export function useProviderModelLoadAction(input: Readonly<{
                 };
             }
             if (result.status === 'loaded') {
+                if (!accountStillCurrent()) {
+                    return { status: 'cancelled', providerMayContinue: true };
+                }
                 try {
                     await input.refresh(connectionId, modelId);
                 } catch {
@@ -153,13 +195,20 @@ export function useProviderModelLoadAction(input: Readonly<{
         } finally {
             inFlight.current = false;
             if (active.current === operation) active.current = null;
-            if (mounted.current) setLoadingModelKey(null);
+            if (mounted.current && accountStillCurrent()) setLoadingModelKey(null);
         }
-    }, [input.machineId, input.refresh, input.resolveExecutionTarget, input.serverId]);
+    }, [accountLifetime, input.machineId, input.refresh, input.resolveExecutionTarget, input.serverId]);
 
     const cancel = React.useCallback(async (): Promise<ProviderModelLoadUiResult | null> => {
         const operation = active.current;
         if (!operation) return null;
+        if (
+            currentAccountLifetime.current !== operation.accountLifetime
+            || !(operation.accountLifetime?.isCurrent() ?? true)
+        ) {
+            operation.controller.abort();
+            return { status: 'cancelled', providerMayContinue: true };
+        }
         const pendingCancellation = cancelProviderModelLoad({
             machineId: operation.executionTarget.machineId,
             serverId: operation.executionTarget.serverId,

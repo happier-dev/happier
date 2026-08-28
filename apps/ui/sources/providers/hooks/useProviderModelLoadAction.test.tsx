@@ -6,7 +6,43 @@ import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
+type TestAccountLifetime = Readonly<{
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+}>;
+const activeAccountLifetime = vi.hoisted(() => {
+    const current: { value: TestAccountLifetime | null } = { value: null };
+    return {
+        current,
+        create() {
+            let retired = false;
+            const retirements = new Set<() => void>();
+            const lifetime: TestAccountLifetime = {
+                isCurrent: () => !retired,
+                onRetire(cancel) {
+                    if (retired) {
+                        cancel();
+                        return { dispose() {} };
+                    }
+                    retirements.add(cancel);
+                    return { dispose: () => retirements.delete(cancel) };
+                },
+            };
+            return {
+                lifetime,
+                retire() {
+                    retired = true;
+                    for (const cancel of [...retirements]) cancel();
+                    retirements.clear();
+                },
+            };
+        },
+    };
+});
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope }));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
+}));
 
 import { useProviderModelLoadAction } from './useProviderModelLoadAction';
 
@@ -17,7 +53,10 @@ function createDeferred<T>() {
 }
 
 describe('useProviderModelLoadAction', () => {
-    afterEach(standardCleanup);
+    afterEach(() => {
+        activeAccountLifetime.current.value = null;
+        standardCleanup();
+    });
     beforeEach(() => machineRpcWithServerScope.mockReset());
 
     it('keeps mounted load state functional through the StrictMode effect replay', async () => {
@@ -43,6 +82,48 @@ describe('useProviderModelLoadAction', () => {
             resolveLoad({ status: 'loaded', source: 'requested' });
             await pending;
         });
+        expect(value.current?.loadingModelKey).toBeNull();
+    });
+
+    it('clears Account A model-load state and refuses its late settlement after Account B mounts', async () => {
+        const accountA = activeAccountLifetime.create();
+        const accountB = activeAccountLifetime.create();
+        activeAccountLifetime.current.value = accountA.lifetime;
+        const loadResult = createDeferred<{ status: 'loaded'; source: 'requested' }>();
+        machineRpcWithServerScope.mockReturnValueOnce(loadResult.promise);
+        const refresh = vi.fn(async () => true);
+        const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
+        function Harness() {
+            value.current = useProviderModelLoadAction({
+                machineId: 'machine-a', serverId: 'server-a', refresh,
+            });
+            return React.createElement('View');
+        }
+        const rendered = await renderScreen(<Harness />);
+
+        let pending!: Promise<unknown>;
+        await act(async () => {
+            pending = value.current!.load('pc_a', 'model-a');
+            await Promise.resolve();
+        });
+        expect(value.current?.loadingModelKey).not.toBeNull();
+
+        let staleCancelResult: unknown;
+        await act(async () => {
+            activeAccountLifetime.current.value = accountB.lifetime;
+            accountA.retire();
+            staleCancelResult = await value.current!.cancel();
+            await rendered.update(<Harness />);
+        });
+
+        expect(value.current?.loadingModelKey).toBeNull();
+        expect(value.current?.cancelledProviderMayContinue).toBe(false);
+        expect(staleCancelResult).toEqual({ status: 'cancelled', providerMayContinue: true });
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        await expect(pending).resolves.toEqual({ status: 'cancelled', providerMayContinue: true });
+
+        await act(async () => loadResult.resolve({ status: 'loaded', source: 'requested' }));
+        expect(refresh).not.toHaveBeenCalled();
         expect(value.current?.loadingModelKey).toBeNull();
     });
 

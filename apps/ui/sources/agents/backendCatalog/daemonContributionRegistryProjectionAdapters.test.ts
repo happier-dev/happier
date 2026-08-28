@@ -172,9 +172,17 @@ describe('daemon contribution registry projection adapters', () => {
                     displayName: 'Acme Review',
                     version: '1.2.3',
                     enabled: true,
+                    immutableGenerationId: 'generation-42',
                     source: {
-                        kind: 'path',
+                        kind: 'localPath',
                         locator: '/plugins/acme-review',
+                    },
+                    brand: {
+                        state: 'available',
+                        resource: { pluginId: 'acme.review', localId: 'brand' },
+                        width: 128,
+                        height: 128,
+                        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                     },
                 },
             },
@@ -187,6 +195,11 @@ describe('daemon contribution registry projection adapters', () => {
                     },
                     channel: 'plugin',
                     isBuiltIn: false,
+                    connectedAccounts: [{
+                        purpose: 'primary',
+                        service: { pluginId: 'acme.review', localId: 'account' },
+                        required: false,
+                    }],
                     providerOwnedEnvironmentKeys: [],
                     cli: {
                         executable: { binaryName: 'acme', sourcePreference: 'system-first' },
@@ -312,11 +325,25 @@ describe('daemon contribution registry projection adapters', () => {
             pluginId: 'acme.review',
             localId: 'acme-native',
         });
+        expect(adapted.mergedProviderProjectionById['acme.native']).toEqual(expect.objectContaining({
+            qualifiedId: 'acme.native',
+            projectionGeneration: 42,
+            installedPackage: expect.objectContaining({
+                id: 'acme.review',
+                immutableGenerationId: 'generation-42',
+                brand: expect.objectContaining({ state: 'available' }),
+            }),
+        }));
 
         expect(adapted.mergedProviderProjectionById['acme.native']?.cli?.auth.loginLaunches).toEqual([
             { kind: 'primary', args: ['login'] },
             { kind: 'device_code', args: ['login', '--device-code'] },
         ]);
+        expect(adapted.mergedProviderProjectionById['acme.native']?.connectedAccounts).toEqual([{
+            purpose: 'primary',
+            service: { pluginId: 'acme.review', localId: 'account' },
+            required: false,
+        }]);
         const projectedCli = adapted.mergedProviderProjectionById['acme.native']?.cli;
         if (!projectedCli) throw new Error('expected native Agent CLI/auth projection');
         const authPlugin = createProjectedAgentLocalAuthPlugin({
@@ -339,7 +366,7 @@ describe('daemon contribution registry projection adapters', () => {
             generation: 42,
             generationLabel: '42',
             provenance: expect.objectContaining({
-                sourceKind: 'path',
+                sourceKind: 'localPath',
                 sourceLabel: '/plugins/acme-review',
             }),
             diagnostics: [

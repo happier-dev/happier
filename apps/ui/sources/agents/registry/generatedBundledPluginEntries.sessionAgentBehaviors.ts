@@ -23,8 +23,6 @@ export const BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS: Readonly<
     claude: Object.freeze({
         agentId: 'claude' as CanonicalAgentId,
         descriptor: Object.freeze({
-  "autoRecipientPolicyId": "claude.teamMemberAutoRecipient.v1",
-  "participantDescriptorId": "claude.teamParticipants.v1",
   "providerBehavior": {
     "agentTeam": {
       "configTeamPath": {
@@ -73,8 +71,6 @@ export const BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS: Readonly<
     },
     "kind": "session.providerBehavior.v1"
   },
-  "providerBehaviorDescriptorId": "claude.sessionProviderBehavior.v1",
-  "subagentDescriptorId": "claude.teamSubagents.v1",
   "visibleMessages": {
     "excludeJsonEventTypes": [
       "idle_notification",

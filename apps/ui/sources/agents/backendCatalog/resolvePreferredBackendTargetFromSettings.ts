@@ -1,4 +1,4 @@
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
@@ -8,6 +8,7 @@ import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 import { resolvePreferredBackendTargetFromProjection } from './resolvePreferredBackendTargetFromProjection';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
 
 function hasNonEmptyRecord(value: Readonly<Record<string, boolean>> | null | undefined): boolean {
     return !!(value && Object.keys(value).length > 0);
@@ -21,7 +22,8 @@ function hasNonEmptyAcpCatalogBackends(value: unknown): boolean {
     return Array.isArray(backends) && backends.length > 0;
 }
 
-function normalizeBackendTargetForUi(target: BackendTargetRefV2): BackendTargetRefV2 {
+function normalizeBackendTargetForUi(target: PersistedBackendTargetRefV2): PersistedBackendTargetRefV2 {
+    if (target.kind === 'agent') return target;
     return target.configuredBackendId
         ? { kind: 'backend', backendId: target.backendId, configuredBackendId: target.configuredBackendId }
         : { kind: 'backend', backendId: target.backendId };
@@ -35,7 +37,7 @@ export function resolvePreferredBackendTargetFromSettings(params: Readonly<{
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     acpCatalogSettingsV1?: unknown;
     daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;
-}>): BackendTargetRefV2 {
+}>): PersistedBackendTargetRefV2 {
     if (params.daemonMergedProjectionInputs) {
         return resolvePreferredBackendTargetFromProjection(params);
     }
@@ -65,11 +67,17 @@ export function resolvePreferredBackendTargetFromSettings(params: Readonly<{
                 const mergedTargets = mergedEntries.map((entry) => entry.backendTarget);
                 const seenTargetKeys = new Set(mergedEntries.map((entry) => entry.backendTargetKey));
                 const builtInTargets = enabledBuiltInAgentIds
-                    .map((agentId) => ({ kind: 'backend', backendId: agentId } satisfies BackendTargetRefV2))
+                    .map((agentId) => ({
+                        kind: 'agent',
+                        identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId],
+                    } satisfies PersistedBackendTargetRefV2))
                     .filter((target) => !seenTargetKeys.has(resolveBackendTargetKeyV2(target)));
                 return [...builtInTargets, ...mergedTargets];
             })()
-            : enabledBuiltInAgentIds.map((agentId) => ({ kind: 'backend', backendId: agentId } satisfies BackendTargetRefV2))
+            : enabledBuiltInAgentIds.map((agentId) => ({
+                kind: 'agent',
+                identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId],
+            } satisfies PersistedBackendTargetRefV2))
         : undefined;
 
     const resolved = resolvePreferredBackendTarget({

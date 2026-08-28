@@ -21,15 +21,17 @@ export function useProviderConnectionModels(input: Readonly<{
     const [modelLoadAction, setModelLoadAction] = React.useState<'available' | 'descriptor_absent' | 'feature_disabled' | null>(null);
     const [error, setError] = React.useState<ProviderErrorV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
+    const [stateScopeKey, setStateScopeKey] = React.useState<string | null>(null);
     const [stateAccountLifetime, setStateAccountLifetime] = React.useState<
         ActiveServerAccountScopeLifetime | null
     >(null);
     const generation = React.useRef(0);
-    const activeScopeKey = React.useRef<string | null>(null);
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
     currentAccountLifetimeRef.current = accountLifetime;
     const stateAccountLifetimeRef = React.useRef(stateAccountLifetime);
     stateAccountLifetimeRef.current = stateAccountLifetime;
+    const stateScopeKeyRef = React.useRef(stateScopeKey);
+    stateScopeKeyRef.current = stateScopeKey;
     const scopeKey = JSON.stringify([input.enabled, input.machineId, input.serverId, input.connectionId]);
 
     React.useEffect(() => {
@@ -38,7 +40,9 @@ export function useProviderConnectionModels(input: Readonly<{
             generation.current += 1;
             if (stateAccountLifetimeRef.current !== accountLifetime) return;
             stateAccountLifetimeRef.current = null;
+            stateScopeKeyRef.current = null;
             setStateAccountLifetime(null);
+            setStateScopeKey(null);
             setModels([]);
             setConnectionRevision(null);
             setManualModelPolicy(null);
@@ -58,7 +62,9 @@ export function useProviderConnectionModels(input: Readonly<{
         if (!requestStillCurrent()) return null;
         if (!input.enabled || !input.machineId || !input.connectionId) {
             stateAccountLifetimeRef.current = accountLifetime;
+            stateScopeKeyRef.current = scopeKey;
             setStateAccountLifetime(accountLifetime);
+            setStateScopeKey(scopeKey);
             setModels([]);
             setConnectionRevision(null);
             setManualModelPolicy(null);
@@ -67,9 +73,14 @@ export function useProviderConnectionModels(input: Readonly<{
             setLoading(false);
             return null;
         }
-        if (stateAccountLifetimeRef.current !== accountLifetime) {
+        if (
+            stateScopeKeyRef.current !== scopeKey
+            || stateAccountLifetimeRef.current !== accountLifetime
+        ) {
             stateAccountLifetimeRef.current = accountLifetime;
+            stateScopeKeyRef.current = scopeKey;
             setStateAccountLifetime(accountLifetime);
+            setStateScopeKey(scopeKey);
             setModels([]);
             setConnectionRevision(null);
             setManualModelPolicy(null);
@@ -86,7 +97,9 @@ export function useProviderConnectionModels(input: Readonly<{
             if (generation.current !== requestGeneration || !requestStillCurrent()) return null;
             if (result.status === 'success') {
                 stateAccountLifetimeRef.current = accountLifetime;
+                stateScopeKeyRef.current = scopeKey;
                 setStateAccountLifetime(accountLifetime);
+                setStateScopeKey(scopeKey);
                 setModels(result.models);
                 setConnectionRevision(result.connectionRevision);
                 setManualModelPolicy(result.manualModelPolicy);
@@ -103,13 +116,15 @@ export function useProviderConnectionModels(input: Readonly<{
                 machineId: input.machineId,
             });
             stateAccountLifetimeRef.current = accountLifetime;
+            stateScopeKeyRef.current = scopeKey;
             setStateAccountLifetime(accountLifetime);
+            setStateScopeKey(scopeKey);
             setError(error);
             return { status: 'error' as const, error };
         } finally {
             if (generation.current === requestGeneration && requestStillCurrent()) setLoading(false);
         }
-    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId]);
+    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId, scopeKey]);
 
     const refresh = React.useCallback(async (): Promise<void> => {
         await refreshWithResult();
@@ -117,11 +132,12 @@ export function useProviderConnectionModels(input: Readonly<{
 
     React.useEffect(() => {
         if (
-            activeScopeKey.current !== scopeKey
+            stateScopeKeyRef.current !== scopeKey
             || stateAccountLifetimeRef.current !== accountLifetime
         ) {
-            activeScopeKey.current = scopeKey;
+            stateScopeKeyRef.current = scopeKey;
             stateAccountLifetimeRef.current = accountLifetime;
+            setStateScopeKey(scopeKey);
             setStateAccountLifetime(accountLifetime);
             setModels([]);
             setConnectionRevision(null);
@@ -133,15 +149,16 @@ export function useProviderConnectionModels(input: Readonly<{
         return () => { generation.current += 1; };
     }, [accountLifetime, refreshWithResult, scopeKey]);
 
-    const stateMatchesAccountLifetime = stateAccountLifetime === accountLifetime;
+    const stateMatchesScope = stateScopeKey === scopeKey
+        && stateAccountLifetime === accountLifetime;
     const scopeEnabled = Boolean(input.enabled && input.machineId && input.connectionId);
     return {
-        models: stateMatchesAccountLifetime ? models : [],
-        connectionRevision: stateMatchesAccountLifetime ? connectionRevision : null,
-        manualModelPolicy: stateMatchesAccountLifetime ? manualModelPolicy : null,
-        modelLoadAction: stateMatchesAccountLifetime ? modelLoadAction : null,
-        error: stateMatchesAccountLifetime ? error : null,
-        loading: scopeEnabled && (!stateMatchesAccountLifetime || loading),
+        models: stateMatchesScope ? models : [],
+        connectionRevision: stateMatchesScope ? connectionRevision : null,
+        manualModelPolicy: stateMatchesScope ? manualModelPolicy : null,
+        modelLoadAction: stateMatchesScope ? modelLoadAction : null,
+        error: stateMatchesScope ? error : null,
+        loading: scopeEnabled && (!stateMatchesScope || loading),
         refresh,
         refreshWithResult,
     };
