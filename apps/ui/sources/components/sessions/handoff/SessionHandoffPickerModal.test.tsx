@@ -798,7 +798,13 @@ describe('SessionHandoffPickerModal', () => {
             directModeMenu!.props.onSelect('keep_direct');
         });
 
-        const globInput = tree.findByType('TextInput' as any);
+        // The shared path picker renders its own search input; select the transfer
+        // glob input by its placeholder key instead of assuming a single text input.
+        const findGlobInput = (): any =>
+            tree.findAllByType('TextInput' as any)
+                .find((node: any) => node.props?.placeholder === 'settingsSession.handoff.includeIgnoredMode.globsPlaceholder');
+        const globInput = findGlobInput();
+        expect(globInput).toBeTruthy();
         expect(globInput.props.editable).toBe(false);
         await act(async () => {
             globInput.props.onChangeText('dist/**, .env.local');
@@ -812,7 +818,7 @@ describe('SessionHandoffPickerModal', () => {
         expect(strategyMenuAfterAttempt?.props.selectedId).toBe('transfer_snapshot');
         expect(conflictMenuAfterAttempt?.props.selectedId).toBe('create_sibling_copy');
         expect(ignoredMenuAfterAttempt?.props.selectedId).toBe('include_selected');
-        expect(tree.findByType('TextInput' as any).props.value).toBe('dist/**');
+        expect(findGlobInput()?.props.value).toBe('dist/**');
 
         const footer = requireCardChrome(chrome).footer;
         const startButton = findElementByTestId(footer, 'session-handoff-start');
