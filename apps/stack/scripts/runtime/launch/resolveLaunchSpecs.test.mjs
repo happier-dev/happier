@@ -188,6 +188,14 @@ test('resolveServerRuntimeLaunchSpec derives packaged migrations from the provid
     snapshot,
   });
   assert.deepEqual(sqlite.migration, { mode: 'in-process' });
+
+  const disabled = resolveServerRuntimeLaunchSpec({
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+    migrationsEnabled: false,
+    snapshot,
+  });
+  assert.deepEqual(disabled.migration, { mode: 'disabled' });
 });
 
 test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the manifest entrypoint escapes the snapshot root', () => {

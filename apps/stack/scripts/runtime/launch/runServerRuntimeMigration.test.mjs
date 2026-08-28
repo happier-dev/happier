@@ -70,6 +70,25 @@ test('an explicit in-process migration contract starts the server without requir
   }]);
 });
 
+test('an explicit disabled migration contract starts without resolving a sidecar', async (t) => {
+  const { spec, serverDir } = await fixture(t);
+  const disabledSpec = { ...spec, migration: { mode: 'disabled' } };
+  const labels = [];
+  const server = { pid: 304 };
+
+  assert.equal(await spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: disabledSpec,
+    env: { HAPPIER_DB_PROVIDER: 'postgres', RUN_MIGRATIONS: '0' },
+    children: [],
+    spawnProcImpl: (label) => {
+      labels.push(label);
+      return server;
+    },
+  }), server);
+  assert.deepEqual(labels, ['server']);
+  assert.equal(disabledSpec.command, join(serverDir, 'happier-server'));
+});
+
 test('migration admission failures are typed and never spawn the normal server', async (t) => {
   const { spec, serverDir, command } = await fixture(t);
   const outside = join(serverDir, '..', 'happier-server-migrate');

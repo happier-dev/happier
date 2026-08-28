@@ -72,6 +72,7 @@ import {
 } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { spawnRuntimeServerAfterMigration } from './runtime/launch/runServerRuntimeMigration.mjs';
+import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
@@ -186,7 +187,12 @@ async function main() {
   const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
   const serverLaunchSpec = runtimeSnapshot
-    ? resolveServerRuntimeLaunchSpec({ serverComponent: serverComponentName, dbProvider, snapshot: runtimeSnapshot })
+    ? resolveServerRuntimeLaunchSpec({
+        serverComponent: serverComponentName,
+        dbProvider,
+        snapshot: runtimeSnapshot,
+        migrationsEnabled: resolveServerMigrationsEnabled(process.env),
+      })
     : null;
   if (dbProvider === 'mysql' && !String(process.env.DATABASE_URL ?? '').trim()) {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before startup');

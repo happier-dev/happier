@@ -12,11 +12,22 @@ export type SelfHostServerMigrationPlan = Readonly<{
     args: readonly string[];
 }>;
 
+function isFalseEnvValue(value: unknown): boolean {
+    return ['0', 'false', 'no', 'off'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+export function resolveServerMigrationsEnabled(env: Readonly<Record<string, unknown>>): boolean {
+    if (isFalseEnvValue(env.RUN_MIGRATIONS)) return false;
+    if (isFalseEnvValue(env.HAPPIER_STACK_PRISMA_MIGRATE)) return false;
+    return true;
+}
+
 export function resolveSelfHostServerMigrationPlan(params: Readonly<{
     serverBinaryPath: string;
     env: Readonly<Record<string, unknown>>;
     platform?: NodeJS.Platform;
 }>): SelfHostServerMigrationPlan | null {
+    if (!resolveServerMigrationsEnabled(params.env)) return null;
     const platform = params.platform ?? process.platform;
     const rawProvider = String(params.env.HAPPIER_DB_PROVIDER ?? params.env.HAPPY_DB_PROVIDER ?? 'sqlite').trim().toLowerCase();
     const provider = rawProvider === 'postgresql' ? 'postgres' : rawProvider;
@@ -27,7 +38,7 @@ export function resolveSelfHostServerMigrationPlan(params: Readonly<{
         const rawAutoMigrate = String(
             params.env.HAPPIER_SQLITE_AUTO_MIGRATE ?? params.env.HAPPY_SQLITE_AUTO_MIGRATE ?? '1',
         ).trim().toLowerCase();
-        if (!['0', 'false', 'no', 'off'].includes(rawAutoMigrate)) return null;
+        if (!isFalseEnvValue(rawAutoMigrate)) return null;
         return { command: params.serverBinaryPath, args: ['--migrate-only'] };
     }
 

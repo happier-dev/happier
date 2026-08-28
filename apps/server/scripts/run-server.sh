@@ -11,6 +11,18 @@ if [ -n "$server_binary" ] && [ ! -x "$server_binary" ]; then
   exit 1
 fi
 
+is_false() {
+  case "$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" in
+    0|false|no|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+migrations_enabled=1
+if is_false "${RUN_MIGRATIONS:-1}" || is_false "${HAPPIER_STACK_PRISMA_MIGRATE:-1}"; then
+  migrations_enabled=0
+fi
+
 provider="$(printf "%s" "${HAPPIER_DB_PROVIDER:-${HAPPY_DB_PROVIDER:-postgres}}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 flavor="$(printf "%s" "${HAPPIER_SERVER_FLAVOR:-${HAPPY_SERVER_FLAVOR:-full}}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 start_script="start"
@@ -40,7 +52,7 @@ export HAPPIER_SERVER_FLAVOR="$flavor"
 export HAPPY_SERVER_FLAVOR="$flavor"
 
 if [ "$provider" = "sqlite" ]; then
-  if [ "${RUN_MIGRATIONS:-1}" = "0" ]; then
+  if [ "$migrations_enabled" = "0" ]; then
     sqlite_auto_migrate="0"
   else
     sqlite_auto_migrate="1"
@@ -62,7 +74,7 @@ if [ "$provider" = "sqlite" ]; then
   fi
 fi
 
-if [ "$should_migrate" = "1" ] && [ "${RUN_MIGRATIONS:-1}" != "0" ]; then
+if [ "$should_migrate" = "1" ] && [ "$migrations_enabled" = "1" ]; then
   attempts="${MIGRATIONS_MAX_ATTEMPTS:-30}"
   delay="${MIGRATIONS_RETRY_DELAY_SECONDS:-2}"
 
@@ -106,6 +118,13 @@ if [ "$should_migrate" = "1" ] && [ "${RUN_MIGRATIONS:-1}" != "0" ]; then
       i=$((i + 1))
       continue
       fi
+    fi
+
+    if echo "$out" | grep -Eq "P1001|Can't reach database server|connection refused|ECONNREFUSED"; then
+      echo "[entrypoint] Database not reachable yet; retrying in ${delay}s..."
+      sleep "$delay"
+      i=$((i + 1))
+      continue
     fi
 
     echo "[entrypoint] Migration failed."

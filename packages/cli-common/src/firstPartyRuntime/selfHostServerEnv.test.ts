@@ -8,6 +8,7 @@ import {
   renderSelfHostServerEnvText,
   resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
   resolveConfiguredSelfHostBaseUrl,
+  resolveServerMigrationsEnabled,
   resolveSelfHostServerMigrationPlan,
 } from './selfHostServerEnv.js';
 
@@ -62,6 +63,17 @@ describe('resolveSelfHostServerMigrationPlan', () => {
       env: { HAPPIER_DB_PROVIDER: 'sqlite', HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
       platform: 'linux',
     })).toEqual({ command: '/opt/happier/server/happier-server', args: ['--migrate-only'] });
+  });
+
+  it('uses one migration opt-out contract for managed and stack runtimes', () => {
+    expect(resolveServerMigrationsEnabled({})).toBe(true);
+    expect(resolveServerMigrationsEnabled({ RUN_MIGRATIONS: '0' })).toBe(false);
+    expect(resolveServerMigrationsEnabled({ HAPPIER_STACK_PRISMA_MIGRATE: 'false' })).toBe(false);
+    expect(resolveSelfHostServerMigrationPlan({
+      serverBinaryPath: '/opt/happier/server/happier-server',
+      env: { HAPPIER_DB_PROVIDER: 'postgres', RUN_MIGRATIONS: '0' },
+      platform: 'linux',
+    })).toBeNull();
   });
 });
 

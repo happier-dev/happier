@@ -35,7 +35,15 @@ async function writeFakePackagedRuntime(params: Readonly<{ dir: string; logPath:
   );
   await writeFile(
     migrationPath,
-    `#!/bin/sh\nset -e\necho "MIGRATE provider=$HAPPIER_DB_PROVIDER url=$DATABASE_URL" >> "${params.logPath}"\n`,
+    `#!/bin/sh
+set -e
+if [ -n "\${MIGRATION_FAIL_ONCE_FILE:-}" ] && [ ! -f "$MIGRATION_FAIL_ONCE_FILE" ]; then
+  : > "$MIGRATION_FAIL_ONCE_FILE"
+  echo "P1001: Can't reach database server"
+  exit 1
+fi
+echo "MIGRATE provider=$HAPPIER_DB_PROVIDER url=$DATABASE_URL" >> "${params.logPath}"
+`,
     { mode: 0o755 },
   );
   await chmod(serverPath, 0o755);
@@ -195,6 +203,31 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     expect(await readLogLines(logPath)).toEqual([
       'SERVER flavor=light provider=sqlite url= sqlite_auto=1 args=',
+    ]);
+  });
+
+  it('retries a packaged migration while the database is not reachable', async () => {
+    const serverPath = await writeFakePackagedRuntime({ dir: tmpDir, logPath });
+    const failOncePath = join(tmpDir, 'migration-failed-once');
+    const res = spawnSync('sh', [getScriptPath(), serverPath], {
+      env: {
+        ...process.env,
+        HAPPIER_DB_PROVIDER: 'postgres',
+        DATABASE_URL: 'postgresql://postgres@db/happier',
+        RUN_MIGRATIONS: '1',
+        MIGRATIONS_MAX_ATTEMPTS: '2',
+        MIGRATIONS_RETRY_DELAY_SECONDS: '0',
+        MIGRATION_FAIL_ONCE_FILE: failOncePath,
+      },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain('Database not reachable yet; retrying');
+    expect(await readLogLines(logPath)).toEqual([
+      'MIGRATE provider=postgres url=postgresql://postgres@db/happier',
+      'SERVER flavor=full provider=postgres url=postgresql://postgres@db/happier sqlite_auto= args=',
     ]);
   });
 
