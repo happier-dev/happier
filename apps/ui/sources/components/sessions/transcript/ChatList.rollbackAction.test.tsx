@@ -199,6 +199,42 @@ describe('ChatList rollback action', () => {
         await screen.unmount();
     }, 120000);
 
+    it('adds rollback-to-point when flattened server eligibility arrives after the transcript row mounted', async () => {
+        flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        const messages = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
+        ];
+        flashListChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+        buildChatListItemsMock.mockImplementation((opts: any) => (
+            (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
+                kind: 'message',
+                id,
+                messageId: id,
+                createdAt: opts.messagesById[id]?.createdAt ?? 0,
+                seq: opts.messagesById[id]?.seq ?? null,
+            }))
+        ));
+
+        const { ChatList } = await import('./ChatList');
+        const screen = await renderFlashListChatListSession();
+        const beforeEligibilityExtraData = requireCapturedFlashListProps().extraData;
+        expect(capturedMessageViewProps.filter((props) => props.message.id === 'u1').at(-1)?.rollbackAction ?? null).toBeNull();
+
+        flashListChatListHarnessState.sessionState = {
+            ...flashListChatListHarnessState.sessionState,
+            rollbackEligibleTurnStarts: [1],
+        };
+        await screen.update(<ChatList session={{ ...flashListChatListHarnessState.sessionState }} />);
+
+        expect(requireCapturedFlashListProps().extraData).not.toBe(beforeEligibilityExtraData);
+        expect(capturedMessageViewProps.filter((props) => props.message.id === 'u1').at(-1)?.rollbackAction).toEqual({
+            target: { type: 'before_user_message', userMessageSeq: 1 },
+            restoredDraftText: 'first',
+        });
+        await screen.unmount();
+    });
+
     it('does not place rollback actions on tool-call or agent messages when rollback-to-point is available', async () => {
         flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
         flashListChatListHarnessState.sessionState = {
