@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { serializeAutomationRunExecutionRecipeV1 } from "@happier-dev/protocol";
+import { serializeAutomationStoredDefinitionExecutionRecipeV1 } from "@happier-dev/protocol";
 
 import type { Tx } from "@/storage/inTx";
 
@@ -23,7 +23,7 @@ vi.mock("@/app/encryption/accountEncryptionTransition", () => ({
 
 import { getAutomation, updateAutomation } from "./automationCrudService";
 
-const strictRecipe = serializeAutomationRunExecutionRecipeV1({
+const strictRecipe = serializeAutomationStoredDefinitionExecutionRecipeV1({
     v: 1,
     templateVersion: 3,
     template: { t: "plain", v: { v: 1, prompt: "current V3 definition" } },
@@ -52,31 +52,49 @@ function strictScheduleDefinition() {
         name: "Current V3 schedule",
         description: null,
         enabled: true,
-        triggerKind: "schedule" as const,
-        scheduleKind: "interval" as const,
-        scheduleExpr: null,
-        everyMs: 60_000,
-        timezone: null,
         targetType: "new_session" as const,
         templateCiphertext: strictRecipeSerialized,
         templateVersion: 3,
-        triggerEventPluginId: null,
-        triggerEventLocalId: null,
-        triggerSourceSelectorId: null,
-        triggerSourceContractVersion: null,
-        triggerObservationTransport: null,
-        triggerWebhookEndpointId: null,
-        triggerObservationStartsAt: null,
-        watcherMachineId: null,
-        watcherMachineInstallationId: null,
-        watcherPluginId: null,
-        watcherMaterializationId: null,
-        triggerDefinitionEnvelope: null,
-        nextRunAt: null,
         lastRunAt: null,
         createdAt: new Date("2026-08-10T12:00:00.000Z"),
         updatedAt: new Date("2026-08-10T12:00:00.000Z"),
         assignments: [],
+        triggers: [scheduleTrigger("strict-schedule", "strict-schedule-trigger")],
+    };
+}
+
+function scheduleTrigger(automationId: string, id: string) {
+    const at = new Date("2026-08-10T12:00:00.000Z");
+    return {
+        id,
+        automationId,
+        kind: "schedule" as const,
+        enabled: true,
+        revision: 1,
+        deletedAt: null,
+        scheduleKind: "interval" as const,
+        scheduleExpr: null,
+        everyMs: 60_000,
+        timezone: null,
+        nextRunAt: null,
+        eventPluginId: null,
+        eventLocalId: null,
+        sourceSelectorId: null,
+        sourceContractVersion: null,
+        observationTransport: null,
+        webhookEndpointId: null,
+        observationStartsAt: null,
+        watcherMachineId: null,
+        watcherMachineInstallationId: null,
+        watcherPluginId: null,
+        watcherMaterializationId: null,
+        definitionEnvelope: null,
+        sessionLifecycleEvent: null,
+        sourceSessionId: null,
+        sourceTurnId: null,
+        createdAt: at,
+        updatedAt: at,
+        eventSourceStatus: null,
     };
 }
 
@@ -89,7 +107,7 @@ function createTransaction(): Tx {
     } as unknown as Tx;
 }
 
-describe("V2 Automation trigger-kind ownership", () => {
+describe("V2 Automation exact-one-schedule compatibility", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.automationFindFirst.mockResolvedValue(null);
@@ -103,24 +121,32 @@ describe("V2 Automation trigger-kind ownership", () => {
     });
 
     it.each([
-        ["Event", "event-automation"],
-        ["Conversation", "conversation-automation"],
-    ] as const)("leaves a %s definition untouched when V2 attempts a mutation", async (_kind, automationId) => {
+        ["zero triggers", []],
+        ["multiple schedules", [scheduleTrigger("automation-1", "schedule-1"), scheduleTrigger("automation-1", "schedule-2")]],
+        ["a non-schedule trigger", [{ ...scheduleTrigger("automation-1", "event-1"), kind: "pluginEvent" as const }]],
+    ] as const)("does not expose or mutate a definition with %s", async (_label, triggers) => {
+        mocks.automationFindFirst.mockResolvedValue({
+            ...strictScheduleDefinition(),
+            id: "automation-1",
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_plain_v1",
+                payload: { prompt: "released V2" },
+            }),
+            triggers,
+        });
+
+        await expect(getAutomation({
+            accountId: "account-1",
+            automationId: "automation-1",
+            requireV2DefinitionRepresentability: true,
+        })).resolves.toBeNull();
         await expect(updateAutomation({
             accountId: "account-1",
-            automationId,
+            automationId: "automation-1",
             input: { name: "must not mutate" },
-            expectedTriggerKind: "schedule",
+            requireV2DefinitionRepresentability: true,
         })).resolves.toBeNull();
 
-        expect(mocks.automationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-            where: {
-                id: automationId,
-                accountId: "account-1",
-                deletedAt: null,
-                triggerKind: "schedule",
-            },
-        }));
         expect(mocks.automationUpdateMany).not.toHaveBeenCalled();
     });
 
@@ -130,7 +156,6 @@ describe("V2 Automation trigger-kind ownership", () => {
         await expect(getAutomation({
             accountId: "account-1",
             automationId: "strict-schedule",
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         })).resolves.toBeNull();
 
@@ -138,7 +163,6 @@ describe("V2 Automation trigger-kind ownership", () => {
             accountId: "account-1",
             automationId: "strict-schedule",
             input: { name: "must not mutate current V3" },
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         })).resolves.toBeNull();
 

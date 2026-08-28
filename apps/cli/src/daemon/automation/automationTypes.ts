@@ -1,6 +1,7 @@
 import type {
   AutomationAccountCurrentnessWitnessV1,
-  AutomationV3RunOrigin,
+  AutomationRunCause,
+  AutomationTriggerId,
   AutomationV3WorkerResultDelivery,
 } from '@happier-dev/protocol';
 
@@ -22,10 +23,11 @@ export type AutomationV3ClaimedRun = Readonly<{
   id: string;
   automationId: string;
   attempt: number;
+  triggerId: AutomationTriggerId | null;
   /** Null is a retained pre-recipe Run and must fail closed in the worker. */
   executionInputEnvelope: string | null;
-  /** Immutable Run-owned origin consumed with the frozen execution recipe. */
-  origin: AutomationV3RunOrigin;
+  /** Immutable Run-owned cause consumed with the frozen execution recipe. */
+  cause: AutomationRunCause;
   /** Missing wire fact normalizes to none at the private claim boundary. */
   resultDelivery: AutomationV3WorkerResultDelivery | Readonly<{ kind: 'none' }>;
 }>;

@@ -221,10 +221,14 @@ const DRAFT = {
         enabled: true,
         name: 'Nightly summary',
         description: 'Summarize the latest state',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: 'Europe/Zurich',
+        triggers: [{
+            clientId: 'schedule-hourly',
+            definition: {
+                kind: 'schedule',
+                enabled: true,
+                schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+            },
+        }],
     },
 } satisfies SessionAuthoringDraft;
 

@@ -4,8 +4,6 @@ import {
     AutomationConversationAdmitInputV1Schema,
     AutomationConversationAdmitResultV1Schema,
     AutomationReplyHandoffTargetV1Schema,
-    AutomationStoredContentEnvelopeV1Schema,
-    MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
     buildAutomationConversationOccurrenceEvidenceV1,
     createCanonicalJsonSigningInput,
     deriveAutomationOccurrenceKeyV1,
@@ -21,38 +19,25 @@ import {
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 
-import {
-    emitAutomationRunTransition,
-    emitAutomationRunUpdatedToMachineOnly,
-} from "@/app/automations/automationChangePublisher";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 
-import { loadAutomationTx } from "./automationCrudService";
+import { classifyAutomationConversationTargetEligibilityV1 } from "./automationConversationTargetVerificationService";
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
 } from "./automationEventCurrentness";
-import { automationRunItemSelect } from "./automationPersistenceSelect";
 import {
     classifyPlainAutomationOccurrenceEvidence,
     encodePlainAutomationOccurrenceEvidence,
-    findAutomationOccurrenceTx,
     rejoinAutomationOccurrenceInsertRace,
 } from "./automationOccurrencePersistence";
-import { freezeAutomationRunExecutionRecipe } from "./automationRunQueueService";
+import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import {
-    assertAutomationExecutionInputEnvelopeOuterForMode,
     validateAutomationStoredContentEnvelopeOuterForMode,
 } from "./automationStoredContentRead";
-import {
-    AUTOMATION_RUN_TERMINAL_STATES,
-    initialAutomationExecutionDispatchStateForRun,
-    type AutomationRunItem,
-} from "./automationTypes";
 
 export type AutomationConversationAdmissionCallerV1 = AutomationEventCallerV1 & Readonly<{
     contributionLocalId: string;
@@ -74,11 +59,12 @@ export class AutomationConversationAdmissionCallerError extends Error {
 type ExistingConversationOccurrenceRow = Readonly<{
     id: string;
     accountId: string;
-    originKind: string;
-    originOccurredAt: Date | null;
+    triggerId: string | null;
+    causeKind: string;
+    causeOccurredAt: Date | null;
     occurrenceKey: string | null;
     occurrenceEvidenceEqualityTag: string | null;
-    originSourceSelectorId: string | null;
+    causeSourceSelectorId: string | null;
     triggerEvidenceEnvelope: string | null;
     replyContextEnvelope: string | null;
     replyHandoffActionPluginId: string | null;
@@ -96,11 +82,12 @@ type ExistingConversationOccurrenceRow = Readonly<{
 const existingConversationOccurrenceSelect = {
     id: true,
     accountId: true,
-    originKind: true,
-    originOccurredAt: true,
+    triggerId: true,
+    causeKind: true,
+    causeOccurredAt: true,
     occurrenceKey: true,
     occurrenceEvidenceEqualityTag: true,
-    originSourceSelectorId: true,
+    causeSourceSelectorId: true,
     triggerEvidenceEnvelope: true,
     replyContextEnvelope: true,
     replyHandoffActionPluginId: true,
@@ -115,12 +102,33 @@ const existingConversationOccurrenceSelect = {
     replyHandoffReceiptEnvelope: true,
 } satisfies Prisma.AutomationRunSelect;
 
+async function findConversationOccurrenceTx(params: Readonly<{
+    tx: Tx;
+    automationId: string;
+    occurrenceKey: string;
+}>): Promise<ExistingConversationOccurrenceRow | null> {
+    return await params.tx.automationRun.findFirst({
+        where: {
+            automationId: params.automationId,
+            causeKind: "conversation",
+            occurrenceKey: params.occurrenceKey,
+        },
+        select: existingConversationOccurrenceSelect,
+    });
+}
+
 type FinalResultDeliveryV1 = Extract<
     AutomationConversationAdmitInputV1["resultDelivery"],
     Readonly<{ kind: "finalResult" }>
 >;
 
-function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict"):
+function blocked(
+    reason:
+        | "capacity"
+        | "temporarilyUnavailable"
+        | "occurrenceConflict"
+        | "resultDeliveryUnsupported",
+):
     AutomationConversationAdmitResultV1 {
     return AutomationConversationAdmitResultV1Schema.parse({
         kind: "blocked",
@@ -176,21 +184,18 @@ function buildConversationEvidence(params: Readonly<{
     });
 }
 
-function deriveHandoffId(runId: string): string {
-    return `automation-reply-handoff:${runId}`;
-}
-
 function hasMatchingConversationEvidence(params: Readonly<{
     row: ExistingConversationOccurrenceRow;
     occurrenceKey: string;
     evidence: AutomationConversationOccurrenceEvidenceV1;
 }>): boolean {
     if (
-        params.row.originKind !== "conversation"
-        || params.row.originOccurredAt?.getTime() !== params.evidence.occurredAt
+        params.row.triggerId !== null
+        || params.row.causeKind !== "conversation"
+        || params.row.causeOccurredAt?.getTime() !== params.evidence.occurredAt
         || params.row.occurrenceKey !== params.occurrenceKey
         || params.row.occurrenceEvidenceEqualityTag !== null
-        || params.row.originSourceSelectorId !== null
+        || params.row.causeSourceSelectorId !== null
         || params.row.triggerEvidenceEnvelope === null
     ) return false;
 
@@ -260,7 +265,6 @@ function resolvePlainReplyHandoffAdmissionPlan(params: Readonly<{
         opened.kind !== "available"
         || opened.correspondence.automationId !== params.input.automationId
         || opened.correspondence.occurrenceKey !== params.occurrenceKey
-        || opened.templateVersion !== params.input.templateVersion
         || createCanonicalJsonSigningInput(opened.opaqueContext)
             !== createCanonicalJsonSigningInput(params.input.resultDelivery.opaqueContext)
     ) return "invalid";
@@ -285,11 +289,10 @@ function hasMatchingFinalResultHandoff(params: Readonly<{
     accountId: string;
     automationId: string;
     occurrenceKey: string;
-    templateVersion: number;
     actionRef: FinalResultDeliveryV1["actionRef"];
     opaqueContext: FinalResultDeliveryV1["opaqueContext"];
 }>): boolean {
-    const expectedHandoffId = deriveHandoffId(params.row.id);
+    const expectedHandoffId = `automation-reply-handoff:${params.row.id}`;
     const target = AutomationReplyHandoffTargetV1Schema.safeParse({
         accountId: params.accountId,
         machineId: params.row.replyHandoffTargetMachineId,
@@ -316,7 +319,6 @@ function hasMatchingFinalResultHandoff(params: Readonly<{
     return opened.kind === "available"
         && opened.correspondence.automationId === params.automationId
         && opened.correspondence.occurrenceKey === params.occurrenceKey
-        && opened.templateVersion === params.templateVersion
         && createCanonicalJsonSigningInput(opened.opaqueContext)
             === createCanonicalJsonSigningInput(params.opaqueContext);
 }
@@ -337,7 +339,6 @@ function existingOccurrenceMatchesAdmission(params: Readonly<{
         accountId: params.accountId,
         automationId: params.input.automationId,
         occurrenceKey: params.occurrenceKey,
-        templateVersion: params.input.templateVersion,
         actionRef: params.input.resultDelivery.actionRef,
         opaqueContext: params.input.resultDelivery.opaqueContext,
     });
@@ -349,7 +350,7 @@ function encryptedFinalResultHandoffMatchesAdmission(params: Readonly<{
     handoff: AutomationConversationAdmitReplyHandoffV1 | undefined;
 }>): boolean | "unavailable" {
     if (params.handoff === undefined) return hasNoReplyHandoff(params.row);
-    const expectedHandoffId = deriveHandoffId(params.row.id);
+    const expectedHandoffId = `automation-reply-handoff:${params.row.id}`;
     const target = AutomationReplyHandoffTargetV1Schema.safeParse({
         accountId: params.accountId,
         machineId: params.row.replyHandoffTargetMachineId,
@@ -389,10 +390,11 @@ function encryptedOccurrenceMatchesAdmission(params: Readonly<{
     hostEvidence: AutomationConversationAdmitEncryptedHostEvidenceV1;
 }>): "match" | "mismatch" | "unavailable" {
     if (
-        params.row.originKind !== "conversation"
-        || params.row.originOccurredAt?.getTime() !== params.hostEvidence.occurredAt
+        params.row.triggerId !== null
+        || params.row.causeKind !== "conversation"
+        || params.row.causeOccurredAt?.getTime() !== params.hostEvidence.occurredAt
         || params.row.occurrenceKey !== params.hostEvidence.occurrenceKey
-        || params.row.originSourceSelectorId !== null
+        || params.row.causeSourceSelectorId !== null
         || params.row.triggerEvidenceEnvelope === null
         || params.row.occurrenceEvidenceEqualityTag
             !== params.hostEvidence.occurrenceEvidenceEqualityTag
@@ -431,9 +433,7 @@ function hostEvidenceMatchesAccountModeAndKey(params: Readonly<{
  * freezing, publication, and reply custody stay with one writer.
  */
 type ConversationRunAdmissionPlanV1 = Readonly<{
-    mode: "plain" | "e2ee";
     automationId: string;
-    templateVersion: number;
     occurrenceKey: AutomationOccurrenceKeyV1;
     occurredAt: number;
     /** Serialized mode-correct occurrence evidence retained on the Run. */
@@ -451,129 +451,58 @@ async function createConversationRunTx(params: Readonly<{
     plan: ConversationRunAdmissionPlanV1;
 }>): Promise<AutomationConversationAdmitResultV1> {
     const { tx, plan } = params;
-    // A conversation is an additional invocation source for an Automation
-    // the Account already owns, so any current Automation admits whatever
-    // its primary trigger is, and several bindings may feed one Automation.
-    // The binding stays in the occurrence identity, which is already
-    // namespaced by the host-stamped caller plugin.
-    const automation = await loadAutomationTx(tx, {
-        accountId: params.accountId,
-        automationId: plan.automationId,
+    const automation = await tx.automation.findFirst({
+        where: {
+            id: plan.automationId,
+            accountId: params.accountId,
+            deletedAt: null,
+        },
+        select: { targetType: true },
     });
-    if (
-        !automation
-        || !automation.enabled
-        || automation.templateVersion !== plan.templateVersion
-    ) {
+    if (!automation) {
         return blocked("temporarilyUnavailable");
     }
 
-    const occupied = await tx.automationRun.count({
-        where: {
-            accountId: params.accountId,
-            originKind: { in: ["pluginEvent", "conversation"] },
-            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-        },
+    const eligibility = classifyAutomationConversationTargetEligibilityV1({
+        targetType: automation.targetType,
+        resultDelivery: plan.replyHandoff === null ? "none" : "finalResult",
     });
-    if (occupied >= MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
-        return blocked("capacity");
-    }
+    if (eligibility !== "eligible") return blocked(eligibility);
 
     const now = new Date();
-    let executionInputEnvelope: string;
-    try {
-        executionInputEnvelope = freezeAutomationRunExecutionRecipe({
-            targetType: automation.targetType,
-            templateVersion: automation.templateVersion,
-            templateCiphertext: automation.templateCiphertext,
-            origin: {
-                kind: "conversation",
-                occurrenceKey: plan.occurrenceKey,
-                occurredAt: plan.occurredAt,
-            },
-            triggerEvidence: AutomationStoredContentEnvelopeV1Schema.parse(
-                plan.executionTriggerEvidence,
-            ),
-        });
-        assertAutomationExecutionInputEnvelopeOuterForMode({
-            raw: executionInputEnvelope,
-            mode: plan.mode,
-            originKind: "conversation",
-        });
-    } catch {
-        return blocked("temporarilyUnavailable");
-    }
-
-    let run = await tx.automationRun.create({
-        data: {
-            automationId: automation.id,
-            accountId: params.accountId,
-            state: "queued",
-            originKind: "conversation",
-            originOccurredAt: new Date(plan.occurredAt),
-            occurrenceKey: plan.occurrenceKey,
-            occurrenceEvidenceEqualityTag: plan.occurrenceEvidenceEqualityTag,
-            originSourceSelectorId: null,
-            triggerEvidenceEnvelope: plan.triggerEvidenceEnvelope,
-            executionInputEnvelope,
-            executionDispatchState: initialAutomationExecutionDispatchStateForRun(
-                executionInputEnvelope,
-            ),
-            scheduledAt: now,
-            dueAt: now,
-        },
-        select: automationRunItemSelect,
-    }) as AutomationRunItem;
-
-    const replyHandoff = plan.replyHandoff;
-    if (replyHandoff !== null) {
-        const handoffId = deriveHandoffId(run.id);
-        run = await tx.automationRun.update({
-            where: { id: run.id },
-            data: {
-                // Admission stores the mode-correct host-sealed context
-                // verbatim. It does not manufacture a second reply binding
-                // after the unique occurrence has chosen this Run.
-                replyContextEnvelope: replyHandoff.replyContextEnvelope,
-                replyHandoffActionPluginId: replyHandoff.actionRef.pluginId,
-                replyHandoffActionLocalId: replyHandoff.actionRef.localId,
-                replyHandoffTargetMachineId: params.caller.machineId,
-                replyHandoffTargetMachineInstallationId: params.caller.machineInstallationId,
-                replyHandoffTargetMaterializationId: params.caller.materializationId,
-                replyHandoffId: handoffId,
-                replyHandoffState: "awaitingResult",
-                revision: { increment: 1 },
-            },
-            select: automationRunItemSelect,
-        }) as AutomationRunItem;
-    }
-
-    const assignmentRows = await tx.automationAssignment.findMany({
-        where: { automationId: automation.id, enabled: true },
-        select: { machineId: true },
-    });
-    const cursor = await markAccountChanged(tx, {
+    const result = await admitAutomationRunTx({
+        tx,
         accountId: params.accountId,
-        kind: "automation",
-        entityId: automation.id,
+        automationId: plan.automationId,
+        now,
+        cause: {
+            kind: "conversation",
+            occurrenceKey: plan.occurrenceKey,
+            occurredAt: plan.occurredAt,
+        },
+        triggerEvidenceEnvelope: plan.triggerEvidenceEnvelope,
+        executionTriggerEvidenceEnvelope: createCanonicalJsonSigningInput(
+            plan.executionTriggerEvidence,
+        ),
+        occurrenceEvidenceEqualityTag: plan.occurrenceEvidenceEqualityTag,
+        ...(plan.replyHandoff
+            ? {
+                replyHandoff: {
+                    contextEnvelope: plan.replyHandoff.replyContextEnvelope,
+                    actionPluginId: plan.replyHandoff.actionRef.pluginId,
+                    actionLocalId: plan.replyHandoff.actionRef.localId,
+                    targetMachineId: params.caller.machineId,
+                    targetMachineInstallationId: params.caller.machineInstallationId,
+                    targetMaterializationId: params.caller.materializationId,
+                },
+            }
+            : {}),
     });
-    afterTx(tx, () => {
-        emitAutomationRunTransition({
-            accountId: params.accountId,
-            run,
-            previousState: null,
-            cursor,
-        });
-        for (const assignment of assignmentRows) {
-            emitAutomationRunUpdatedToMachineOnly({
-                accountId: params.accountId,
-                machineId: assignment.machineId,
-                run,
-                cursor,
-            });
-        }
-    });
-    return admitted(run.id);
+    if (result.kind === "ineligible") {
+        return blocked(result.reason === "capacity" ? "capacity" : "temporarilyUnavailable");
+    }
+    if (result.kind === "rejoined") return rejoined(result.run.id);
+    return admitted(result.run.id);
 }
 
 async function assertCurrentAdmissionCallerTx(params: Readonly<{
@@ -638,11 +567,10 @@ export async function admitEncryptedAutomationConversationV1(params: Readonly<{
         const replyHandoff = resolveEncryptedReplyHandoffAdmissionPlan(hostEvidence.replyHandoff);
         if (replyHandoff === "invalid") return blocked("temporarilyUnavailable");
 
-        const existing = await findAutomationOccurrenceTx({
+        const existing = await findConversationOccurrenceTx({
             tx,
             automationId: hostEvidence.automationId,
             occurrenceKey: hostEvidence.occurrenceKey,
-            select: existingConversationOccurrenceSelect,
         });
         if (existing && existing.accountId === params.accountId) {
             const disposition = encryptedOccurrenceMatchesAdmission({
@@ -667,9 +595,7 @@ export async function admitEncryptedAutomationConversationV1(params: Readonly<{
             accountId: params.accountId,
             caller: params.caller,
             plan: {
-                mode: "e2ee",
                 automationId: hostEvidence.automationId,
-                templateVersion: hostEvidence.templateVersion,
                 occurrenceKey: hostEvidence.occurrenceKey,
                 occurredAt: hostEvidence.occurredAt,
                 triggerEvidenceEnvelope: createCanonicalJsonSigningInput(
@@ -736,11 +662,10 @@ export async function admitAutomationConversationV1(params: Readonly<{
             replyHandoff: params.replyHandoff,
         });
         if (replyHandoff === "invalid") return blocked("temporarilyUnavailable");
-        const existing = await findAutomationOccurrenceTx({
+        const existing = await findConversationOccurrenceTx({
             tx,
             automationId: input.automationId,
             occurrenceKey,
-            select: existingConversationOccurrenceSelect,
         });
         if (existing && existing.accountId === params.accountId) {
             return existingOccurrenceMatchesAdmission({
@@ -759,9 +684,7 @@ export async function admitAutomationConversationV1(params: Readonly<{
             accountId: params.accountId,
             caller: params.caller,
             plan: {
-                mode: "plain",
                 automationId: input.automationId,
-                templateVersion: input.templateVersion,
                 occurrenceKey,
                 occurredAt: input.occurredAt,
                 triggerEvidenceEnvelope: encodePlainAutomationOccurrenceEvidence(evidence),

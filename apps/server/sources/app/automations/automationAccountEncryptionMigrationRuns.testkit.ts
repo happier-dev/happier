@@ -3,6 +3,7 @@ import {
     deriveAutomationOccurrenceKeyV1,
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    sealAutomationRunFailureDetailStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
 } from "@happier-dev/protocol";
 import { expect } from "vitest";
@@ -14,6 +15,7 @@ import {
     matchAutomationAccountEncryptionMigrationPostStateInTx,
     migrateAutomationAccountEncryptionInTx,
 } from "./automationCrudService";
+import { encodeAutomationRunCause } from "./automationRunCauseCodec";
 
 const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
     "8a2e26d2-5b2b-4e9b-a57f-68ca5e575dc7",
@@ -33,17 +35,20 @@ const runContentSelect = {
     resultEnvelope: true,
     replyContextEnvelope: true,
     replyHandoffReceiptEnvelope: true,
+    errorMessage: true,
     summaryCiphertext: true,
 } as const;
 
 function eventTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
-    templateVersion: number;
+    triggerId: string;
+    triggerRevision: number;
 }>): string {
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        templateVersion: params.templateVersion,
+        triggerId: params.triggerId,
+        triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
             pluginId: "com.example.github",
@@ -139,9 +144,10 @@ function strictExecutionInput(params: Readonly<{
                 },
             },
         },
+        assignmentMachineIds: ["machine-account-encryption-migration"],
     });
     if (serialized.kind !== "available") {
-        throw new Error("All-origin migration fixture must use a strict Run recipe");
+        throw new Error("All-cause migration fixture must use a strict Run recipe");
     }
     return serialized.serialized;
 }
@@ -178,16 +184,17 @@ function encryptedStrictExecutionInput(params: Readonly<{
                 },
             },
         },
+        assignmentMachineIds: ["machine-account-encryption-migration"],
     });
     if (serialized.kind !== "available") {
-        throw new Error("All-origin migration fixture must use a strict encrypted Run recipe");
+        throw new Error("All-cause migration fixture must use a strict encrypted Run recipe");
     }
     return serialized.serialized;
 }
 
 function executionInput(params: Readonly<{
     templateCiphertext: string;
-    origin: Readonly<{ kind: "scheduled"; scheduledFor: number }>
+    retainedV2Origin: Readonly<{ kind: "scheduled"; scheduledFor: number }>
         | Readonly<{ kind: "manual"; invokedAt: number }>;
 }>): string {
     return JSON.stringify({
@@ -195,7 +202,7 @@ function executionInput(params: Readonly<{
         targetType: "new_session",
         templateVersion: 1,
         templateCiphertext: params.templateCiphertext,
-        origin: params.origin,
+        origin: params.retainedV2Origin,
     });
 }
 
@@ -218,13 +225,12 @@ function plainResultEnvelope(params: Readonly<{
 function plainReplyContextEnvelope(params: Readonly<{
     automationId: string;
     occurrenceKey: string;
-}>, templateVersion: number): string {
+}>): string {
     return JSON.stringify({
         t: "plain",
         v: {
             v: 1,
             correspondence: params,
-            templateVersion,
             opaqueContext: {
                 conversationId: "conversation-account-encryption-migration",
             },
@@ -251,7 +257,7 @@ function plainReplyReceiptEnvelope(params: Readonly<{
     });
 }
 
-async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void) {
+async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) {
     const account = await db.account.create({
         data: { encryptionMode: "plain" },
         select: { id: true },
@@ -264,22 +270,43 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             accountId: account.id,
             name: "Event evidence migration",
             enabled: false,
-            triggerKind: "pluginEvent",
-            triggerEventPluginId: "com.example.github",
-            triggerEventLocalId: "repository-event",
-            triggerSourceSelectorId: sourceSelectorId,
-            triggerSourceContractVersion: 1,
-            triggerObservationTransport: "checkpointedPull",
-            triggerDefinitionEnvelope: eventTriggerDefinitionEnvelope({
-                automationId: eventAutomationId,
-                templateVersion: 4,
-            }),
+            triggers: {
+                create: [
+                    {
+                        id: "trigger-account-encryption-migration-event",
+                        kind: "pluginEvent",
+                        eventPluginId: "com.example.github",
+                        eventLocalId: "repository-event",
+                        sourceSelectorId,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: eventTriggerDefinitionEnvelope({
+                            automationId: eventAutomationId,
+                            triggerId: "trigger-account-encryption-migration-event",
+                            triggerRevision: 0,
+                        }),
+                    },
+                    {
+                        id: "trigger-account-encryption-migration-schedule",
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                ],
+            },
             targetType: "new_session",
             templateCiphertext: plainTemplate("migrate Event Run"),
             templateVersion: 4,
         },
-        select: { id: true, templateVersion: true, templateCiphertext: true },
+        select: {
+            id: true,
+            templateVersion: true,
+            templateCiphertext: true,
+            triggers: { select: { id: true, kind: true, revision: true } },
+        },
     });
+    const eventTrigger = eventAutomation.triggers.find((trigger) => trigger.kind === "pluginEvent")!;
+    const scheduleTrigger = eventAutomation.triggers.find((trigger) => trigger.kind === "schedule")!;
     const conversationAutomationId = "automation-account-encryption-migration-conversation";
     const conversationAutomation = await db.automation.create({
         data: {
@@ -287,12 +314,7 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             accountId: account.id,
             name: "Conversation evidence migration",
             enabled: false,
-            // Conversation is the Run origin below; this Automation keeps a
-            // normal schedule definition so Channel admission is an additive
-            // invocation source rather than a definition trigger.
-            triggerKind: "schedule",
-            scheduleKind: "interval",
-            everyMs: 60_000,
+            // Conversation is a direct Run cause, so no trigger row is needed.
             targetType: "new_session",
             templateCiphertext: plainTemplate("migrate Conversation Run"),
             templateVersion: 6,
@@ -308,23 +330,39 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
         select: { id: true },
     });
     const event = eventEvidence();
+    const eventRunEvidence = {
+        ...event,
+        sourceInstanceId: "migration-repository",
+        sourceContractVersion: 1,
+        observationReceivedAt: event.occurredAt,
+        filter: { version: null, result: "matched" as const },
+    };
     const eventRunId = "run-account-encryption-event";
+    const eventOccurrenceKey = deriveAutomationOccurrenceKeyV1({
+        triggerId: eventTrigger.id,
+        evidence: event,
+    });
     const eventRun = await db.automationRun.create({
         data: {
             id: eventRunId,
             automationId: eventAutomation.id,
             accountId: account.id,
-            state: "queued",
-            originKind: "pluginEvent",
-            originOccurredAt: new Date(event.occurredAt),
-            occurrenceKey: deriveAutomationOccurrenceKeyV1(event),
+            state: "failed",
+            ...encodeAutomationRunCause({
+                kind: "trigger",
+                triggerId: eventTrigger.id,
+                triggerRevision: eventTrigger.revision,
+                triggerKind: "pluginEvent",
+                occurrenceKey: eventOccurrenceKey,
+                occurredAt: event.occurredAt,
+                evidence: { eventRef: event.eventRef, sourceSelectorId },
+            }),
             occurrenceEvidenceEqualityTag: null,
-            originSourceSelectorId: sourceSelectorId,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: event }),
             executionInputEnvelope: strictExecutionInput({
                 templateVersion: eventAutomation.templateVersion,
                 prompt: "migrate Event Run",
-                evidence: event,
+                evidence: eventRunEvidence,
             }),
             resultEnvelope: plainResultEnvelope({
                 accountId: account.id,
@@ -332,12 +370,27 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
                 runId: eventRunId,
                 handoffId: "handoff-account-encryption-event",
             }),
+            errorCode: "provider_failed",
+            errorMessage: JSON.stringify(sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "plain",
+                correspondence: {
+                    automationId: eventAutomation.id,
+                    runId: eventRunId,
+                },
+                detail: "private Event provider failure detail",
+            })),
             scheduledAt: new Date("2026-08-10T10:00:00.000Z"),
             dueAt: new Date("2026-08-10T10:00:00.000Z"),
+            finishedAt: new Date("2026-08-10T10:00:30.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: runContentSelect,
     });
     const conversation = conversationEvidence();
+    const conversationRunEvidence = {
+        ...conversation,
+        observationReceivedAt: conversation.occurredAt,
+    };
     const conversationRunId = "run-account-encryption-conversation";
     const conversationCorrespondence = {
         accountId: account.id,
@@ -352,15 +405,17 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             automationId: conversationAutomation.id,
             accountId: account.id,
             state: "succeeded",
-            originKind: "conversation",
-            originOccurredAt: new Date(conversation.occurredAt),
-            occurrenceKey: conversationOccurrenceKey,
+            ...encodeAutomationRunCause({
+                kind: "conversation",
+                occurrenceKey: conversationOccurrenceKey,
+                occurredAt: conversation.occurredAt,
+            }),
             occurrenceEvidenceEqualityTag: null,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: conversation }),
             executionInputEnvelope: strictExecutionInput({
                 templateVersion: conversationAutomation.templateVersion,
                 prompt: "migrate Conversation Run",
-                evidence: conversation,
+                evidence: conversationRunEvidence,
             }),
             resultEnvelope: plainResultEnvelope(conversationCorrespondence),
             replyContextEnvelope: plainReplyContextEnvelope(
@@ -368,7 +423,6 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
                     automationId: conversationCorrespondence.automationId,
                     occurrenceKey: conversationOccurrenceKey,
                 },
-                conversationAutomation.templateVersion,
             ),
             replyHandoffActionPluginId: "happier.channels",
             replyHandoffActionLocalId: "automation/result-deliver-v1",
@@ -381,8 +435,14 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             scheduledAt: new Date("2026-08-10T10:01:00.000Z"),
             dueAt: new Date("2026-08-10T10:01:00.000Z"),
             finishedAt: new Date("2026-08-10T10:02:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: runContentSelect,
+    });
+    const scheduledFor = new Date("2026-08-10T10:03:00.000Z");
+    const scheduleOccurrenceKey = deriveAutomationOccurrenceKeyV1({
+        triggerId: scheduleTrigger.id,
+        evidence: { v: 1, kind: "schedule", scheduledFor: scheduledFor.getTime() },
     });
     const scheduledRun = await db.automationRun.create({
         data: {
@@ -390,17 +450,25 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "queued",
-            originKind: "scheduled",
-            originOccurredAt: null,
+            ...encodeAutomationRunCause({
+                kind: "trigger",
+                triggerId: scheduleTrigger.id,
+                triggerRevision: scheduleTrigger.revision,
+                triggerKind: "schedule",
+                occurrenceKey: scheduleOccurrenceKey,
+                occurredAt: scheduledFor.getTime(),
+                evidence: { scheduledFor: scheduledFor.getTime() },
+            }),
             executionInputEnvelope: executionInput({
                 templateCiphertext: eventAutomation.templateCiphertext,
-                origin: {
+                retainedV2Origin: {
                     kind: "scheduled",
-                    scheduledFor: new Date("2026-08-10T10:03:00.000Z").getTime(),
+                    scheduledFor: scheduledFor.getTime(),
                 },
             }),
-            scheduledAt: new Date("2026-08-10T10:03:00.000Z"),
-            dueAt: new Date("2026-08-10T10:03:00.000Z"),
+            scheduledAt: scheduledFor,
+            dueAt: scheduledFor,
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: runContentSelect,
     });
@@ -410,11 +478,10 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "succeeded",
-            originKind: "manual",
-            originOccurredAt: null,
+            ...encodeAutomationRunCause({ kind: "manual", invokedAt: 1_723_247_201_000 }),
             executionInputEnvelope: executionInput({
                 templateCiphertext: eventAutomation.templateCiphertext,
-                origin: { kind: "manual", invokedAt: 1_723_247_201_000 },
+                retainedV2Origin: { kind: "manual", invokedAt: 1_723_247_201_000 },
             }),
             resultEnvelope: JSON.stringify({
                 t: "legacySummaryCiphertext",
@@ -424,12 +491,14 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             scheduledAt: new Date("2026-08-10T10:04:00.000Z"),
             dueAt: new Date("2026-08-10T10:04:00.000Z"),
             finishedAt: new Date("2026-08-10T10:05:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: runContentSelect,
     });
     return {
         account,
         eventAutomation,
+        eventTrigger,
         conversationAutomation,
         eventRun,
         conversationRun,
@@ -440,13 +509,15 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
 
 function migrationItem(params: Readonly<{
     runId: string;
+    automationId: string;
     expectedRunRevision: number;
-    originKind: "pluginEvent" | "conversation" | "scheduled" | "manual";
+    runKind: "pluginEvent" | "conversation" | "scheduled" | "manual";
     templateVersion: number;
     retainsOccurrenceEvidence: boolean;
     resultEnvelope: string | null;
     replyContextEnvelope: string | null;
     replyHandoffReceiptEnvelope: string | null;
+    failureDetailEnvelope: string | null;
 }>) {
     return {
         runId: params.runId,
@@ -459,7 +530,7 @@ function migrationItem(params: Readonly<{
             : null,
         occurrenceEvidenceEqualityTag: params.retainsOccurrenceEvidence ? e2eeTag : null,
         executionInputEnvelope:
-            params.originKind === "pluginEvent" || params.originKind === "conversation"
+            params.runKind === "pluginEvent" || params.runKind === "conversation"
                 ? encryptedStrictExecutionInput({
                     runId: params.runId,
                     templateVersion: params.templateVersion,
@@ -468,7 +539,7 @@ function migrationItem(params: Readonly<{
                     templateCiphertext: encryptedTemplate(
                         "replacement-encrypted-execution-input-" + params.runId,
                     ),
-                    origin: params.originKind === "scheduled"
+                    retainedV2Origin: params.runKind === "scheduled"
                         ? {
                             kind: "scheduled",
                             scheduledFor: new Date("2026-08-10T10:03:00.000Z").getTime(),
@@ -493,10 +564,22 @@ function migrationItem(params: Readonly<{
                 t: "encrypted",
                 c: "replacement-encrypted-receipt-" + params.runId,
             }),
+        failureDetailEnvelope: params.failureDetailEnvelope === null
+            ? null
+            : JSON.stringify(sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "e2ee",
+                correspondence: {
+                    automationId: params.automationId,
+                    runId: params.runId,
+                },
+                detail: "private Event provider failure detail",
+                material: triggerDefinitionMaterial,
+                randomBytes: (length) => new Uint8Array(length).fill(7),
+            })),
     };
 }
 
-function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
+function buildDirective(seeded: Awaited<ReturnType<typeof seedAllCauseRuns>>) {
     const directive = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
         action: "migrate",
         templates: [
@@ -506,13 +589,17 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
                 templateCiphertext: encryptedTemplate(
                     "replacement-encrypted-template-" + seeded.eventAutomation.id,
                 ),
-                triggerDefinitionEnvelope: JSON.stringify(
+                triggerDefinitionEnvelopes: [{
+                    triggerId: seeded.eventTrigger.id,
+                    triggerRevision: seeded.eventTrigger.revision,
+                    envelope: JSON.stringify(
                     sealAutomationTriggerDefinitionStoredEnvelopeV1({
                         mode: "e2ee",
                         binding: {
                             v: 1,
                             automationId: seeded.eventAutomation.id,
-                            templateVersion: seeded.eventAutomation.templateVersion + 1,
+                            triggerId: seeded.eventTrigger.id,
+                            triggerRevision: seeded.eventTrigger.revision,
                             triggerKind: "pluginEvent",
                             eventRef: {
                                 pluginId: "com.example.github",
@@ -531,7 +618,8 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
                         material: triggerDefinitionMaterial,
                         randomBytes: (length) => new Uint8Array(length).fill(6),
                     }),
-                ),
+                    ),
+                }],
             },
             {
                 automationId: seeded.conversationAutomation.id,
@@ -539,53 +627,62 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
                 templateCiphertext: encryptedTemplate(
                     "replacement-encrypted-template-" + seeded.conversationAutomation.id,
                 ),
+                triggerDefinitionEnvelopes: [],
             },
         ],
         runs: [
             migrationItem({
                 runId: seeded.eventRun.id,
+                automationId: seeded.eventAutomation.id,
                 expectedRunRevision: seeded.eventRun.revision,
-                originKind: "pluginEvent",
+                runKind: "pluginEvent",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: true,
                 resultEnvelope: seeded.eventRun.resultEnvelope,
                 replyContextEnvelope: seeded.eventRun.replyContextEnvelope,
                 replyHandoffReceiptEnvelope: seeded.eventRun.replyHandoffReceiptEnvelope,
+                failureDetailEnvelope: seeded.eventRun.errorMessage,
             }),
             migrationItem({
                 runId: seeded.conversationRun.id,
+                automationId: seeded.conversationAutomation.id,
                 expectedRunRevision: seeded.conversationRun.revision,
-                originKind: "conversation",
+                runKind: "conversation",
                 templateVersion: seeded.conversationAutomation.templateVersion,
                 retainsOccurrenceEvidence: true,
                 resultEnvelope: seeded.conversationRun.resultEnvelope,
                 replyContextEnvelope: seeded.conversationRun.replyContextEnvelope,
                 replyHandoffReceiptEnvelope: seeded.conversationRun.replyHandoffReceiptEnvelope,
+                failureDetailEnvelope: seeded.conversationRun.errorMessage,
             }),
             migrationItem({
                 runId: seeded.scheduledRun.id,
+                automationId: seeded.eventAutomation.id,
                 expectedRunRevision: seeded.scheduledRun.revision,
-                originKind: "scheduled",
+                runKind: "scheduled",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: false,
                 resultEnvelope: seeded.scheduledRun.resultEnvelope,
                 replyContextEnvelope: seeded.scheduledRun.replyContextEnvelope,
                 replyHandoffReceiptEnvelope: seeded.scheduledRun.replyHandoffReceiptEnvelope,
+                failureDetailEnvelope: seeded.scheduledRun.errorMessage,
             }),
             migrationItem({
                 runId: seeded.manualRun.id,
+                automationId: seeded.eventAutomation.id,
                 expectedRunRevision: seeded.manualRun.revision,
-                originKind: "manual",
+                runKind: "manual",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: false,
                 resultEnvelope: seeded.manualRun.resultEnvelope,
                 replyContextEnvelope: seeded.manualRun.replyContextEnvelope,
                 replyHandoffReceiptEnvelope: seeded.manualRun.replyHandoffReceiptEnvelope,
+                failureDetailEnvelope: seeded.manualRun.errorMessage,
             }),
         ],
     });
     if (directive.action !== "migrate") {
-        throw new Error("Expected all-origin migration directive");
+        throw new Error("Expected all-cause migration directive");
     }
     return directive;
 }
@@ -603,20 +700,33 @@ function expectedMigratedRun(
         resultEnvelope: target.resultEnvelope,
         replyContextEnvelope: target.replyContextEnvelope,
         replyHandoffReceiptEnvelope: target.replyHandoffReceiptEnvelope,
+        errorMessage: target.failureDetailEnvelope,
         summaryCiphertext: null,
     };
 }
 
 /**
- * The canonical all-origin retained-Run migration-participant assertion. Both
+ * The canonical all-cause retained-Run migration-participant assertion. Both
  * SQLite integration and PostgreSQL DB-contract suites call this exact scenario.
  */
-export async function assertAllOriginAutomationRunMigrationToE2ee(params?: Readonly<{
+export async function assertAllCauseAutomationRunMigrationToE2ee(params?: Readonly<{
     onAccountCreated?: (accountId: string) => void;
 }>) {
-    const seeded = await seedAllOriginRuns(params?.onAccountCreated);
+    const seeded = await seedAllCauseRuns(params?.onAccountCreated);
     const directive = buildDirective(seeded);
-    const [eventTarget, conversationTarget, scheduledTarget, manualTarget] = directive.runs!;
+    const targetsByRunId = new Map(directive.runs!.map((target) => [target.runId, target] as const));
+    const eventTarget = targetsByRunId.get(seeded.eventRun.id)!;
+    const conversationTarget = targetsByRunId.get(seeded.conversationRun.id)!;
+    const scheduledTarget = targetsByRunId.get(seeded.scheduledRun.id)!;
+    const manualTarget = targetsByRunId.get(seeded.manualRun.id)!;
+    const templatesByAutomationId = new Map(
+        directive.templates.map((template) => [template.automationId, template] as const),
+    );
+    const eventTemplate = templatesByAutomationId.get(seeded.eventAutomation.id)!;
+    const conversationTemplate = templatesByAutomationId.get(seeded.conversationAutomation.id)!;
+    const eventTriggerTarget = eventTemplate.triggerDefinitionEnvelopes.find(
+        (target) => target.triggerId === seeded.eventTrigger.id,
+    )!;
 
     await expect(inTx(async (tx) =>
         await migrateAutomationAccountEncryptionInTx({
@@ -648,24 +758,27 @@ export async function assertAllOriginAutomationRunMigrationToE2ee(params?: Reado
         select: {
             templateCiphertext: true,
             templateVersion: true,
-            triggerDefinitionEnvelope: true,
+            triggers: {
+                where: { kind: "pluginEvent" },
+                select: { definitionEnvelope: true },
+            },
         },
     })).resolves.toEqual({
-        templateCiphertext: directive.templates[0]!.templateCiphertext,
+        templateCiphertext: eventTemplate.templateCiphertext,
         templateVersion: seeded.eventAutomation.templateVersion + 1,
-        triggerDefinitionEnvelope: directive.templates[0]!.triggerDefinitionEnvelope,
+        triggers: [{ definitionEnvelope: eventTriggerTarget.envelope }],
     });
     await expect(db.automation.findUniqueOrThrow({
         where: { id: seeded.conversationAutomation.id },
         select: {
             templateCiphertext: true,
             templateVersion: true,
-            triggerDefinitionEnvelope: true,
+            triggers: { select: { definitionEnvelope: true } },
         },
     })).resolves.toEqual({
-        templateCiphertext: directive.templates[1]!.templateCiphertext,
+        templateCiphertext: conversationTemplate.templateCiphertext,
         templateVersion: seeded.conversationAutomation.templateVersion + 1,
-        triggerDefinitionEnvelope: null,
+        triggers: [],
     });
     await expect(inTx(async (tx) =>
         await matchAutomationAccountEncryptionMigrationPostStateInTx({

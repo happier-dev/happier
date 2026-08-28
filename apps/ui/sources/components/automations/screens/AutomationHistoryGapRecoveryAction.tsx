@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { HappierBanner } from '@happier-dev/plugin-ui/presentation';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
@@ -17,11 +18,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import {
-    isPluginEventAutomationDefinition,
-    type AutomationDefinition,
-} from '@/sync/domains/automations/automationTypes';
-import { arePluginMachineMaterializationRefsEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
+import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 
 import {
     readAutomationHistoryGapRecoveryEligibleEvent,
@@ -31,21 +28,23 @@ import {
 
 function resolveHistoryGapRecoveryExecutionOrigin(params: Readonly<{
     automation: AutomationDefinition | null;
+    triggerId: string;
     reader: ReturnType<typeof useActivePluginAccountAvailabilityReader>;
     classifyRelease: ReturnType<typeof useActivePluginAccountAvailabilityReleaseClassifier>;
 }>): FreshPluginMachineExecutionOriginV1 | null {
-    const status = readAutomationHistoryGapRecoveryStatus(params.automation);
+    const status = readAutomationHistoryGapRecoveryStatus(params.automation, params.triggerId);
     const automation = params.automation;
-    if (!status || !automation || !isPluginEventAutomationDefinition(automation) || !params.reader) return null;
+    const trigger = automation?.triggers.find((candidate) => candidate.id === params.triggerId);
+    if (!status || !automation || trigger?.kind !== 'pluginEvent' || !params.reader) return null;
     const admission = params.reader.readMaterializations();
     if (admission.kind !== 'available') return null;
     const matches = admission.materializations.filter((materialization) => (
-        materialization.pluginId === automation.trigger.eventRef.pluginId
+        materialization.pluginId === trigger.eventRef.pluginId
         && arePluginMachineMaterializationRefsEqual(materialization, status.reporterMaterializationRef)
     ));
     if (matches.length !== 1) return null;
     return resolveFreshPluginMachineExecutionOrigin({
-        pluginId: automation.trigger.eventRef.pluginId,
+        pluginId: trigger.eventRef.pluginId,
         origin: composePluginMachineExecutionOriginV1(matches[0]!),
         reader: params.reader,
         classifyRelease: params.classifyRelease,
@@ -59,6 +58,7 @@ function resolveHistoryGapRecoveryExecutionOrigin(params: Readonly<{
  */
 export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     automation: AutomationDefinition;
+    triggerId: string;
     isCurrentRoute: () => boolean;
     rereadAutomationStatus: () => Promise<void>;
 }>) {
@@ -68,12 +68,13 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const automationRef = React.useRef(props.automation);
     automationRef.current = props.automation;
-    const status = readAutomationHistoryGapRecoveryStatus(props.automation);
+    const status = readAutomationHistoryGapRecoveryStatus(props.automation, props.triggerId);
     const resolveExecutionOrigin = React.useCallback(() => resolveHistoryGapRecoveryExecutionOrigin({
         automation: automationRef.current,
+        triggerId: props.triggerId,
         reader: availabilityReader,
         classifyRelease,
-    }), [availabilityReader, classifyRelease]);
+    }), [availabilityReader, classifyRelease, props.triggerId]);
     const origin = resolveExecutionOrigin();
     const projection = useDaemonMergedProjectionInputs({
         machineId: origin?.machineTarget.target.machineId ?? null,
@@ -86,9 +87,10 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
             ? readAutomationHistoryGapRecoveryEligibleEvent({
                 inputs: projection.inputs,
                 automation: props.automation,
+                triggerId: props.triggerId,
             })
             : null
-    ), [projection.inputs, projection.phase, props.automation]);
+    ), [projection.inputs, projection.phase, props.automation, props.triggerId]);
     const operationRef = React.useRef<AbortController | null>(null);
     const [recovering, setRecovering] = React.useState(false);
     const [recoveryFailed, setRecoveryFailed] = React.useState(false);
@@ -110,6 +112,7 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
             try {
                 const outcome = await recoverAutomationHistoryGap({
                     eligibleEvent,
+                    triggerId: props.triggerId,
                     accountLifetime,
                     signal: operation.signal,
                     resolveCurrentAutomation: () => automationRef.current,

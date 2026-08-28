@@ -39,7 +39,8 @@ const START_RESPONSE = {
     id: 'run/1',
     automationId: 'automation-1',
     state: 'running' as const,
-    origin: { kind: 'manual' as const, invokedAt: 1_723_247_201_000 },
+    triggerId: null,
+    cause: { kind: 'manual' as const, invokedAt: 1_723_247_201_000 },
     dueAt: 1_723_247_201_000,
     claimedAt: 1_723_247_201_000,
     startedAt: 1_723_247_201_001,
@@ -54,7 +55,6 @@ const START_RESPONSE = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
-    contentRemovedAt: null,
     createdAt: 1_723_247_201_000,
     updatedAt: 1_723_247_201_001,
   },
@@ -166,7 +166,7 @@ describe('createAutomationClaimClient', () => {
         kind: 'happier_automation_template_plain_v1',
         payload: { directory: '/tmp/frozen-claim' },
       }),
-      origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+      cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
     });
     axiosPost.mockResolvedValue({
       data: {
@@ -174,7 +174,8 @@ describe('createAutomationClaimClient', () => {
           id: 'run-1',
           automationId: 'automation-1',
           attempt: 1,
-          origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+          triggerId: null,
+          cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
           executionInputEnvelope: frozenExecutionInput,
         },
         automation: { id: 'automation-1', name: 'Frozen', enabled: true },
@@ -190,7 +191,8 @@ describe('createAutomationClaimClient', () => {
         id: 'run-1',
         automationId: 'automation-1',
         attempt: 1,
-        origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+        triggerId: null,
+        cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
         executionInputEnvelope: frozenExecutionInput,
         resultDelivery: { kind: 'none' },
       },
@@ -235,6 +237,7 @@ describe('createAutomationClaimClient', () => {
           id: 'run-parent-turn',
           automationId: 'automation-parent-turn',
           attempt: 1,
+          triggerId: 'trigger-parent-turn',
           cause,
           executionInputEnvelope: JSON.stringify({ v: 1 }),
         },
@@ -252,6 +255,7 @@ describe('createAutomationClaimClient', () => {
         id: 'run-parent-turn',
         automationId: 'automation-parent-turn',
         attempt: 1,
+        triggerId: 'trigger-parent-turn',
         cause,
         executionInputEnvelope: JSON.stringify({ v: 1 }),
         resultDelivery: { kind: 'none' },
@@ -293,9 +297,10 @@ describe('createAutomationClaimClient', () => {
           id: 'run-final',
           automationId: 'automation-final',
           attempt: 1,
-          origin: {
+          triggerId: null,
+          cause: {
             kind: 'conversation',
-            occurrenceKey: 'occurrence-final',
+            occurrenceKey: 'A'.repeat(43),
             occurredAt: 1_723_247_201_000,
           },
           executionInputEnvelope: JSON.stringify({
@@ -306,7 +311,11 @@ describe('createAutomationClaimClient', () => {
               kind: 'happier_automation_template_plain_v1',
               payload: { sessionId: 'sess-final' },
             }),
-            origin: { kind: 'conversation', occurredAt: 1_723_247_201_000 },
+            cause: {
+              kind: 'conversation',
+              occurrenceKey: 'A'.repeat(43),
+              occurredAt: 1_723_247_201_000,
+            },
           }),
           resultDelivery: {
             kind: 'finalResult',
@@ -347,13 +356,15 @@ describe('createAutomationClaimClient', () => {
     await client.fetchAssignments('m1');
 
     await expect(client.startRun({
+      protocol: 'v3',
       runId: 'run/1',
       machineId: 'm1',
       attempt: 2,
       accountCurrentness: CLAIM_CURRENTNESS,
     })).resolves.toEqual(START_CURRENTNESS);
-    await client.heartbeatRun({ runId: 'run/1', machineId: 'm1', attempt: 2, leaseDurationMs: 12_000 });
+    await client.heartbeatRun({ protocol: 'v3', runId: 'run/1', machineId: 'm1', attempt: 2, leaseDurationMs: 12_000 });
     await client.succeedRun({
+      protocol: 'v3',
       runId: 'run/1',
       machineId: 'm1',
       attempt: 2,
@@ -361,6 +372,7 @@ describe('createAutomationClaimClient', () => {
       producedSessionId: 's1',
     });
     await client.failRun({
+      protocol: 'v3',
       runId: 'run/1',
       machineId: 'm1',
       attempt: 2,
@@ -639,8 +651,8 @@ describe('createAutomationClaimClient', () => {
 
     v3Available = true;
     await client.fetchAssignments('machine-1');
-    await client.startRun({ runId: 'run-v2', machineId: 'machine-1', attempt: 1 });
-    await client.succeedRun({ runId: 'run-v2', machineId: 'machine-1', attempt: 1 });
+    await client.startRun({ protocol: 'v2', runId: 'run-v2', machineId: 'machine-1', attempt: 1 });
+    await client.succeedRun({ protocol: 'v2', runId: 'run-v2', machineId: 'machine-1', attempt: 1 });
 
     expect(axiosPost.mock.calls.map((call) => call[0])).toEqual([
       expect.stringMatching(/\/v2\/automations\/runs\/claim$/),
@@ -649,7 +661,7 @@ describe('createAutomationClaimClient', () => {
     ]);
   });
 
-  it('keeps an active V3 Run on V3 through a V2 refresh, then uses V2 for the next claim after settlement', async () => {
+  it('keeps V3 sticky after observation and surfaces a later missing assignments endpoint', async () => {
     let v3Available = true;
     axiosGet.mockImplementation((url: unknown) => {
       const requestUrl = String(url);
@@ -684,11 +696,18 @@ describe('createAutomationClaimClient', () => {
             id: 'run-v3',
             automationId: 'automation-event',
             attempt: 1,
-            origin: {
-              kind: 'pluginEvent',
-              occurrenceKey: 'github-push-1',
-              sourceSelectorId: 'source-selector-1',
+            triggerId: 'trigger-event',
+            cause: {
+              kind: 'trigger',
+              triggerId: 'trigger-event',
+              triggerRevision: 1,
+              triggerKind: 'pluginEvent',
+              occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
               occurredAt: 1_723_247_201_000,
+              evidence: {
+                eventRef: { pluginId: 'com.example.event', localId: 'issue-opened' },
+                sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
+              },
             },
             executionInputEnvelope: '{"kind":"happier_automation_run_execution_recipe_v1"}',
           },
@@ -698,28 +717,34 @@ describe('createAutomationClaimClient', () => {
       })
       .mockResolvedValueOnce({ data: START_RESPONSE })
       .mockResolvedValueOnce({ data: undefined })
-      .mockResolvedValueOnce({ data: { run: null, automation: null } });
+      .mockResolvedValueOnce({
+        data: { run: null, automation: null, accountCurrentness: null },
+      });
 
-    const client = createAutomationClaimClient({ token: 'token-active-v3-downshift' });
+    const client = createAutomationClaimClient({ token: 'token-active-v3-sticky' });
     await client.fetchAssignments('machine-1');
     await client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 });
 
     v3Available = false;
-    await client.fetchAssignments('machine-1');
+    await expect(client.fetchAssignments('machine-1')).rejects.toMatchObject({
+      response: { status: 404 },
+    });
     await client.startRun({
+      protocol: 'v3',
       runId: 'run-v3',
       machineId: 'machine-1',
       attempt: 1,
       accountCurrentness: CLAIM_CURRENTNESS,
     });
     await client.succeedRun({
+      protocol: 'v3',
       runId: 'run-v3',
       machineId: 'machine-1',
       attempt: 1,
       accountCurrentness: START_CURRENTNESS,
     });
     await expect(client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 })).resolves.toEqual({
-      protocol: 'v2',
+      protocol: 'v3',
       run: null,
       automation: null,
     });
@@ -728,11 +753,11 @@ describe('createAutomationClaimClient', () => {
       expect.stringMatching(/\/v3\/automations\/runs\/claim$/),
       expect.stringMatching(/\/v3\/automations\/runs\/run-v3\/start$/),
       expect.stringMatching(/\/v3\/automations\/runs\/run-v3\/succeed$/),
-      expect.stringMatching(/\/v2\/automations\/runs\/claim$/),
+      expect.stringMatching(/\/v3\/automations\/runs\/claim$/),
     ]);
   });
 
-  it('falls back to schedule-only V2 when an older server has V3 reads but no V3 claim endpoint', async () => {
+  it('surfaces a missing V3 claim endpoint after V3 assignments select the current protocol', async () => {
     axiosGet.mockResolvedValue({
       data: {
         assignments: [{
@@ -743,38 +768,20 @@ describe('createAutomationClaimClient', () => {
         settings: DEFAULT_WORKER_SETTINGS,
       },
     });
-    axiosPost
-      .mockImplementationOnce((url: unknown) => Promise.reject(createAxios404(String(url))))
-      .mockResolvedValueOnce({ data: { run: null, automation: null } })
-      .mockResolvedValueOnce({ data: undefined });
+    axiosPost.mockImplementationOnce((url: unknown) => Promise.reject(createAxios404(String(url))));
 
-    const client = createAutomationClaimClient({ token: 'token-v3-read-v2-worker' });
+    const client = createAutomationClaimClient({ token: 'token-v3-claim-required' });
     await client.fetchAssignments('machine-1');
-    await expect(client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 })).resolves.toEqual({
-      protocol: 'v2',
-      run: null,
-      automation: null,
+    await expect(client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 })).rejects.toMatchObject({
+      response: { status: 404 },
     });
-    await client.succeedRun({ runId: 'run-1', machineId: 'machine-1', attempt: 1 });
 
     expect(axiosPost.mock.calls.map((call) => call[0])).toEqual([
       expect.stringMatching(/\/v3\/automations\/runs\/claim$/),
-      expect.stringMatching(/\/v2\/automations\/runs\/claim$/),
-      expect.stringMatching(/\/v2\/automations\/runs\/run-1\/succeed$/),
     ]);
-    expect(axiosPost.mock.calls[1]?.[1]).toEqual({
-      machineId: 'machine-1',
-      leaseDurationMs: 30_000,
-    });
-    expect(axiosPost.mock.calls[2]?.[1]).toEqual({
-      machineId: 'machine-1',
-      attempt: 1,
-      producedSessionId: null,
-      summaryCiphertext: null,
-    });
   });
 
-  it('keeps a fallback V2 Run on V2 without letting its older claim overwrite a newer V3 assignment read', async () => {
+  it('keeps V3 selected when an overlapping older V3 claim fails after a newer V3 assignment read', async () => {
     let markV3ClaimStarted!: () => void;
     let rejectOlderV3Claim!: (error: unknown) => void;
     let v3ClaimCount = 0;
@@ -809,33 +816,17 @@ describe('createAutomationClaimClient', () => {
           data: { run: null, automation: null, accountCurrentness: null },
         });
       }
-      if (requestUrl.endsWith('/v2/automations/runs/claim')) {
-        return Promise.resolve({
-          data: {
-            run: { id: 'run-v2', automationId: 'automation-schedule', attempt: 1 },
-            automation: { id: 'automation-schedule', name: 'Schedule', enabled: true },
-          },
-        });
-      }
-      if (requestUrl.endsWith('/v2/automations/runs/run-v2/succeed')) {
-        return Promise.resolve({ data: undefined });
-      }
       throw new Error(`Unexpected Automation request: ${requestUrl}`);
     });
 
-    const client = createAutomationClaimClient({ token: 'token-overlapping-claim-upgrade' });
+    const client = createAutomationClaimClient({ token: 'token-overlapping-v3-claim' });
     await client.fetchAssignments('machine-1');
     const olderClaim = client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 });
     await v3ClaimStarted;
 
     await client.fetchAssignments('machine-1');
     rejectOlderV3Claim(createAxios404(olderV3ClaimUrl));
-    await expect(olderClaim).resolves.toEqual({
-      protocol: 'v2',
-      run: { id: 'run-v2', automationId: 'automation-schedule', attempt: 1 },
-      automation: { id: 'automation-schedule', name: 'Schedule', enabled: true },
-    });
-    await client.succeedRun({ runId: 'run-v2', machineId: 'machine-1', attempt: 1 });
+    await expect(olderClaim).rejects.toMatchObject({ response: { status: 404 } });
 
     await expect(client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 })).resolves.toEqual({
       protocol: 'v3',
@@ -844,10 +835,29 @@ describe('createAutomationClaimClient', () => {
     });
     expect(axiosPost.mock.calls.map((call) => call[0])).toEqual([
       expect.stringMatching(/\/v3\/automations\/runs\/claim$/),
-      expect.stringMatching(/\/v2\/automations\/runs\/claim$/),
-      expect.stringMatching(/\/v2\/automations\/runs\/run-v2\/succeed$/),
       expect.stringMatching(/\/v3\/automations\/runs\/claim$/),
     ]);
+  });
+
+  it('routes lifecycle by the explicit claimed protocol instead of the current assignment protocol', async () => {
+    axiosGet.mockResolvedValue({
+      data: {
+        assignments: [{ machineId: 'machine-1', automationId: 'automation-v3', nextClaimAt: 1 }],
+        settings: DEFAULT_WORKER_SETTINGS,
+      },
+    });
+    axiosPost.mockResolvedValue({ data: undefined });
+
+    const client = createAutomationClaimClient({ token: 'token-explicit-run-protocol' });
+    await client.fetchAssignments('machine-1');
+    await client.succeedRun({
+      protocol: 'v2',
+      runId: 'run-v2',
+      machineId: 'machine-1',
+      attempt: 1,
+    });
+
+    expect(axiosPost.mock.calls.at(-1)?.[0]).toMatch(/\/v2\/automations\/runs\/run-v2\/succeed$/);
   });
 
   it('carries an authoritative created Session through a V2 input-failure settlement', async () => {
@@ -859,6 +869,7 @@ describe('createAutomationClaimClient', () => {
     const client = createAutomationClaimClient({ token: 'token-v2-known-session' });
     await client.fetchAssignments('machine-1');
     await client.failRun({
+      protocol: 'v2',
       runId: 'run-1',
       machineId: 'machine-1',
       attempt: 1,

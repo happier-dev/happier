@@ -1,13 +1,11 @@
 import {
     AutomationTriggerDefinitionBindingV1Schema,
-    AutomationRunExecutionInputV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
     validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1,
     normalizeAutomationTemplateEnvelopeStoredRead,
     parseAutomationRunExecutionRecipeV1,
     validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
-    type AutomationRunExecutionInputV1,
     type AutomationTriggerDefinitionBindingV1,
     type AutomationStoredContentEnvelopeV1,
 } from "@happier-dev/protocol";
@@ -32,7 +30,7 @@ export type AutomationStoredContentOuterValidation =
 export type AutomationExecutionInputOuterValidation =
     | Readonly<{
         kind: "available";
-        input: AutomationRunExecutionInputV1;
+        input: RetainedAutomationRunExecutionInputV2;
     }>
     | Readonly<{ kind: "contentInvalid" | "modeMismatch" }>;
 
@@ -44,7 +42,8 @@ export type AutomationExecutionInputOuterValidation =
  */
 export function readAutomationTriggerDefinitionBinding(params: Readonly<{
     automationId: string;
-    templateVersion: number;
+    triggerId: string;
+    triggerRevision: number;
     triggerKind: string;
     triggerEventPluginId: string | null;
     triggerEventLocalId: string | null;
@@ -58,7 +57,8 @@ export function readAutomationTriggerDefinitionBinding(params: Readonly<{
                 ? {
                     v: 1,
                     automationId: params.automationId,
-                    templateVersion: params.templateVersion,
+                    triggerId: params.triggerId,
+                    triggerRevision: params.triggerRevision,
                     triggerKind: "pluginEvent" as const,
                     eventRef: {
                         pluginId: params.triggerEventPluginId,
@@ -208,9 +208,27 @@ export function assertAutomationRunFailureDetailEnvelopeOuterForMode(params: {
  * supplied it binds those bytes to that exact Run arm. Current strict recipes
  * are parsed and validated by Protocol instead.
  */
+export type RetainedAutomationRunExecutionInputV2 = Readonly<{
+    kind: "happier_automation_run_execution_input_v1";
+    targetType: "new_session" | "existing_session";
+    templateVersion: number;
+    templateCiphertext: string;
+    origin:
+        | Readonly<{ kind: "scheduled"; scheduledFor: number }>
+        | Readonly<{ kind: "manual"; invokedAt: number }>;
+}>;
+
+function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const actual = Object.keys(value).sort();
+    const expected = [...keys].sort();
+    return actual.length === expected.length
+        && actual.every((key, index) => key === expected[index]);
+}
+
 function parseRetainedAutomationRunExecutionInputV2(params: {
     raw: string;
-    originKind?: string;
+    retainedV2OriginKind?: "scheduled" | "manual";
 }) {
     let raw: unknown;
     try {
@@ -218,23 +236,42 @@ function parseRetainedAutomationRunExecutionInputV2(params: {
     } catch {
         return null;
     }
-    const recipe = AutomationRunExecutionInputV1Schema.safeParse(raw);
-    if (!recipe.success) {
-        return null;
-    }
+    if (!isExactObject(raw, [
+        "kind",
+        "targetType",
+        "templateVersion",
+        "templateCiphertext",
+        "origin",
+    ])) return null;
     if (
-        (recipe.data.origin.kind !== "scheduled" && recipe.data.origin.kind !== "manual")
-        || (
-            params.originKind !== undefined
-            && params.originKind !== recipe.data.origin.kind
-        )
-    ) {
-        return null;
-    }
+        raw.kind !== "happier_automation_run_execution_input_v1"
+        || (raw.targetType !== "new_session" && raw.targetType !== "existing_session")
+        || !Number.isSafeInteger(raw.templateVersion)
+        || (raw.templateVersion as number) < 0
+        || typeof raw.templateCiphertext !== "string"
+        || raw.templateCiphertext.length === 0
+    ) return null;
+
+    const origin = raw.origin;
+    const scheduled = isExactObject(origin, ["kind", "scheduledFor"])
+        && origin.kind === "scheduled"
+        && Number.isSafeInteger(origin.scheduledFor)
+        && (origin.scheduledFor as number) >= 0;
+    const manual = isExactObject(origin, ["kind", "invokedAt"])
+        && origin.kind === "manual"
+        && Number.isSafeInteger(origin.invokedAt)
+        && (origin.invokedAt as number) >= 0;
+    if (!scheduled && !manual) return null;
+    if (
+        params.retainedV2OriginKind !== undefined
+        && params.retainedV2OriginKind !== origin.kind
+    ) return null;
+
+    const recipe = raw as RetainedAutomationRunExecutionInputV2;
 
     let templateRaw: unknown;
     try {
-        templateRaw = JSON.parse(recipe.data.templateCiphertext);
+        templateRaw = JSON.parse(recipe.templateCiphertext);
     } catch {
         return null;
     }
@@ -242,14 +279,14 @@ function parseRetainedAutomationRunExecutionInputV2(params: {
     if (!template) {
         return null;
     }
-    return { recipe: recipe.data, template };
+    return { recipe, template };
 }
 
 /** Read the exact released-V2 frozen Run shape without Account-mode authority. */
 export function readRetainedAutomationRunExecutionInputV2(params: {
     raw: string;
-    originKind?: string;
-}): AutomationRunExecutionInputV1 | null {
+    retainedV2OriginKind?: "scheduled" | "manual";
+}): RetainedAutomationRunExecutionInputV2 | null {
     return parseRetainedAutomationRunExecutionInputV2(params)?.recipe ?? null;
 }
 
@@ -260,7 +297,7 @@ export function readRetainedAutomationRunExecutionInputV2(params: {
 export function validateRetainedAutomationRunExecutionInputV2OuterForMode(params: {
     raw: string;
     mode: "plain" | "e2ee";
-    originKind?: string;
+    retainedV2OriginKind?: "scheduled" | "manual";
 }): AutomationExecutionInputOuterValidation | null {
     const retained = parseRetainedAutomationRunExecutionInputV2(params);
     if (!retained) return null;
@@ -284,8 +321,8 @@ export function validateRetainedAutomationRunExecutionInputV2OuterForMode(params
 export function readRetainedAutomationRunExecutionInputV2ForMode(params: {
     raw: string;
     mode: "plain" | "e2ee";
-    originKind?: string;
-}): AutomationRunExecutionInputV1 | null {
+    retainedV2OriginKind?: "scheduled" | "manual";
+}): RetainedAutomationRunExecutionInputV2 | null {
     const validation = validateRetainedAutomationRunExecutionInputV2OuterForMode(params);
     return validation?.kind === "available" ? validation.input : null;
 }
@@ -293,7 +330,7 @@ export function readRetainedAutomationRunExecutionInputV2ForMode(params: {
 export function assertAutomationExecutionInputEnvelopeOuterForMode(params: {
     raw: string | null;
     mode: "plain" | "e2ee";
-    originKind?: string;
+    retainedV2OriginKind?: "scheduled" | "manual";
 }): void {
     if (params.raw === null) {
         return;
@@ -312,10 +349,13 @@ export function assertAutomationExecutionInputEnvelopeOuterForMode(params: {
         }
         return;
     }
+    if (params.retainedV2OriginKind === undefined) {
+        throw new AutomationStoredContentReadError("contentInvalid");
+    }
     const validation = validateRetainedAutomationRunExecutionInputV2OuterForMode({
         raw: params.raw,
         mode: params.mode,
-        originKind: params.originKind,
+        retainedV2OriginKind: params.retainedV2OriginKind,
     });
     if (validation?.kind !== "available") {
         throw new AutomationStoredContentReadError(validation?.kind ?? "contentInvalid");

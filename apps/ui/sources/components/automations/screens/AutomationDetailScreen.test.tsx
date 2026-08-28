@@ -4,8 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema,
     AutomationDefinitionDetailSchema,
+    AutomationTriggerIdSchema,
+    AutomationTriggerListItemSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
-    type AutomationDefinitionDetail,
+    type AutomationEventSourceCatalogStatus,
+    type AutomationEventSourceStatusV1,
+    type AutomationTriggerListItem,
 } from '@happier-dev/protocol';
 import {
     createCapturingLegendListMock,
@@ -20,44 +24,21 @@ type AutomationScreenFixture = {
     name: string;
     enabled: boolean;
     description: string | null;
-    trigger: AutomationDefinitionDetail['trigger'];
+    triggers: AutomationTriggerListItem[];
+    retiredTriggers: Array<{
+        id: string;
+        kind: 'schedule' | 'pluginEvent' | 'sessionLifecycle';
+        revision: number;
+        retiredAt: number;
+    }>;
     targetType: 'newSession' | 'existingSession' | 'executionRun';
     existingSessionId: string | null;
     templateVersion: number;
-    sourceStatus?: {
-        automationId: string;
-        eventRef: { pluginId: string; localId: string };
-        sourceSelectorId: string;
-        templateVersion: number;
-        reporterMaterializationRef: {
-            pluginId: string;
-            machineId: string;
-            materializationId: string;
-        };
-        reporterImmutableGenerationId?: string;
-        state: 'uninitialized' | 'baselined' | 'observing' | 'backingOff' | 'attention';
-        code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
-        lastObservedAt: number | null;
-        lastDispositionAt: number | null;
-        nextRetryAt: number | null;
-        observedCount: number;
-        admittedCount: number;
-        skippedCount: number;
-        revision: number;
-    };
-    sourceCatalogStatus?: {
-        observedRevision: string;
-        adoptedRevision: string | null;
-        state: 'current' | 'reconciling' | 'reconciliationLate';
-        scanStartedAt: number | null;
-        nextRetryAt: number | null;
-    };
     detail:
         | { kind: 'unloaded'; templateVersion: number }
         | { kind: 'available'; templateVersion: number; value: unknown }
         | { kind: 'unavailable'; templateVersion: number; code: string };
     linkedExistingSessionId: string | null;
-    nextRunAt: number | null;
     assignments: Array<{ machineId: string; enabled: boolean; priority: number }>;
 };
 
@@ -66,6 +47,70 @@ type FetchAutomationRuns = (
     limit?: number,
     cursor?: string,
 ) => Promise<{ nextCursor: string | null }>;
+
+type EventTriggerFixture = Extract<AutomationTriggerListItem, Readonly<{ kind: 'pluginEvent' }>>;
+
+function eventTriggerFixture(
+    overrides: Partial<EventTriggerFixture> = {},
+): EventTriggerFixture {
+    return AutomationTriggerListItemSchema.parse({
+        id: AutomationTriggerIdSchema.parse('event-trigger-1'),
+        revision: 1,
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 1,
+        kind: 'pluginEvent',
+        eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111'),
+        sourceContractVersion: 1,
+        observation: { kind: 'checkpointedPull', watcher: null },
+        sourceStatus: null,
+        sourceCatalogStatus: null,
+        ...overrides,
+    });
+}
+
+function eventSourceStatusFixture(
+    overrides: Partial<AutomationEventSourceStatusV1> = {},
+): AutomationEventSourceStatusV1 {
+    return {
+        automationId: 'a1',
+        triggerId: AutomationTriggerIdSchema.parse('event-trigger-1'),
+        triggerRevision: 1,
+        eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+        sourceSelectorId: '11111111-1111-4111-8111-111111111111',
+        reporterMaterializationRef: {
+            pluginId: 'happier.scm.github',
+            machineId: 'watcher-machine',
+            materializationId: 'github-materialization',
+        },
+        reporterImmutableGenerationId: 'github-generation-1',
+        state: 'observing',
+        code: null,
+        lastObservedAt: 1,
+        lastDispositionAt: 2,
+        nextRetryAt: null,
+        observedCount: 4,
+        admittedCount: 5,
+        skippedCount: 6,
+        revision: 7,
+        ...overrides,
+    };
+}
+
+function eventSourceCatalogStatusFixture(
+    overrides: Partial<AutomationEventSourceCatalogStatus> = {},
+): AutomationEventSourceCatalogStatus {
+    return {
+        reporterImmutableGenerationId: 'github-generation-1',
+        observedRevision: '7',
+        adoptedRevision: '7',
+        state: 'current',
+        scanStartedAt: null,
+        nextRetryAt: null,
+        ...overrides,
+    };
+}
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,6 +123,9 @@ const routeParamsState = vi.hoisted(() => ({ id: 'a1' }));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
+const eventRuntimeProjectionState = vi.hoisted(() => ({
+    immutableGenerationId: 'github-generation-1',
+}));
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
     refreshAutomationDefinitionDetail: vi.fn(async () => {}),
@@ -89,19 +137,24 @@ const syncSpies = vi.hoisted(() => ({
     clearAutomationRunHistory: vi.fn(async () => ({ clearedRuns: 0 })),
     replaceAutomationAssignments: vi.fn(async () => {}),
 }));
-const automationState = vi.hoisted((): { automation: AutomationScreenFixture; missing: boolean } => ({
+const automationState = vi.hoisted(() => ({
     automation: {
         id: 'a1',
         name: 'Nightly',
         enabled: true,
         description: null as string | null,
-        trigger: { kind: 'schedule' as const, schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null as string | null } },
+        triggers: [{
+            id: 'schedule-trigger-1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+            kind: 'schedule' as const,
+            schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null as string | null },
+            nextRunAt: null,
+        }],
+        retiredTriggers: [] as AutomationScreenFixture['retiredTriggers'],
         targetType: 'newSession' as const,
         existingSessionId: null as string | null,
         templateVersion: 1,
         detail: { kind: 'unloaded' as const, templateVersion: 1 },
         linkedExistingSessionId: null as string | null,
-        nextRunAt: null as number | null,
         assignments: [] as Array<{ machineId: string; enabled: boolean; priority: number }>,
     },
     missing: false,
@@ -163,7 +216,12 @@ installAutomationScreensCommonModuleMocks({
                 'settingsPlugins.eventAutomationComposer.sourceStatusState.backingOff': 'Waiting to retry',
                 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate': 'Reconciliation delayed',
                 'settingsPlugins.eventAutomationComposer.sourceStatusCode.rateLimited': 'Rate limited',
-                'automations.detail.runMeta.origin.pluginEvent': 'Event',
+                'automations.detail.runMeta.cause.pluginEvent': 'Event',
+                'automations.detail.runMeta.triggerRetired': 'Trigger retired',
+                'automations.detail.trigger.status.running': 'Running from this turn',
+                'automations.detail.trigger.run': 'Matching run',
+                'automations.detail.trigger.sourceSession': 'Source session',
+                'automations.detail.trigger.sourceTurn': 'Exact source turn',
                 'automations.detail.runMeta.state.queued': 'Queued',
                 'automations.detail.runMeta.state.claimed': 'Claimed',
                 'automations.detail.runMeta.state.running': 'Running',
@@ -175,7 +233,7 @@ installAutomationScreensCommonModuleMocks({
                 'automations.detail.runMeta.state.skipped': 'Skipped',
                 'automations.detail.runMeta.state.missed': 'Missed',
                 'automations.detail.runMeta.state.outcome_uncertain': 'Outcome uncertain',
-                'automations.list.event': 'Event: repository-event-v1',
+                'automations.list.event': 'Event: pull-request-opened-v1',
                 'status.online': 'online',
                 'status.offline': 'offline',
             };
@@ -206,6 +264,9 @@ installAutomationScreensCommonModuleMocks({
             if (key === 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusScanStarted') {
                 return `Scan started: ${String(params?.time ?? '')}`;
             }
+            if (key === 'automations.detail.runMeta.triggerIdentity') {
+                return `${String(params?.id ?? '')} · revision ${String(params?.revision ?? '')}`;
+            }
             return labels[key] ?? key;
         },
     },
@@ -219,8 +280,11 @@ installAutomationScreensCommonModuleMocks({
         }).module;
     },
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
+            storage: createLiveStorageStoreMock(() => ({
+                automationRunsByAutomationId: { a1: automationRunsState.list },
+            })),
             useAutomation: () => (automationState.missing ? null : automationState.automation),
             useAutomationRuns: () => automationRunsState.list,
             useAutomationRunNextCursor: () => automationRunCursorState.nextCursor,
@@ -240,6 +304,33 @@ installAutomationScreensCommonModuleMocks({
         });
     },
 });
+
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({
+        phase: 'ready',
+        inputs: {
+            automationEligibleEvents: [],
+            pluginProjectionV2: {
+                v: 2,
+                generation: 1,
+                installedPackagesById: {
+                    'happier.scm.github': {
+                        id: 'happier.scm.github',
+                        displayName: 'GitHub',
+                        version: '1.0.0',
+                        enabled: true,
+                        source: { kind: 'bundled', locator: '@happier-dev/plugins-scm-github' },
+                        immutableGenerationId: eventRuntimeProjectionState.immutableGenerationId,
+                    },
+                },
+                contributionIntrospection: { version: 1, generation: 1, contributions: [], diagnostics: [] },
+            },
+        },
+    }),
+}));
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: '', generation: 1 }),
+}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -326,6 +417,7 @@ vi.mock('@/sync/sync', () => ({
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {
+        eventRuntimeProjectionState.immutableGenerationId = 'github-generation-1';
         runHistoryListMock.state.reset();
         routeParamsState.id = 'a1';
         automationState.missing = false;
@@ -334,13 +426,18 @@ describe('AutomationDetailScreen', () => {
             name: 'Nightly',
             enabled: true,
             description: null,
-            trigger: { kind: 'schedule', schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
+            triggers: [{
+                id: 'schedule-trigger-1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                kind: 'schedule',
+                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
+                nextRunAt: null,
+            }],
+            retiredTriggers: [],
             targetType: 'newSession',
             existingSessionId: null,
             templateVersion: 1,
             detail: { kind: 'unloaded', templateVersion: 1 },
             linkedExistingSessionId: null,
-            nextRunAt: null,
             assignments: [],
         };
         machinesState.list = [];
@@ -411,9 +508,14 @@ describe('AutomationDetailScreen', () => {
             name: 'Nightly',
             description: null,
             enabled: true,
-            trigger: {
+            triggers: [{
+                id: 'event-trigger-1',
+                revision: 1,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 1,
                 kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+                eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
                 sourceSelectorId,
                 sourceContractVersion: 1,
                 observation: {
@@ -425,34 +527,37 @@ describe('AutomationDetailScreen', () => {
                         materializationId: 'github-materialization',
                     },
                 },
-            },
+                sourceStatus: null,
+                sourceCatalogStatus: null,
+                triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    mode: 'plain',
+                    binding: {
+                        v: 1,
+                        automationId: 'a1',
+                        triggerId: 'event-trigger-1',
+                        triggerRevision: 1,
+                        triggerKind: 'pluginEvent',
+                        eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+                        sourceSelectorId,
+                    },
+                    definition: {
+                        v: 1,
+                        sourceInstanceId: 'repository:123',
+                        sourceConfig: { repository: 'happier-dev/happier' },
+                        displayLabel: 'happier-dev/happier',
+                        filter: { v: 1, all: [{ op: 'eq', field: '/action', value: 'opened' }] },
+                        maximumObservationAgeMs: null,
+                    },
+                })),
+            }],
             targetType,
             existingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
             templateVersion: 3,
-            nextRunAt: null,
             lastRunAt: null,
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-            triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
-                mode: 'plain',
-                binding: {
-                    v: 1,
-                    automationId: 'a1',
-                    templateVersion: 3,
-                    triggerKind: 'pluginEvent',
-                    eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                    sourceSelectorId,
-                },
-                definition: {
-                    v: 1,
-                    sourceInstanceId: 'repository:123',
-                    sourceConfig: { repository: 'happier-dev/happier' },
-                    displayLabel: 'happier-dev/happier',
-                    filter: { v: 1, all: [{ op: 'eq', field: '/action', value: 'opened' }] },
-                    maximumObservationAgeMs: null,
-                },
-            })),
+            retiredTriggers: [],
             executionRecipe: {
                 v: 1,
                 templateVersion: 3,
@@ -466,16 +571,31 @@ describe('AutomationDetailScreen', () => {
             name: 'Nightly',
             enabled: true,
             description: null,
-            trigger: detail.trigger,
+            triggers: detail.triggers,
             targetType,
             existingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
             templateVersion: 3,
             detail: { kind: 'available', templateVersion: 3, value: detail },
             linkedExistingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
-            nextRunAt: null,
             assignments: [],
         };
     }
+
+    it('renders retired trigger tombstones as read-only history outside the live editor set', async () => {
+        automationState.automation.retiredTriggers = [{
+            id: 'retired-event-1',
+            kind: 'pluginEvent',
+            revision: 4,
+            retiredAt: 9,
+        }];
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+
+        const retired = screen.findByProps({ testID: 'automation-retired-trigger-retired-event-1' });
+        expect(retired.props.title).toBe('Event');
+        expect(retired.props.subtitle).toContain('retired-event-1 · revision 4');
+        expect(retired.props.onPress).toBeUndefined();
+    });
 
     it('blurs the active element before navigating to edit automation', async () => {
         // The retained editor is available only for a direct V2-compatible schedule detail.
@@ -505,16 +625,10 @@ describe('AutomationDetailScreen', () => {
         });
     });
 
-    it('loads direct Event detail through the incumbent owner and never offers the blocked schedule editor', async () => {
+    it('loads direct Event detail through the incumbent owner and offers the shared plural editor', async () => {
         automationState.automation = {
             ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: 'selector-1',
-                sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null },
-            },
+            triggers: [eventTriggerFixture()],
             templateVersion: 3,
             detail: { kind: 'unloaded', templateVersion: 3 },
         };
@@ -526,8 +640,8 @@ describe('AutomationDetailScreen', () => {
         });
 
         expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledWith('a1');
-        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Edit automation')).toBeUndefined();
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Event: repository-event-v1');
+        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Edit automation')).toBeDefined();
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Event: pull-request-opened-v1');
         const watcher = screen.findAllByType('Pressable' as any).find(
             (instance: any) => instance.props.accessibilityLabel === 'Observation watcher',
         );
@@ -646,35 +760,16 @@ describe('AutomationDetailScreen', () => {
         // reporter is still running. Rendering them verbatim next to a watcher
         // that cannot observe tells the user a stopped source is healthy.
         machinesState.list = machines as typeof machinesState.list;
+        const current = currentEventDefinitionForEditor('executionRun');
         automationState.automation = {
-            ...currentEventDefinitionForEditor('executionRun'),
-            sourceStatus: {
-                automationId: 'a1',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: '11111111-1111-4111-8111-111111111111',
-                templateVersion: 3,
-                reporterMaterializationRef: {
-                    pluginId: 'happier.scm.github',
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization',
-                },
-                state: 'observing' as const,
-                code: null,
-                lastObservedAt: 1,
-                lastDispositionAt: 2,
-                nextRetryAt: null,
-                observedCount: 4,
-                admittedCount: 5,
-                skippedCount: 6,
-                revision: 7,
-            },
-            sourceCatalogStatus: {
-                observedRevision: '7',
-                adoptedRevision: '7',
-                state: 'current' as const,
-                scanStartedAt: null,
-                nextRetryAt: null,
-            },
+            ...current,
+            triggers: current.triggers.map((trigger) => trigger.kind === 'pluginEvent'
+                ? {
+                    ...trigger,
+                    sourceStatus: eventSourceStatusFixture(),
+                    sourceCatalogStatus: eventSourceCatalogStatusFixture(),
+                }
+                : trigger),
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
@@ -704,35 +799,16 @@ describe('AutomationDetailScreen', () => {
             installationId: 'watcher-installation',
             metadata: { displayName: 'Build box' },
         }] as typeof machinesState.list;
+        const current = currentEventDefinitionForEditor('executionRun');
         automationState.automation = {
-            ...currentEventDefinitionForEditor('executionRun'),
-            sourceStatus: {
-                automationId: 'a1',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: '11111111-1111-4111-8111-111111111111',
-                templateVersion: 3,
-                reporterMaterializationRef: {
-                    pluginId: 'happier.scm.github',
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization',
-                },
-                state: 'observing' as const,
-                code: null,
-                lastObservedAt: 1,
-                lastDispositionAt: 2,
-                nextRetryAt: null,
-                observedCount: 4,
-                admittedCount: 5,
-                skippedCount: 6,
-                revision: 7,
-            },
-            sourceCatalogStatus: {
-                observedRevision: '7',
-                adoptedRevision: '7',
-                state: 'current' as const,
-                scanStartedAt: null,
-                nextRetryAt: null,
-            },
+            ...current,
+            triggers: current.triggers.map((trigger) => trigger.kind === 'pluginEvent'
+                ? {
+                    ...trigger,
+                    sourceStatus: eventSourceStatusFixture(),
+                    sourceCatalogStatus: eventSourceCatalogStatusFixture(),
+                }
+                : trigger),
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
@@ -751,18 +827,44 @@ describe('AutomationDetailScreen', () => {
         expect(catalogStatus?.props.detail).toBe('Current');
     });
 
+    it('does not present retained source health after the plugin generation is replaced', async () => {
+        eventRuntimeProjectionState.immutableGenerationId = 'github-generation-2';
+        machinesState.list = [{
+            id: 'watcher-machine',
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            installationId: 'watcher-installation',
+            metadata: { displayName: 'Build box' },
+        }] as typeof machinesState.list;
+        const current = currentEventDefinitionForEditor('executionRun');
+        automationState.automation = {
+            ...current,
+            triggers: current.triggers.map((trigger) => trigger.kind === 'pluginEvent'
+                ? {
+                    ...trigger,
+                    sourceStatus: eventSourceStatusFixture(),
+                    sourceCatalogStatus: eventSourceCatalogStatusFixture(),
+                }
+                : trigger),
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const status = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation source',
+        );
+        const catalogStatus = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Catalog reconciliation',
+        );
+        expect(status?.props.detail).toBe('Source status unavailable');
+        expect(catalogStatus?.props.detail).toBe('Source currentness unavailable');
+    });
+
     it('renders missing Event source and catalog status as explicit states rather than omitting the rows', async () => {
         automationState.automation = {
             ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: 'selector-1',
-                sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null },
-            },
-            sourceStatus: undefined,
-            sourceCatalogStatus: undefined,
+            triggers: [eventTriggerFixture({ sourceStatus: null, sourceCatalogStatus: null })],
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
@@ -777,20 +879,59 @@ describe('AutomationDetailScreen', () => {
         expect(catalogStatus?.props.detail).toBe('Source currentness unavailable');
     });
 
+    it('renders exact-turn lifecycle truth and its matching Run from the trigger projection', async () => {
+        automationState.automation = {
+            ...automationState.automation,
+            triggers: [{
+                id: 'turn-trigger-1',
+                revision: 5,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 2,
+                kind: 'sessionLifecycle',
+                event: 'parentTurnCompleted',
+                scope: {
+                    kind: 'exactTurn',
+                    sourceSessionId: 'session-source',
+                    sourceTurnId: 'turn-exact',
+                },
+                consumption: 'once',
+                status: { state: 'running', runId: 'run-from-turn' },
+            }],
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+
+        expect(screen.getTextContent()).toContain('Running from this turn');
+        expect(screen.getTextContent()).toContain('run-from-turn');
+        expect(screen.getTextContent()).toContain('session-source');
+        expect(screen.getTextContent()).toContain('turn-exact');
+    });
+
     it('shows the durable-push endpoint a webhook Automation actually observes', async () => {
         automationState.automation = {
             ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: 'selector-1',
-                sourceContractVersion: 1,
+            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0 }],
+            triggers: [eventTriggerFixture({
+                sourceStatus: eventSourceStatusFixture({
+                    reporterMaterializationRef: {
+                        machineId: 'last-status-reporter',
+                        materializationId: 'last-status-materialization',
+                        pluginId: 'happier.scm.github',
+                    },
+                }),
                 observation: {
                     kind: 'durablePush',
                     webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+                    endpointMaterializationRef: {
+                        machineId: 'observation-machine',
+                        materializationId: 'observation-materialization',
+                        pluginId: 'happier.scm.github',
+                    },
                     observationStartsAt: 1_700_000_000_000,
                 },
-            },
+            })],
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
@@ -798,21 +939,58 @@ describe('AutomationDetailScreen', () => {
         const endpoint = screen.findAllByType('Pressable' as any).find(
             (instance: any) => instance.props.testID === 'automation-detail-event-endpoint',
         );
+        const placement = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.testID === 'automation-detail-event-observation-placement',
+        );
         expect(endpoint?.props.detail).toBe('wh_ep_AAAAAAAAAAAAAAAAAAAAAQ');
+        expect(placement?.props.detail).toBe('observation-machine');
+        expect(placement?.props.subtitle).toBe('observation-materialization');
+    });
+
+    it('does not substitute an execution assignment or stale status reporter for webhook observation placement', async () => {
+        automationState.automation = {
+            ...automationState.automation,
+            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0 }],
+            triggers: [eventTriggerFixture({
+                sourceStatus: eventSourceStatusFixture({
+                    reporterMaterializationRef: {
+                        machineId: 'last-status-reporter',
+                        materializationId: 'last-status-materialization',
+                        pluginId: 'happier.scm.github',
+                    },
+                }),
+                observation: {
+                    kind: 'durablePush',
+                    webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+                    endpointMaterializationRef: null,
+                    observationStartsAt: 1_700_000_000_000,
+                },
+            })],
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const placement = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.testID === 'automation-detail-event-observation-placement',
+        );
+        expect(placement?.props.detail).toBe('Source status unavailable');
+        expect(placement?.props.detail).not.toBe('execution-machine');
+        expect(placement?.props.detail).not.toBe('last-status-reporter');
     });
 
     it('renders the bounded Event source status from the canonical projection', async () => {
         const sourceStatus = {
             automationId: 'a1',
-            eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+            triggerId: 'event-trigger-1',
+            triggerRevision: 1,
+            eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
             sourceSelectorId: 'selector-1',
-            templateVersion: 3,
             reporterMaterializationRef: {
                 pluginId: 'happier.scm.github',
                 machineId: 'watcher-1',
                 materializationId: 'materialization-1',
             },
-            reporterImmutableGenerationId: 'generation-1',
+            reporterImmutableGenerationId: 'github-generation-1',
             state: 'backingOff' as const,
             code: 'rateLimited' as const,
             lastObservedAt: 1,
@@ -824,6 +1002,7 @@ describe('AutomationDetailScreen', () => {
             revision: 7,
         };
         const sourceCatalogStatus = {
+            reporterImmutableGenerationId: 'github-generation-1',
             observedRevision: '9',
             adoptedRevision: '7',
             state: 'reconciliationLate' as const,
@@ -832,16 +1011,13 @@ describe('AutomationDetailScreen', () => {
         };
         automationState.automation = {
             ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
+            triggers: [eventTriggerFixture({
                 eventRef: sourceStatus.eventRef,
                 sourceSelectorId: sourceStatus.sourceSelectorId,
-                sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null },
-            },
-            templateVersion: sourceStatus.templateVersion,
-            sourceStatus,
-            sourceCatalogStatus,
+                sourceStatus,
+                sourceCatalogStatus,
+            })],
+            templateVersion: 3,
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
@@ -867,136 +1043,6 @@ describe('AutomationDetailScreen', () => {
         expect(catalogStatus?.props.subtitle).toContain('Adopted revision: 7');
         expect(catalogStatus?.props.subtitle).toContain('Scan started:');
         expect(catalogStatus?.props.subtitle).toContain('Next retry:');
-    });
-
-    it('renders private Event source, filter, target, permission, and output ceiling only after the canonical detail read succeeds', async () => {
-        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
-            '11111111-1111-4111-8111-111111111111',
-        );
-        automationState.automation = {
-            ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId,
-                sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null },
-            },
-            targetType: 'executionRun',
-            existingSessionId: null,
-            templateVersion: 3,
-            detail: {
-                kind: 'available',
-                templateVersion: 3,
-                value: AutomationDefinitionDetailSchema.parse({
-                    id: 'a1',
-                    name: 'Nightly',
-                    description: null,
-                    enabled: true,
-                    trigger: {
-                        kind: 'pluginEvent',
-                        eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                        sourceSelectorId,
-                        sourceContractVersion: 1,
-                        observation: { kind: 'checkpointedPull', watcher: null },
-                    },
-                    targetType: 'executionRun',
-                    existingSessionId: null,
-                    templateVersion: 3,
-                    nextRunAt: null,
-                    lastRunAt: null,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    assignments: [],
-                    triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
-                        mode: 'plain',
-                        binding: {
-                            v: 1,
-                            automationId: 'a1',
-                            templateVersion: 3,
-                            triggerKind: 'pluginEvent',
-                            eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                            sourceSelectorId,
-                        },
-                        definition: {
-                            v: 1,
-                            sourceInstanceId: 'repository:123',
-                            sourceConfig: { repository: 'happier-dev/happier' },
-                            displayLabel: 'happier-dev/happier',
-                            filter: { v: 1, all: [{ op: 'eq', field: '/action', value: 'opened' }] },
-                            maximumObservationAgeMs: null,
-                        },
-                    })),
-                    executionRecipe: {
-                        v: 1,
-                        templateVersion: 3,
-                        template: { t: 'plain', v: { v: 1, prompt: 'Review {{input}}' } },
-                        triggerEvidence: null,
-                        target: {
-                            kind: 'executionRun',
-                            request: {
-                                intent: 'task',
-                                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                                permissionMode: 'read_only',
-                                retentionPolicy: 'ephemeral',
-                                runClass: 'bounded',
-                                ioMode: 'request_response',
-                            },
-                        },
-                    },
-                }),
-            },
-        };
-        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-
-        const source = screen.findAllByType('Pressable' as any).find(
-            (instance: any) => instance.props.accessibilityLabel === 'Source instance' && instance.props.detail === 'happier-dev/happier',
-        );
-        const filter = screen.findAllByType('Pressable' as any).find(
-            (instance: any) => instance.props.accessibilityLabel === 'Filter',
-        );
-        const target = screen.findAllByType('Pressable' as any).find(
-            (instance: any) => instance.props.accessibilityLabel === 'Frozen target',
-        );
-        const outputCeiling = screen.findAllByType('Pressable' as any).find(
-            (instance: any) => instance.props.accessibilityLabel === 'Output limit',
-        );
-        expect(source).toBeTruthy();
-        expect(filter?.props.subtitle).toContain('/action');
-        expect(filter?.props.subtitle).toContain('opened');
-        expect(target?.props.detail).toBe('Execution run · read_only');
-        expect(outputCeiling?.props.detail).toBe('256 KB');
-    });
-
-    it('withholds private Event fields when the canonical direct detail is unavailable', async () => {
-        automationState.automation = {
-            ...automationState.automation,
-            trigger: {
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
-                sourceSelectorId: '11111111-1111-4111-8111-111111111111',
-                sourceContractVersion: 1,
-                observation: { kind: 'checkpointedPull', watcher: null },
-            },
-            targetType: 'executionRun',
-            existingSessionId: null,
-            templateVersion: 3,
-            detail: {
-                kind: 'unavailable',
-                templateVersion: 3,
-                code: 'automation_stored_content_unavailable',
-            },
-        };
-        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-
-        expect(screen.findAllByProps({ accessibilityLabel: 'Source instance' })).toHaveLength(0);
-        expect(screen.findAllByProps({ accessibilityLabel: 'Filter' })).toHaveLength(0);
-        expect(screen.findAllByProps({ accessibilityLabel: 'Frozen target' })).toHaveLength(0);
-        expect(screen.findAllByProps({ accessibilityLabel: 'Output limit' })).toHaveLength(0);
     });
 
     it('offers the shared editor for an existing-Session Event edit seed', async () => {
@@ -1031,16 +1077,25 @@ describe('AutomationDetailScreen', () => {
         });
     });
 
-    it('labels an Event Run in the paginated history from its immutable origin', async () => {
+    it('labels an Event Run in the paginated history from its immutable cause', async () => {
         automationRunsState.list = [{
             id: 'event-run-1',
             automationId: 'a1',
+            revision: 1,
+            triggerId: 'event-trigger-1',
+            triggerRetired: true,
             state: 'queued',
-            origin: {
-                kind: 'pluginEvent',
+            cause: {
+                kind: 'trigger',
+                triggerId: 'event-trigger-1',
+                triggerRevision: 4,
+                triggerKind: 'pluginEvent',
                 occurrenceKey: 'occurrence-1',
-                sourceSelectorId: 'selector-1',
                 occurredAt: 10,
+                evidence: {
+                    eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+                    sourceSelectorId: 'selector-1',
+                },
             },
             dueAt: 10,
             claimedAt: null,
@@ -1056,7 +1111,6 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
-            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];
@@ -1066,15 +1120,22 @@ describe('AutomationDetailScreen', () => {
         const runRow = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Queued');
 
         expect(runRow?.props.subtitle).toContain('Event');
+        expect(runRow?.props.subtitle).toContain('event-trigger-1 · revision 4');
+        expect(runRow?.props.subtitle).toContain('Trigger retired');
     });
 
-    it('does not offer the retained schedule editor for a current schedule recipe', async () => {
+    it('offers the shared plural editor for a current schedule recipe', async () => {
         const strictScheduleDetail = {
             id: 'a1',
             name: 'Nightly',
             description: null,
             enabled: true,
-            trigger: {
+            triggers: [{
+                id: 'schedule-trigger-1',
+                revision: 1,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 1,
                 kind: 'schedule',
                 schedule: {
                     kind: 'interval',
@@ -1082,7 +1143,9 @@ describe('AutomationDetailScreen', () => {
                     scheduleExpr: null,
                     timezone: null,
                 },
-            },
+                nextRunAt: null,
+                triggerDefinitionEnvelope: null,
+            }],
             targetType: 'executionRun',
             existingSessionId: null,
             executionRecipe: {
@@ -1106,8 +1169,6 @@ describe('AutomationDetailScreen', () => {
                 },
             },
             templateVersion: 3,
-            triggerDefinitionEnvelope: null,
-            nextRunAt: null,
             lastRunAt: null,
             createdAt: 1,
             updatedAt: 1,
@@ -1129,7 +1190,14 @@ describe('AutomationDetailScreen', () => {
 
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
 
-        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Edit automation')).toBeUndefined();
+        const editButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Edit automation');
+        await act(async () => {
+            pressTestInstance(editButton, 'Edit automation');
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/automations/edit',
+            params: { id: 'a1' },
+        });
     });
 
     it('updates machine assignments without forcing a full automations refresh', async () => {
@@ -1224,7 +1292,9 @@ describe('AutomationDetailScreen', () => {
             await deferredRunNow.promise;
         });
 
-        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'automations.detail.runNowQueuedBadge')).toBeUndefined();
+        const secondRunNow = screen.findAllByType('Item' as any)
+            .find((item: any) => item.props.title === 'Run now');
+        expect(secondRunNow?.props.rightElement).toBeUndefined();
     });
 
     it('keeps a revisited detail Run now control pending until its original request settles', async () => {
@@ -1638,8 +1708,11 @@ describe('AutomationDetailScreen', () => {
         automationRunsState.list = Array.from({ length: 25 }, (_unused, index) => ({
             id: `run-${index}`,
             automationId: 'a1',
+            revision: 1,
+            triggerId: null,
+            triggerRetired: false,
             state: 'succeeded',
-            origin: { kind: 'manual', invokedAt: index },
+            cause: { kind: 'manual', invokedAt: index },
             dueAt: index,
             claimedAt: null,
             startedAt: null,
@@ -1654,7 +1727,6 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
-            contentRemovedAt: null,
             createdAt: index,
             updatedAt: index,
         }));
@@ -1684,7 +1756,27 @@ describe('AutomationDetailScreen', () => {
             (row: any) => row.props.accessibilityLabel === 'Succeeded',
         );
         expect(laterPageRows).toHaveLength(5);
+        expect((runHistoryListMock.state.props?.data as ReadonlyArray<{
+            kind: string;
+            run?: { id: string };
+        }>).flatMap((row) => row.kind === 'run' && row.run ? [row.run.id] : []))
+            .toEqual(['run-20', 'run-21', 'run-22', 'run-23', 'run-24']);
         expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(fetchesBeforeShowingRetainedPage);
+
+        // A live insertion sorts into the first page, but the older page keeps
+        // its existing Run-identity anchor instead of shifting by one row.
+        automationRunsState.list = [{
+            ...automationRunsState.list[0]!,
+            id: 'run-new',
+            createdAt: 100,
+            updatedAt: 100,
+        }, ...automationRunsState.list];
+        await screen.update(React.createElement(AutomationDetailScreen));
+        expect((runHistoryListMock.state.props?.data as ReadonlyArray<{
+            kind: string;
+            run?: { id: string };
+        }>).flatMap((row) => row.kind === 'run' && row.run ? [row.run.id] : []))
+            .toEqual(['run-20', 'run-21', 'run-22', 'run-23', 'run-24']);
 
         const newerPageButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.previous');
         expect(newerPageButton).toBeTruthy();
@@ -1698,43 +1790,15 @@ describe('AutomationDetailScreen', () => {
         expect(restoredNewerPageRows).toHaveLength(20);
     });
 
-    it('does not infer cancellation availability from a run state before the server projects action authority', async () => {
-        automationRunsState.list = [{
-            id: 'run-1',
-            automationId: 'a1',
-            state: 'running',
-            origin: { kind: 'manual', invokedAt: 10 },
-            dueAt: 10,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-            errorCode: null,
-            producedSessionId: null,
-            executionDispatchState: null,
-            executionAttempt: 0,
-            replyHandoffState: 'none',
-            replyHandoffAttempt: 0,
-            replyHandoffDueAt: null,
-            contentRemovedAt: null,
-            createdAt: 10,
-            updatedAt: 11,
-        }];
-        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Cancel run')).toBeUndefined();
-        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'automations.detail.cancelRun')).toBeUndefined();
-    });
-
     it('opens an individual run through the Automation run-detail route', async () => {
         automationRunsState.list = [{
             id: 'run-1',
             automationId: 'a1',
+            revision: 1,
+            triggerId: null,
+            triggerRetired: false,
             state: 'running',
-            origin: { kind: 'manual', invokedAt: 10 },
+            cause: { kind: 'manual', invokedAt: 10 },
             dueAt: 10,
             claimedAt: null,
             startedAt: null,
@@ -1749,7 +1813,6 @@ describe('AutomationDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
-            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];

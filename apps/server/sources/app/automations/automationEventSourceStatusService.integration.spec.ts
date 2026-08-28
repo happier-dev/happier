@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
     normalizePluginReleaseFactsV1,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import {
@@ -31,8 +32,12 @@ const PLUGIN_ID = "com.acme.github";
 const PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
 const AUTOMATION_ID = "automation-source-status";
+const TRIGGER_ID = "automation-source-status-trigger";
+const TRIGGER_REVISION = 7;
 const SOURCE_SELECTOR_ID = "48d496d6-2105-465a-b363-a0ce80d6594f";
 const DURABLE_PUSH_ENDPOINT_ID = "wh_ep_AAECAwQFBgcICQoLDA0ODw";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
+const SOURCE_CONFIG_SCHEMA = { type: "object", additionalProperties: false } as const;
 
 const caller = {
     pluginId: PLUGIN_ID,
@@ -62,14 +67,23 @@ function releaseFacts(params: Readonly<{
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: supportsDurablePush ? [{
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: SOURCE_CONFIG_SCHEMA,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, SOURCE_CONFIG_SCHEMA),
+                }, ...(supportsDurablePush ? [{
                     id: "receive-repository-events",
                     title: "Receive repository events",
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
                     execution: { target: "daemon" },
-                }] : [],
+                }] : [])],
                 events: params.includeEligibleEvent === false ? [] : [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -87,7 +101,8 @@ function releaseFacts(params: Readonly<{
                                     localId: "repository-events",
                                 },
                             } : {}),
-                            sourceConfigSchema: { type: "object", additionalProperties: false },
+                            sourceConfigSchema: SOURCE_CONFIG_SCHEMA,
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -208,24 +223,31 @@ describe("Automation Event source status", () => {
                 accountId: ACCOUNT_ID,
                 name: "Observe repository events",
                 enabled: true,
-                scheduleKind: null,
                 targetType: "new_session",
                 templateCiphertext: JSON.stringify({
                     kind: "happier_automation_template_plain_v1",
                     payload: { prompt: "observe" },
                 }),
                 templateVersion: 7,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: PLUGIN_ID,
-                triggerEventLocalId: EVENT_LOCAL_ID,
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
+            },
+        });
+        await db.automationTrigger.create({
+            data: {
+                id: TRIGGER_ID,
+                automationId: AUTOMATION_ID,
+                kind: "pluginEvent",
+                enabled: true,
+                revision: TRIGGER_REVISION,
+                eventPluginId: PLUGIN_ID,
+                eventLocalId: EVENT_LOCAL_ID,
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
                 watcherMachineId: MACHINE_ID,
                 watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
                 watcherPluginId: PLUGIN_ID,
                 watcherMaterializationId: MATERIALIZATION_ID,
-                triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
             },
         });
         if (options.catalogState ?? true) {
@@ -324,7 +346,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "observing",
@@ -339,14 +362,7 @@ describe("Automation Event source status", () => {
         })).resolves.toEqual({});
 
         await expect(db.automationEventSourceStatus.findUnique({
-            where: {
-                automationId_eventPluginId_eventLocalId_sourceSelectorId: {
-                    automationId: AUTOMATION_ID,
-                    eventPluginId: PLUGIN_ID,
-                    eventLocalId: EVENT_LOCAL_ID,
-                    sourceSelectorId: SOURCE_SELECTOR_ID,
-                },
-            },
+            where: { triggerId: TRIGGER_ID },
         })).resolves.toMatchObject({
             reporterMachineId: MACHINE_ID,
             reporterMachineInstallationId: MACHINE_INSTALLATION_ID,
@@ -360,6 +376,114 @@ describe("Automation Event source status", () => {
         });
     });
 
+    it("keeps source status independent for two Event triggers on one Automation", async () => {
+        await seed();
+        const secondTriggerId = `${TRIGGER_ID}-second`;
+        const secondSelectorId = "58d496d6-2105-465a-b363-a0ce80d6594f";
+        await db.automationTrigger.create({
+            data: {
+                id: secondTriggerId,
+                automationId: AUTOMATION_ID,
+                kind: "pluginEvent",
+                enabled: true,
+                revision: 3,
+                eventPluginId: PLUGIN_ID,
+                eventLocalId: EVENT_LOCAL_ID,
+                sourceSelectorId: secondSelectorId,
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
+                watcherMachineId: MACHINE_ID,
+                watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+                watcherPluginId: PLUGIN_ID,
+                watcherMaterializationId: MATERIALIZATION_ID,
+                definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+            },
+        });
+
+        for (const input of [{
+            triggerId: TRIGGER_ID,
+            triggerRevision: TRIGGER_REVISION,
+            sourceSelectorId: SOURCE_SELECTOR_ID,
+            observedDelta: 1,
+        }, {
+            triggerId: secondTriggerId,
+            triggerRevision: 3,
+            sourceSelectorId: secondSelectorId,
+            observedDelta: 2,
+        }] as const) {
+            await reportAutomationEventSourceStatusV1({
+                accountId: ACCOUNT_ID,
+                caller,
+                input: {
+                    kind: "source",
+                    automationId: AUTOMATION_ID,
+                    triggerId: input.triggerId,
+                    triggerRevision: input.triggerRevision,
+                    eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                    sourceSelectorId: input.sourceSelectorId,
+                    state: "observing",
+                    code: "none",
+                    lastObservedAt: 1_723_247_200_000,
+                    lastDispositionAt: 1_723_247_200_001,
+                    nextRetryAt: null,
+                    observedDelta: input.observedDelta,
+                    admittedDelta: 0,
+                    skippedDelta: 0,
+                },
+            });
+        }
+
+        await expect(db.automationEventSourceStatus.findMany({
+            orderBy: { triggerId: "asc" },
+            select: { triggerId: true, triggerRevision: true, observedCount: true },
+        })).resolves.toEqual([
+            { triggerId: TRIGGER_ID, triggerRevision: TRIGGER_REVISION, observedCount: 1 },
+            { triggerId: secondTriggerId, triggerRevision: 3, observedCount: 2 },
+        ]);
+    });
+
+    it("resets bounded source counters when the exact trigger revision changes", async () => {
+        await seed();
+        const report = (triggerRevision: number, observedDelta: number) => ({
+            kind: "source" as const,
+            automationId: AUTOMATION_ID,
+            triggerId: TRIGGER_ID,
+            triggerRevision,
+            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+            sourceSelectorId: SOURCE_SELECTOR_ID,
+            state: "observing" as const,
+            code: "none" as const,
+            lastObservedAt: 1_723_247_200_000,
+            lastDispositionAt: 1_723_247_200_001,
+            nextRetryAt: null,
+            observedDelta,
+            admittedDelta: 0,
+            skippedDelta: 0,
+        });
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: report(TRIGGER_REVISION, 3),
+        });
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: { revision: TRIGGER_REVISION + 1 },
+        });
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: report(TRIGGER_REVISION + 1, 2),
+        });
+
+        await expect(db.automationEventSourceStatus.findUnique({
+            where: { triggerId: TRIGGER_ID },
+            select: { triggerRevision: true, observedCount: true },
+        })).resolves.toEqual({
+            triggerRevision: TRIGGER_REVISION + 1,
+            observedCount: 2,
+        });
+    });
+
     it("batch-projects only the exact current Event source and catalog reconciliation status", async () => {
         await seed();
         await reportAutomationEventSourceStatusV1({
@@ -368,7 +492,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "observing",
@@ -401,7 +526,7 @@ describe("Automation Event source status", () => {
         if (!automation) throw new Error("Expected seeded Automation");
 
         const current = await loadAutomationEventStatusProjections({ automations: [automation] });
-        expect(current.get(AUTOMATION_ID)).toMatchObject({
+        expect(current.get(TRIGGER_ID)).toMatchObject({
             sourceStatus: {
                 state: "observing",
                 observedCount: 1,
@@ -415,8 +540,19 @@ describe("Automation Event source status", () => {
             },
         });
 
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationEventSourceStatus.update({
+            where: { triggerId: TRIGGER_ID },
+            data: { triggerRevision: TRIGGER_REVISION - 1 },
+        });
+        const priorRevision = await loadAutomationEventStatusProjections({ automations: [automation] });
+        expect(priorRevision.get(TRIGGER_ID)?.sourceStatus).toBeNull();
+        await db.automationEventSourceStatus.update({
+            where: { triggerId: TRIGGER_ID },
+            data: { triggerRevision: TRIGGER_REVISION },
+        });
+
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: { watcherMaterializationId: "materialization-moved" },
         });
         const staleAutomation = await getAutomation({
@@ -430,13 +566,14 @@ describe("Automation Event source status", () => {
         // The retired reporter can no longer write this row (the writer rejects
         // it as `observation_target_changed`), so its last healthy summary is
         // not the current observer's status and must not be presented as one.
-        expect(staleMaterialization.get(AUTOMATION_ID)).toEqual({
+        expect(staleMaterialization.get(TRIGGER_ID)).toEqual({
             sourceStatus: null,
             sourceCatalogStatus: null,
+            durablePushEndpointMaterializationRef: null,
         });
 
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: { watcherMaterializationId: MATERIALIZATION_ID },
         });
         await db.automationEventSourceCatalogStatus.deleteMany({ where: { accountId: ACCOUNT_ID } });
@@ -447,6 +584,7 @@ describe("Automation Event source status", () => {
                 reporterMachineId: MACHINE_ID,
                 reporterMachineInstallationId: MACHINE_INSTALLATION_ID,
                 reporterMaterializationId: MATERIALIZATION_ID,
+                reporterImmutableGenerationId: "github-immutable-generation-a",
                 scopeKey: `durablePush:${DURABLE_PUSH_ENDPOINT_ID}`,
                 observedRevision: 7n,
                 adoptedRevision: 6n,
@@ -465,18 +603,18 @@ describe("Automation Event source status", () => {
         const staleScope = await loadAutomationEventStatusProjections({
             automations: [scopeAutomation],
         });
-        expect(staleScope.get(AUTOMATION_ID)?.sourceCatalogStatus).toBeNull();
+        expect(staleScope.get(TRIGGER_ID)?.sourceCatalogStatus).toBeNull();
     });
 
     it("projects a durable-push catalog status only while its endpoint still has the reporter materialization", async () => {
         await seed({ supportedObservationTransports: ["durablePush"] });
         await seedCurrentDurablePushEndpoint();
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(1_723_247_200_000),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_247_200_000),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
@@ -502,7 +640,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "observing",
@@ -522,14 +661,19 @@ describe("Automation Event source status", () => {
         if (!automation) throw new Error("Expected durable-push Automation");
 
         const current = await loadAutomationEventStatusProjections({ automations: [automation] });
-        expect(current.get(AUTOMATION_ID)?.sourceCatalogStatus).toEqual({
+        expect(current.get(TRIGGER_ID)?.durablePushEndpointMaterializationRef).toEqual({
+            machineId: MACHINE_ID,
+            materializationId: MATERIALIZATION_ID,
+            pluginId: PLUGIN_ID,
+        });
+        expect(current.get(TRIGGER_ID)?.sourceCatalogStatus).toEqual({
             observedRevision: "7",
             adoptedRevision: null,
             state: "reconciling",
             scanStartedAt: 1_723_247_200_000,
             nextRetryAt: 1_723_247_260_000,
         });
-        expect(current.get(AUTOMATION_ID)?.sourceStatus).toMatchObject({
+        expect(current.get(TRIGGER_ID)?.sourceStatus).toMatchObject({
             state: "observing",
             observedCount: 1,
         });
@@ -541,9 +685,14 @@ describe("Automation Event source status", () => {
         const stale = await loadAutomationEventStatusProjections({ automations: [automation] });
         // The retargeted endpoint means the row's reporter is no longer the
         // Automation's delivery target, so neither summary is current.
-        expect(stale.get(AUTOMATION_ID)).toEqual({
+        expect(stale.get(TRIGGER_ID)).toEqual({
             sourceStatus: null,
             sourceCatalogStatus: null,
+            durablePushEndpointMaterializationRef: {
+                machineId: MACHINE_ID,
+                materializationId: "materialization-moved",
+                pluginId: PLUGIN_ID,
+            },
         });
     });
 
@@ -562,7 +711,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "observing",
@@ -630,8 +780,8 @@ describe("Automation Event source status", () => {
     it("does not create an Automation change or event for a rejected source report", async () => {
         await seed();
         const emitUpdate = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: { watcherMaterializationId: "materialization-moved" },
         });
 
@@ -641,7 +791,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "attention",
@@ -672,7 +823,8 @@ describe("Automation Event source status", () => {
         const report = {
             kind: "source" as const,
             automationId: AUTOMATION_ID,
-            templateVersion: 7,
+            triggerId: TRIGGER_ID,
+            triggerRevision: TRIGGER_REVISION,
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
             sourceSelectorId: SOURCE_SELECTOR_ID,
             state: "observing" as const,
@@ -685,8 +837,8 @@ describe("Automation Event source status", () => {
             skippedDelta: 0,
         };
         await reportAutomationEventSourceStatusV1({ accountId: ACCOUNT_ID, caller, input: report });
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: { watcherMaterializationId: "materialization-moved" },
         });
 
@@ -697,14 +849,7 @@ describe("Automation Event source status", () => {
         })).rejects.toBeInstanceOf(AutomationEventSourceStatusReportError);
 
         await expect(db.automationEventSourceStatus.findUnique({
-            where: {
-                automationId_eventPluginId_eventLocalId_sourceSelectorId: {
-                    automationId: AUTOMATION_ID,
-                    eventPluginId: PLUGIN_ID,
-                    eventLocalId: EVENT_LOCAL_ID,
-                    sourceSelectorId: SOURCE_SELECTOR_ID,
-                },
-            },
+            where: { triggerId: TRIGGER_ID },
         })).resolves.toMatchObject({ state: "observing", observedCount: 1, admittedCount: 1 });
     });
 
@@ -741,7 +886,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "attention",
@@ -850,6 +996,7 @@ describe("Automation Event source status", () => {
         })).resolves.toEqual([expect.objectContaining({
             reporterMachineId: MACHINE_ID,
             reporterMachineInstallationId: MACHINE_INSTALLATION_ID,
+            reporterImmutableGenerationId: "github-immutable-generation-a",
             observedRevision: 7n,
             adoptedRevision: 7n,
             state: "current",
@@ -864,6 +1011,7 @@ describe("Automation Event source status", () => {
             machineId: "machine-automation-source-status-second",
             machineInstallationId: "installation-automation-source-status-second",
             materializationId: MATERIALIZATION_ID,
+            immutableGenerationId: "github-immutable-generation-a",
         } as const;
         await db.machine.create({
             data: {
@@ -922,12 +1070,14 @@ describe("Automation Event source status", () => {
             select: {
                 reporterMachineId: true,
                 reporterMachineInstallationId: true,
+                reporterImmutableGenerationId: true,
                 revision: true,
             },
         })).resolves.toEqual([
             {
                 reporterMachineId: secondCaller.machineId,
                 reporterMachineInstallationId: secondCaller.machineInstallationId,
+                reporterImmutableGenerationId: secondCaller.immutableGenerationId,
                 revision: 2,
             },
         ]);
@@ -967,12 +1117,12 @@ describe("Automation Event source status", () => {
             data: { normalizedManifest: durableRelease.normalizedManifest },
         });
         await seedCurrentDurablePushEndpoint();
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(1_723_247_200_000),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_247_200_000),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
@@ -986,7 +1136,8 @@ describe("Automation Event source status", () => {
             input: {
                 kind: "source",
                 automationId: AUTOMATION_ID,
-                templateVersion: 7,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: SOURCE_SELECTOR_ID,
                 state: "observing",
@@ -1063,6 +1214,7 @@ describe("Automation Event source status", () => {
             machineId: "machine-automation-source-status-retargeted",
             machineInstallationId: "installation-automation-source-status-retargeted",
             materializationId: "materialization-automation-source-status-retargeted",
+            immutableGenerationId: "github-immutable-generation-b",
         } as const;
         await db.machine.create({
             data: {
@@ -1147,12 +1299,12 @@ describe("Automation Event source status", () => {
             targetMachineInstallationId: nextCaller.machineInstallationId,
             targetMaterializationId: nextCaller.materializationId,
         });
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(1_723_248_000_000),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_248_000_000),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
@@ -1230,7 +1382,8 @@ describe("Automation Event source status", () => {
         const sourceStatus = {
             kind: "source" as const,
             automationId: AUTOMATION_ID,
-            templateVersion: 7,
+            triggerId: TRIGGER_ID,
+            triggerRevision: TRIGGER_REVISION,
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
             sourceSelectorId: SOURCE_SELECTOR_ID,
             state: "observing" as const,

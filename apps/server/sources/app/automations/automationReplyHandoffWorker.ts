@@ -72,6 +72,7 @@ function buildDispatchRequest(claim: Awaited<ReturnType<typeof claimNextAutomati
             runId: claim.runId,
             automationId: claim.automationId,
             occurrenceKey: claim.occurrenceKey,
+            cause: claim.cause,
             accountCurrentness: claim.accountCurrentness,
             resultEnvelope,
             replyContextEnvelope,
@@ -83,7 +84,10 @@ function buildDispatchRequest(claim: Awaited<ReturnType<typeof claimNextAutomati
 function isRetryableUnavailable(
     code: Extract<AutomationReplyHandoffDispatchResultV1, { kind: "unavailable" }>["code"],
 ): boolean {
-    return code === "targetUnavailable" || code === "cancelled";
+    return code === "targetUnavailable"
+        || code === "actionExecutionFailed"
+        || code === "contractInvalid"
+        || code === "cancelled";
 }
 
 async function readNextDueAt(now: Date): Promise<Date | null> {
@@ -121,10 +125,16 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
     }
     const result = AutomationReplyHandoffDispatchResultV1Schema.safeParse(rawResult);
     if (!result.success) {
+        // The daemon may have committed custody before returning a malformed
+        // or truncated response. Rejoin the same handoff id instead of
+        // terminalizing an outcome whose effect truth is ambiguous.
         const settlement = await settleAutomationReplyHandoff({
             claim,
             now: params.now,
-            outcome: { kind: "blocked" },
+            outcome: {
+                kind: "retry",
+                retryAfterMs: DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS,
+            },
         });
         return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now) };
     }

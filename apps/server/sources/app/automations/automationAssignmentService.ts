@@ -6,77 +6,85 @@ import {
     isTerminalAutomationRunState,
     type AutomationAssignmentInput,
     type AutomationExecutionDispatchState,
-    type AutomationRunOriginKind,
     type AutomationRunState,
     type AutomationTriggerKind,
 } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import { isAutomationDefinitionRepresentableInV2 } from "./automationApiProjection";
-import { retiredAutomationLeaseRecoveryDisjuncts } from "./automationClaimService";
+import { automationListItemSelect } from "./automationPersistenceSelect";
 
 type AutomationAssignmentWakeRun = Readonly<{
-    originKind: AutomationRunOriginKind;
+    triggerId: string | null;
+    causeKind: "trigger" | "manual" | "conversation";
+    causeTriggerKind: AutomationTriggerKind | null;
     state: AutomationRunState;
     dueAt: Date;
     leaseExpiresAt: Date | null;
     executionDispatchState: AutomationExecutionDispatchState | null;
+    /** Omitted only by focused helper callers; persisted projections set it explicitly. */
+    assignedToMachine?: boolean;
 }>;
 
-const automationDaemonWakeAutomationSelect = {
-    id: true,
-    name: true,
-    enabled: true,
-    triggerKind: true,
-    scheduleKind: true,
-    scheduleExpr: true,
-    everyMs: true,
-    timezone: true,
-    targetType: true,
-    templateCiphertext: true,
-    templateVersion: true,
-    nextRunAt: true,
-    lastRunAt: true,
-    updatedAt: true,
-    runs: {
-        where: {
-            OR: [
-                { state: "queued" },
-                { state: "claimed", leaseExpiresAt: { not: null } },
-                { state: "running", leaseExpiresAt: { not: null } },
-                { executionDispatchState: "retryWaiting" },
-            ],
+const automationAssignmentWakeRunSelect = {
+    triggerId: true,
+    causeKind: true,
+    causeTriggerKind: true,
+    state: true,
+    dueAt: true,
+    leaseExpiresAt: true,
+    executionDispatchState: true,
+} satisfies Prisma.AutomationRunSelect;
+
+function automationDaemonWakeAutomationSelect(machineId: string) {
+    return {
+        ...automationListItemSelect,
+        runs: {
+            where: {
+                OR: [
+                    { state: "queued" },
+                    { state: "claimed", leaseExpiresAt: { not: null } },
+                    { state: "running", leaseExpiresAt: { not: null } },
+                    { executionDispatchState: "retryWaiting" },
+                ],
+            },
+            select: {
+                ...automationAssignmentWakeRunSelect,
+                assignments: {
+                    where: { machineId },
+                    select: { machineId: true },
+                },
+            },
         },
-        select: {
-            originKind: true,
-            state: true,
-            dueAt: true,
-            leaseExpiresAt: true,
-            executionDispatchState: true,
-        },
-    },
-} satisfies Prisma.AutomationSelect;
+    } satisfies Prisma.AutomationSelect;
+}
 
 /**
  * Canonical durable worker wake projection. It is a minimum of only facts
  * that can make this assignment claimable without relying on a socket hint.
  */
 export function resolveAutomationAssignmentNextClaimAt(params: Readonly<{
-    nextRunAt: Date | null;
+    schedules: ReadonlyArray<{ triggerId: string; nextRunAt: Date | null }>;
     runs: ReadonlyArray<AutomationAssignmentWakeRun>;
 }>): Date | null {
     const candidates: Date[] = [];
-    const nextRunAt = params.nextRunAt;
-    const nextScheduleIsHeldByLease = nextRunAt !== null && params.runs.some((run) =>
-        run.originKind === "scheduled"
-        &&
-        (run.state === "claimed" || run.state === "running")
-        && run.leaseExpiresAt !== null
-    );
-    if (nextRunAt !== null && !nextScheduleIsHeldByLease) {
-        candidates.push(nextRunAt);
+    const openScheduleTriggerIds = new Set<string>();
+    for (const run of params.runs) {
+        const triggerId = run.triggerId;
+        if (
+            triggerId !== null
+            && run.causeKind === "trigger"
+            && run.causeTriggerKind === "schedule"
+            && !isTerminalAutomationRunState(run.state)
+        ) {
+            openScheduleTriggerIds.add(triggerId);
+        }
+    }
+    for (const schedule of params.schedules) {
+        if (schedule.nextRunAt === null) continue;
+        if (!openScheduleTriggerIds.has(schedule.triggerId)) candidates.push(schedule.nextRunAt);
     }
     for (const run of params.runs) {
-        if (isTerminalAutomationRunState(run.state)) {
+        if (run.assignedToMachine === false || isTerminalAutomationRunState(run.state)) {
             continue;
         }
         // Run lifecycle owns wake authority. A queued retry uses its retry dueAt,
@@ -180,8 +188,7 @@ export async function listDaemonAssignments(params: {
     expectedTriggerKind?: AutomationTriggerKind;
     requireV2DefinitionRepresentability?: boolean;
 }) {
-    const now = new Date();
-    const [rows, retiredLeaseRuns] = await Promise.all([
+    const [rows, admittedRunAssignments] = await Promise.all([
         db.automationAssignment.findMany({
             where: {
                 machineId: params.machineId,
@@ -190,9 +197,6 @@ export async function listDaemonAssignments(params: {
                     accountId: params.accountId,
                     enabled: true,
                     deletedAt: null,
-                    ...(params.expectedTriggerKind
-                        ? { triggerKind: params.expectedTriggerKind }
-                        : {}),
                 },
             },
             select: {
@@ -201,92 +205,107 @@ export async function listDaemonAssignments(params: {
                 enabled: true,
                 priority: true,
                 updatedAt: true,
-                automation: { select: automationDaemonWakeAutomationSelect },
+                automation: { select: automationDaemonWakeAutomationSelect(params.machineId) },
             },
             orderBy: [{ priority: "desc" }, { updatedAt: "desc" }],
         }),
-        db.automationRun.findMany({
+        db.automationRunAssignment.findMany({
             where: {
-                accountId: params.accountId,
-                dueAt: { lte: now },
-                state: { in: ["claimed", "running"] },
-                leaseExpiresAt: { not: null },
-                // Exactly the rows the claim scan can resolve, asked through
-                // its owner so this wake cannot drift away from it.
-                OR: retiredAutomationLeaseRecoveryDisjuncts({
-                    machineId: params.machineId,
+                machineId: params.machineId,
+                run: {
                     accountId: params.accountId,
-                    expectedTriggerKind: params.expectedTriggerKind,
-                }),
+                    OR: [
+                        { state: "queued" },
+                        { state: "claimed", leaseExpiresAt: { not: null } },
+                        { state: "running", leaseExpiresAt: { not: null } },
+                        { executionDispatchState: "retryWaiting" },
+                    ],
+                },
             },
             select: {
-                id: true,
-                originKind: true,
-                state: true,
-                dueAt: true,
-                leaseExpiresAt: true,
-                executionDispatchState: true,
-                updatedAt: true,
-                automation: { select: automationDaemonWakeAutomationSelect },
+                machineId: true,
+                priority: true,
+                run: {
+                    select: {
+                        ...automationAssignmentWakeRunSelect,
+                        id: true,
+                        automationId: true,
+                        updatedAt: true,
+                    },
+                },
             },
-            orderBy: [{ leaseExpiresAt: "asc" }, { updatedAt: "desc" }],
+            orderBy: [{ priority: "desc" }, { runId: "asc" }],
         }),
     ]);
 
     const activeAssignments = rows
         .filter((row) => !params.requireV2DefinitionRepresentability
             || isAutomationDefinitionRepresentableInV2(row.automation))
-        .map((row) => ({
-            ...row,
-            nextClaimAt: resolveAutomationAssignmentNextClaimAt({
-                nextRunAt: row.automation.nextRunAt,
-                runs: row.automation.runs,
-            }),
-        }));
-
-    // An assignment is ordinarily a current-claim authority. This narrow
-    // projection is not: it retains only a retired Run's lease-expiry wake, so
-    // the existing claim transaction can terminalize the durable Run instead of
-    // leaving it capacity-counted. The claim transaction refuses to hand a
-    // retired Run to any machine, so this wake can never start its work.
-    const retirementWakes = retiredLeaseRuns
-        .filter((run) => !params.requireV2DefinitionRepresentability
-            || isAutomationDefinitionRepresentableInV2(run.automation))
-        .map((run) => {
-            const wakeRun: AutomationAssignmentWakeRun = {
-                originKind: run.originKind,
-                state: run.state,
-                dueAt: run.dueAt,
-                leaseExpiresAt: run.leaseExpiresAt,
-                executionDispatchState: run.executionDispatchState,
-            };
-            const nextClaimAt = resolveAutomationAssignmentNextClaimAt({
-                // Retirement rejects all new work. Only the incumbent lease
-                // recovery deadline remains reachable through this row.
-                nextRunAt: null,
-                runs: [wakeRun],
-            });
+        .map((row) => {
+            const runs: AutomationAssignmentWakeRun[] = row.automation.runs.map((run) => ({
+                ...run,
+                assignedToMachine: run.assignments.length > 0,
+            }));
             return {
-                id: run.id,
-                machineId: params.machineId,
-                enabled: true,
-                priority: 0,
-                updatedAt: run.updatedAt,
-                automation: {
-                    ...run.automation,
-                    runs: [wakeRun],
-                    // Released V2 turns this endpoint's Definition cursor into
-                    // its worker wake. The durable Definition is unchanged;
-                    // this response-only cursor carries the same lease expiry.
-                    ...(params.requireV2DefinitionRepresentability
-                        ? { nextRunAt: nextClaimAt }
-                        : {}),
-                },
-                nextClaimAt,
+                ...row,
+                automation: { ...row.automation, runs },
+                nextClaimAt: resolveAutomationAssignmentNextClaimAt({
+                    schedules: row.automation.triggers
+                        .filter((trigger) => trigger.kind === "schedule" && trigger.enabled)
+                        .map((trigger) => ({ triggerId: trigger.id, nextRunAt: trigger.nextRunAt })),
+                    runs,
+                }),
             };
         });
 
-    return [...activeAssignments, ...retirementWakes].sort((left, right) => (
+    const activeDefinitionIds = new Set(activeAssignments.map((row) => row.automation.id));
+    const frozenByAutomationId = new Map<string, typeof admittedRunAssignments>();
+    for (const assignment of admittedRunAssignments) {
+        if (activeDefinitionIds.has(assignment.run.automationId)) continue;
+        const group = frozenByAutomationId.get(assignment.run.automationId);
+        if (group) group.push(assignment);
+        else frozenByAutomationId.set(assignment.run.automationId, [assignment]);
+    }
+
+    // Frozen Run assignments survive definition disable/delete/reassignment.
+    // Fetch each remaining Automation projection exactly once; nesting that
+    // Automation's complete open-Run set under every assigned Run is O(N²).
+    const frozenAutomations = frozenByAutomationId.size === 0
+        ? []
+        : await db.automation.findMany({
+            where: {
+                id: { in: [...frozenByAutomationId.keys()] },
+                accountId: params.accountId,
+            },
+            select: automationListItemSelect,
+        });
+    const admittedRunWakes: Array<(typeof activeAssignments)[number]> = [];
+    for (const automation of frozenAutomations) {
+        const assignments = frozenByAutomationId.get(automation.id) ?? [];
+        if (assignments.length === 0) continue;
+        const representative = assignments.reduce((best, candidate) => (
+            candidate.priority > best.priority
+            || (candidate.priority === best.priority
+                && candidate.run.updatedAt.getTime() > best.run.updatedAt.getTime())
+                ? candidate
+                : best
+        ));
+        const runs: AutomationAssignmentWakeRun[] = assignments.map((assignment) => ({
+            ...assignment.run,
+            assignedToMachine: true,
+        }));
+        admittedRunWakes.push({
+            id: representative.run.id,
+            machineId: representative.machineId,
+            enabled: true,
+            priority: representative.priority,
+            updatedAt: representative.run.updatedAt,
+            automation: { ...automation, runs },
+            nextClaimAt: resolveAutomationAssignmentNextClaimAt({ schedules: [], runs }),
+        });
+    }
+
+    return [...activeAssignments, ...admittedRunWakes].sort((left, right) => (
         right.priority - left.priority
         || right.updatedAt.getTime() - left.updatedAt.getTime()
         || left.id.localeCompare(right.id)

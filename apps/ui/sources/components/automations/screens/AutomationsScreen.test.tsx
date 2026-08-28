@@ -48,12 +48,58 @@ type AutomationListItem = Readonly<{
     name: string;
     description: string | null;
     enabled: boolean;
-    trigger: {
+    triggers: ReadonlyArray<Readonly<{
+        id: string;
+        revision: number;
+        enabled: boolean;
+        createdAt: number;
+        updatedAt: number;
         kind: 'schedule';
         schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone: string | null };
-    };
-    nextRunAt: number | null;
+        nextRunAt: number | null;
+    }>>;
 }>;
+
+function createScheduleTrigger(input: Readonly<{
+    id: string;
+    nextRunAt?: number | null;
+    everyMs?: number;
+    enabled?: boolean;
+}>) {
+    return {
+        id: input.id,
+        revision: 1,
+        enabled: input.enabled ?? true,
+        createdAt: 1,
+        updatedAt: 1,
+        kind: 'schedule' as const,
+        schedule: {
+            kind: 'interval' as const,
+            everyMs: input.everyMs ?? 900_000,
+            scheduleExpr: null,
+            timezone: null,
+        },
+        nextRunAt: input.nextRunAt ?? null,
+    };
+}
+
+function createAutomationListItem(input: Readonly<{
+    id?: string;
+    name?: string;
+    triggers?: AutomationListItem['triggers'];
+}> = {}): AutomationListItem {
+    const id = input.id ?? 'a1';
+    return {
+        id,
+        name: input.name ?? 'Nightly',
+        description: null,
+        enabled: true,
+        triggers: input.triggers ?? [createScheduleTrigger({
+            id: `${id}-schedule-1`,
+            nextRunAt: Date.now() + 60_000,
+        })],
+    };
+}
 
 const automationsState = vi.hoisted(() => ({
     list: [] as AutomationListItem[],
@@ -195,19 +241,7 @@ describe('AutomationsScreen', () => {
     it('keeps the hydrated automation list visible while the mount refresh is pending', async () => {
         const refresh = createDeferred<void>();
         syncSpies.refreshAutomations.mockImplementationOnce(() => refresh.promise);
-        automationsState.list = [
-            {
-                id: 'a1',
-                name: 'Nightly',
-                description: null,
-                enabled: true,
-                trigger: {
-                    kind: 'schedule',
-                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
-                },
-                nextRunAt: Date.now() + 60_000,
-            },
-        ];
+        automationsState.list = [createAutomationListItem()];
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         const screen = await renderScreen(React.createElement(AutomationsScreen));
@@ -217,6 +251,31 @@ describe('AutomationsScreen', () => {
 
         refresh.resolve();
         await flushHookEffects();
+    });
+
+    it('presents zero and multiple automatic triggers without selecting a primary trigger', async () => {
+        machinesState.list = [{ id: 'm1' }];
+        automationsState.list = [
+            createAutomationListItem({ id: 'on-demand', name: 'On demand', triggers: [] }),
+            createAutomationListItem({
+                id: 'dual-cadence',
+                name: 'Dual cadence',
+                triggers: [
+                    createScheduleTrigger({ id: 'dual-cadence-schedule-1', everyMs: 300_000 }),
+                    createScheduleTrigger({ id: 'dual-cadence-schedule-2', everyMs: 3_600_000 }),
+                ],
+            }),
+        ];
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const rendered = JSON.stringify(screen.tree.toJSON());
+        expect(rendered).toContain('automations.list.noAutomaticTriggers');
+        expect(rendered.match(/automations\.list\.interval/g)).toHaveLength(2);
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: On demand' }))
+            .toBeTruthy();
     });
 
     it('shows an announced retryable error instead of an authoritative empty state after an initial refresh failure', async () => {
@@ -244,19 +303,7 @@ describe('AutomationsScreen', () => {
 
     it('keeps cached automations visible with an announced retry and disables stale mutations after refresh failure', async () => {
         machinesState.list = [{ id: 'm1' }];
-        automationsState.list = [
-            {
-                id: 'a1',
-                name: 'Nightly',
-                description: null,
-                enabled: true,
-                trigger: {
-                    kind: 'schedule',
-                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
-                },
-                nextRunAt: Date.now() + 60_000,
-            },
-        ];
+        automationsState.list = [createAutomationListItem()];
         syncSpies.refreshAutomations.mockRejectedValueOnce(new Error('network unavailable'));
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
@@ -267,7 +314,8 @@ describe('AutomationsScreen', () => {
         const errorState = screen.findByProps({ testID: 'automations-stale-refresh-error' });
         expect(errorState.props.accessibilityRole).toBe('alert');
         expect(errorState.props.accessibilityLiveRegion).toBe('assertive');
-        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' }).props.disabled).toBe(true);
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' }).props.disabled)
+            .toBe(true);
         expect(screen.findByType('Switch' as any).props.disabled).toBe(true);
 
         await pressTestInstanceAsync(screen.findByProps({ testID: 'automations-stale-refresh-retry' }));
@@ -277,16 +325,10 @@ describe('AutomationsScreen', () => {
     it('hands a high-cardinality Account list to the canonical virtualized owner in bounded chunks', async () => {
         // This asserts that a high-cardinality catalog does not materialise one
         // group per definition; the virtualized owner decides what is mounted.
-        automationsState.list = Array.from({ length: 200 }, (_unused, index) => ({
+        automationsState.list = Array.from({ length: 200 }, (_unused, index) => createAutomationListItem({
             id: `a${index}`,
             name: `Automation ${index}`,
-            description: null,
-            enabled: true,
-            trigger: {
-                kind: 'schedule' as const,
-                schedule: { kind: 'interval' as const, everyMs: 900_000, scheduleExpr: null, timezone: null },
-            },
-            nextRunAt: null,
+            triggers: [createScheduleTrigger({ id: `a${index}-schedule-1` })],
         }));
 
         const { AutomationsScreen } = await import('./AutomationsScreen');
@@ -306,26 +348,14 @@ describe('AutomationsScreen', () => {
     });
 
     it('keeps list navigation semantic while its controls remain independent', async () => {
-        automationsState.list = [
-            {
-                id: 'a1',
-                name: 'Nightly',
-                description: null,
-                enabled: true,
-                trigger: {
-                    kind: 'schedule',
-                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
-                },
-                nextRunAt: Date.now() + 60_000,
-            },
-        ];
+        automationsState.list = [createAutomationListItem()];
 
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         const screen = await renderScreen(React.createElement(AutomationsScreen));
         await flushHookEffects();
 
-        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' });
         expect(findClosestPressableAncestor(runNow)).toBeNull();
 
         const toggle = screen.findByType('Switch' as any);
@@ -349,25 +379,13 @@ describe('AutomationsScreen', () => {
     it('submits each list Run now action once while its request is pending', async () => {
         const runNow = createDeferred<void>();
         syncSpies.runAutomationNow.mockImplementationOnce(() => runNow.promise);
-        automationsState.list = [
-            {
-                id: 'a1',
-                name: 'Nightly',
-                description: null,
-                enabled: true,
-                trigger: {
-                    kind: 'schedule',
-                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
-                },
-                nextRunAt: Date.now() + 60_000,
-            },
-        ];
+        automationsState.list = [createAutomationListItem()];
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         const screen = await renderScreen(React.createElement(AutomationsScreen));
         await flushHookEffects();
 
-        const runNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        const runNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' });
         await act(async () => {
             runNowButton.props.onPress();
             runNowButton.props.onPress();
@@ -375,7 +393,7 @@ describe('AutomationsScreen', () => {
         });
 
         expect(syncSpies.runAutomationNow).toHaveBeenCalledTimes(1);
-        const pendingRunNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        const pendingRunNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' });
         expect(pendingRunNowButton.props.disabled).toBe(true);
         expect(pendingRunNowButton.props.accessibilityState).toEqual(expect.objectContaining({
             disabled: true,
@@ -389,25 +407,13 @@ describe('AutomationsScreen', () => {
     });
 
     it('keeps the list Run now action at the canonical interactive target size', async () => {
-        automationsState.list = [
-            {
-                id: 'a1',
-                name: 'Nightly',
-                description: null,
-                enabled: true,
-                trigger: {
-                    kind: 'schedule',
-                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
-                },
-                nextRunAt: Date.now() + 60_000,
-            },
-        ];
+        automationsState.list = [createAutomationListItem()];
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         const screen = await renderScreen(React.createElement(AutomationsScreen));
         await flushHookEffects();
 
-        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' });
         const style = flattenStyle(runNow.props.style);
         const minimum = resolveMinimumInteractiveTargetSize(Platform.OS);
         expect(Math.max(Number(style.width ?? 0), Number(style.minWidth ?? 0))).toBeGreaterThanOrEqual(minimum);

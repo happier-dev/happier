@@ -58,7 +58,8 @@ function buildStrictClaimedRun(params: Readonly<{
       automationId: 'automation-1',
       attempt: 1,
       executionInputEnvelope: serialized.serialized,
-      origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+      triggerId: null,
+      cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
     },
     automation: {
       id: 'automation-1',

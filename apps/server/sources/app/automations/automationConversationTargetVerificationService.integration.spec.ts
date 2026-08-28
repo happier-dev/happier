@@ -67,6 +67,7 @@ describe("Automation conversation target verification database boundary", () => 
         harness?.resetEnv();
         await harness?.resetDbTables([
             () => db.automationAssignment.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.pluginMachineMaterialization.deleteMany(),
             () => db.accountPluginRelease.deleteMany(),
@@ -124,14 +125,13 @@ describe("Automation conversation target verification database boundary", () => 
         await db.automation.createMany({
             data: [
                 {
-                    id: "automation-manual-owned",
+                    id: "automation-direct-owned",
                     accountId: ACCOUNT_ID,
-                    name: "Owned manual",
+                    name: "Owned direct target",
                     enabled: true,
                     targetType: "execution_run",
-                    templateCiphertext: "manual-definition-content",
+                    templateCiphertext: "direct-definition-content",
                     templateVersion: 3,
-                    triggerKind: "manual",
                 },
                 {
                     id: "automation-schedule-deleted",
@@ -139,58 +139,93 @@ describe("Automation conversation target verification database boundary", () => 
                     name: "Deleted schedule",
                     enabled: true,
                     deletedAt: new Date("2026-08-12T00:00:00.000Z"),
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     targetType: "execution_run",
                     templateCiphertext: "deleted-definition-content",
                     templateVersion: 3,
-                    triggerKind: "schedule",
                 },
                 {
                     id: "automation-schedule-owned",
                     accountId: ACCOUNT_ID,
                     name: "Owned schedule",
                     enabled: true,
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     targetType: "execution_run",
                     templateCiphertext: "schedule-definition-content",
                     templateVersion: 3,
-                    triggerKind: "schedule",
                 },
                 {
                     id: "automation-schedule-foreign",
                     accountId: FOREIGN_ACCOUNT_ID,
                     name: "Foreign schedule",
                     enabled: true,
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     targetType: "execution_run",
                     templateCiphertext: "foreign-definition-content",
                     templateVersion: 3,
-                    triggerKind: "schedule",
+                },
+            ],
+        });
+        await db.automationTrigger.createMany({
+            data: [
+                {
+                    id: "trigger-schedule-deleted",
+                    automationId: "automation-schedule-deleted",
+                    kind: "schedule",
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                },
+                {
+                    id: "trigger-schedule-owned",
+                    automationId: "automation-schedule-owned",
+                    kind: "schedule",
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                },
+                {
+                    id: "trigger-schedule-foreign",
+                    automationId: "automation-schedule-foreign",
+                    kind: "schedule",
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
                 },
             ],
         });
     });
 
-    it("verifies an existing schedule Automation so a conversation is an additional invocation source", async () => {
-        // A conversation binding never replaces the Automation's primary
-        // trigger, so a scheduled Automation is a first-class binding target
-        // and its schedule stays exactly where it was.
+    it("verifies an Automation with a schedule trigger so a conversation is an additional invocation source", async () => {
+        // Direct conversation invocation does not mutate automatic triggers.
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 automationId: "automation-schedule-owned",
-                expectedTemplateVersion: 3,
             },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        })).resolves.toEqual({ kind: "verified" });
 
-        await expect(db.automation.findUnique({
-            where: { id: "automation-schedule-owned" },
-            select: { triggerKind: true, scheduleKind: true, everyMs: true },
-        })).resolves.toEqual({ triggerKind: "schedule", scheduleKind: "interval", everyMs: 60_000 });
+        await expect(db.automationTrigger.findMany({
+            where: { automationId: "automation-schedule-owned" },
+            select: { id: true, kind: true, scheduleKind: true, everyMs: true },
+        })).resolves.toEqual([{
+            id: "trigger-schedule-owned",
+            kind: "schedule",
+            scheduleKind: "interval",
+            everyMs: 60_000,
+        }]);
+    });
+
+    it("verifies a zero-trigger Automation for an authorized direct conversation invocation", async () => {
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: "automation-direct-owned",
+            },
+        })).resolves.toEqual({ kind: "verified" });
+
+        await expect(db.automationTrigger.count({
+            where: { automationId: "automation-direct-owned" },
+        })).resolves.toBe(0);
     });
 
     it("verifies one Automation for every distinct conversation binding that names it", async () => {
@@ -202,9 +237,8 @@ describe("Automation conversation target verification database boundary", () => 
                 caller,
                 input: {
                     automationId: "automation-schedule-owned",
-                    expectedTemplateVersion: 3,
                 },
-            })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            })).resolves.toEqual({ kind: "verified" });
         }
     });
 
@@ -254,9 +288,8 @@ describe("Automation conversation target verification database boundary", () => 
             },
             input: {
                 automationId: "automation-schedule-owned",
-                expectedTemplateVersion: 3,
             },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        })).resolves.toEqual({ kind: "verified" });
     });
 
     it.each([
@@ -267,24 +300,28 @@ describe("Automation conversation target verification database boundary", () => 
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller,
-            input: { automationId, expectedTemplateVersion: 3 },
+            input: { automationId },
         })).resolves.toEqual({ kind: "notVerified", reason: "notFound" });
     });
 
-    it("reports version mismatch without returning the current version or stored content", async () => {
+    it("verifies against current recipe data without exposing or pinning its version", async () => {
+        await db.automation.update({
+            where: { id: "automation-schedule-owned" },
+            data: { templateVersion: 4, templateCiphertext: "edited-definition-content" },
+        });
+
         const result = await verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 automationId: "automation-schedule-owned",
-                expectedTemplateVersion: 2,
             },
         });
 
-        expect(result).toEqual({ kind: "notVerified", reason: "templateVersionMismatch" });
+        expect(result).toEqual({ kind: "verified" });
         expect(result).not.toHaveProperty("templateVersion");
         expect(result).not.toHaveProperty("templateCiphertext");
-        expect(result).not.toHaveProperty("triggerDefinitionEnvelope");
+        expect(result).not.toHaveProperty("triggers");
     });
 
     it("refuses final-result delivery for a target that cannot carry a reply", async () => {
@@ -293,7 +330,6 @@ describe("Automation conversation target verification database boundary", () => 
             caller,
             input: {
                 automationId: "automation-schedule-owned",
-                expectedTemplateVersion: 3,
                 resultDelivery: "finalResult",
             },
         })).resolves.toEqual({ kind: "notVerified", reason: "resultDeliveryUnsupported" });
@@ -302,16 +338,13 @@ describe("Automation conversation target verification database boundary", () => 
     it("keeps final-result delivery verified before persistence for an E2EE Account", async () => {
         await db.automation.create({
             data: {
-                id: "automation-session-owned",
+                id: "automation-session-target-owned",
                 accountId: ACCOUNT_ID,
                 name: "Owned session",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext: "session-definition-content",
                 templateVersion: 3,
-                triggerKind: "schedule",
             },
         });
 
@@ -319,11 +352,10 @@ describe("Automation conversation target verification database boundary", () => 
             accountId: ACCOUNT_ID,
             caller,
             input: {
-                automationId: "automation-session-owned",
-                expectedTemplateVersion: 3,
+                automationId: "automation-session-target-owned",
                 resultDelivery: "finalResult",
             },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        })).resolves.toEqual({ kind: "verified" });
 
         // A complete, verifiable content-key binding means E2EE itself is not
         // a target-verification refusal once the host can seal the context
@@ -350,20 +382,18 @@ describe("Automation conversation target verification database boundary", () => 
             accountId: ACCOUNT_ID,
             caller,
             input: {
-                automationId: "automation-session-owned",
-                expectedTemplateVersion: 3,
+                automationId: "automation-session-target-owned",
                 resultDelivery: "finalResult",
             },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        })).resolves.toEqual({ kind: "verified" });
 
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
-                automationId: "automation-session-owned",
-                expectedTemplateVersion: 3,
+                automationId: "automation-session-target-owned",
             },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+        })).resolves.toEqual({ kind: "verified" });
     });
 
     it("refuses a caller whose plugin materialization is not current", async () => {
@@ -374,22 +404,20 @@ describe("Automation conversation target verification database boundary", () => 
             caller,
             input: {
                 automationId: "automation-schedule-owned",
-                expectedTemplateVersion: 3,
             },
         })).rejects.toBeInstanceOf(AutomationConversationTargetVerificationCallerError);
     });
 
-    it("projects every current Account Automation regardless of primary trigger, including disabled ones", async () => {
+    it("projects every current Account Automation regardless of its trigger set, including disabled ones", async () => {
         await db.automation.create({
             data: {
-                id: "automation-manual-disabled",
+                id: "automation-direct-disabled",
                 accountId: ACCOUNT_ID,
-                name: "Disabled manual",
+                name: "Disabled direct target",
                 enabled: false,
                 targetType: "execution_run",
                 templateCiphertext: "disabled-definition-content",
                 templateVersion: 4,
-                triggerKind: "manual",
             },
         });
 
@@ -400,26 +428,90 @@ describe("Automation conversation target verification database boundary", () => 
         })).resolves.toEqual({
             items: [
                 {
-                    automationId: "automation-manual-disabled",
-                    templateVersion: 4,
-                    label: "Disabled manual",
+                    automationId: "automation-direct-disabled",
+                    label: "Disabled direct target",
                     execution: { targetType: "execution_run", enabled: false },
                 },
                 {
-                    automationId: "automation-manual-owned",
-                    templateVersion: 3,
-                    label: "Owned manual",
+                    automationId: "automation-direct-owned",
+                    label: "Owned direct target",
                     execution: { targetType: "execution_run", enabled: true },
                 },
                 {
                     automationId: "automation-schedule-owned",
-                    templateVersion: 3,
                     label: "Owned schedule",
                     execution: { targetType: "execution_run", enabled: true },
                 },
             ],
             nextCursor: null,
         });
+    });
+
+    it("does not apply the released V2 representability filter to conversation targets", async () => {
+        await db.automation.createMany({
+            data: [
+                {
+                    id: "automation-multiple-triggers-owned",
+                    accountId: ACCOUNT_ID,
+                    name: "Multiple triggers",
+                    enabled: true,
+                    targetType: "execution_run",
+                    templateCiphertext: "multiple-triggers-definition-content",
+                    templateVersion: 5,
+                },
+                {
+                    id: "automation-session-lifecycle-owned",
+                    accountId: ACCOUNT_ID,
+                    name: "Session lifecycle",
+                    enabled: true,
+                    targetType: "execution_run",
+                    templateCiphertext: "session-lifecycle-definition-content",
+                    templateVersion: 6,
+                },
+            ],
+        });
+        await db.automationTrigger.createMany({
+            data: [
+                {
+                    id: "trigger-multiple-schedule-a",
+                    automationId: "automation-multiple-triggers-owned",
+                    kind: "schedule",
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                },
+                {
+                    id: "trigger-multiple-schedule-b",
+                    automationId: "automation-multiple-triggers-owned",
+                    kind: "schedule",
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 120_000,
+                },
+                {
+                    id: "trigger-session-lifecycle",
+                    automationId: "automation-session-lifecycle-owned",
+                    kind: "sessionLifecycle",
+                    revision: 1,
+                    sessionLifecycleEvent: "parentTurnCompleted",
+                    sourceSessionId: "session-source",
+                    sourceTurnId: "turn-source",
+                },
+            ],
+        });
+
+        const result = await listAutomationConversationTargetsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { limit: 100 },
+        });
+
+        expect(result.items.map((item) => item.automationId)).toEqual([
+            "automation-direct-owned",
+            "automation-multiple-triggers-owned",
+            "automation-schedule-owned",
+            "automation-session-lifecycle-owned",
+        ]);
     });
 
     it("offers no next page when the last page exactly fills the requested limit", async () => {
@@ -429,8 +521,8 @@ describe("Automation conversation target verification database boundary", () => 
             input: { limit: 2 },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-manual-owned", templateVersion: 3, label: "Owned manual", execution: { targetType: "execution_run", enabled: true } },
-                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-direct-owned", label: "Owned direct target", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-schedule-owned", label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
             ],
             nextCursor: null,
         });
@@ -448,7 +540,6 @@ describe("Automation conversation target verification database boundary", () => 
                     targetType: "execution_run" as const,
                     templateCiphertext: `page-definition-${serial}`,
                     templateVersion: index,
-                    triggerKind: "manual" as const,
                 };
             }),
         });
@@ -460,7 +551,7 @@ describe("Automation conversation target verification database boundary", () => 
         });
         expect(firstPage.items).toHaveLength(100);
         expect(firstPage.items.map((item) => item.automationId)).toEqual([
-            "automation-manual-owned",
+            "automation-direct-owned",
             ...Array.from({ length: 99 }, (_, index) =>
                 `automation-page-${String(index + 1).padStart(3, "0")}`,
             ),
@@ -473,9 +564,9 @@ describe("Automation conversation target verification database boundary", () => 
             input: { cursor: firstPage.nextCursor },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-page-100", templateVersion: 99, label: "Target 100", execution: { targetType: "execution_run", enabled: false } },
-                { automationId: "automation-page-101", templateVersion: 100, label: "Target 101", execution: { targetType: "execution_run", enabled: true } },
-                { automationId: "automation-schedule-owned", templateVersion: 3, label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-page-100", label: "Target 100", execution: { targetType: "execution_run", enabled: false } },
+                { automationId: "automation-page-101", label: "Target 101", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-schedule-owned", label: "Owned schedule", execution: { targetType: "execution_run", enabled: true } },
             ],
             nextCursor: null,
         });
@@ -492,7 +583,6 @@ describe("Automation conversation target verification database boundary", () => 
                 targetType: "execution_run" as const,
                 templateCiphertext: `keyset-definition-${suffix}`,
                 templateVersion: index,
-                triggerKind: "manual" as const,
             })),
         });
         await db.automation.delete({ where: { id: "automation-keyset-a" } });
@@ -505,7 +595,6 @@ describe("Automation conversation target verification database boundary", () => 
                 targetType: "execution_run",
                 templateCiphertext: "keyset-definition-c",
                 templateVersion: 2,
-                triggerKind: "manual",
             },
         });
 
@@ -515,8 +604,8 @@ describe("Automation conversation target verification database boundary", () => 
             input: { cursor: "automation-keyset-a" },
         })).resolves.toEqual({
             items: [
-                { automationId: "automation-keyset-b", templateVersion: 1, label: "Keyset b", execution: { targetType: "execution_run", enabled: true } },
-                { automationId: "automation-keyset-c", templateVersion: 2, label: "Keyset c", execution: { targetType: "execution_run", enabled: false } },
+                { automationId: "automation-keyset-b", label: "Keyset b", execution: { targetType: "execution_run", enabled: true } },
+                { automationId: "automation-keyset-c", label: "Keyset c", execution: { targetType: "execution_run", enabled: false } },
             ],
             nextCursor: null,
         });

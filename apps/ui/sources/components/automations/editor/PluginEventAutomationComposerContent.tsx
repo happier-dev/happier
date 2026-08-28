@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol';
 
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import { useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
-import { arePluginMachineMaterializationRefsEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -27,8 +28,6 @@ import type {
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
 }>;
-
-type ExistingSessionOption = PluginEventAutomationComposerModel['existingSessionOptions'][number];
 
 const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
@@ -127,10 +126,6 @@ function watcherDisplayLabel(params: Readonly<{
     return `${params.machineId} / ${params.materializationId}`;
 }
 
-function existingSessionOptionKey(option: ExistingSessionOption): string {
-    return `${option.serverId ?? ''}\u0000${option.sessionId}`;
-}
-
 function EventPluginBrand(props: Readonly<{
     presentation: PluginEventAutomationPluginPresentation;
     testID: string;
@@ -179,16 +174,15 @@ function formatPayloadSample(value: unknown): string {
  * canonical owners.
  */
 export function PluginEventAutomationComposerContent(props: Props) {
+    const router = useRouter();
     const { theme } = useUnistyles();
     const [eventPickerOpen, setEventPickerOpen] = React.useState(false);
     const [watcherPickerOpen, setWatcherPickerOpen] = React.useState(false);
-    const [existingSessionPickerOpen, setExistingSessionPickerOpen] = React.useState(false);
     const [filterFieldPickerOpenFor, setFilterFieldPickerOpenFor] = React.useState<string | null>(null);
     const [filterOperatorPickerOpenFor, setFilterOperatorPickerOpenFor] = React.useState<string | null>(null);
     const collapseAllPickers = React.useCallback(() => {
         setEventPickerOpen(false);
         setWatcherPickerOpen(false);
-        setExistingSessionPickerOpen(false);
         setFilterFieldPickerOpenFor(null);
         setFilterOperatorPickerOpenFor(null);
     }, []);
@@ -199,13 +193,18 @@ export function PluginEventAutomationComposerContent(props: Props) {
     } = useEventComposerPickerDisclosure({
         anyPickerOpen: eventPickerOpen
             || watcherPickerOpen
-            || existingSessionPickerOpen
             || filterFieldPickerOpenFor !== null
             || filterOperatorPickerOpenFor !== null,
         collapseAllPickers,
     });
     const selectedEvent = props.model.selectedEvent;
     const selectedWatcher = props.model.selectedWatcherOrigin;
+    const observationPlacementTitle = props.model.observationTransport === 'durablePush'
+        ? t('automations.detail.event.observationPlacementTitle')
+        : t('automations.detail.event.watcherTitle');
+    const chooseObservationPlacement = props.model.observationTransport === 'durablePush'
+        ? t('automations.detail.event.observationPlacementTitle')
+        : t('automations.form.trigger.chooseWatcher');
     const selectedEventAvailability = selectedEvent
         ? props.model.getPluginPresentation(selectedEvent).availability
         : null;
@@ -216,6 +215,75 @@ export function PluginEventAutomationComposerContent(props: Props) {
             && candidate.materialization.serverIdentityId === selectedWatcher.serverIdentityId
             && arePluginMachineMaterializationRefsEqual(candidate.materialization, selectedWatcher.materializationRef)
         ));
+    const eventOptionByKey = React.useMemo(() => new Map(props.model.eligibleEvents.map((event) => {
+        const presentation = props.model.getPluginPresentation(event);
+        return [presentation.eventKey, event] as const;
+    })), [props.model.eligibleEvents, props.model.getPluginPresentation]);
+    const eventSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
+        () => props.model.eligibleEvents.map((event) => {
+            const plugin = props.model.getPluginPresentation(event);
+            return {
+                id: plugin.eventKey,
+                testID: `automation-event-option-${event.event.id}`,
+                label: event.event.title,
+                subtitle: [plugin.displayName, event.event.description].filter(Boolean).join(' · '),
+                accessibilityLabel: `${event.event.title}, ${plugin.displayName}`,
+                icon: (
+                    <EventPluginBrand
+                        presentation={plugin}
+                        testID={`automation-event-plugin-brand-${event.event.id}`}
+                    />
+                ),
+                rightAccessory: plugin.availability === 'available'
+                    ? t('settingsPlugins.eventAutomationComposer.available')
+                    : t('common.unavailable'),
+                disabled: plugin.availability !== 'available',
+            };
+        }),
+        [props.model.eligibleEvents, props.model.getPluginPresentation],
+    );
+    const eventSelectionStep = React.useMemo<SelectionListStep>(() => ({
+        id: 'automation-events',
+        inputPlaceholder: t('automations.exactTurn.searchPlaceholder'),
+        emptyStateLabel: t('automations.form.trigger.noEligibleEvents'),
+        sections: [{
+            kind: 'static',
+            id: 'events',
+            options: eventSelectionOptions,
+            virtualization: 'force',
+        }],
+    }), [eventSelectionOptions]);
+    const watcherOptionByKey = React.useMemo(
+        () => new Map(props.model.watcherCandidates.map((candidate) => [
+            watcherKey(candidate.materialization),
+            candidate,
+        ])),
+        [props.model.watcherCandidates],
+    );
+    const watcherSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
+        () => props.model.watcherCandidates.map((candidate) => {
+            const key = watcherKey(candidate.materialization);
+            return {
+                id: key,
+                testID: `automation-event-watcher-option-${key}`,
+                label: watcherDisplayLabel(candidate.materialization),
+                subtitle: candidate.materialization.version,
+                disabled: !isPluginMachineExecutionOriginCandidateSelectable(candidate),
+            };
+        }),
+        [props.model.watcherCandidates],
+    );
+    const watcherSelectionStep = React.useMemo<SelectionListStep>(() => ({
+        id: 'automation-event-watchers',
+        inputPlaceholder: chooseObservationPlacement,
+        emptyStateLabel: t('automations.form.trigger.noEligibleWatchers'),
+        sections: [{
+            kind: 'static',
+            id: 'watchers',
+            options: watcherSelectionOptions,
+            virtualization: 'force',
+        }],
+    }), [chooseObservationPlacement, watcherSelectionOptions]);
     // Preserve the selected draft so the user can recover by choosing a
     // replacement source or watcher, but never make an out-of-date binding
     // look actionable while the writer is correctly refusing it.
@@ -235,6 +303,9 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 ? t('common.loading')
                 : t('automations.form.trigger.configureSource');
     const sourceUnavailable = props.model.sourceStatus === 'unavailable' || sourceCurrentnessUnavailable;
+    const sourceSettingsPath = props.model.sourceFailure?.remediation?.kind === 'openSettings'
+        ? props.model.sourceFailure.remediation.path
+        : null;
     const sourceSetupHint = sourceUnavailable
         ? t('automations.form.trigger.sourceUnavailable')
         : !props.model.filterValid
@@ -245,40 +316,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const showSourceInstanceId = props.model.sourceStatus === 'configured'
         && !sourceCurrentnessUnavailable
         && props.model.sourceInstanceId !== null;
-    const selectedExistingSession = props.model.existingSessionOptions.find((option) => (
-        option.sessionId === props.model.selectedExistingSessionId
-    )) ?? null;
-    // The session-list index is the existing owner of eligible sessions. This
-    // map only adapts its current options to the shared list's opaque row ids;
-    // it neither caches nor decides eligibility itself.
-    const existingSessionOptionByKey = React.useMemo(
-        () => new Map(props.model.existingSessionOptions.map((option) => [existingSessionOptionKey(option), option])),
-        [props.model.existingSessionOptions],
-    );
-    const existingSessionSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
-        () => props.model.existingSessionOptions.map((option) => ({
-            id: existingSessionOptionKey(option),
-            label: option.label,
-            testID: `automation-event-existing-session-option-${option.sessionId}`,
-        })),
-        [props.model.existingSessionOptions],
-    );
-    const existingSessionSelectionStep = React.useMemo<SelectionListStep>(() => ({
-        id: 'existing-session',
-        inputPlaceholder: t('sessionsList.searchSessionsPlaceholder'),
-        sections: [{
-            kind: 'static',
-            id: 'existing-sessions',
-            options: existingSessionSelectionOptions,
-            // This picker can expose the full retained session index. Keep one
-            // scroll owner from the first row rather than mounting an eager
-            // mapped list until it crosses the primitive's threshold.
-            virtualization: 'force',
-        }],
-    }), [existingSessionSelectionOptions]);
-    const selectedExistingSessionOptionKey = selectedExistingSession
-        ? existingSessionOptionKey(selectedExistingSession)
-        : null;
     // The one-time secret is disclosed by the ensure that configured this
     // source. Keeping it tied to `configured` means a reconfiguration cannot
     // leave a stale credential on screen next to a new endpoint, and requiring
@@ -288,180 +325,10 @@ export function PluginEventAutomationComposerContent(props: Props) {
         && !sourceCurrentnessUnavailable
         ? props.model.webhookEndpoint
         : null;
-    const existingSessionUnavailable = props.model.targetKind === 'existingSession'
-        && props.model.existingSessionAvailability !== null
-        && props.model.existingSessionAvailability.kind !== 'ready';
 
     return (
         <View testID="automation-event-composer" style={styles.section}>
-            <View style={styles.modeRow}>
-                <Pressable
-                    testID="automation-trigger-schedule"
-                    accessibilityRole="button"
-                    accessibilityState={{
-                        selected: props.model.mode === 'schedule',
-                        disabled: props.model.isEditingEvent,
-                    }}
-                    disabled={props.model.isEditingEvent}
-                    onPress={() => props.model.setMode('schedule')}
-                    style={({ pressed }) => [
-                        styles.modeButton,
-                        props.model.mode === 'schedule' ? styles.modeButtonSelected : null,
-                        props.model.isEditingEvent ? styles.disabled : null,
-                        pressed ? styles.pressed : null,
-                    ]}
-                >
-                    <Icon name="repeat" size={14} color={theme.colors.text.secondary} />
-                    <Text style={styles.modeButtonText}>{t('automations.form.trigger.schedule')}</Text>
-                </Pressable>
-                <Pressable
-                    testID="automation-trigger-event"
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: props.model.mode === 'event' }}
-                    onPress={() => props.model.setMode('event')}
-                    style={({ pressed }) => [
-                        styles.modeButton,
-                        props.model.mode === 'event' ? styles.modeButtonSelected : null,
-                        pressed ? styles.pressed : null,
-                    ]}
-                >
-                    <Icon name="lightning" size={14} color={theme.colors.text.secondary} />
-                    <Text style={styles.modeButtonText}>{t('automations.form.trigger.event')}</Text>
-                </Pressable>
-            </View>
-
-            {props.model.mode === 'event' ? (
                 <View style={styles.eventFields}>
-                    <Text style={styles.fieldLabel}>{t('automations.form.trigger.target')}</Text>
-                    <View style={styles.targetRow}>
-                        {([
-                            ['newSession', 'automation-event-target-new-session', 'automations.form.trigger.targetNewSession'],
-                            ['existingSession', 'automation-event-target-existing-session', 'automations.form.trigger.targetExistingSession'],
-                            ['executionRun', 'automation-event-target-execution-run', 'automations.form.trigger.targetExecutionRun'],
-                        ] as const).map(([kind, testID, label]) => {
-                            const selected = props.model.targetKind === kind;
-                            return (
-                                <Pressable
-                                    key={kind}
-                                    testID={testID}
-                                    accessibilityRole="button"
-                                    accessibilityState={{ selected }}
-                                    onPress={() => {
-                                        props.model.setTargetKind(kind);
-                                        setExistingSessionPickerOpen(false);
-                                    }}
-                                    style={({ pressed }) => [
-                                        styles.targetButton,
-                                        selected ? styles.targetButtonSelected : null,
-                                        pressed ? styles.pressed : null,
-                                    ]}
-                                >
-                                    <Text numberOfLines={1} style={styles.targetButtonText}>{t(label)}</Text>
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-                    {props.model.targetKind === 'existingSession' ? (
-                        <>
-                            <Pressable
-                                testID="automation-event-existing-session-picker"
-                                accessibilityRole="button"
-                                accessibilityState={{
-                                    expanded: existingSessionPickerOpen,
-                                    disabled: props.model.existingSessionOptions.length === 0,
-                                }}
-                                disabled={props.model.existingSessionOptions.length === 0}
-                                ref={pickerTriggerRef('existingSession')}
-                                onPress={() => {
-                                    notePickerTriggerPressed('existingSession', existingSessionPickerOpen);
-                                    setExistingSessionPickerOpen((current) => !current);
-                                }}
-                                style={({ pressed }) => [
-                                    styles.selectTrigger,
-                                    props.model.existingSessionOptions.length === 0 ? styles.disabled : null,
-                                    pressed ? styles.pressed : null,
-                                ]}
-                            >
-                                <Text numberOfLines={1} style={styles.selectTriggerText}>
-                                    {selectedExistingSession?.label ?? t('automations.form.trigger.chooseExistingSession')}
-                                </Text>
-                                <Icon
-                                    name={existingSessionPickerOpen ? 'caret-up' : 'caret-down'}
-                                    size={14}
-                                    color={theme.colors.text.secondary}
-                                />
-                            </Pressable>
-                            {existingSessionPickerOpen ? (
-                                <View testID="automation-event-existing-session-picker-options" style={styles.optionList}>
-                                    <SelectionList
-                                        rootStep={existingSessionSelectionStep}
-                                        listAccessibilityLabel={t('automations.form.trigger.targetExistingSession')}
-                                        selectedOptionId={selectedExistingSessionOptionKey}
-                                        onSelect={(optionKey) => {
-                                            const option = existingSessionOptionByKey.get(optionKey);
-                                            if (!option) return;
-                                            props.model.selectExistingSession(option);
-                                            notePickerCollapsed('existingSession');
-                                            setExistingSessionPickerOpen(false);
-                                        }}
-                                        onRequestClose={() => {
-                                            notePickerCollapsed('existingSession');
-                                            setExistingSessionPickerOpen(false);
-                                        }}
-                                        keyboardHintsEnabled={false}
-                                        autoFocusInputOnWeb
-                                        disableTransitions
-                                        maxHeight={300}
-                                        testID="automation-event-existing-session-list"
-                                        inputTestID="automation-event-existing-session-search"
-                                    />
-                                </View>
-                            ) : null}
-                            {props.model.existingSessionOptions.length === 0 ? (
-                                <Text style={styles.unavailableText}>
-                                    {t('automations.form.trigger.noEligibleExistingSessions')}
-                                </Text>
-                            ) : null}
-                            {existingSessionUnavailable ? (
-                                <Text
-                                    testID="automation-event-existing-session-unavailable"
-                                    accessibilityRole="alert"
-                                    accessibilityLiveRegion="polite"
-                                    style={styles.unavailableText}
-                                >
-                                    {t('automations.form.trigger.existingSessionUnavailable')}
-                                </Text>
-                            ) : null}
-                        </>
-                    ) : null}
-                    {props.model.targetKind === 'executionRun' ? (
-                        <>
-                            <Text style={styles.fieldLabel}>{t('automations.form.trigger.executionPermissionMode')}</Text>
-                            <View style={styles.targetRow}>
-                                {([
-                                    ['no_tools', 'automation-event-execution-permission-no-tools', 'automations.form.trigger.executionNoTools'],
-                                    ['read_only', 'automation-event-execution-permission-read-only', 'automations.form.trigger.executionReadOnly'],
-                                ] as const).map(([permissionMode, testID, label]) => (
-                                    <Pressable
-                                        key={permissionMode}
-                                        testID={testID}
-                                        accessibilityRole="button"
-                                        accessibilityState={{ selected: props.model.executionPermissionMode === permissionMode }}
-                                        onPress={() => props.model.setExecutionPermissionMode(permissionMode)}
-                                        style={({ pressed }) => [
-                                            styles.targetButton,
-                                            props.model.executionPermissionMode === permissionMode
-                                                ? styles.targetButtonSelected
-                                                : null,
-                                            pressed ? styles.pressed : null,
-                                        ]}
-                                    >
-                                        <Text numberOfLines={1} style={styles.targetButtonText}>{t(label)}</Text>
-                                    </Pressable>
-                                ))}
-                            </View>
-                        </>
-                    ) : null}
                     {props.model.eventCatalogStatus !== 'ready' ? (
                         <Text style={styles.unavailableText}>
                             {t('automations.form.trigger.eventCatalogUnavailable')}
@@ -491,66 +358,41 @@ export function PluginEventAutomationComposerContent(props: Props) {
                             </Pressable>
                             {eventPickerOpen ? (
                                 <View testID="automation-event-picker-options" style={styles.optionList}>
-                                    {props.model.eligibleEvents.length === 0 ? (
-                                        <Text style={styles.unavailableText}>
-                                            {t('automations.form.trigger.noEligibleEvents')}
-                                        </Text>
-                                    ) : props.model.eligibleEvents.map((event) => {
-                                        const plugin = props.model.getPluginPresentation(event);
-                                        const selected = selectedEvent?.event.id === event.event.id;
-                                        return (
-                                            <Pressable
-                                                key={plugin.eventKey}
-                                                testID={`automation-event-option-${event.event.id}`}
-                                                accessibilityRole="button"
-                                                accessibilityState={{ selected }}
-                                                onPress={() => {
-                                                    props.model.selectEvent(event);
-                                                    notePickerCollapsed('event');
-                                                    setEventPickerOpen(false);
-                                                    setWatcherPickerOpen(false);
-                                                }}
-                                                style={({ pressed }) => [
-                                                    styles.optionRow,
-                                                    selected ? styles.optionRowSelected : null,
-                                                    pressed ? styles.pressed : null,
-                                                ]}
-                                            >
-                                                <View style={styles.eventOptionHeader}>
-                                                    <EventPluginBrand
-                                                        presentation={plugin}
-                                                        testID={`automation-event-plugin-brand-${event.event.id}`}
-                                                    />
-                                                    <View style={styles.eventOptionCopy}>
-                                                        <Text style={styles.optionTitle}>{event.event.title}</Text>
-                                                        <Text style={styles.pluginTitle}>{plugin.displayName}</Text>
-                                                    </View>
-                                                    <Text style={plugin.availability === 'available'
-                                                        ? styles.availableText
-                                                        : styles.unavailableText}
-                                                    >
-                                                        {plugin.availability === 'available'
-                                                            ? t('settingsPlugins.eventAutomationComposer.available')
-                                                            : t('common.unavailable')}
-                                                    </Text>
-                                                </View>
-                                                {event.event.description ? (
-                                                    <Text numberOfLines={2} style={styles.optionDescription}>
-                                                        {event.event.description}
-                                                    </Text>
-                                                ) : null}
-                                            </Pressable>
-                                        );
-                                    })}
+                                    <SelectionList
+                                        rootStep={eventSelectionStep}
+                                        listAccessibilityLabel={t('automations.form.trigger.eventSource')}
+                                        selectedOptionId={selectedEvent
+                                            ? props.model.getPluginPresentation(selectedEvent).eventKey
+                                            : null}
+                                        onSelect={(eventKey) => {
+                                            const event = eventOptionByKey.get(eventKey);
+                                            if (!event) return;
+                                            props.model.selectEvent(event);
+                                            notePickerCollapsed('event');
+                                            setEventPickerOpen(false);
+                                            setWatcherPickerOpen(false);
+                                        }}
+                                        onRequestClose={() => {
+                                            notePickerCollapsed('event');
+                                            setEventPickerOpen(false);
+                                        }}
+                                        keyboardHintsEnabled={false}
+                                        autoFocusInputOnWeb
+                                        disableTransitions
+                                        maxHeight={320}
+                                        testID="automation-event-selection-list"
+                                        inputTestID="automation-event-search"
+                                    />
                                 </View>
                             ) : null}
 
                             {selectedEvent ? (
                                 <>
-                                    <Text style={styles.fieldLabel}>{t('automations.detail.event.watcherTitle')}</Text>
+                                    <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>
                                     <Pressable
                                         testID="automation-event-watcher-picker"
                                         accessibilityRole="button"
+                                        accessibilityLabel={observationPlacementTitle}
                                         accessibilityState={{ expanded: watcherPickerOpen }}
                                         ref={pickerTriggerRef('watcher')}
                                         onPress={() => {
@@ -562,7 +404,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         <Text numberOfLines={1} style={styles.selectTriggerText}>
                                             {selectedWatcher
                                                 ? watcherDisplayLabel(selectedWatcher.materializationRef)
-                                                : t('automations.form.trigger.chooseWatcher')}
+                                                : chooseObservationPlacement}
                                         </Text>
                                         <Icon
                                             name={watcherPickerOpen ? 'caret-up' : 'caret-down'}
@@ -572,50 +414,30 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     </Pressable>
                                     {watcherPickerOpen ? (
                                         <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
-                                            {props.model.watcherCandidates.length === 0 ? (
-                                                <Text style={styles.unavailableText}>
-                                                    {t('automations.form.trigger.noEligibleWatchers')}
-                                                </Text>
-                                            ) : props.model.watcherCandidates.map((candidate) => {
-                                                const key = watcherKey(candidate.materialization);
-                                                const selected = selectedWatcher?.materializationRef.machineId
-                                                    === candidate.materialization.machineId
-                                                    && selectedWatcher.materializationRef.materializationId
-                                                    === candidate.materialization.materializationId;
-                                                const selectable = isPluginMachineExecutionOriginCandidateSelectable(candidate);
-                                                return (
-                                                    <Pressable
-                                                        key={key}
-                                                        testID={`automation-event-watcher-option-${key}`}
-                                                        accessibilityRole="button"
-                                                        accessibilityState={{ selected, disabled: !selectable }}
-                                                        disabled={!selectable}
-                                                        onPress={() => {
-                                                            props.model.selectWatcher(candidate);
-                                                            notePickerCollapsed('watcher');
-                                                            setWatcherPickerOpen(false);
-                                                        }}
-                                                        style={({ pressed }) => [
-                                                            styles.optionRow,
-                                                            selected ? styles.optionRowSelected : null,
-                                                            !selectable ? styles.disabled : null,
-                                                            pressed ? styles.pressed : null,
-                                                        ]}
-                                                    >
-                                                        <Text style={styles.optionTitle}>
-                                                            {watcherDisplayLabel(candidate.materialization)}
-                                                        </Text>
-                                                        <Text style={styles.optionDescription}>
-                                                            {candidate.materialization.version}
-                                                        </Text>
-                                                        {!selectable ? (
-                                                            <Text style={styles.unavailableText}>
-                                                                {t('common.unavailable')}
-                                                            </Text>
-                                                        ) : null}
-                                                    </Pressable>
-                                                );
-                                            })}
+                                            <SelectionList
+                                                rootStep={watcherSelectionStep}
+                                                listAccessibilityLabel={observationPlacementTitle}
+                                                selectedOptionId={selectedWatcher
+                                                    ? watcherKey(selectedWatcher.materializationRef)
+                                                    : null}
+                                                onSelect={(key) => {
+                                                    const candidate = watcherOptionByKey.get(key);
+                                                    if (!candidate) return;
+                                                    props.model.selectWatcher(candidate);
+                                                    notePickerCollapsed('watcher');
+                                                    setWatcherPickerOpen(false);
+                                                }}
+                                                onRequestClose={() => {
+                                                    notePickerCollapsed('watcher');
+                                                    setWatcherPickerOpen(false);
+                                                }}
+                                                keyboardHintsEnabled={false}
+                                                autoFocusInputOnWeb
+                                                disableTransitions
+                                                maxHeight={300}
+                                                testID="automation-event-watcher-selection-list"
+                                                inputTestID="automation-event-watcher-search"
+                                            />
                                         </View>
                                     ) : null}
 
@@ -684,6 +506,22 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             {t('automations.form.trigger.sourceUnavailable')}
                                         </Text>
                                     ) : null}
+                                    {sourceSettingsPath ? (
+                                        <Pressable
+                                            testID="automation-event-source-open-settings"
+                                            accessibilityRole="button"
+                                            onPress={() => router.push(sourceSettingsPath as never)}
+                                            style={({ pressed }) => [
+                                                styles.sourceRemediation,
+                                                pressed ? styles.pressed : null,
+                                            ]}
+                                        >
+                                            <Icon name="gear" size={14} color={theme.colors.accent.blue} />
+                                            <Text style={styles.sourceRemediationText}>
+                                                {t('modals.openSettings')}
+                                            </Text>
+                                        </Pressable>
+                                    ) : null}
                                     {showSourceInstanceId ? (
                                         <Text numberOfLines={1} style={styles.optionDescription}>
                                             {props.model.sourceInstanceId}
@@ -697,6 +535,20 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             <Text style={styles.webhookEndpointInstructions}>
                                                 {t('automations.form.trigger.webhookEndpointInstructions')}
                                             </Text>
+                                            {selectedWatcher ? (
+                                                <>
+                                                    <Text style={styles.fieldLabel}>
+                                                        {t('automations.detail.event.observationPlacementTitle')}
+                                                    </Text>
+                                                    <Text
+                                                        testID="automation-event-webhook-endpoint-placement"
+                                                        selectable
+                                                        style={styles.webhookEndpointValue}
+                                                    >
+                                                        {watcherDisplayLabel(selectedWatcher.materializationRef)}
+                                                    </Text>
+                                                </>
+                                            ) : null}
                                             <Text style={styles.fieldLabel}>
                                                 {t('automations.form.trigger.webhookEndpointUrl')}
                                             </Text>
@@ -1002,7 +854,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
                         </>
                     )}
                 </View>
-            ) : null}
         </View>
     );
 }
@@ -1010,32 +861,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
 const styles = StyleSheet.create((theme) => ({
     section: {
         gap: 10,
-    },
-    modeRow: {
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        gap: 8,
-    },
-    modeButton: {
-        minHeight: minimumInteractiveTargetSize,
-        minWidth: minimumInteractiveTargetSize,
-        alignItems: 'center',
-        flexDirection: 'row',
-        gap: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: 11,
-        paddingVertical: 8,
-    },
-    modeButtonSelected: {
-        borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.surface.selected,
-    },
-    modeButtonText: {
-        ...Typography.rowMeta(),
-        color: theme.colors.text.primary,
     },
     targetRow: {
         flexDirection: 'row',
@@ -1280,6 +1105,20 @@ const styles = StyleSheet.create((theme) => ({
     unavailableText: {
         ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
+    },
+    sourceRemediation: {
+        minHeight: minimumInteractiveTargetSize,
+        minWidth: minimumInteractiveTargetSize,
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        gap: 6,
+        borderRadius: 8,
+        paddingHorizontal: 4,
+    },
+    sourceRemediationText: {
+        ...Typography.rowMeta(),
+        color: theme.colors.accent.blue,
     },
     disabled: {
         opacity: 0.56,

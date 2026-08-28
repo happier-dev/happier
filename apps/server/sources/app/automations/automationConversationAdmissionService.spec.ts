@@ -33,12 +33,12 @@ const bridgeCaller = {
     machineId: "machine-1",
     machineInstallationId: "installation-1",
     materializationId: "materialization-slack-1",
+    immutableGenerationId: "generation-slack-1",
 } as const;
 
 const input = {
     automationId: "automation-1",
     bindingId: "binding-1",
-    templateVersion: 3,
     occurrenceId: "slack:event:1",
     occurredAt: 1_700_000_000_000,
     sender: { id: "U-123" },

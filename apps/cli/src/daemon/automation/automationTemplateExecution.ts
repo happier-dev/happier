@@ -4,19 +4,16 @@ import {
   AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
   AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
   AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
-  AutomationRunExecutionInputV1Schema,
   BackendTargetRefV2Schema,
-  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
   materializeAutomationRunPromptV1,
-  type CodexBackendMode,
   normalizeBackendTargetRefV2InputToV2,
-  normalizeCodexBackendMode,
   normalizeAutomationTemplateEnvelopeStoredRead,
   openAccountScopedBlobCiphertext,
   type SessionAuthoringCheckoutCreationDraftV1,
   SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
+  RuntimeDescriptorV1Schema,
 } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -25,9 +22,7 @@ import {
   SpawnSessionTerminalSchema,
 } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { decodeBase64, decryptLegacy } from '@/api/encryption';
-
-const MAX_EXECUTION_INPUT_ENVELOPE_CHARS = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
-const UTF8_ENCODER = new TextEncoder();
+import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from '@/rpc/handlers/spawnRuntimeSelection';
 
 const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
@@ -50,7 +45,14 @@ const TemplateSchema = z.object({
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
   windowsTerminalWindowName: z.string().optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+  /**
+   * Released remote-dev V2 account-template ingress only. Current writers
+   * use runtimeDescriptorV1. Remove when those stored templates are no longer
+   * accepted by the Automation worker.
+   */
   experimentalCodexAcp: z.boolean().optional(),
+  /** Same released remote-dev V2 account-template ingress as above. */
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   agentModeId: z.string().optional(),
   existingSessionId: z.string().trim().min(1).optional(),
@@ -79,14 +81,6 @@ export type AutomationClaimedRunPayload = Readonly<{
   };
 }>;
 
-export type AutomationFrozenRunPayload = Readonly<{
-  run: {
-    id: string;
-    automationId: string;
-    executionInputEnvelope: string | null;
-  };
-}>;
-
 export type ParsedAutomationExecution = Readonly<{
   targetType: 'new_session' | 'existing_session';
   directory: string;
@@ -108,8 +102,7 @@ export type ParsedAutomationExecution = Readonly<{
   windowsRemoteSessionLaunchMode?: SpawnSessionOptions['windowsRemoteSessionLaunchMode'];
   windowsRemoteSessionConsole?: SpawnSessionOptions['windowsRemoteSessionConsole'];
   windowsTerminalWindowName?: SpawnSessionOptions['windowsTerminalWindowName'];
-  experimentalCodexAcp?: boolean;
-  codexBackendMode?: CodexBackendMode;
+  runtimeDescriptorV1?: SpawnSessionOptions['runtimeDescriptorV1'];
   agentModeId?: string;
   existingSessionId?: string;
   sessionEncryptionMode?: 'e2ee' | 'plain';
@@ -140,8 +133,8 @@ type AutomationTemplatePromptMaterializationResult =
 /**
  * Renders a released V2 Definition's prompt through the one Protocol token
  * materializer. This adapter never carries trigger evidence: its only writer
- * freezes `scheduled`/`manual` Runs, which `parseAutomationRunExecutionInput`
- * rechecks before reaching here. The template is built locally, so the only
+ * is constrained by the released V2 representability adapter before the
+ * worker reaches here. The template is built locally, so the only
  * way it can fail the Protocol template shape is its prompt byte ceiling.
  */
 export function materializeAutomationTemplatePrompt(params: Readonly<{
@@ -253,7 +246,14 @@ export function parseAutomationTemplateExecution(
   }
 
   const template = parsed.data;
-  const codexBackendMode = normalizeCodexBackendMode(template.codexBackendMode);
+  const runtimeDescriptorV1 = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+    agentId: template.backendTarget?.sourceKind === 'built_in'
+      ? template.backendTarget.backendId
+      : template.agent,
+    codexBackendMode: template.codexBackendMode,
+    experimentalCodexAcp: template.experimentalCodexAcp,
+    runtimeDescriptorV1: template.runtimeDescriptorV1,
+  }).runtimeDescriptorV1;
 
   if (payload.automation.targetType === 'existing_session' && !template.existingSessionId) {
     return invalidAutomationTemplate('Invalid automation template: existingSessionId is required for existing_session target');
@@ -310,8 +310,7 @@ export function parseAutomationTemplateExecution(
       ...(typeof template.windowsTerminalWindowName === 'string'
         ? { windowsTerminalWindowName: template.windowsTerminalWindowName }
         : {}),
-      ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
-      ...(codexBackendMode !== null ? { codexBackendMode } : {}),
+      ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
       ...(template.agentModeId ? { agentModeId: template.agentModeId } : {}),
       ...(template.existingSessionId ? { existingSessionId: template.existingSessionId } : {}),
       ...(template.sessionEncryptionMode ? { sessionEncryptionMode: template.sessionEncryptionMode } : {}),
@@ -321,75 +320,6 @@ export function parseAutomationTemplateExecution(
       ...(typeof template.displayText === 'string' && template.displayText.trim().length > 0
         ? { displayText: template.displayText }
         : {}),
-    },
-  };
-}
-
-/**
- * V3 execution reads only the immutable Run recipe. Retained Runs without one
- * are deliberately not reconstructed from the current Automation definition.
- */
-export function parseAutomationRunExecutionInput(
-  payload: AutomationFrozenRunPayload,
-  encryption?: AutomationTemplateEncryption,
-): AutomationTemplateExecutionParseResult {
-  const raw = payload.run.executionInputEnvelope;
-  if (raw === null) {
-    return invalidAutomationTemplate('Frozen automation execution input is unavailable');
-  }
-  if (
-    raw.length > MAX_EXECUTION_INPUT_ENVELOPE_CHARS
-    || UTF8_ENCODER.encode(raw).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
-  ) {
-    return invalidAutomationTemplate('Invalid frozen automation execution input: envelope too large');
-  }
-
-  let parsedRaw: unknown;
-  try {
-    parsedRaw = JSON.parse(raw);
-  } catch {
-    return invalidAutomationTemplate('Invalid frozen automation execution input JSON');
-  }
-  const recipe = AutomationRunExecutionInputV1Schema.safeParse(parsedRaw);
-  if (!recipe.success) {
-    return invalidAutomationTemplate('Invalid frozen automation execution input');
-  }
-  // The only V2 writer freezes `scheduled`/`manual` Runs. Refuse any other
-  // origin rather than silently materializing its evidence as empty input.
-  if (recipe.data.origin.kind !== 'scheduled' && recipe.data.origin.kind !== 'manual') {
-    return invalidAutomationTemplate('Invalid frozen automation execution input: unsupported origin');
-  }
-
-  const parsedTemplate = parseAutomationTemplateExecution({
-    run: {
-      id: payload.run.id,
-      automationId: payload.run.automationId,
-    },
-    automation: {
-      id: payload.run.automationId,
-      name: 'Frozen automation execution input',
-      enabled: true,
-      targetType: recipe.data.targetType,
-      templateCiphertext: recipe.data.templateCiphertext,
-    },
-  }, encryption);
-  if (!parsedTemplate.ok) {
-    return parsedTemplate;
-  }
-
-  const materialized = materializeAutomationTemplatePrompt({
-    prompt: parsedTemplate.value.prompt,
-  });
-  if (!materialized.ok) {
-    return materialized;
-  }
-
-  const { prompt: _prompt, ...executionWithoutPrompt } = parsedTemplate.value;
-  return {
-    ok: true,
-    value: {
-      ...executionWithoutPrompt,
-      ...(materialized.prompt !== undefined ? { prompt: materialized.prompt } : {}),
     },
   };
 }

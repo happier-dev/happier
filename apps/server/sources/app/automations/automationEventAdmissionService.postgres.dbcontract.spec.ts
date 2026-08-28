@@ -7,11 +7,12 @@ import {
     buildAutomationPluginEventOccurrenceEvidenceV1,
     deriveAutomationOccurrenceKeyV1,
     normalizePluginReleaseFactsV1,
-    serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationSourceSelectorIdV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { db, initDbPostgres } from "@/storage/db";
@@ -25,8 +26,10 @@ const SERVER_IDENTITY_ID = `srv_eventAdmissionPg${randomUUID().split("-").join("
 const PLUGIN_ID = "com.happier.postgres-event-admission-contract";
 const PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
 
 function releaseFacts() {
+    const sourceConfigSchema = { type: "object", additionalProperties: false } as const;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: PLUGIN_ID, version: PLUGIN_VERSION },
         archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -39,7 +42,16 @@ function releaseFacts() {
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: [],
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: sourceConfigSchema,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
+                }],
                 events: [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -56,10 +68,8 @@ function releaseFacts() {
                         source: {
                             sourceContractVersion: 1,
                             supportedObservationTransports: ["checkpointedPull"],
-                            sourceConfigSchema: {
-                                type: "object",
-                                additionalProperties: false,
-                            },
+                            sourceConfigSchema,
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -76,7 +86,7 @@ function releaseFacts() {
 }
 
 function strictEventDefinitionRecipe(machineId: string): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: 1,
         template: { t: "plain", v: { v: 1, prompt: "native PostgreSQL Event contract" } },
@@ -101,6 +111,8 @@ function strictEventDefinitionRecipe(machineId: string): string {
 
 function triggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
+    triggerId: string;
+    triggerRevision: number;
     sourceSelectorId: AutomationSourceSelectorIdV1;
 }>): string {
     const definition: PluginJsonValueV2 = {
@@ -116,7 +128,8 @@ function triggerDefinitionEnvelope(params: Readonly<{
         binding: {
             v: 1,
             automationId: params.automationId,
-            templateVersion: 1,
+            triggerId: params.triggerId,
+            triggerRevision: params.triggerRevision,
             triggerKind: "pluginEvent",
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
             sourceSelectorId: params.sourceSelectorId,
@@ -167,15 +180,15 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             if (dbConnected) await db.$disconnect();
         });
 
-        it("serializes concurrent exact occurrences without duplicate Run wakes and keeps same-source Automations independent", async () => {
+        it("serializes concurrent exact occurrences and admits one Run per same-source trigger", async () => {
             const suffix = randomUUID();
             const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
-            const secondSourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
             const machineId = `postgres-event-admission-machine-${suffix}`;
             const machineInstallationId = `postgres-event-admission-installation-${suffix}`;
             const materializationId = `postgres-event-admission-materialization-${suffix}`;
             const automationId = `postgres-event-admission-automation-${suffix}`;
-            const secondAutomationId = `postgres-event-admission-second-automation-${suffix}`;
+            const triggerId = `postgres-event-admission-trigger-${suffix}`;
+            const secondTriggerId = `postgres-event-admission-trigger-second-${suffix}`;
             const account = await db.account.create({
                 data: { publicKey: null, encryptionMode: "plain" },
                 select: { id: true },
@@ -229,36 +242,45 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     observedAt: new Date("2026-08-10T00:00:00.000Z"),
                 },
             });
-            const createAutomation = async (params: Readonly<{
-                automationId: string;
-                sourceSelectorId: AutomationSourceSelectorIdV1;
-            }>) => await db.automation.create({
+            await db.automation.create({
                 data: {
-                    id: params.automationId,
+                    id: automationId,
                     accountId: account.id,
                     name: "PostgreSQL Event admission contract",
                     enabled: true,
-                    scheduleKind: null,
                     targetType: "new_session",
                     templateCiphertext: strictEventDefinitionRecipe(machineId),
                     templateVersion: 1,
-                    triggerKind: "pluginEvent",
-                    triggerEventPluginId: PLUGIN_ID,
-                    triggerEventLocalId: EVENT_LOCAL_ID,
-                    triggerSourceSelectorId: params.sourceSelectorId,
-                    triggerSourceContractVersion: 1,
-                    triggerObservationTransport: "checkpointedPull",
+                },
+            });
+            const createTrigger = async (params: Readonly<{
+                triggerId: string;
+                sourceSelectorId: AutomationSourceSelectorIdV1;
+            }>) => await db.automationTrigger.create({
+                data: {
+                    id: params.triggerId,
+                    automationId,
+                    kind: "pluginEvent",
+                    enabled: true,
+                    revision: 1,
+                    eventPluginId: PLUGIN_ID,
+                    eventLocalId: EVENT_LOCAL_ID,
+                    sourceSelectorId: params.sourceSelectorId,
+                    sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull",
                     watcherMachineId: machineId,
                     watcherMachineInstallationId: machineInstallationId,
                     watcherPluginId: PLUGIN_ID,
                     watcherMaterializationId: materializationId,
-                    triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                        automationId: params.automationId,
+                    definitionEnvelope: triggerDefinitionEnvelope({
+                        automationId,
+                        triggerId: params.triggerId,
+                        triggerRevision: 1,
                         sourceSelectorId: params.sourceSelectorId,
                     }),
                 },
             });
-            await createAutomation({ automationId, sourceSelectorId });
+            await createTrigger({ triggerId, sourceSelectorId });
             await db.automationAssignment.create({
                 data: { automationId, machineId, enabled: true },
             });
@@ -281,11 +303,13 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                 action: string,
                 definitions: readonly Readonly<{
                     automationId: string;
-                    templateVersion: number;
+                    triggerId: string;
+                    triggerRevision: number;
                     sourceSelectorId: AutomationSourceSelectorIdV1;
                 }>[] = [{
                     automationId,
-                    templateVersion: 1,
+                    triggerId,
+                    triggerRevision: 1,
                     sourceSelectorId,
                 }],
             ) => ({
@@ -362,21 +386,31 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                 select: {
                     state: true,
                     revision: true,
-                    originKind: true,
-                    originOccurredAt: true,
+                    triggerId: true,
+                    causeKind: true,
+                    causeTriggerKind: true,
+                    causeTriggerRevision: true,
+                    causeEventPluginId: true,
+                    causeEventLocalId: true,
+                    causeOccurredAt: true,
                     occurrenceKey: true,
                     occurrenceEvidenceEqualityTag: true,
-                    originSourceSelectorId: true,
+                    causeSourceSelectorId: true,
                     triggerEvidenceEnvelope: true,
                 },
             })).resolves.toEqual({
                 state: "queued",
                 revision: 0,
-                originKind: "pluginEvent",
-                originOccurredAt: new Date(1_723_247_200_000),
-                occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
+                triggerId,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeOccurredAt: new Date(1_723_247_200_000),
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrenceEvidence }),
                 occurrenceEvidenceEqualityTag: null,
-                originSourceSelectorId: sourceSelectorId,
+                causeSourceSelectorId: sourceSelectorId,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: occurrenceEvidence }),
             });
             expect((await currentness()).accountCurrentness.version).toBe(
@@ -413,18 +447,16 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             }));
 
             emitUpdate.mockClear();
-            await createAutomation({
-                automationId: secondAutomationId,
-                sourceSelectorId: secondSourceSelectorId,
-            });
-            await db.automationAssignment.create({
-                data: { automationId: secondAutomationId, machineId, enabled: true },
+            await createTrigger({
+                triggerId: secondTriggerId,
+                sourceSelectorId,
             });
             const secondAdmission = await admit({
                 input: eventInput("opened", [{
-                    automationId: secondAutomationId,
-                    templateVersion: 1,
-                    sourceSelectorId: secondSourceSelectorId,
+                    automationId,
+                    triggerId: secondTriggerId,
+                    triggerRevision: 1,
+                    sourceSelectorId,
                 }]),
                 hostEvidence: await currentness(),
             });
@@ -433,34 +465,55 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             ]);
             const secondResult = secondAdmission.results[0];
             if (!secondResult || secondResult.kind !== "admitted") {
-                throw new Error("same-source second Automation admission must create a Run");
+                throw new Error("same-source second trigger admission must create a Run");
             }
             const secondRunId = secondResult.runId;
             expect(secondRunId).not.toBe(runId);
             expect(await db.automationRun.findMany({
                 where: { accountId: account.id },
-                select: { automationId: true, occurrenceKey: true, originSourceSelectorId: true },
-                orderBy: { automationId: "asc" },
+                select: { automationId: true, triggerId: true, occurrenceKey: true, causeSourceSelectorId: true },
+                orderBy: { triggerId: "asc" },
             })).resolves.toEqual([
                 {
                     automationId,
-                    occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
-                    originSourceSelectorId: sourceSelectorId,
+                    triggerId,
+                    occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrenceEvidence }),
+                    causeSourceSelectorId: sourceSelectorId,
                 },
                 {
-                    automationId: secondAutomationId,
-                    occurrenceKey: deriveAutomationOccurrenceKeyV1(
-                        buildAutomationPluginEventOccurrenceEvidenceV1({
+                    automationId,
+                    triggerId: secondTriggerId,
+                    occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                        triggerId: secondTriggerId,
+                        evidence: buildAutomationPluginEventOccurrenceEvidenceV1({
                             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
-                            sourceSelectorId: secondSourceSelectorId,
+                            sourceSelectorId,
                             occurrenceId: `postgres-event-admission-delivery-${suffix}`,
                             occurredAt: 1_723_247_200_000,
                             payload: { action: "opened" },
                         }),
-                    ),
-                    originSourceSelectorId: secondSourceSelectorId,
+                    }),
+                    causeSourceSelectorId: sourceSelectorId,
                 },
             ]);
+
+            await expect(admit({
+                input: eventInput("opened", [
+                    { automationId, triggerId, triggerRevision: 1, sourceSelectorId },
+                    {
+                        automationId,
+                        triggerId: secondTriggerId,
+                        triggerRevision: 1,
+                        sourceSelectorId,
+                    },
+                ]),
+                hostEvidence: await currentness(),
+            })).resolves.toEqual({
+                results: [
+                    { kind: "rejoined", runId, checkpointSafe: true },
+                    { kind: "rejoined", runId: secondRunId, checkpointSafe: true },
+                ],
+            });
 
             await expect(admit({
                 input: eventInput("closed"),

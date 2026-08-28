@@ -1,39 +1,16 @@
 import React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
-
-const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 24,
-        paddingVertical: 24,
-        gap: 10,
-    },
-    title: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: theme.colors.text.primary,
-    },
-    body: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-    },
-}));
 
 export function AutomationsEmptyState(props: Readonly<{ title: string; body: string }>) {
     const { theme } = useUnistyles();
-    const styles = stylesheet;
-
     return (
-        <View style={styles.container}>
-            <Icon name="timer" size={56} color={theme.colors.text.secondary} />
-            <Text style={styles.title}>{props.title}</Text>
-            <Text style={styles.body}>{props.body}</Text>
-        </View>
+        <EmptyState
+            icon={<Icon name="timer" size={56} color={theme.colors.text.secondary} />}
+            title={props.title}
+            subtitle={props.body}
+        />
     );
 }

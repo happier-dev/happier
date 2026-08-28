@@ -3,42 +3,32 @@ import {
     AutomationEventAdmitHttpResultV1Schema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
-    MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
     compilePluginJsonSchema,
     buildAutomationPluginEventOccurrenceEvidenceV1,
     createCanonicalJsonSigningInput,
     deriveAutomationOccurrenceKeyV1,
     evaluateAutomationEventFilterV1,
-    freezeAutomationRunPluginEventExecutionRecipeV1,
     isAutomationEventObservationFreshV1,
     isAutomationTriggerEvidenceCiphertextV1,
     isSameAutomationEventDeclarationReleaseV1,
     isValidPluginJsonSchemaValue,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
-    parseAutomationRunExecutionRecipeV1,
-    validateAutomationRunExecutionRecipeOuterV1,
     type AutomationEventAdmitHostEvidenceV1,
     type AutomationEventAdmitContinuationV1,
     type AutomationEventAdmitHttpInputV1,
     type AutomationEventAdmitItemResultV1,
     type AutomationEventAdmitHttpResultV1,
     type AutomationOccurrenceEvidenceV1,
-    type AutomationRunExecutionRecipeV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 
-import {
-    emitAutomationRunTransition,
-    emitAutomationRunUpdatedToMachineOnly,
-} from "@/app/automations/automationChangePublisher";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     validateCurrentPluginWebhookInvocationReferenceTxV1,
     type PluginWebhookInvocationReferenceValidationResultV1,
 } from "@/app/plugins/webhooks/claimStore";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { afterTx, inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
@@ -51,24 +41,21 @@ import {
     type CurrentAutomationEventContributionV1,
 } from "./automationEventCurrentness";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
-import { automationRunItemSelect } from "./automationPersistenceSelect";
 import {
     classifyPlainAutomationOccurrenceEvidence,
     encodePlainAutomationOccurrenceEvidence,
-    findAutomationOccurrenceTx,
+    findAutomationTriggerOccurrencesTx,
     rejoinAutomationOccurrenceInsertRace,
 } from "./automationOccurrencePersistence";
 import {
-    assertAutomationExecutionInputEnvelopeOuterForMode,
     validateAutomationStoredContentEnvelopeOuterForMode,
     readAutomationTriggerDefinitionBinding,
     validateAutomationTriggerDefinitionEnvelopeOuterForMode,
 } from "./automationStoredContentRead";
 import {
-    AUTOMATION_RUN_TERMINAL_STATES,
-    initialAutomationExecutionDispatchStateForRun,
-    type AutomationRunItem,
-} from "./automationTypes";
+    admitAutomationRunsTx,
+    type AutomationRunAdmissionIneligibleReason,
+} from "./automationRunAdmissionService";
 
 export type AutomationEventAdmissionCallerV1 = AutomationEventCallerV1;
 
@@ -87,45 +74,98 @@ export class AutomationEventAdmissionError extends Error {
 type Candidate = Readonly<{
     groupKey: string;
     automationId: string;
+    triggerId: string;
+    triggerRevision: number;
     occurrenceKey: string;
     sourceSelectorId: string;
-    originOccurredAt: Date;
+    occurredAt: Date;
     evidence: AutomationOccurrenceEvidenceV1;
     occurrenceEvidenceEqualityTag: string | null;
     triggerEvidenceEnvelope: string;
-    executionInputEnvelope: string;
+    executionTriggerEvidenceEnvelope: string;
 }>;
 
 type EncryptedCandidate = Readonly<{
     group: DefinitionGroup<EncryptedDefinition>;
     automationId: string;
+    triggerId: string;
+    triggerRevision: number;
     occurrenceKey: string;
     sourceSelectorId: string;
-    originOccurredAt: Date;
+    occurredAt: Date;
     occurrenceEvidenceEqualityTag: string;
     triggerEvidenceEnvelope: string;
-    executionInputEnvelope: string;
 }>;
 
 type ExistingOccurrenceRow = Readonly<{
     id: string;
-    originKind: string;
-    originOccurredAt: Date | null;
+    triggerId: string | null;
+    causeKind: string;
+    causeTriggerKind: string | null;
+    causeEventPluginId: string | null;
+    causeEventLocalId: string | null;
+    causeOccurredAt: Date | null;
     occurrenceKey: string | null;
-    originSourceSelectorId: string | null;
+    causeSourceSelectorId: string | null;
     occurrenceEvidenceEqualityTag: string | null;
     triggerEvidenceEnvelope: string | null;
 }>;
 
 const existingEventOccurrenceSelect = {
     id: true,
-    originKind: true,
-    originOccurredAt: true,
+    triggerId: true,
+    causeKind: true,
+    causeTriggerKind: true,
+    causeEventPluginId: true,
+    causeEventLocalId: true,
+    causeOccurredAt: true,
     occurrenceKey: true,
-    originSourceSelectorId: true,
+    causeSourceSelectorId: true,
     occurrenceEvidenceEqualityTag: true,
     triggerEvidenceEnvelope: true,
 } satisfies Prisma.AutomationRunSelect;
+
+const currentEventAdmissionTriggerSelect = {
+    id: true,
+    automationId: true,
+    enabled: true,
+    deletedAt: true,
+    revision: true,
+    kind: true,
+    eventPluginId: true,
+    eventLocalId: true,
+    sourceSelectorId: true,
+    sourceContractVersion: true,
+    observationTransport: true,
+    webhookEndpointId: true,
+    observationStartsAt: true,
+    watcherMachineId: true,
+    watcherMachineInstallationId: true,
+    watcherPluginId: true,
+    watcherMaterializationId: true,
+    definitionEnvelope: true,
+    automation: { select: { id: true, enabled: true, deletedAt: true } },
+} satisfies Prisma.AutomationTriggerSelect;
+
+type CurrentEventAdmissionTrigger = Prisma.AutomationTriggerGetPayload<{
+    select: typeof currentEventAdmissionTriggerSelect;
+}>;
+
+async function loadCurrentEventAdmissionTriggersTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    triggerIds: readonly string[];
+}>): Promise<ReadonlyMap<string, CurrentEventAdmissionTrigger>> {
+    if (params.triggerIds.length === 0) return new Map();
+    const rows = await params.tx.automationTrigger.findMany({
+        where: {
+            id: { in: [...new Set(params.triggerIds)] },
+            automation: { accountId: params.accountId },
+        },
+        select: currentEventAdmissionTriggerSelect,
+    });
+    return new Map(rows.map((row) => [row.id, row]));
+}
 
 type EncryptedDefinition = Extract<
     AutomationEventAdmitHostEvidenceV1,
@@ -137,6 +177,10 @@ type DefinitionGroup<TDefinition = AutomationEventAdmitHttpInputV1["definitions"
     definition: TDefinition;
     indexes: readonly number[];
 }>;
+
+function occurrenceLookupKey(triggerId: string, occurrenceKey: string): string {
+    return JSON.stringify([triggerId, occurrenceKey]);
+}
 
 function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict"):
     AutomationEventAdmitItemResultV1 {
@@ -151,6 +195,16 @@ function skipped(reason: "filtered" | "beforeObservationStart" | "outsideFreshne
 function refresh(reason: "definitionStale" | "observationTargetChanged"):
     AutomationEventAdmitItemResultV1 {
     return { kind: "refreshDefinition", reason, checkpointSafe: false };
+}
+
+function ineligibleAdmissionResult(
+    reason: AutomationRunAdmissionIneligibleReason,
+): AutomationEventAdmitItemResultV1 {
+    if (reason === "triggerRevisionMismatch") return refresh("definitionStale");
+    if (reason === "triggerKindMismatch") return refresh("observationTargetChanged");
+    if (reason === "capacity") return blocked("capacity");
+    if (reason === "definitionInvalid") return skipped("occurrenceRejected");
+    return skipped("definitionRetired");
 }
 
 /**
@@ -183,14 +237,15 @@ function groupRequestDefinitions<TDefinition>(
 function groupDefinitions(input: AutomationEventAdmitHttpInputV1): readonly DefinitionGroup[] {
     return groupRequestDefinitions(input.definitions, (definition) => [
         definition.automationId,
-        definition.templateVersion,
+        definition.triggerId,
+        definition.triggerRevision,
         definition.sourceSelectorId,
     ].join("\u0000"));
 }
 
 /**
  * Encrypted definitions carry their own host-derived occurrence key, so the
- * durable `(automationId, occurrenceKey)` identity is the request-local group.
+ * durable `(triggerId, occurrenceKey)` identity is the request-local group.
  * Positions that claim one identity with different sealed evidence cannot both
  * be honoured; they are refused before any mutation instead of letting the
  * unique-constraint exception choose the outcome.
@@ -205,7 +260,7 @@ function groupEncryptedDefinitions(
     const conflicting: DefinitionGroup<EncryptedDefinition>[] = [];
     for (const group of groupRequestDefinitions(
         definitions,
-        (definition) => [definition.automationId, definition.occurrenceKey].join("\u0000"),
+        (definition) => [definition.triggerId, definition.occurrenceKey].join("\u0000"),
     )) {
         const representative = createCanonicalJsonSigningInput(group.definition);
         const identical = group.indexes.every((index) => (
@@ -266,15 +321,20 @@ async function assertAllResultsWithReadyContinuationTx(params: Readonly<{
 
 function existingEvidenceDisposition(params: Readonly<{
     row: ExistingOccurrenceRow;
+    triggerId: string;
     occurrenceKey: string;
     sourceSelectorId: string;
     evidence: AutomationOccurrenceEvidenceV1;
 }>): "match" | "mismatch" | "unavailable" {
     if (
-        params.row.originKind !== "pluginEvent"
-        || params.row.originOccurredAt?.getTime() !== params.evidence.occurredAt
+        params.row.triggerId !== params.triggerId
+        || params.row.causeKind !== "trigger"
+        || params.row.causeTriggerKind !== "pluginEvent"
+        || params.row.causeEventPluginId !== params.evidence.eventRef.pluginId
+        || params.row.causeEventLocalId !== params.evidence.eventRef.localId
+        || params.row.causeOccurredAt?.getTime() !== params.evidence.occurredAt
         || params.row.occurrenceKey !== params.occurrenceKey
-        || params.row.originSourceSelectorId !== params.sourceSelectorId
+        || params.row.causeSourceSelectorId !== params.sourceSelectorId
         || params.row.triggerEvidenceEnvelope === null
     ) return "mismatch";
 
@@ -288,16 +348,22 @@ function existingEvidenceDisposition(params: Readonly<{
 
 function encryptedExistingEvidenceDisposition(params: Readonly<{
     row: ExistingOccurrenceRow;
+    triggerId: string;
+    eventRef: Readonly<{ pluginId: string; localId: string }>;
     occurrenceKey: string;
     sourceSelectorId: string;
     occurredAt: number;
     occurrenceEvidenceEqualityTag: string;
 }>): "match" | "mismatch" | "unavailable" {
     if (
-        params.row.originKind !== "pluginEvent"
-        || params.row.originOccurredAt?.getTime() !== params.occurredAt
+        params.row.triggerId !== params.triggerId
+        || params.row.causeKind !== "trigger"
+        || params.row.causeTriggerKind !== "pluginEvent"
+        || params.row.causeEventPluginId !== params.eventRef.pluginId
+        || params.row.causeEventLocalId !== params.eventRef.localId
+        || params.row.causeOccurredAt?.getTime() !== params.occurredAt
         || params.row.occurrenceKey !== params.occurrenceKey
-        || params.row.originSourceSelectorId !== params.sourceSelectorId
+        || params.row.causeSourceSelectorId !== params.sourceSelectorId
         || params.row.triggerEvidenceEnvelope === null
         || params.row.occurrenceEvidenceEqualityTag !== params.occurrenceEvidenceEqualityTag
     ) return "mismatch";
@@ -337,20 +403,9 @@ function hostEvidenceMatchesAccountCurrentness(params: Readonly<{
         && params.hostEvidence.accountCurrentness.version === params.account.version;
 }
 
-function targetTypeForExecutionRecipe(recipe: AutomationRunExecutionRecipeV1): "new_session" | "existing_session" | "execution_run" {
-    switch (recipe.target.kind) {
-        case "newSession":
-            return "new_session";
-        case "existingSession":
-            return "existing_session";
-        case "executionRun":
-            return "execution_run";
-    }
-}
-
 function selectedPullTargetMatchesCaller(
-    automation: Readonly<{
-        triggerObservationTransport: string | null;
+    trigger: Readonly<{
+        observationTransport: string | null;
         watcherMachineId: string | null;
         watcherMachineInstallationId: string | null;
         watcherPluginId: string | null;
@@ -358,11 +413,11 @@ function selectedPullTargetMatchesCaller(
     }>,
     caller: AutomationEventAdmissionCallerV1,
 ): boolean {
-    return automation.triggerObservationTransport === "checkpointedPull"
-        && automation.watcherMachineId === caller.machineId
-        && automation.watcherMachineInstallationId === caller.machineInstallationId
-        && automation.watcherPluginId === caller.pluginId
-        && automation.watcherMaterializationId === caller.materializationId;
+    return trigger.observationTransport === "checkpointedPull"
+        && trigger.watcherMachineId === caller.machineId
+        && trigger.watcherMachineInstallationId === caller.machineInstallationId
+        && trigger.watcherPluginId === caller.pluginId
+        && trigger.watcherMaterializationId === caller.materializationId;
 }
 
 function validatedWebhookTargetMatchesCaller(
@@ -376,6 +431,26 @@ function validatedWebhookTargetMatchesCaller(
         && target.materialization.machineId === caller.machineId
         && target.materialization.materializationId === caller.materializationId
         && target.machineInstallationId === caller.machineInstallationId;
+}
+
+/** One bounded admission request must not re-read identical webhook authority per definition. */
+export function createRequestLocalDurablePushCurrentnessReads<TValidation, TEndpoint>(params: Readonly<{
+    validateInvocation: () => Promise<TValidation>;
+    readEndpoint: (webhookEndpointId: string) => Promise<TEndpoint>;
+}>) {
+    let validation: Promise<TValidation> | null = null;
+    const endpoints = new Map<string, Promise<TEndpoint>>();
+    return {
+        validateInvocation: async () => await (validation ??= params.validateInvocation()),
+        readEndpoint: async (webhookEndpointId: string) => {
+            let endpoint = endpoints.get(webhookEndpointId);
+            if (!endpoint) {
+                endpoint = params.readEndpoint(webhookEndpointId);
+                endpoints.set(webhookEndpointId, endpoint);
+            }
+            return await endpoint;
+        },
+    };
 }
 
 async function admitEncryptedAutomationEventV1(params: Readonly<{
@@ -434,22 +509,34 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
         for (const group of conflicting) {
             assignGroupResult(results, group, blocked("occurrenceConflict"));
         }
+        const existingOccurrences = await findAutomationTriggerOccurrencesTx({
+            tx,
+            accountId: params.accountId,
+            occurrences: groups.map(({ definition }) => ({
+                triggerId: definition.triggerId,
+                occurrenceKey: definition.occurrenceKey,
+            })),
+            select: existingEventOccurrenceSelect,
+        });
+        const existingByOccurrence = new Map(existingOccurrences.map((row) => [
+            occurrenceLookupKey(row.triggerId!, row.occurrenceKey!),
+            row,
+        ]));
         const missing: DefinitionGroup<EncryptedDefinition>[] = [];
         for (const group of groups) {
             const definition = group.definition;
-            const existing = await findAutomationOccurrenceTx({
-                tx,
-                accountId: params.accountId,
-                automationId: definition.automationId,
-                occurrenceKey: definition.occurrenceKey,
-                select: existingEventOccurrenceSelect,
-            });
+            const existing = existingByOccurrence.get(occurrenceLookupKey(
+                definition.triggerId,
+                definition.occurrenceKey,
+            )) ?? null;
             if (existing === null) {
                 missing.push(group);
                 continue;
             }
             const disposition = encryptedExistingEvidenceDisposition({
                 row: existing,
+                triggerId: definition.triggerId,
+                eventRef: params.hostEvidence.eventRef,
                 occurrenceKey: definition.occurrenceKey,
                 sourceSelectorId: definition.sourceSelectorId,
                 occurredAt: definition.occurredAt,
@@ -523,49 +610,51 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             });
         }
 
+        const currentTriggers = await loadCurrentEventAdmissionTriggersTx({
+            tx,
+            accountId: params.accountId,
+            triggerIds: missing.map(({ definition }) => definition.triggerId),
+        });
+        const durablePushCurrentness = params.hostEvidence.webhookInvocationReference
+            ? createRequestLocalDurablePushCurrentnessReads({
+                validateInvocation: async () => await validateCurrentPluginWebhookInvocationReferenceTxV1({
+                    tx,
+                    accountId: params.accountId,
+                    reference: params.hostEvidence.webhookInvocationReference!,
+                    serverIdentityId: params.serverIdentityId,
+                }),
+                readEndpoint: async (webhookEndpointId: string) =>
+                    await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
+                        tx,
+                        accountId: params.accountId,
+                        webhookEndpointId,
+                        caller: params.caller,
+                        callerVersion,
+                    }),
+            })
+            : null;
         const candidates: EncryptedCandidate[] = [];
         for (const group of missing) {
             const definition = group.definition;
-            const automation = await tx.automation.findFirst({
-                where: { id: definition.automationId, accountId: params.accountId },
-                select: {
-                    id: true,
-                    enabled: true,
-                    deletedAt: true,
-                    templateVersion: true,
-                    targetType: true,
-                    templateCiphertext: true,
-                    triggerKind: true,
-                    triggerEventPluginId: true,
-                    triggerEventLocalId: true,
-                    triggerSourceSelectorId: true,
-                    triggerSourceContractVersion: true,
-                    triggerObservationTransport: true,
-                    triggerWebhookEndpointId: true,
-                    triggerObservationStartsAt: true,
-                    watcherMachineId: true,
-                    watcherMachineInstallationId: true,
-                    watcherPluginId: true,
-                    watcherMaterializationId: true,
-                    triggerDefinitionEnvelope: true,
-                },
-            });
-            if (!automation || !automation.enabled || automation.deletedAt !== null
-                || automation.triggerKind !== "pluginEvent") {
+            const trigger = currentTriggers.get(definition.triggerId);
+            const automation = trigger?.automation;
+            if (!trigger || trigger.automationId !== definition.automationId
+                || !automation || !automation.enabled || automation.deletedAt !== null
+                || !trigger.enabled || trigger.deletedAt !== null || trigger.kind !== "pluginEvent") {
                 assignGroupResult(results, group, skipped("definitionRetired"));
                 continue;
             }
-            if (automation.templateVersion !== definition.templateVersion) {
+            if (trigger.revision !== definition.triggerRevision) {
                 assignGroupResult(results, group, refresh("definitionStale"));
                 continue;
             }
             if (
-                automation.triggerEventPluginId !== params.hostEvidence.eventRef.pluginId
-                || automation.triggerEventLocalId !== params.hostEvidence.eventRef.localId
-                || automation.triggerSourceSelectorId !== definition.sourceSelectorId
-                || automation.triggerSourceContractVersion !== definition.sourceContractVersion
+                trigger.eventPluginId !== params.hostEvidence.eventRef.pluginId
+                || trigger.eventLocalId !== params.hostEvidence.eventRef.localId
+                || trigger.sourceSelectorId !== definition.sourceSelectorId
+                || trigger.sourceContractVersion !== definition.sourceContractVersion
                 || definition.sourceContractVersion !== event.automation.source.sourceContractVersion
-                || automation.triggerObservationTransport !== definition.observationTransport
+                || trigger.observationTransport !== definition.observationTransport
                 || !event.automation.source.supportedObservationTransports.includes(
                     definition.observationTransport,
                 )
@@ -577,34 +666,28 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             if (definition.observationTransport === "checkpointedPull") {
                 if (
                     params.hostEvidence.webhookInvocationReference !== undefined
-                    || !selectedPullTargetMatchesCaller(automation, params.caller)
+                    || !selectedPullTargetMatchesCaller(trigger, params.caller)
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
             } else if (definition.observationTransport === "durablePush") {
-                const webhookEndpointId = automation.triggerWebhookEndpointId;
+                const webhookEndpointId = trigger.webhookEndpointId;
                 const webhookContribution = readCurrentAutomationEventDurablePushWebhookContributionV1(event);
-                const reference = params.hostEvidence.webhookInvocationReference;
                 if (
                     webhookEndpointId === null
-                    || automation.triggerObservationStartsAt === null
+                    || trigger.observationStartsAt === null
                     || webhookContribution === null
                     || webhookContribution.pluginId !== params.hostEvidence.eventRef.pluginId
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
-                if (!reference) {
+                if (!durablePushCurrentness) {
                     assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
                 }
-                const validated = await validateCurrentPluginWebhookInvocationReferenceTxV1({
-                    tx,
-                    accountId: params.accountId,
-                    reference,
-                    serverIdentityId: params.serverIdentityId,
-                });
+                const validated = await durablePushCurrentness.validateInvocation();
                 if (validated.kind !== "ready") {
                     assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
@@ -620,13 +703,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
-                const currentEndpoint = await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
-                    tx,
-                    accountId: params.accountId,
-                    webhookEndpointId,
-                    caller: params.caller,
-                    callerVersion,
-                });
+                const currentEndpoint = await durablePushCurrentness.readEndpoint(webhookEndpointId);
                 if (
                     currentEndpoint === null
                     || !sameAutomationEventDurablePushWebhookContributionV1(
@@ -647,22 +724,23 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 continue;
             }
 
-            if (automation.triggerDefinitionEnvelope === null) {
+            if (trigger.definitionEnvelope === null) {
                 assignGroupResult(results, group, skipped("occurrenceRejected"));
                 continue;
             }
             const definitionBinding = readAutomationTriggerDefinitionBinding({
                 automationId: automation.id,
-                templateVersion: automation.templateVersion,
-                triggerKind: automation.triggerKind,
-                triggerEventPluginId: automation.triggerEventPluginId,
-                triggerEventLocalId: automation.triggerEventLocalId,
-                triggerSourceSelectorId: automation.triggerSourceSelectorId,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
+                triggerKind: trigger.kind,
+                triggerEventPluginId: trigger.eventPluginId,
+                triggerEventLocalId: trigger.eventLocalId,
+                triggerSourceSelectorId: trigger.sourceSelectorId,
             });
             const definitionOuter = definitionBinding === null
                 ? { kind: "contentInvalid" as const }
                 : validateAutomationTriggerDefinitionEnvelopeOuterForMode({
-                    raw: automation.triggerDefinitionEnvelope,
+                    raw: trigger.definitionEnvelope,
                     mode: "e2ee",
                     binding: definitionBinding,
                 });
@@ -671,128 +749,60 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 continue;
             }
 
-            const suppliedRecipe = parseAutomationRunExecutionRecipeV1(
-                definition.outcome.executionRecipe,
-            );
-            const suppliedOuter = suppliedRecipe.kind === "available"
-                ? validateAutomationRunExecutionRecipeOuterV1({
-                    recipe: suppliedRecipe.recipe,
-                    accountCurrentness: params.hostEvidence.accountCurrentness,
-                })
-                : { kind: "contentInvalid" as const };
-            const triggerEvidence = suppliedOuter.kind === "available"
-                ? suppliedOuter.recipe.triggerEvidence
-                : null;
-            const expectedRecipe = triggerEvidence === null
-                ? { kind: "contentInvalid" as const }
-                : freezeAutomationRunPluginEventExecutionRecipeV1({
-                    definitionRecipe: automation.templateCiphertext,
-                    templateVersion: automation.templateVersion,
-                    triggerEvidence,
-                });
-            const expectedTargetType = suppliedOuter.kind === "available"
-                ? targetTypeForExecutionRecipe(suppliedOuter.recipe)
-                : null;
-            if (
-                expectedRecipe.kind !== "available"
-                || expectedRecipe.serialized !== definition.outcome.executionRecipe
-                || suppliedOuter.kind !== "available"
-                || expectedTargetType !== automation.targetType
-                || triggerEvidence === null
-                || triggerEvidence.t !== "encrypted"
-                || !isAutomationTriggerEvidenceCiphertextV1(triggerEvidence.c)
-            ) {
-                assignGroupResult(results, group, skipped("occurrenceRejected"));
-                continue;
-            }
             candidates.push({
                 group,
                 automationId: automation.id,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
                 occurrenceKey: definition.occurrenceKey,
                 sourceSelectorId: definition.sourceSelectorId,
-                originOccurredAt: new Date(definition.occurredAt),
+                occurredAt: new Date(definition.occurredAt),
                 occurrenceEvidenceEqualityTag: definition.occurrenceEvidenceEqualityTag,
-                triggerEvidenceEnvelope: createCanonicalJsonSigningInput(triggerEvidence),
-                executionInputEnvelope: expectedRecipe.serialized,
+                triggerEvidenceEnvelope: createCanonicalJsonSigningInput(
+                    definition.triggerEvidenceEnvelope,
+                ),
             });
         }
 
-        const occupied = await tx.automationRun.count({
-            where: {
-                accountId: params.accountId,
-                originKind: { in: ["pluginEvent", "conversation"] },
-                state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-            },
-        });
-        if (occupied + candidates.length > MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
-            for (const candidate of candidates) assignGroupResult(results, candidate.group, blocked("capacity"));
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
-                results,
-            });
-        }
-
-        const newRuns: AutomationRunItem[] = [];
         const now = new Date();
-        for (const candidate of candidates) {
-            const run = await tx.automationRun.create({
-                data: {
-                    automationId: candidate.automationId,
-                    accountId: params.accountId,
-                    state: "queued",
-                    originKind: "pluginEvent",
-                    originOccurredAt: candidate.originOccurredAt,
+        const admissions = await admitAutomationRunsTx({
+            tx,
+            accountId: params.accountId,
+            admissions: candidates.map((candidate) => ({
+                automationId: candidate.automationId,
+                now,
+                cause: {
+                    kind: "trigger",
+                    triggerId: candidate.triggerId,
+                    triggerRevision: candidate.triggerRevision,
+                    triggerKind: "pluginEvent",
                     occurrenceKey: candidate.occurrenceKey,
-                    occurrenceEvidenceEqualityTag: candidate.occurrenceEvidenceEqualityTag,
-                    originSourceSelectorId: candidate.sourceSelectorId,
-                    triggerEvidenceEnvelope: candidate.triggerEvidenceEnvelope,
-                    executionInputEnvelope: candidate.executionInputEnvelope,
-                    executionDispatchState: initialAutomationExecutionDispatchStateForRun(
-                        candidate.executionInputEnvelope,
-                    ),
-                    scheduledAt: now,
-                    dueAt: now,
+                    occurredAt: candidate.occurredAt.getTime(),
+                    evidence: {
+                        eventRef: params.hostEvidence.eventRef,
+                        sourceSelectorId: candidate.sourceSelectorId,
+                    },
                 },
-                select: automationRunItemSelect,
-            }) as AutomationRunItem;
-            assignGroupResult(results, candidate.group, { kind: "admitted", runId: run.id, checkpointSafe: true });
-            newRuns.push(run);
-        }
-        if (newRuns.length > 0) {
-            const assignmentRows = await tx.automationAssignment.findMany({
-                where: { automationId: { in: newRuns.map((run) => run.automationId) }, enabled: true },
-                select: { automationId: true, machineId: true },
+                triggerEvidenceEnvelope: candidate.triggerEvidenceEnvelope,
+                occurrenceEvidenceEqualityTag: candidate.occurrenceEvidenceEqualityTag,
+            })),
+        });
+        for (const [index, candidate] of candidates.entries()) {
+            const admitted = admissions[index]!;
+            if (admitted.kind === "ineligible") {
+                assignGroupResult(
+                    results,
+                    candidate.group,
+                    ineligibleAdmissionResult(admitted.reason),
+                );
+                continue;
+            }
+            const run = admitted.run;
+            assignGroupResult(results, candidate.group, {
+                kind: admitted.kind,
+                runId: run.id,
+                checkpointSafe: true,
             });
-            const assignmentsByAutomation = new Map<string, string[]>();
-            for (const assignment of assignmentRows) {
-                const machines = assignmentsByAutomation.get(assignment.automationId) ?? [];
-                machines.push(assignment.machineId);
-                assignmentsByAutomation.set(assignment.automationId, machines);
-            }
-            for (const run of newRuns) {
-                const cursor = await markAccountChanged(tx, {
-                    accountId: params.accountId,
-                    kind: "automation",
-                    entityId: run.automationId,
-                });
-                afterTx(tx, () => {
-                    emitAutomationRunTransition({
-                        accountId: params.accountId,
-                        run,
-                        previousState: null,
-                        cursor,
-                    });
-                    for (const machineId of assignmentsByAutomation.get(run.automationId) ?? []) {
-                        emitAutomationRunUpdatedToMachineOnly({
-                            accountId: params.accountId,
-                            machineId,
-                            run,
-                            cursor,
-                        });
-                    }
-                });
-            }
         }
         return await assertAllResultsWithReadyContinuationTx({
             tx,
@@ -846,7 +856,7 @@ export async function admitAutomationEventV1(params: Readonly<{
             throw error;
         }
 
-        // The canonical Account transition fence serializes automatic-origin
+        // The canonical Account transition fence serializes automatic-cause
         // capacity and supplies the one current mode/key/version witness.
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
             tx,
@@ -888,21 +898,38 @@ export async function admitAutomationEventV1(params: Readonly<{
                 occurredAt: input.occurredAt,
                 payload: input.payload,
             });
-            const occurrenceKey = deriveAutomationOccurrenceKeyV1(evidence);
-            occurrenceByGroupKey.set(group.key, { evidence, occurrenceKey });
-            const existing = await findAutomationOccurrenceTx({
-                tx,
-                accountId: params.accountId,
-                automationId: group.definition.automationId,
-                occurrenceKey,
-                select: existingEventOccurrenceSelect,
+            const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+                triggerId: group.definition.triggerId,
+                evidence,
             });
+            occurrenceByGroupKey.set(group.key, { evidence, occurrenceKey });
+        }
+        const existingOccurrences = await findAutomationTriggerOccurrencesTx({
+            tx,
+            accountId: params.accountId,
+            occurrences: groups.map((group) => ({
+                triggerId: group.definition.triggerId,
+                occurrenceKey: occurrenceByGroupKey.get(group.key)!.occurrenceKey,
+            })),
+            select: existingEventOccurrenceSelect,
+        });
+        const existingByOccurrence = new Map(existingOccurrences.map((row) => [
+            occurrenceLookupKey(row.triggerId!, row.occurrenceKey!),
+            row,
+        ]));
+        for (const group of groups) {
+            const { evidence, occurrenceKey } = occurrenceByGroupKey.get(group.key)!;
+            const existing = existingByOccurrence.get(occurrenceLookupKey(
+                group.definition.triggerId,
+                occurrenceKey,
+            )) ?? null;
             if (existing === null) {
                 missingGroups.push(group);
                 continue;
             }
             const disposition = existingEvidenceDisposition({
                 row: existing,
+                triggerId: group.definition.triggerId,
                 occurrenceKey,
                 sourceSelectorId: group.definition.sourceSelectorId,
                 evidence,
@@ -971,48 +998,47 @@ export async function admitAutomationEventV1(params: Readonly<{
             });
         }
 
-        for (const group of missingGroups) {
-            const automation = await tx.automation.findFirst({
-                where: {
-                    id: group.definition.automationId,
+        const currentTriggers = await loadCurrentEventAdmissionTriggersTx({
+            tx,
+            accountId: params.accountId,
+            triggerIds: missingGroups.map(({ definition }) => definition.triggerId),
+        });
+        const durablePushCurrentness = hostEvidence.webhookInvocationReference
+            ? createRequestLocalDurablePushCurrentnessReads({
+                validateInvocation: async () => await validateCurrentPluginWebhookInvocationReferenceTxV1({
+                    tx,
                     accountId: params.accountId,
-                },
-                select: {
-                    id: true,
-                    enabled: true,
-                    deletedAt: true,
-                    templateVersion: true,
-                    targetType: true,
-                    templateCiphertext: true,
-                    triggerKind: true,
-                    triggerEventPluginId: true,
-                    triggerEventLocalId: true,
-                    triggerSourceSelectorId: true,
-                    triggerSourceContractVersion: true,
-                    triggerObservationTransport: true,
-                    triggerWebhookEndpointId: true,
-                    triggerObservationStartsAt: true,
-                    watcherMachineId: true,
-                    watcherMachineInstallationId: true,
-                    watcherPluginId: true,
-                    watcherMaterializationId: true,
-                    triggerDefinitionEnvelope: true,
-                },
-            });
-            const sourceContractVersion = automation?.triggerSourceContractVersion ?? null;
-            if (!automation || !automation.enabled || automation.deletedAt !== null
-                || automation.triggerKind !== "pluginEvent") {
+                    reference: hostEvidence.webhookInvocationReference!,
+                    serverIdentityId,
+                }),
+                readEndpoint: async (webhookEndpointId: string) =>
+                    await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
+                        tx,
+                        accountId: params.accountId,
+                        webhookEndpointId,
+                        caller: params.caller,
+                        callerVersion,
+                    }),
+            })
+            : null;
+        for (const group of missingGroups) {
+            const trigger = currentTriggers.get(group.definition.triggerId);
+            const automation = trigger?.automation;
+            const sourceContractVersion = trigger?.sourceContractVersion ?? null;
+            if (!trigger || trigger.automationId !== group.definition.automationId
+                || !automation || !automation.enabled || automation.deletedAt !== null
+                || !trigger.enabled || trigger.deletedAt !== null || trigger.kind !== "pluginEvent") {
                 assignGroupResult(results, group, skipped("definitionRetired"));
                 continue;
             }
-            if (automation.templateVersion !== group.definition.templateVersion) {
+            if (trigger.revision !== group.definition.triggerRevision) {
                 assignGroupResult(results, group, refresh("definitionStale"));
                 continue;
             }
             if (
-                automation.triggerEventPluginId !== input.eventRef.pluginId
-                || automation.triggerEventLocalId !== input.eventRef.localId
-                || automation.triggerSourceSelectorId !== group.definition.sourceSelectorId
+                trigger.eventPluginId !== input.eventRef.pluginId
+                || trigger.eventLocalId !== input.eventRef.localId
+                || trigger.sourceSelectorId !== group.definition.sourceSelectorId
                 || sourceContractVersion === null
                 || sourceContractVersion !== event.automation.source.sourceContractVersion
             ) {
@@ -1023,19 +1049,18 @@ export async function admitAutomationEventV1(params: Readonly<{
                 PluginWebhookInvocationReferenceValidationResultV1,
                 Readonly<{ kind: "ready" }>
             > | null = null;
-            if (automation.triggerObservationTransport === "checkpointedPull") {
+            if (trigger.observationTransport === "checkpointedPull") {
                 if (
                     hostEvidence.webhookInvocationReference !== undefined
-                    || !selectedPullTargetMatchesCaller(automation, params.caller)
+                    || !selectedPullTargetMatchesCaller(trigger, params.caller)
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
-            } else if (automation.triggerObservationTransport === "durablePush") {
-                const webhookEndpointId = automation.triggerWebhookEndpointId;
+            } else if (trigger.observationTransport === "durablePush") {
+                const webhookEndpointId = trigger.webhookEndpointId;
                 const webhookContribution =
                     readCurrentAutomationEventDurablePushWebhookContributionV1(event);
-                const reference = hostEvidence.webhookInvocationReference;
                 if (
                     webhookEndpointId === null
                     || webhookContribution === null
@@ -1044,16 +1069,11 @@ export async function admitAutomationEventV1(params: Readonly<{
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
-                if (!reference) {
+                if (!durablePushCurrentness) {
                     assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
                 }
-                const validated = await validateCurrentPluginWebhookInvocationReferenceTxV1({
-                    tx,
-                    accountId: params.accountId,
-                    reference,
-                    serverIdentityId,
-                });
+                const validated = await durablePushCurrentness.validateInvocation();
                 if (validated.kind !== "ready") {
                     assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                     continue;
@@ -1069,13 +1089,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
                 }
-                const currentEndpoint = await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
-                    tx,
-                    accountId: params.accountId,
-                    webhookEndpointId,
-                    caller: params.caller,
-                    callerVersion,
-                });
+                const currentEndpoint = await durablePushCurrentness.readEndpoint(webhookEndpointId);
                 if (
                     currentEndpoint === null
                     || !sameAutomationEventDurablePushWebhookContributionV1(
@@ -1092,7 +1106,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                 // strictly after its committed observation boundary. The
                 // generic webhook owner supplies the original receivedAt
                 // timestamp; retry time must never reopen an older delivery.
-                const observationStartsAt = automation.triggerObservationStartsAt?.getTime();
+                const observationStartsAt = trigger.observationStartsAt?.getTime();
                 if (observationStartsAt === undefined
                     || input.observationReceivedAt <= observationStartsAt) {
                     assignGroupResult(
@@ -1116,24 +1130,25 @@ export async function admitAutomationEventV1(params: Readonly<{
             const occurrence = occurrenceByGroupKey.get(group.key)!;
             const { evidence, occurrenceKey } = occurrence;
 
-            if (automation.triggerDefinitionEnvelope === null) {
+            if (trigger.definitionEnvelope === null) {
                 assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                 continue;
             }
             const definitionBinding = readAutomationTriggerDefinitionBinding({
                 automationId: automation.id,
-                templateVersion: automation.templateVersion,
-                triggerKind: automation.triggerKind,
-                triggerEventPluginId: automation.triggerEventPluginId,
-                triggerEventLocalId: automation.triggerEventLocalId,
-                triggerSourceSelectorId: automation.triggerSourceSelectorId,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
+                triggerKind: trigger.kind,
+                triggerEventPluginId: trigger.eventPluginId,
+                triggerEventLocalId: trigger.eventLocalId,
+                triggerSourceSelectorId: trigger.sourceSelectorId,
             });
             if (definitionBinding === null) {
                 assignGroupResult(results, group, blocked("temporarilyUnavailable"));
                 continue;
             }
             const outer = validateAutomationTriggerDefinitionEnvelopeOuterForMode({
-                raw: automation.triggerDefinitionEnvelope,
+                raw: trigger.definitionEnvelope,
                 mode: "plain",
                 binding: definitionBinding,
             });
@@ -1187,130 +1202,68 @@ export async function admitAutomationEventV1(params: Readonly<{
                     result: "matched" as const,
                 },
             };
-            let executionInputEnvelope: string;
-            try {
-                const frozenRecipe = freezeAutomationRunPluginEventExecutionRecipeV1({
-                    definitionRecipe: automation.templateCiphertext,
-                    templateVersion: automation.templateVersion,
-                    triggerEvidence: AutomationStoredContentEnvelopeV1Schema.parse({
-                        t: "plain",
-                        v: frozenTriggerEvidence,
-                    }),
-                });
-                if (
-                    frozenRecipe.kind !== "available"
-                    || targetTypeForExecutionRecipe(frozenRecipe.recipe) !== automation.targetType
-                ) {
-                    throw new Error("automation_event_execution_recipe_invalid");
-                }
-                executionInputEnvelope = frozenRecipe.serialized;
-                assertAutomationExecutionInputEnvelopeOuterForMode({
-                    raw: executionInputEnvelope,
-                    mode: "plain",
-                    originKind: "pluginEvent",
-                });
-            } catch {
-                assignGroupResult(results, group, blocked("temporarilyUnavailable"));
-                continue;
-            }
+            const triggerEvidenceEnvelope = createCanonicalJsonSigningInput(
+                AutomationStoredContentEnvelopeV1Schema.parse({
+                    t: "plain",
+                    v: frozenTriggerEvidence,
+                }),
+            );
             candidates.push({
                 groupKey: group.key,
                 automationId: automation.id,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
                 occurrenceKey,
                 sourceSelectorId: group.definition.sourceSelectorId,
-                originOccurredAt: new Date(input.occurredAt),
+                occurredAt: new Date(input.occurredAt),
                 evidence,
                 occurrenceEvidenceEqualityTag: null,
                 triggerEvidenceEnvelope: encodePlainAutomationOccurrenceEvidence(evidence),
-                executionInputEnvelope,
+                executionTriggerEvidenceEnvelope: triggerEvidenceEnvelope,
             });
         }
 
-        const occupied = await tx.automationRun.count({
-            where: {
-                accountId: params.accountId,
-                originKind: { in: ["pluginEvent", "conversation"] },
-                state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-            },
-        });
-        if (occupied + candidates.length > MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT) {
-            const groupsByKey = new Map(groups.map((group) => [group.key, group]));
-            for (const candidate of candidates) {
-                assignGroupResult(results, groupsByKey.get(candidate.groupKey)!, blocked("capacity"));
-            }
-            return await assertAllResultsWithReadyContinuationTx({
-                tx,
-                accountId: params.accountId,
-                results,
-            });
-        }
-
-        const newRuns: AutomationRunItem[] = [];
         const groupsByKey = new Map(groups.map((group) => [group.key, group]));
         const now = new Date();
-        for (const candidate of candidates) {
-            const run = await tx.automationRun.create({
-                data: {
-                    automationId: candidate.automationId,
-                    accountId: params.accountId,
-                    state: "queued",
-                    originKind: "pluginEvent",
-                    originOccurredAt: candidate.originOccurredAt,
+        const admissions = await admitAutomationRunsTx({
+            tx,
+            accountId: params.accountId,
+            admissions: candidates.map((candidate) => ({
+                automationId: candidate.automationId,
+                now,
+                cause: {
+                    kind: "trigger",
+                    triggerId: candidate.triggerId,
+                    triggerRevision: candidate.triggerRevision,
+                    triggerKind: "pluginEvent",
                     occurrenceKey: candidate.occurrenceKey,
-                    occurrenceEvidenceEqualityTag: candidate.occurrenceEvidenceEqualityTag,
-                    originSourceSelectorId: candidate.sourceSelectorId,
-                    triggerEvidenceEnvelope: candidate.triggerEvidenceEnvelope,
-                    executionInputEnvelope: candidate.executionInputEnvelope,
-                    executionDispatchState: initialAutomationExecutionDispatchStateForRun(
-                        candidate.executionInputEnvelope,
-                    ),
-                    scheduledAt: now,
-                    dueAt: now,
+                    occurredAt: candidate.occurredAt.getTime(),
+                    evidence: {
+                        eventRef: input.eventRef,
+                        sourceSelectorId: candidate.sourceSelectorId,
+                    },
                 },
-                select: automationRunItemSelect,
-            }) as AutomationRunItem;
+                triggerEvidenceEnvelope: candidate.triggerEvidenceEnvelope,
+                executionTriggerEvidenceEnvelope: candidate.executionTriggerEvidenceEnvelope,
+                occurrenceEvidenceEqualityTag: candidate.occurrenceEvidenceEqualityTag,
+            })),
+        });
+        for (const [index, candidate] of candidates.entries()) {
             const group = groupsByKey.get(candidate.groupKey)!;
-            assignGroupResult(results, group, { kind: "admitted", runId: run.id, checkpointSafe: true });
-            newRuns.push(run);
-        }
-
-        if (newRuns.length > 0) {
-            const assignmentRows = await tx.automationAssignment.findMany({
-                where: {
-                    automationId: { in: newRuns.map((run) => run.automationId) },
-                    enabled: true,
-                },
-                select: { automationId: true, machineId: true },
+            const admitted = admissions[index]!;
+            if (admitted.kind === "ineligible") {
+                assignGroupResult(
+                    results,
+                    group,
+                    ineligibleAdmissionResult(admitted.reason),
+                );
+                continue;
+            }
+            assignGroupResult(results, group, {
+                kind: admitted.kind,
+                runId: admitted.run.id,
+                checkpointSafe: true,
             });
-            const assignmentsByAutomation = new Map<string, string[]>();
-            for (const assignment of assignmentRows) {
-                const machines = assignmentsByAutomation.get(assignment.automationId) ?? [];
-                machines.push(assignment.machineId);
-                assignmentsByAutomation.set(assignment.automationId, machines);
-            }
-            for (const run of newRuns) {
-                const cursor = await markAccountChanged(tx, {
-                    accountId: params.accountId,
-                    kind: "automation",
-                    entityId: run.automationId,
-                });
-                afterTx(tx, () => {
-                    emitAutomationRunTransition({
-                        accountId: params.accountId,
-                        run,
-                        previousState: null,
-                        cursor,
-                    });
-                    for (const machineId of assignmentsByAutomation.get(run.automationId) ?? []) {
-                        emitAutomationRunUpdatedToMachineOnly({
-                            accountId: params.accountId,
-                            machineId,
-                            run,
-                            cursor,
-                        });
-                    }
-                });
-            }
         }
 
         return await assertAllResultsWithReadyContinuationTx({

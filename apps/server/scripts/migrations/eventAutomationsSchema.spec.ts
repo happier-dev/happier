@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,34 +11,138 @@ import {
     applySqliteMigrations,
     type SqliteMigrationExecutor,
 } from "../../sources/flavors/light/sqliteMigrations";
+import { AUTOMATION_RUN_TERMINAL_STATES } from "../../sources/app/automations/automationTypes";
 
 const serverRoot = join(import.meta.dirname, "..", "..");
 const migrationId = "20260816231000_add_event_automations_v1";
+// Provenance-pinned compatibility basis: server-v0.2.1 at
+// 4913c1e533c872a0712ba1c25b3104fd470aacc2. Its
+// enqueueImmediateRunTx wrote scheduledAt === dueAt without an idempotency key;
+// enqueueNextScheduledRunIfMissingTx wrote scheduledAt as enqueue time and a
+// strictly later dueAt as the actual scheduled occurrence instant.
 
 async function read(relativePath: string): Promise<string> {
     return await readFile(join(serverRoot, relativePath), "utf8");
+}
+
+function model(schema: string, name: string): string {
+    const match = schema.match(new RegExp(`model\\s+${name}\\s+\\{([\\s\\S]*?)\\n\\}`, "m"));
+    if (!match?.[1]) throw new Error(`model ${name} not found`);
+    return match[1];
+}
+
+function normalizeSql(sql: string): string {
+    return sql.replace(/[`\"]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function namedCheck(sql: string, name: string): string {
+    const marker = new RegExp(
+        `CONSTRAINT\\s+[\`\"]?${name}[\`\"]?\\s+CHECK\\s*\\(`,
+        "i",
+    ).exec(sql);
+    if (marker?.index === undefined) throw new Error(`constraint ${name} not found`);
+    const openingParen = sql.indexOf("(", marker.index + marker[0].length - 1);
+    let depth = 0;
+    let quote: "'" | "\"" | "`" | null = null;
+    for (let index = openingParen; index < sql.length; index += 1) {
+        const character = sql[index]!;
+        if (quote !== null) {
+            if (character === quote && sql[index - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (character === "'" || character === "\"" || character === "`") {
+            quote = character;
+        } else if (character === "(") {
+            depth += 1;
+        } else if (character === ")") {
+            depth -= 1;
+            if (depth === 0) return normalizeSql(sql.slice(openingParen, index + 1));
+        }
+    }
+    throw new Error(`constraint ${name} is unclosed`);
+}
+
+function createdTable(sql: string, name: string): string {
+    const marker = new RegExp(
+        `CREATE\\s+TABLE\\s+[\`"]?${name}[\`"]?\\s*\\(`,
+        "i",
+    ).exec(sql);
+    if (marker?.index === undefined) throw new Error(`table ${name} not found`);
+    const openingParen = sql.indexOf("(", marker.index + marker[0].length - 1);
+    let depth = 0;
+    let quote: "'" | "\"" | "`" | null = null;
+    for (let index = openingParen; index < sql.length; index += 1) {
+        const character = sql[index]!;
+        if (quote !== null) {
+            if (character === quote && sql[index - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (character === "'" || character === "\"" || character === "`") {
+            quote = character;
+        } else if (character === "(") {
+            depth += 1;
+        } else if (character === ")") {
+            depth -= 1;
+            if (depth === 0) return normalizeSql(sql.slice(marker.index, index + 1));
+        }
+    }
+    throw new Error(`table ${name} is unclosed`);
+}
+
+function discriminantArm(check: string, field: string, value: string): string {
+    const marker = `${field} = '${value}'`;
+    const start = check.indexOf(marker);
+    if (start < 0) throw new Error(`${marker} arm not found`);
+    const next = check.indexOf(`${field} = '`, start + marker.length);
+    return check.slice(start, next < 0 ? undefined : next);
+}
+
+function topLevelArmContaining(check: string, markers: readonly string[]): string {
+    const arms: string[] = [];
+    let depth = 0;
+    let start = 0;
+    let quote: "'" | null = null;
+    for (let index = 0; index < check.length; index += 1) {
+        const character = check[index]!;
+        if (quote !== null) {
+            if (character === quote && check[index - 1] !== "\\") quote = null;
+            continue;
+        }
+        if (character === "'") {
+            quote = character;
+        } else if (character === "(") {
+            depth += 1;
+        } else if (character === ")") {
+            depth -= 1;
+        } else if (depth === 1 && check.startsWith(" OR ", index)) {
+            arms.push(check.slice(start, index));
+            start = index + 4;
+            index += 3;
+        }
+    }
+    arms.push(check.slice(start));
+    const arm = arms.find((candidate) => markers.every((marker) => candidate.includes(marker)));
+    if (arm === undefined) throw new Error(`${markers.join(" + ")} arm not found`);
+    return arm;
 }
 
 async function applySqliteMigrationThroughCanonicalExecutor(
     db: DatabaseSync,
     sql: string,
 ): Promise<void> {
-    const root = await mkdtemp(join(tmpdir(), "event-automations-v1-"));
+    const root = await mkdtemp(join(tmpdir(), "automation-trigger-sets-"));
     const migrationDir = join(root, migrationId);
     try {
         await mkdir(migrationDir, { recursive: true });
         await writeFile(join(migrationDir, "migration.sql"), sql, "utf8");
         const executor: SqliteMigrationExecutor = {
-            exec: (statement) => {
-                db.exec(statement);
-            },
-            queryRows: (statement, params = []) =>
-                db.prepare(statement).all(...params),
+            exec: (statement) => db.exec(statement),
+            queryRows: (statement, params = []) => db.prepare(statement).all(...params),
             run: (statement, params = []) => {
                 db.prepare(statement).run(...params);
             },
             queryTableNames: () => new Set(
-                db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`)
+                db.prepare("SELECT name FROM sqlite_master WHERE type='table'")
                     .all()
                     .map((row) => String((row as { name: unknown }).name)),
             ),
@@ -61,85 +165,28 @@ async function applySqliteMigrationThroughCanonicalExecutor(
     }
 }
 
-function model(schema: string, name: string): string {
-    const match = schema.match(new RegExp(`model\\s+${name}\\s+\\{([\\s\\S]*?)\\n\\}`, "m"));
-    if (!match?.[1]) {
-        throw new Error(`model ${name} not found`);
-    }
-    return match[1];
-}
+const schemaPaths = [
+    "prisma/schema.prisma",
+    "prisma/sqlite/schema.prisma",
+    "prisma/mysql/schema.prisma",
+] as const;
 
-async function listTypeScriptFiles(relativeDirectory: string): Promise<string[]> {
-    const directory = join(serverRoot, relativeDirectory);
-    const entries = await readdir(directory, { withFileTypes: true });
-    const paths = await Promise.all(entries.map(async (entry) => {
-        const relativePath = join(relativeDirectory, entry.name);
-        if (entry.isDirectory()) {
-            return await listTypeScriptFiles(relativePath);
-        }
-        return entry.isFile() && entry.name.endsWith(".ts")
-            ? [relativePath]
-            : [];
-    }));
-    return paths.flat().sort();
-}
+const migrationPaths = [
+    "prisma/migrations/20260816231000_add_event_automations_v1/migration.sql",
+    "prisma/sqlite/migrations/20260816231000_add_event_automations_v1/migration.sql",
+    "prisma/mysql/migrations/20260816231000_add_event_automations_v1/migration.sql",
+] as const;
 
-function enclosingObject(source: string, openingBrace: number): string {
-    let depth = 0;
-    let quote: "'" | '"' | "`" | null = null;
-    let escaped = false;
-
-    for (let index = openingBrace; index < source.length; index += 1) {
-        const character = source[index]!;
-        if (quote !== null) {
-            if (escaped) {
-                escaped = false;
-            } else if (character === "\\") {
-                escaped = true;
-            } else if (character === quote) {
-                quote = null;
-            }
-            continue;
-        }
-        if (character === "'" || character === '"' || character === "`") {
-            quote = character;
-            continue;
-        }
-        if (character === "{") {
-            depth += 1;
-        } else if (character === "}") {
-            depth -= 1;
-            if (depth === 0) return source.slice(openingBrace, index + 1);
-        }
-    }
-    throw new Error("Unclosed AutomationRun mutation object");
-}
-
-function directAutomationRunMutationObjects(source: string): string[] {
-    const matcher = /\bautomationRun\.(?:update|updateMany)\s*\(/g;
-    const mutations: string[] = [];
-    for (const match of source.matchAll(matcher)) {
-        const openingBrace = source.indexOf("{", match.index! + match[0].length);
-        if (openingBrace < 0) {
-            throw new Error("AutomationRun mutation is missing its argument object");
-        }
-        mutations.push(enclosingObject(source, openingBrace));
-    }
-    return mutations;
-}
-
-describe("Event Automations persistence contract", () => {
-    const schemaPaths = [
-        "prisma/schema.prisma",
-        "prisma/sqlite/schema.prisma",
-        "prisma/mysql/schema.prisma",
-    ] as const;
-
-    it.each(schemaPaths)("moves automatic admission state to one AutomationTrigger owner in %s", async (schemaPath) => {
+describe("Automation trigger-set persistence contract", () => {
+    it.each(schemaPaths)("uses one trigger child and immutable Run-cause owner in %s", async (schemaPath) => {
         const schema = await read(schemaPath);
         const automation = model(schema, "Automation");
         const trigger = model(schema, "AutomationTrigger");
         const run = model(schema, "AutomationRun");
+        const claimReceipt = model(schema, "AutomationWorkerClaimReceipt");
+        const assignment = model(schema, "AutomationRunAssignment");
+        const sourceStatus = model(schema, "AutomationEventSourceStatus");
+        const catalogStatus = model(schema, "AutomationEventSourceCatalogStatus");
 
         expect(schema).toMatch(
             /enum AutomationTriggerKind \{\s+schedule\s+pluginEvent\s+sessionLifecycle\s+\}/m,
@@ -147,886 +194,942 @@ describe("Event Automations persistence contract", () => {
         expect(schema).toMatch(
             /enum AutomationRunCauseKind \{\s+trigger\s+manual\s+conversation\s+\}/m,
         );
-
+        expect(automation).toMatch(/^\s*triggers\s+AutomationTrigger\[\]\s*$/m);
+        for (const staleField of [
+            "triggerKind", "scheduleKind", "nextRunAt", "triggerEventPluginId",
+            "triggerSourceSelectorId", "triggerDefinitionEnvelope",
+        ]) {
+            expect(automation).not.toMatch(new RegExp(`^\\s*${staleField}\\s+`, "m"));
+        }
         for (const field of [
-            "id",
-            "automationId",
-            "kind",
-            "enabled",
-            "revision",
-            "deletedAt",
-            "scheduleKind",
-            "scheduleExpr",
-            "everyMs",
-            "timezone",
-            "nextRunAt",
-            "eventPluginId",
-            "eventLocalId",
-            "sourceSelectorId",
-            "sourceContractVersion",
-            "observationTransport",
-            "webhookEndpointId",
-            "observationStartsAt",
-            "watcherMachineId",
-            "watcherMachineInstallationId",
-            "watcherPluginId",
-            "watcherMaterializationId",
-            "filterEnvelope",
-            "definitionEnvelope",
-            "sessionLifecycleEvent",
-            "sourceSessionId",
-            "sourceTurnId",
-            "createdAt",
-            "updatedAt",
+            "automationId", "kind", "enabled", "revision", "deletedAt", "scheduleKind",
+            "nextRunAt", "eventPluginId", "eventLocalId", "sourceSelectorId",
+            "observationTransport", "definitionEnvelope", "sessionLifecycleEvent",
+            "sourceSessionId", "sourceTurnId",
         ]) {
             expect(trigger).toMatch(new RegExp(`^\\s*${field}\\s+`, "m"));
         }
-        expect(trigger).toMatch(/@@index\(\[automationId, enabled, updatedAt(?:\(sort: Desc\))?\]\)/);
-        expect(trigger).toContain(
-            "@@index([automationId, enabled, kind, eventPluginId, eventLocalId], map: \"AutomationTrigger_event_lookup_idx\")",
-        );
-        expect(trigger).toContain(
-            "@@index([automationId, enabled, watcherMachineId, watcherMaterializationId], map: \"AutomationTrigger_watcher_lookup_idx\")",
-        );
-
-        for (const formerTriggerField of [
-            "scheduleKind",
-            "scheduleExpr",
-            "everyMs",
-            "timezone",
-            "nextRunAt",
-            "triggerKind",
-            "triggerEventPluginId",
-            "triggerSourceSelectorId",
-            "triggerDefinitionEnvelope",
-        ]) {
-            expect(automation).not.toMatch(new RegExp(`^\\s*${formerTriggerField}\\s+`, "m"));
-        }
-        expect(automation).toMatch(/^\s*triggers\s+AutomationTrigger\[\]\s*$/m);
-
-        expect(run).toMatch(/^\s*triggerId\s+String\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeKind\s+AutomationRunCauseKind(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeTriggerKind\s+AutomationTriggerKind\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeTriggerRevision\s+Int\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeOccurredAt\s+DateTime\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeSessionLifecycleEvent\s+AutomationSessionLifecycleEvent\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeSourceSessionId\s+String\?(?:\s|$)/m);
-        expect(run).toMatch(/^\s*causeSourceTurnId\s+String\?(?:\s|$)/m);
-        expect(run).not.toMatch(/^\s*origin(?:Kind|OccurredAt|SourceSelectorId)\s+/m);
-        expect(run).toContain("@@unique([triggerId, occurrenceKey])");
-        expect(run).not.toMatch(/^\s*trigger\s+AutomationTrigger/m);
-        expect(trigger).not.toMatch(/^\s*sourceSession\s+Session/m);
-
-        const sourceStatus = model(schema, "AutomationEventSourceStatus");
-        expect(sourceStatus).toMatch(/^\s*triggerId\s+String(?:\s|$)/m);
-        expect(sourceStatus).toMatch(/^\s*trigger\s+AutomationTrigger\s+@relation\(/m);
-        expect(sourceStatus).not.toMatch(/^\s*automationId\s+/m);
-    });
-
-    it.each(schemaPaths)("keeps one origin-aware AutomationRun owner in %s", async (schemaPath) => {
-        const schema = await read(schemaPath);
-        const automation = model(schema, "Automation");
-        const run = model(schema, "AutomationRun");
-
         for (const field of [
-            "deletedAt",
-            "triggerKind",
-            "triggerEventPluginId",
-            "triggerEventLocalId",
-            "triggerSourceSelectorId",
-            "triggerSourceContractVersion",
-            "triggerObservationTransport",
-            "triggerWebhookEndpointId",
-            "triggerObservationStartsAt",
-            "watcherMachineId",
-            "watcherMachineInstallationId",
-            "watcherPluginId",
-            "watcherMaterializationId",
-            "triggerDefinitionEnvelope",
-        ]) {
-            expect(automation).toMatch(new RegExp(`^\\s*${field}\\s+`, "m"));
-        }
-        expect(automation).toContain(
-            "@@index([accountId, enabled, triggerKind, triggerEventPluginId, triggerEventLocalId], map: \"Automation_event_trigger_lookup_idx\")",
-        );
-        expect(automation).toContain(
-            "@@index([accountId, enabled, watcherMachineId, watcherMaterializationId], map: \"Automation_watcher_materialization_lookup_idx\")",
-        );
-
-        for (const field of [
-            "originKind",
-            "originOccurredAt",
-            "occurrenceKey",
-            "legacyManualIdempotencyKey",
-            "occurrenceEvidenceEqualityTag",
-            "originSourceSelectorId",
-            "triggerEvidenceEnvelope",
-            "executionInputEnvelope",
-            "executionDispatchState",
-            "executionAttempt",
-            "executionDispatchCommittedAt",
-            "executionDispatchDueAt",
-            "executionNativeRunId",
-            "executionNativeCallId",
-            "executionNativeSidechainId",
-            "resultEnvelope",
-            "replyContextEnvelope",
-            "replyHandoffActionPluginId",
-            "replyHandoffActionLocalId",
-            "replyHandoffTargetMachineId",
-            "replyHandoffTargetMachineInstallationId",
-            "replyHandoffTargetMaterializationId",
-            "replyHandoffId",
-            "replyHandoffState",
-            "replyHandoffAttempt",
-            "replyHandoffDueAt",
-            "replyHandoffReceiptEnvelope",
-            "revision",
+            "triggerId", "causeKind", "causeTriggerKind", "causeTriggerRevision",
+            "causeOccurredAt", "occurrenceKey", "legacyManualIdempotencyKey",
         ]) {
             expect(run).toMatch(new RegExp(`^\\s*${field}\\s+`, "m"));
         }
-        expect(run).toContain("@@unique([automationId, occurrenceKey])");
+        expect(schema).not.toContain("filterEnvelope");
+        expect(schema).not.toContain("contentRemovedAt");
+        expect(claimReceipt).toMatch(/^\s*runId\s+String\?/m);
+        expect(claimReceipt).toMatch(/^\s*claimedAttempt\s+Int\?/m);
+        expect(claimReceipt).toContain("@@index([expiresAt])");
+        expect(run).not.toMatch(/^\s*origin(?:Kind|OccurredAt|SourceSelectorId)\s+/m);
+        expect(run).not.toMatch(/^\s*claimRequestNonceDigest\s+/m);
+        expect(run).toContain("@@unique([triggerId, occurrenceKey])");
+        expect(run).toContain("@@unique([automationId, causeKind, occurrenceKey]");
         expect(run).toContain(
             "@@unique([automationId, legacyManualIdempotencyKey], map: \"AutomationRun_automationId_idempotencyKey_key\")",
         );
-        expect(run).toContain("@@index([accountId, originKind, state])");
-        expect(run).toContain("@@index([replyHandoffState, replyHandoffDueAt])");
-        expect(run).not.toMatch(/@@index\([^\n]*originOccurredAt/m);
-        expect(run).toMatch(/^\s*revision\s+Int\s+@default\(0\)\s*$/m);
-
-        // `scheduledAt` remains non-null for the V2 contract. V3 retains the
-        // source-declared Event/Conversation fact in its own nullable column.
-        expect(run).toMatch(/^\s*scheduledAt\s+DateTime(?:\s|$)/m);
-        expect(run).toMatch(/^\s*originOccurredAt\s+DateTime\?(?:\s|$)/m);
-        expect(automation).toMatch(/^\s*scheduleKind\s+AutomationScheduleKind\?(?:\s|$)/m);
-        expect(run).toMatch(
-            /^\s*automation\s+Automation\s+@relation\([^\n]*onDelete:\s*Restrict[^\n]*\)\s*$/m,
-        );
-
-        expect(model(schema, "AutomationEventCatalogState")).toMatch(
-            /^\s*eventSourceDefinitionsRevision\s+BigInt\b/m,
-        );
-        expect(model(schema, "AutomationEventSourceStatus")).toContain(
-            "@@id([automationId, eventPluginId, eventLocalId, sourceSelectorId])",
-        );
-        expect(model(schema, "AutomationEventSourceCatalogStatus")).toContain(
-            "@@id([accountId, eventPluginId, reporterMaterializationId, scopeKey])",
-        );
-
-        if (schemaPath === "prisma/mysql/schema.prisma") {
-            expect(automation).toMatch(
-                /^\s*triggerDefinitionEnvelope\s+String\?\s+@db\.LongText\s*$/m,
-            );
-            for (const field of [
-                "triggerEvidenceEnvelope",
-                "executionInputEnvelope",
-                "resultEnvelope",
-                "replyContextEnvelope",
-                "replyHandoffReceiptEnvelope",
-            ]) {
-                expect(run).toMatch(
-                    new RegExp(`^\\s*${field}\\s+String\\?\\s+@db\\.LongText\\s*$`, "m"),
-                );
-            }
-        }
-
-        // PEP1 keeps transition coordination Account-owned; Automation must
-        // not create a second stage owner.
-        expect(schema).not.toMatch(/Automation(?:Run|Event).*Stage/);
-        expect(schema).not.toMatch(/Automation(?:Receipt|DispatchLedger|RunQueue)/);
+        expect(assignment).toMatch(/^\s*runId\s+String\s*$/m);
+        expect(assignment).toMatch(/^\s*machineId\s+String\s*$/m);
+        expect(assignment).toMatch(/^\s*priority\s+Int\s+@default\(0\)\s*$/m);
+        expect(assignment).toContain("@@id([runId, machineId])");
+        expect(assignment).not.toMatch(/^\s*(?:automationId|enabled|updatedAt)\s+/m);
+        expect(sourceStatus).toMatch(/^\s*triggerId\s+String\s+@id\s*$/m);
+        expect(sourceStatus).toMatch(/^\s*trigger\s+AutomationTrigger\s+@relation\(/m);
+        expect(sourceStatus).toMatch(/^\s*triggerRevision\s+Int\s*$/m);
+        expect(sourceStatus).toMatch(/^\s*reporterImmutableGenerationId\s+String(?:\s+@db\.VarChar\(256\))?\s*$/m);
+        expect(sourceStatus).not.toMatch(/^\s*automationId\s+/m);
+        expect(catalogStatus).toMatch(/^\s*reporterImmutableGenerationId\s+String(?:\s+@db\.VarChar\(256\))?\s*$/m);
     });
 
-    it.each([
-        ["prisma/migrations", '"'],
-        ["prisma/sqlite/migrations", '"'],
-        ["prisma/mysql/migrations", "`"],
-    ] as const)("adds the same additive Event Automation contract for %s", async (migrationRoot, quote) => {
-        const sql = await read(`${migrationRoot}/${migrationId}/migration.sql`);
+    it.each(migrationPaths)("encodes the same physical trigger/cause arms in %s", async (migrationPath) => {
+        const sql = await read(migrationPath);
+        const normalized = normalizeSql(sql);
+        const triggerCheck = namedCheck(sql, "AutomationTrigger_arm_check");
+        const executionInputCheck = namedCheck(sql, "AutomationRun_execution_input_arm_check");
+        const causeCheck = namedCheck(sql, "AutomationRun_cause_arm_check");
+        const sourceStatusTable = createdTable(sql, "AutomationEventSourceStatus");
+        const catalogStatusTable = createdTable(sql, "AutomationEventSourceCatalogStatus");
+        const livePluginEvent = topLevelArmContaining(
+            triggerCheck,
+            ["deletedAt IS NULL", "kind = 'pluginEvent'"],
+        );
+        const deletedPluginEvent = topLevelArmContaining(
+            triggerCheck,
+            ["deletedAt IS NOT NULL", "kind = 'pluginEvent'"],
+        );
+        const triggerCause = discriminantArm(causeCheck, "causeKind", "trigger");
+        const manualCause = discriminantArm(causeCheck, "causeKind", "manual");
+        const conversationCause = discriminantArm(causeCheck, "causeKind", "conversation");
 
-        for (const table of [
-            "Automation",
-            "AutomationRun",
-            "AutomationEventCatalogState",
-            "AutomationEventSourceStatus",
-            "AutomationEventSourceCatalogStatus",
+        expect(normalized).toContain("CREATE TABLE AutomationTrigger");
+        expect(normalized).toContain("CREATE TABLE AutomationRunAssignment");
+        expect(normalized).toContain("CREATE TABLE AutomationWorkerClaimReceipt");
+        expect(normalized).toContain("AutomationWorkerClaimReceipt_outcome_check");
+        expect(normalized).not.toContain("claimRequestNonceDigest");
+        expect(normalized).toContain("CREATE TABLE AutomationEventSourceStatus");
+        expect(normalized).toContain("CREATE TABLE AutomationEventSourceCatalogStatus");
+        expect(normalized).not.toContain("ADD COLUMN triggerKind");
+        expect(normalized).not.toContain("ADD COLUMN originKind");
+        expect(normalized).not.toContain("filterEnvelope");
+        expect(normalized).not.toContain("contentRemovedAt");
+        expect(triggerCheck).toMatch(/kind = 'schedule'.*scheduleKind.*eventPluginId IS NULL/s);
+        expect(livePluginEvent).toContain("deletedAt IS NULL");
+        for (const requiredField of [
+            "eventPluginId", "eventLocalId", "sourceSelectorId", "sourceContractVersion",
+            "observationTransport", "definitionEnvelope",
         ]) {
-            expect(sql).toContain(`${quote}${table}${quote}`);
+            expect(livePluginEvent).toContain(`${requiredField} IS NOT NULL`);
         }
-        for (const field of [
-            "triggerKind",
-            "originKind",
-            "originOccurredAt",
-            "occurrenceKey",
-            "occurrenceEvidenceEqualityTag",
-            "executionDispatchState",
-            "resultEnvelope",
-            "revision",
+        expect(livePluginEvent).toContain("sessionLifecycleEvent IS NULL");
+        expect(triggerCheck).toMatch(/kind = 'sessionLifecycle'.*sessionLifecycleEvent = 'parentTurnCompleted'.*sourceTurnId IS NOT NULL/s);
+        expect(deletedPluginEvent).toMatch(/enabled = (?:false|0)/);
+        for (const retainedIdentityField of [
+            "eventPluginId", "eventLocalId", "sourceSelectorId", "sourceContractVersion",
         ]) {
-            expect(sql).toContain(`${quote}${field}${quote}`);
+            expect(deletedPluginEvent).toContain(`${retainedIdentityField} IS NOT NULL`);
         }
-        expect(sql).toMatch(new RegExp(`${quote}revision${quote}[\\s\\S]{0,80}DEFAULT\\s+0`, "i"));
-        expect(sql).toContain("legacySummaryCiphertext");
-        expect(sql).toContain("summaryCiphertext");
-        expect(sql).not.toMatch(/Automation(?:Run|Event).*Stage/);
-        expect(sql).not.toMatch(/Automation(?:Receipt|DispatchLedger|RunQueue)/);
-    });
-
-    it("keeps Conversation only as a retained Run origin across provider schemas and migrations", async () => {
-        const [postgresSchema, sqliteSchema, mysqlSchema, postgresSql, sqliteSql, mysqlSql] =
-            await Promise.all([
-                read("prisma/schema.prisma"),
-                read("prisma/sqlite/schema.prisma"),
-                read("prisma/mysql/schema.prisma"),
-                read(`prisma/migrations/${migrationId}/migration.sql`),
-                read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-                read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-            ]);
-
-        for (const schema of [postgresSchema, sqliteSchema, mysqlSchema]) {
-            expect(schema).toMatch(
-                /enum AutomationTriggerKind \{\s+schedule\s+manual\s+pluginEvent\s+\}/m,
-            );
-            expect(schema).toMatch(
-                /enum AutomationRunOriginKind \{[\s\S]*?\sconversation\s*\}/m,
-            );
+        for (const scrubbedField of [
+            "definitionEnvelope", "observationTransport", "webhookEndpointId", "observationStartsAt",
+            "watcherMachineId", "watcherMachineInstallationId", "watcherPluginId",
+            "watcherMaterializationId", "scheduleKind", "scheduleExpr", "everyMs", "timezone",
+            "nextRunAt", "sessionLifecycleEvent", "sourceSessionId", "sourceTurnId",
+        ]) {
+            expect(deletedPluginEvent).toContain(`${scrubbedField} IS NULL`);
         }
-
-        expect(postgresSql).toContain(
-            'CREATE TYPE "AutomationTriggerKind" AS ENUM (\'schedule\', \'manual\', \'pluginEvent\');',
+        expect(triggerCheck).toContain("scheduleKind IS NOT NULL");
+        expect(triggerCheck).toContain("sessionLifecycleEvent IS NOT NULL");
+        expect(executionInputCheck).toMatch(
+            /state NOT IN \('queued', 'claimed', 'running'\).*executionInputEnvelope IS NOT NULL/s,
         );
-        expect(postgresSql).toContain(
-            'CREATE TYPE "AutomationRunOriginKind" AS ENUM (\'scheduled\', \'manual\', \'pluginEvent\', \'conversation\');',
+        expect(triggerCause).toContain("idempotencyKey IS NULL");
+        expect(triggerCause).toContain("causeTriggerKind IS NOT NULL");
+        expect(triggerCause).toContain("triggerId IS NOT NULL");
+        expect(triggerCause).toContain("occurrenceKey IS NOT NULL");
+        expect(manualCause).toContain("triggerId IS NULL");
+        expect(manualCause).toContain("occurrenceKey IS NULL");
+        expect(conversationCause).toContain("triggerId IS NULL");
+        expect(conversationCause).toContain("occurrenceKey IS NOT NULL");
+        expect(conversationCause).toContain("idempotencyKey IS NULL");
+        expect(normalized).toMatch(
+            /AutomationRun_triggerId_occurrenceKey_key.{0,80}triggerId, occurrenceKey/,
         );
-        expect(sqliteSql).not.toMatch(/"triggerKind" = 'conversation'/);
-        expect(sqliteSql).toContain('"originKind" = \'conversation\'');
-        expect(mysqlSql).toContain(
-            "ADD COLUMN `triggerKind` ENUM('schedule', 'manual', 'pluginEvent')",
+        expect(normalized).not.toContain("AutomationRun_automationId_occurrenceKey_key");
+        expect(normalized).toMatch(
+            /AutomationRun_automationId_causeKind_occurrenceKey_key.{0,100}automationId, causeKind, occurrenceKey/,
         );
-        expect(mysqlSql).toContain(
-            "ADD COLUMN `originKind` ENUM('scheduled', 'manual', 'pluginEvent', 'conversation')",
+        expect(normalized).toMatch(
+            /AutomationEventSourceStatus.*triggerId.*PRIMARY KEY.*triggerId.*REFERENCES AutomationTrigger.*id/s,
         );
+        expect(sourceStatusTable).toMatch(
+            /reporterImmutableGenerationId (?:VARCHAR\(256\)|TEXT) NOT NULL/,
+        );
+        expect(catalogStatusTable).toMatch(
+            /reporterImmutableGenerationId (?:VARCHAR\(256\)|TEXT) NOT NULL/,
+        );
+        expect(normalized).toMatch(
+            /AutomationRunAssignment.*PRIMARY KEY.*runId.*machineId.*REFERENCES AutomationRun.*id/s,
+        );
+        const namedPreflightIndex = normalized.indexOf("AutomationRun_open_frozen_input_preflight");
+        const preflightIndex = namedPreflightIndex >= 0
+            ? namedPreflightIndex
+            : normalized.search(
+                /DO \$\$\s+BEGIN\s+IF EXISTS \(\s+SELECT 1 FROM (?:"AutomationRun"|AutomationRun)/,
+            );
+        const firstCanonicalMutationIndex = [
+            normalized.indexOf("CREATE TYPE AutomationTriggerKind"),
+            normalized.indexOf("PRAGMA defer_foreign_keys"),
+            normalized.indexOf("ALTER TABLE Automation ADD COLUMN"),
+        ].filter((index) => index >= 0).sort((left, right) => left - right)[0];
+        expect(preflightIndex).toBeGreaterThanOrEqual(0);
+        expect(firstCanonicalMutationIndex).toBeGreaterThan(preflightIndex);
+        expect(normalized).toMatch(/state IN \('queued', 'claimed', 'running'\)/);
+        expect(normalized).not.toMatch(/executionInputEnvelope\s*=|SET\s+executionInputEnvelope/i);
+        expect(normalized).not.toMatch(
+            /INSERT INTO (?:new_)?AutomationRun \([^)]*executionInputEnvelope/i,
+        );
+        expect(normalized.match(/THEN run\.dueAt ELSE/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     });
 
-    it("keeps the MySQL catalog-status primary key portable within utf8mb4's 3072-byte limit", async () => {
-        const mysqlSql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
-        const catalogStatusDdl = mysqlSql.match(
-            /CREATE TABLE `AutomationEventSourceCatalogStatus` \([\s\S]*?\) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;/,
-        )?.[0];
-
-        expect(catalogStatusDdl).toBeDefined();
-        expect(catalogStatusDdl).toContain(
-            "PRIMARY KEY (`accountId`, `eventPluginId`, `reporterMaterializationId`, `scopeKey`)",
+    it.each(migrationPaths)("retains reply identity without a second Run-compaction state in %s", async (migrationPath) => {
+        const replyCheck = namedCheck(await read(migrationPath), "AutomationRun_reply_handoff_arm_check");
+        expect(replyCheck).toMatch(
+            /causeKind = 'conversation'.*replyContextEnvelope IS NOT NULL.*replyHandoffActionPluginId IS NOT NULL.*replyHandoffId IS NOT NULL/s,
         );
-        expect(catalogStatusDdl).toContain("`reporterMachineId` VARCHAR(191) NOT NULL");
-        expect(catalogStatusDdl).toContain("`reporterMachineInstallationId` VARCHAR(191) NOT NULL");
-
-        // The materialization identity is canonical ASCII, so its binary
-        // column preserves exact equality while the full primary key remains
-        // within InnoDB's 3072-byte budget.
-        expect(191 * 4 + 191 * 4 + 256 + 191 * 4).toBeLessThanOrEqual(3072);
+        expect(replyCheck).toMatch(
+            /causeKind IN \('trigger', 'manual'\).*replyContextEnvelope IS NULL.*replyHandoffId IS NULL.*replyHandoffState = 'none'/s,
+        );
+        expect(replyCheck).not.toContain("contentRemovedAt");
     });
 
-    it("keeps every named MySQL index and constraint within the provider identifier ceiling", async () => {
-        const mysqlSql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
-        const identifiers = [...mysqlSql.matchAll(/\b(?:INDEX|CONSTRAINT)\s+`([^`]+)`/g)]
+    it("keeps MySQL identities portable without weakening canonical equality", async () => {
+        const sql = await read(migrationPaths[2]);
+        const namedIdentifiers = [...sql.matchAll(/\b(?:INDEX|CONSTRAINT)\s+`([^`]+)`/g)]
             .map((match) => match[1]!);
-
-        expect(identifiers.length).toBeGreaterThan(0);
-        expect(identifiers.filter((identifier) => identifier.length > 64)).toEqual([]);
+        expect(namedIdentifiers.length).toBeGreaterThan(0);
+        expect(namedIdentifiers.filter((identifier) => identifier.length > 64)).toEqual([]);
+        expect(sql).toMatch(
+            /`occurrenceKey`\s+CHAR\(43\)\s+CHARACTER SET ascii\s+COLLATE ascii_bin/i,
+        );
+        expect(sql).toMatch(
+            /`reporterMaterializationId`\s+VARCHAR\(256\)\s+CHARACTER SET ascii\s+COLLATE ascii_bin/i,
+        );
+        expect(sql).toMatch(
+            /INSERT INTO `AutomationTrigger`[\s\S]*SELECT `id`, `id`, 'schedule'[\s\S]*FROM `Automation`/,
+        );
+        expect(sql).toMatch(
+            /CASE WHEN run\.`idempotencyKey` IS NOT NULL OR run\.`dueAt` = run\.`scheduledAt` THEN 'manual' ELSE 'trigger' END/,
+        );
+        expect(sql).toMatch(
+            /CASE WHEN run\.`idempotencyKey` IS NULL AND run\.`dueAt` <> run\.`scheduledAt` THEN run\.`automationId` ELSE NULL END/,
+        );
+        expect(sql).toMatch(
+            /run\.`causeOccurredAt` = CASE WHEN[\s\S]*?THEN run\.`dueAt` ELSE run\.`createdAt` END/,
+        );
+        expect(sql).toMatch(
+            /run\.`causeScheduledFor` = CASE WHEN[\s\S]*?THEN run\.`dueAt` ELSE NULL END/,
+        );
+        expect(sql).toMatch(/`AutomationTrigger`[\s\S]*?`id` VARCHAR\(191\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/);
+        expect(sql).toMatch(/`AutomationTrigger`[\s\S]*?`eventPluginId` VARCHAR\(191\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL/);
+        expect(sql).toMatch(/`AutomationTrigger`[\s\S]*?`eventLocalId` VARCHAR\(191\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL/);
+        expect(sql).toMatch(/`AutomationEventSourceStatus`[\s\S]*?`triggerId` VARCHAR\(191\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/);
+        // The catalog-status primary key folds distinct author plugin IDs under
+        // the table default collation; the member must be exact.
+        expect(sql).toMatch(/`AutomationEventSourceCatalogStatus`[\s\S]*?`eventPluginId` VARCHAR\(191\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/);
+        expect(sql).toMatch(
+            /CASE WHEN run\.`summaryCiphertext` IS NOT NULL[\s\S]*JSON_OBJECT\([\s\S]*'legacySummaryCiphertext'/,
+        );
+        expect(sql).toContain("INDEX `AutomationRun_triggerId_state_idx`(`triggerId`, `state`)");
     });
+});
 
-    it("replaces the AutomationRun foreign key in separate MySQL statements", async () => {
-        const mysqlSql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
-
-        expect(mysqlSql).toMatch(
-            /ALTER TABLE `AutomationRun`\s+DROP FOREIGN KEY `AutomationRun_automationId_fkey`;\s+ALTER TABLE `AutomationRun`\s+ADD CONSTRAINT `AutomationRun_automationId_fkey`/,
+async function createPostgresPredecessor(): Promise<PGlite> {
+    const db = new PGlite();
+    await db.exec(`
+        CREATE TYPE "AutomationScheduleKind" AS ENUM ('cron', 'interval');
+        CREATE TYPE "AutomationTargetType" AS ENUM ('new_session', 'existing_session');
+        CREATE TYPE "AutomationRunState" AS ENUM (
+            'queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled', 'expired'
         );
-    });
-
-    it("adopts preview manual rows before MySQL narrows the schedule enum", async () => {
-        const mysqlSql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
-        const runAdoption = mysqlSql.indexOf("SET run.`originKind` = 'manual'");
-        const definitionAdoption = mysqlSql.indexOf("`triggerKind` = 'manual'");
-        const scheduleNarrowing = mysqlSql.indexOf(
-            "MODIFY `scheduleKind` ENUM('cron', 'interval') NULL",
+        CREATE TABLE "Account" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Machine" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Session" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Automation" (
+            "id" TEXT NOT NULL PRIMARY KEY, "accountId" TEXT NOT NULL, "name" TEXT NOT NULL,
+            "description" TEXT, "enabled" BOOLEAN NOT NULL DEFAULT true,
+            "scheduleKind" "AutomationScheduleKind" NOT NULL, "scheduleExpr" TEXT, "everyMs" INTEGER,
+            "timezone" TEXT, "targetType" "AutomationTargetType" NOT NULL, "templateCiphertext" TEXT NOT NULL,
+            "templateVersion" INTEGER NOT NULL DEFAULT 0, "nextRunAt" TIMESTAMP(3), "lastRunAt" TIMESTAMP(3),
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+            CONSTRAINT "Automation_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
         );
-
-        expect(runAdoption).toBeGreaterThanOrEqual(0);
-        expect(definitionAdoption).toBeGreaterThan(runAdoption);
-        expect(scheduleNarrowing).toBeGreaterThan(definitionAdoption);
-    });
-
-    it("uses ordinary nullable occurrence uniqueness in every provider migration", async () => {
-        const [postgresSql, sqliteSql, mysqlSql] = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-        ]);
-
-        expect(postgresSql).toMatch(/UNIQUE\s*\(\s*"automationId"\s*,\s*"occurrenceKey"\s*\)/i);
-        expect(sqliteSql).toMatch(
-            /(?:UNIQUE\s*\(\s*"automationId"\s*,\s*"occurrenceKey"\s*\)|CREATE\s+UNIQUE\s+INDEX[\s\S]*?ON\s+"AutomationRun"\s*\(\s*"automationId"\s*,\s*"occurrenceKey"\s*\))/i,
+        CREATE TABLE "AutomationAssignment" (
+            "id" TEXT NOT NULL PRIMARY KEY, "automationId" TEXT NOT NULL, "machineId" TEXT NOT NULL,
+            "enabled" BOOLEAN NOT NULL DEFAULT true, "priority" INTEGER NOT NULL DEFAULT 0,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+            CONSTRAINT "AutomationAssignment_automationId_fkey" FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT "AutomationAssignment_machineId_fkey" FOREIGN KEY ("machineId") REFERENCES "Machine"("id") ON DELETE CASCADE ON UPDATE CASCADE
         );
-        expect(mysqlSql).toMatch(/UNIQUE(?:\s+INDEX|\s+KEY)?[^\n]*`automationId`[^\n]*`occurrenceKey`/i);
-    });
+        CREATE TABLE "AutomationRun" (
+            "id" TEXT NOT NULL PRIMARY KEY, "automationId" TEXT NOT NULL, "accountId" TEXT NOT NULL,
+            "state" "AutomationRunState" NOT NULL DEFAULT 'queued', "scheduledAt" TIMESTAMP(3) NOT NULL,
+            "dueAt" TIMESTAMP(3) NOT NULL, "claimedAt" TIMESTAMP(3), "startedAt" TIMESTAMP(3),
+            "finishedAt" TIMESTAMP(3), "claimedByMachineId" TEXT, "leaseExpiresAt" TIMESTAMP(3),
+            "attempt" INTEGER NOT NULL DEFAULT 0, "summaryCiphertext" TEXT, "errorCode" TEXT,
+            "errorMessage" TEXT, "producedSessionId" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL,
+            CONSTRAINT "AutomationRun_automationId_fkey" FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT "AutomationRun_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE TABLE "AutomationRunEvent" (
+            "id" TEXT NOT NULL PRIMARY KEY, "runId" TEXT NOT NULL,
+            "ts" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "type" TEXT NOT NULL, "payload" JSONB,
+            CONSTRAINT "AutomationRunEvent_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AutomationRun"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE UNIQUE INDEX "AutomationAssignment_automationId_machineId_key" ON "AutomationAssignment"("automationId", "machineId");
+        CREATE INDEX "AutomationAssignment_machineId_enabled_idx" ON "AutomationAssignment"("machineId", "enabled");
+        CREATE INDEX "AutomationAssignment_automationId_enabled_idx" ON "AutomationAssignment"("automationId", "enabled");
+        CREATE INDEX "AutomationRun_accountId_state_dueAt_idx" ON "AutomationRun"("accountId", "state", "dueAt");
+        CREATE INDEX "AutomationRun_automationId_dueAt_idx" ON "AutomationRun"("automationId", "dueAt");
+        CREATE INDEX "AutomationRun_claimedByMachineId_leaseExpiresAt_idx" ON "AutomationRun"("claimedByMachineId", "leaseExpiresAt");
+        CREATE INDEX "AutomationRunEvent_runId_ts_idx" ON "AutomationRunEvent"("runId", "ts");
+        CREATE INDEX "AutomationRunEvent_ts_idx" ON "AutomationRunEvent"("ts");
+    `);
+    await db.exec(await read("prisma/migrations/20260816230000_add_manual_automation_triggers/migration.sql"));
+    await db.exec(`
+        INSERT INTO "Account" ("id") VALUES ('account');
+        INSERT INTO "Machine" ("id") VALUES ('machine-enabled'), ('machine-disabled');
+        INSERT INTO "Automation" (
+            "id", "accountId", "name", "enabled", "scheduleKind", "everyMs", "timezone",
+            "targetType", "templateCiphertext", "nextRunAt", "updatedAt"
+        ) VALUES ('automation', 'account', 'retained schedule', false, 'interval', 60000, 'UTC',
+            'new_session', '{}', '2026-08-27T10:00:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationAssignment" ("id", "automationId", "machineId", "enabled", "priority", "updatedAt") VALUES
+            ('enabled-assignment', 'automation', 'machine-enabled', true, 7, CURRENT_TIMESTAMP),
+            ('disabled-assignment', 'automation', 'machine-disabled', false, 9, CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "summaryCiphertext", "updatedAt")
+            VALUES ('scheduled-run', 'automation', 'account', 'succeeded', '2026-08-27T10:00:00.000Z', '2026-08-27T10:01:00.000Z', '2026-08-27T10:02:00.000Z', ' exact legacy ', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "updatedAt")
+            VALUES ('manual-run', 'automation', 'account', 'succeeded', '2026-08-27T09:30:00.000Z', '2026-08-27T09:30:00.000Z', '2026-08-27T09:31:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "updatedAt") VALUES
+            ('cron-dst-run', 'automation', 'account', 'succeeded', '2026-10-25T00:59:00.000Z', '2026-10-25T01:00:00.000Z', '2026-10-25T01:01:00.000Z', CURRENT_TIMESTAMP),
+            ('manual-dst-run', 'automation', 'account', 'succeeded', '2026-10-25T01:30:00.000Z', '2026-10-25T01:30:00.000Z', '2026-10-25T01:31:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRunEvent" ("id", "runId", "type") VALUES ('event', 'scheduled-run', 'queued');
+    `);
+    return db;
+}
 
-    it("preserves canonical occurrence-key equality across provider collations", async () => {
-        const [postgresSql, sqliteSql, mysqlSql, mysqlSchema] = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-            read("prisma/mysql/schema.prisma"),
-        ]);
+function createSqlitePredecessor(): DatabaseSync {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+        PRAGMA foreign_keys=ON;
+        CREATE TABLE "Account" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Machine" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Session" ("id" TEXT NOT NULL PRIMARY KEY);
+        CREATE TABLE "Automation" (
+            "id" TEXT NOT NULL PRIMARY KEY, "accountId" TEXT NOT NULL, "name" TEXT NOT NULL,
+            "description" TEXT, "enabled" BOOLEAN NOT NULL DEFAULT true, "scheduleKind" TEXT NOT NULL,
+            "scheduleExpr" TEXT, "everyMs" INTEGER, "timezone" TEXT, "targetType" TEXT NOT NULL,
+            "templateCiphertext" TEXT NOT NULL, "templateVersion" INTEGER NOT NULL DEFAULT 0,
+            "nextRunAt" DATETIME, "lastRunAt" DATETIME,
+            "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL,
+            CONSTRAINT "Automation_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE TABLE "AutomationAssignment" (
+            "id" TEXT NOT NULL PRIMARY KEY, "automationId" TEXT NOT NULL, "machineId" TEXT NOT NULL,
+            "enabled" BOOLEAN NOT NULL DEFAULT true, "priority" INTEGER NOT NULL DEFAULT 0,
+            "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL,
+            CONSTRAINT "AutomationAssignment_automationId_fkey" FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT "AutomationAssignment_machineId_fkey" FOREIGN KEY ("machineId") REFERENCES "Machine"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE TABLE "AutomationRun" (
+            "id" TEXT NOT NULL PRIMARY KEY, "automationId" TEXT NOT NULL, "accountId" TEXT NOT NULL,
+            "state" TEXT NOT NULL DEFAULT 'queued', "scheduledAt" DATETIME NOT NULL, "dueAt" DATETIME NOT NULL,
+            "claimedAt" DATETIME, "startedAt" DATETIME, "finishedAt" DATETIME, "claimedByMachineId" TEXT,
+            "leaseExpiresAt" DATETIME, "attempt" INTEGER NOT NULL DEFAULT 0, "summaryCiphertext" TEXT,
+            "errorCode" TEXT, "errorMessage" TEXT, "producedSessionId" TEXT,
+            "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL,
+            CONSTRAINT "AutomationRun_automationId_fkey" FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT "AutomationRun_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE TABLE "AutomationRunEvent" (
+            "id" TEXT NOT NULL PRIMARY KEY, "runId" TEXT NOT NULL, "ts" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "type" TEXT NOT NULL, "payload" TEXT,
+            CONSTRAINT "AutomationRunEvent_runId_fkey" FOREIGN KEY ("runId") REFERENCES "AutomationRun"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        );
+        CREATE UNIQUE INDEX "AutomationAssignment_automationId_machineId_key" ON "AutomationAssignment"("automationId", "machineId");
+        CREATE INDEX "AutomationAssignment_machineId_enabled_idx" ON "AutomationAssignment"("machineId", "enabled");
+        CREATE INDEX "AutomationAssignment_automationId_enabled_idx" ON "AutomationAssignment"("automationId", "enabled");
+        CREATE INDEX "AutomationRun_accountId_state_dueAt_idx" ON "AutomationRun"("accountId", "state", "dueAt");
+        CREATE INDEX "AutomationRun_automationId_dueAt_idx" ON "AutomationRun"("automationId", "dueAt");
+        CREATE INDEX "AutomationRun_claimedByMachineId_leaseExpiresAt_idx" ON "AutomationRun"("claimedByMachineId", "leaseExpiresAt");
+        CREATE INDEX "AutomationRunEvent_runId_ts_idx" ON "AutomationRunEvent"("runId", "ts");
+        CREATE INDEX "AutomationRunEvent_ts_idx" ON "AutomationRunEvent"("ts");
+        ALTER TABLE "AutomationRun" ADD COLUMN "idempotencyKey" TEXT;
+        CREATE UNIQUE INDEX "AutomationRun_automationId_idempotencyKey_key" ON "AutomationRun"("automationId", "idempotencyKey");
+        INSERT INTO "Account" ("id") VALUES ('account');
+        INSERT INTO "Machine" ("id") VALUES ('machine-enabled'), ('machine-disabled');
+        INSERT INTO "Automation" (
+            "id", "accountId", "name", "enabled", "scheduleKind", "everyMs", "timezone", "targetType",
+            "templateCiphertext", "nextRunAt", "updatedAt"
+        ) VALUES ('automation', 'account', 'retained schedule', false, 'interval', 60000, 'UTC',
+            'new_session', '{}', '2026-08-27T10:00:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationAssignment" ("id", "automationId", "machineId", "enabled", "priority", "updatedAt") VALUES
+            ('enabled-assignment', 'automation', 'machine-enabled', true, 7, CURRENT_TIMESTAMP),
+            ('disabled-assignment', 'automation', 'machine-disabled', false, 9, CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "summaryCiphertext", "updatedAt")
+            VALUES ('scheduled-run', 'automation', 'account', 'succeeded', '2026-08-27T10:00:00.000Z', '2026-08-27T10:01:00.000Z', '2026-08-27T10:02:00.000Z', ' exact legacy ', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "updatedAt")
+            VALUES ('manual-run', 'automation', 'account', 'succeeded', '2026-08-27T09:30:00.000Z', '2026-08-27T09:30:00.000Z', '2026-08-27T09:31:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "finishedAt", "updatedAt") VALUES
+            ('cron-dst-run', 'automation', 'account', 'succeeded', '2026-10-25T00:59:00.000Z', '2026-10-25T01:00:00.000Z', '2026-10-25T01:01:00.000Z', CURRENT_TIMESTAMP),
+            ('manual-dst-run', 'automation', 'account', 'succeeded', '2026-10-25T01:30:00.000Z', '2026-10-25T01:30:00.000Z', '2026-10-25T01:31:00.000Z', CURRENT_TIMESTAMP);
+        INSERT INTO "AutomationRunEvent" ("id", "runId", "type") VALUES ('event', 'scheduled-run', 'queued');
+    `);
+    return db;
+}
 
-        // PostgreSQL and SQLite TEXT values retain their existing binary/text
-        // equality semantics. MySQL needs an explicit per-column binary ASCII
-        // collation because the table's default collation is case-insensitive.
-        expect(postgresSql).toMatch(/ADD\s+COLUMN\s+"occurrenceKey"\s+TEXT/i);
-        expect(sqliteSql).toMatch(
-            /ALTER\s+TABLE\s+"AutomationRun"\s+ADD\s+COLUMN\s+"occurrenceKey"\s+TEXT/i,
-        );
-        expect(mysqlSql).toMatch(
-            /ADD\s+COLUMN\s+`occurrenceKey`\s+CHAR\(43\)\s+CHARACTER\s+SET\s+ascii\s+COLLATE\s+ascii_bin\s+NULL/i,
-        );
-        expect(model(mysqlSchema, "AutomationRun")).toMatch(
-            /^\s*occurrenceKey\s+String\?\s+@db\.Char\(43\)\s*$/m,
-        );
-    });
-
-    it("preserves canonical reporter materialization identity across provider collations", async () => {
-        const [postgresSql, sqliteSql, mysqlSql, mysqlSchema] = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-            read("prisma/mysql/schema.prisma"),
-        ]);
-
-        expect(postgresSql).toMatch(
-            /CREATE\s+TABLE\s+"AutomationEventSourceCatalogStatus"[\s\S]*?"reporterMaterializationId"\s+TEXT\s+NOT\s+NULL/i,
-        );
-        expect(sqliteSql).toMatch(
-            /CREATE\s+TABLE\s+"AutomationEventSourceCatalogStatus"[\s\S]*?"reporterMaterializationId"\s+TEXT\s+NOT\s+NULL/i,
-        );
-        expect(mysqlSql).toMatch(
-            /`reporterMaterializationId`\s+VARCHAR\(256\)\s+CHARACTER\s+SET\s+ascii\s+COLLATE\s+ascii_bin\s+NOT\s+NULL/i,
-        );
-        expect(model(mysqlSchema, "AutomationEventSourceCatalogStatus")).toMatch(
-            /^\s*reporterMaterializationId\s+String\s+@db\.VarChar\(256\)\s*$/m,
-        );
-    });
-
-    it("makes every canonical AutomationRun mutation advance the one revision owner", async () => {
-        const expectedMutationCounts = new Map([
-            ["sources/app/automations/automationClaimService.ts", 3],
-            ["sources/app/automations/automationConversationAdmissionService.ts", 1],
-            ["sources/app/automations/automationCrudService.ts", 3],
-            ["sources/app/automations/automationReplyHandoffService.ts", 4],
-            ["sources/app/retention/rules/automationRunRetentionRule.ts", 1],
-            // Cross-machine acknowledgement-loss and failed-input cancellation
-            // retain the canonical produced Session identity through the incumbent Run owner.
-            ["sources/app/automations/automationRunService.ts", 15],
-        ]);
-        const expectedMutationEvidence = new Map([
-            [
-                "sources/app/automations/automationRunService.ts",
-                {
-                    label: "cancelled Run produced-Session identity retention",
-                    pattern: /producedSessionId,\s*revision:\s*\{\s*increment:\s*1\s*\}/,
-                },
-            ],
-        ]);
-        const sourceFiles = (await listTypeScriptFiles("sources/app"))
-            .filter((path) => !/\.(?:spec|test)\.ts$/.test(path));
-        const mutationObjectsByPath = new Map<string, string[]>();
-
-        for (const path of sourceFiles) {
-            const mutations = directAutomationRunMutationObjects(await read(path));
-            if (mutations.length > 0) {
-                mutationObjectsByPath.set(path, mutations);
+describe("Automation trigger-set executable migration", () => {
+    it.each(["queued", "claimed", "running"] as const)(
+        "refuses SQLite activation before canonical mutation while a released predecessor Run is %s",
+        async (state) => {
+            const db = createSqlitePredecessor();
+            try {
+                db.prepare(`
+                    INSERT INTO "AutomationRun" (
+                        "id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "updatedAt"
+                    ) VALUES (
+                        'released-open-manual', 'automation', 'account', ?,
+                        '2026-08-27T11:00:00.000Z', '2026-08-27T11:00:00.000Z', CURRENT_TIMESTAMP
+                    )
+                `).run(state);
+                await expect(applySqliteMigrationThroughCanonicalExecutor(
+                    db,
+                    await read(migrationPaths[1]),
+                )).rejects.toThrow(/AutomationRun.*open|drain.*Automation/i);
+                expect(db.prepare(`
+                    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'AutomationTrigger'
+                `).all()).toEqual([]);
+                expect(db.prepare(`
+                    SELECT name FROM pragma_table_info('AutomationRun') WHERE name = 'executionInputEnvelope'
+                `).all()).toEqual([]);
+                expect(db.prepare(`
+                    SELECT state FROM "AutomationRun" WHERE id = 'released-open-manual'
+                `).get()).toEqual({ state });
+            } finally {
+                db.close();
             }
-        }
+        },
+    );
 
-        expect([...mutationObjectsByPath.keys()].sort()).toEqual(
-            [...expectedMutationCounts.keys()].sort(),
-        );
-        for (const [path, expectedCount] of expectedMutationCounts) {
-            const mutations = mutationObjectsByPath.get(path) ?? [];
-            expect(mutations, `${path} direct mutation inventory`).toHaveLength(expectedCount);
-            for (const mutation of mutations) {
-                const dataIndex = mutation.indexOf("data:");
-                expect(dataIndex).toBeGreaterThanOrEqual(0);
-                expect(mutation.slice(dataIndex)).toMatch(
-                    /\brevision\s*:\s*\{\s*increment\s*:\s*1\s*\}/,
-                );
+    it(
+        "refuses PostgreSQL activation before canonical mutation for every open released predecessor Run state",
+        async () => {
+            const db = await createPostgresPredecessor();
+            try {
+                for (const state of ["queued", "claimed", "running"] as const) {
+                    await db.query(`
+                        INSERT INTO "AutomationRun" (
+                            "id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "updatedAt"
+                        ) VALUES (
+                            'released-open-manual', 'automation', 'account', $1,
+                            '2026-08-27T11:00:00.000Z', '2026-08-27T11:00:00.000Z', CURRENT_TIMESTAMP
+                        )
+                    `, [state]);
+                    await expect(db.exec(await read(migrationPaths[0]))).rejects.toThrow(
+                        /Automation activation requires zero open predecessor AutomationRun rows/i,
+                    );
+                    const tables = await db.query<{ tableName: string }>(`
+                        SELECT table_name AS "tableName"
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'AutomationTrigger'
+                    `);
+                    expect(tables.rows).toEqual([]);
+                    const columns = await db.query<{ columnName: string }>(`
+                        SELECT column_name AS "columnName"
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'AutomationRun'
+                            AND column_name = 'executionInputEnvelope'
+                    `);
+                    expect(columns.rows).toEqual([]);
+                    await db.query(`DELETE FROM "AutomationRun" WHERE "id" = 'released-open-manual'`);
+                }
+            } finally {
+                await db.close();
             }
-        }
-        for (const [path, evidence] of expectedMutationEvidence) {
-            const mutations = mutationObjectsByPath.get(path) ?? [];
-            expect(
-                mutations.some((mutation) => evidence.pattern.test(mutation)),
-                `${path} ${evidence.label}`,
-            ).toBe(true);
-        }
-    });
+        },
+        60_000,
+    );
 
-    it("adds portable trigger and Run origin-arm constraints in every provider migration", async () => {
-        const migrations = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-        ]);
-
-        for (const sql of migrations) {
-            expect(sql).toContain("Automation_trigger_arm_check");
-            expect(sql).toContain("AutomationRun_origin_arm_check");
-            expect(sql).toContain("AutomationRun_reply_handoff_arm_check");
-            expect(sql).toContain("originOccurredAt");
-            expect(sql).toContain("occurrenceEvidenceEqualityTag");
-            expect(sql).toMatch(/CHECK\s*\(/i);
-        }
-    });
-
-    it("requires source occurrence time only for Event and Conversation Run arms in every provider", async () => {
-        const [postgresSql, sqliteSql, mysqlSql] = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-        ]);
-
-        for (const sql of [postgresSql, sqliteSql, mysqlSql]) {
-            expect(sql).toMatch(/originKind[^\n]*(?:scheduled|manual)[\s\S]{0,180}originOccurredAt[^\n]*IS\s+NULL/i);
-            expect(sql).toMatch(/originKind[^\n]*pluginEvent[\s\S]{0,180}originOccurredAt[^\n]*IS\s+NOT\s+NULL/i);
-            expect(sql).toMatch(/originKind[^\n]*conversation[\s\S]{0,180}originOccurredAt[^\n]*IS\s+NOT\s+NULL/i);
-            expect(sql).not.toMatch(/(?:CREATE|ADD)\s+(?:UNIQUE\s+)?INDEX[^\n]*originOccurredAt/i);
-        }
-        expect(postgresSql).toMatch(/ADD\s+COLUMN\s+"originOccurredAt"\s+TIMESTAMP\(3\)/i);
-        expect(sqliteSql).toMatch(/ADD\s+COLUMN\s+"originOccurredAt"\s+DATETIME/i);
-        expect(mysqlSql).toMatch(/ADD\s+COLUMN\s+`originOccurredAt`\s+DATETIME\(3\)\s+NULL/i);
-    });
-
-    it("preserves the legacy non-null origin-time projection without deleting durable run history", async () => {
-        const [postgresSql, sqliteSql, mysqlSql] = await Promise.all([
-            read(`prisma/migrations/${migrationId}/migration.sql`),
-            read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
-        ]);
-
-        expect(postgresSql).not.toMatch(
-            /ALTER\s+TABLE\s+"AutomationRun"\s+ALTER\s+COLUMN\s+"scheduledAt"\s+DROP\s+NOT\s+NULL/i,
-        );
-        expect(mysqlSql).toMatch(
-            /ALTER\s+TABLE\s+`AutomationRun`\s+MODIFY\s+`scheduledAt`\s+DATETIME\(3\)\s+NOT\s+NULL/i,
-        );
-        expect(sqliteSql).toMatch(/"scheduledAt"\s+DATETIME\s+NOT\s+NULL/i);
-
-        for (const sql of [postgresSql, sqliteSql, mysqlSql]) {
-            expect(sql).not.toMatch(/AutomationRun_automationId_fkey[\s\S]{0,180}ON\s+DELETE\s+CASCADE/i);
-            expect(sql).toMatch(/AutomationRun_automationId_fkey[\s\S]{0,180}ON\s+DELETE\s+(?:RESTRICT|NO\s+ACTION)/i);
-        }
-    });
-
-    it("defers SQLite foreign keys while rebuilding Automation under retained Runs", async () => {
-        const sqliteSql = await read(`prisma/sqlite/migrations/${migrationId}/migration.sql`);
-
-        expect(sqliteSql).toMatch(
-            /PRAGMA\s+defer_foreign_keys\s*=\s*ON\s*;[\s\S]*?PRAGMA\s+foreign_keys\s*=\s*OFF\s*;[\s\S]*?CREATE\s+TABLE\s+"new_Automation"/i,
-        );
-        expect(sqliteSql).toMatch(
-            /ALTER\s+TABLE\s+"new_Automation"\s+RENAME\s+TO\s+"Automation"[\s\S]*?PRAGMA\s+foreign_keys\s*=\s*ON\s*;[\s\S]*?PRAGMA\s+defer_foreign_keys\s*=\s*OFF\s*;/i,
-        );
-    });
-
-    it("migrates PostgreSQL schedule rows while preserving their origin-time projection", async () => {
-        const db = new PGlite();
+    it("migrates PostgreSQL schedule/manual data and enforces trigger-scoped occurrence identity", async () => {
+        const db = await createPostgresPredecessor();
         try {
-            await db.exec(`
-                CREATE TYPE "AutomationScheduleKind" AS ENUM ('cron', 'interval');
-                CREATE TYPE "AutomationTargetType" AS ENUM ('new_session', 'existing_session');
-                CREATE TYPE "AutomationRunState" AS ENUM ('queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled', 'expired');
-                CREATE TABLE "Account" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Machine" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Session" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Automation" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "accountId" TEXT NOT NULL,
-                    "name" TEXT NOT NULL,
-                    "enabled" BOOLEAN NOT NULL DEFAULT true,
-                    "scheduleKind" "AutomationScheduleKind" NOT NULL,
-                    "scheduleExpr" TEXT,
-                    "everyMs" INTEGER,
-                    "timezone" TEXT,
-                    "targetType" "AutomationTargetType" NOT NULL,
-                    "templateCiphertext" TEXT NOT NULL,
-                    "templateVersion" INTEGER NOT NULL DEFAULT 0,
-                    "nextRunAt" TIMESTAMP(3),
-                    "lastRunAt" TIMESTAMP(3),
-                    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "updatedAt" TIMESTAMP(3) NOT NULL,
-                    CONSTRAINT "Automation_accountId_fkey"
-                        FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
-                );
-                CREATE TABLE "AutomationRun" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "automationId" TEXT NOT NULL,
-                    "accountId" TEXT NOT NULL,
-                    "state" "AutomationRunState" NOT NULL DEFAULT 'queued',
-                    "scheduledAt" TIMESTAMP(3) NOT NULL,
-                    "dueAt" TIMESTAMP(3) NOT NULL,
-                    "attempt" INTEGER NOT NULL DEFAULT 0,
-                    "summaryCiphertext" TEXT,
-                    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "updatedAt" TIMESTAMP(3) NOT NULL,
-                    CONSTRAINT "AutomationRun_automationId_fkey"
-                        FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-                    CONSTRAINT "AutomationRun_accountId_fkey"
-                        FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
-                );
-                INSERT INTO "Account" ("id") VALUES ('account');
-                INSERT INTO "Automation" (
-                    "id", "accountId", "name", "scheduleKind", "targetType", "templateCiphertext", "updatedAt"
-                ) VALUES ('automation', 'account', 'legacy schedule', 'interval', 'new_session', '{}', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationRun" (
-                    "id", "automationId", "accountId", "scheduledAt", "dueAt", "summaryCiphertext", "updatedAt"
-                ) VALUES ('run', 'automation', 'account', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ' exact legacy ', CURRENT_TIMESTAMP);
-            `);
-
-            await db.exec(await read(
-                "prisma/migrations/20260816230000_add_manual_automation_triggers/migration.sql",
-            ));
-            await db.exec(`
-                INSERT INTO "Automation" (
-                    "id", "accountId", "name", "scheduleKind", "targetType", "templateCiphertext", "updatedAt"
-                ) VALUES ('manual-automation', 'account', 'preview manual', 'manual', 'new_session', '{}', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationRun" (
-                    "id", "automationId", "accountId", "scheduledAt", "dueAt", "idempotencyKey", "updatedAt"
-                ) VALUES (
-                    'manual-run', 'manual-automation', 'account', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-                    'preview-build-41', CURRENT_TIMESTAMP
-                );
-            `);
-
-            await db.exec(await read(`prisma/migrations/${migrationId}/migration.sql`));
-            const adoptedManual = await db.query<{
-                triggerKind: string;
-                scheduleKind: string | null;
-                idempotencyKey: string | null;
-                originKind: string;
+            await db.exec(await read(migrationPaths[0]));
+            const triggers = await db.query<{
+                id: string; automationId: string; kind: string; enabled: boolean;
+                scheduleKind: string; everyMs: number; timezone: string;
             }>(`
-                SELECT
-                    a."triggerKind",
-                    a."scheduleKind"::text AS "scheduleKind",
-                    r."idempotencyKey",
-                    r."originKind"
-                FROM "Automation" a
-                JOIN "AutomationRun" r ON r."automationId" = a."id"
-                WHERE a."id" = 'manual-automation'
+                SELECT "id", "automationId", "kind"::text AS "kind", "enabled",
+                    "scheduleKind"::text AS "scheduleKind", "everyMs", "timezone"
+                FROM "AutomationTrigger"
             `);
-            expect(adoptedManual.rows).toEqual([{
-                triggerKind: "manual",
-                scheduleKind: null,
-                idempotencyKey: "preview-build-41",
-                originKind: "manual",
+            expect(triggers.rows).toEqual([{
+                id: "automation",
+                automationId: "automation",
+                kind: "schedule",
+                enabled: true,
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                timezone: "UTC",
             }]);
-            const scheduledAt = await db.query<{ scheduledAt: Date | null }>(`
-                SELECT "scheduledAt" FROM "AutomationRun" WHERE "id" = 'run'
+            const runs = await db.query<{
+                id: string; triggerId: string | null; causeKind: string;
+                causeTriggerKind: string | null; causeTriggerRevision: number | null;
+                causeScheduledFor: Date | null; occurrenceKey: string | null;
+                legacyManualIdempotencyKey: string | null; resultEnvelope: string | null;
+                executionInputEnvelope: string | null;
+                causeOccurredMatchesDueAt: boolean; causeScheduledMatchesDueAt: boolean | null;
+            }>(`
+                SELECT "id", "triggerId", "causeKind"::text AS "causeKind",
+                    "causeTriggerKind"::text AS "causeTriggerKind", "causeTriggerRevision",
+                    "causeScheduledFor", "occurrenceKey",
+                    "idempotencyKey" AS "legacyManualIdempotencyKey", "resultEnvelope",
+                    "executionInputEnvelope",
+                    "causeOccurredAt" = "dueAt" AS "causeOccurredMatchesDueAt",
+                    "causeScheduledFor" = "dueAt" AS "causeScheduledMatchesDueAt"
+                FROM "AutomationRun"
+                WHERE "id" IN ('manual-run', 'scheduled-run')
+                ORDER BY "id"
             `);
-            expect(scheduledAt.rows[0]!.scheduledAt).not.toBeNull();
-            await expect(
-                db.exec(`UPDATE "AutomationRun" SET "scheduledAt" = NULL WHERE "id" = 'run';`),
-            ).rejects.toThrow();
-            await expect(
-                db.exec(`UPDATE "Automation" SET "triggerKind" = 'pluginEvent' WHERE "id" = 'automation';`),
-            ).rejects.toThrow();
-            await db.exec(`
-                UPDATE "Automation"
-                SET
-                    "scheduleKind" = NULL,
-                    "triggerKind" = 'pluginEvent',
-                    "triggerEventPluginId" = 'com.example.source',
-                    "triggerEventLocalId" = 'issue.opened',
-                    "triggerSourceSelectorId" = 'selector-1',
-                    "triggerSourceContractVersion" = 1,
-                    "triggerObservationTransport" = 'durablePush',
-                    "triggerWebhookEndpointId" = 'endpoint-1',
-                    "triggerObservationStartsAt" = CURRENT_TIMESTAMP,
-                    "triggerDefinitionEnvelope" = '{"t":"plain","v":{}}'
-                WHERE "id" = 'automation';
-            `);
-            await expect(
-                db.exec(`UPDATE "Automation" SET "triggerSourceSelectorId" = NULL WHERE "id" = 'automation';`),
-            ).rejects.toThrow();
-            await expect(
-                db.exec(`UPDATE "AutomationRun" SET "originKind" = 'pluginEvent' WHERE "id" = 'run';`),
-            ).rejects.toThrow();
-            await db.exec(`
-                UPDATE "AutomationRun"
-                SET
-                    "originKind" = 'pluginEvent',
-                    "originOccurredAt" = CURRENT_TIMESTAMP,
-                    "occurrenceKey" = 'occurrence-1',
-                    "originSourceSelectorId" = 'selector-1',
-                    "triggerEvidenceEnvelope" = '{"t":"plain","v":{}}'
-                WHERE "id" = 'run';
-            `);
-            await expect(
-                db.exec(`
-                    UPDATE "AutomationRun"
-                    SET "occurrenceEvidenceEqualityTag" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                    WHERE "id" = 'run';
-                `),
-            ).rejects.toThrow();
-            await expect(
-                db.exec(`
-                    UPDATE "AutomationRun"
-                    SET "triggerEvidenceEnvelope" = '{"t":"encrypted","c":"ciphertext"}'
-                    WHERE "id" = 'run';
-                `),
-            ).rejects.toThrow();
-            await db.exec(`
-                UPDATE "AutomationRun"
-                SET
-                    "triggerEvidenceEnvelope" = '{"t":"encrypted","c":"ciphertext"}',
-                    "occurrenceEvidenceEqualityTag" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                WHERE "id" = 'run';
-            `);
-            const migrated = await db.query<{ resultEnvelope: string | null; revision: number }>(`
-                SELECT "resultEnvelope", "revision" FROM "AutomationRun" WHERE "id" = 'run'
-            `);
-            expect(JSON.parse(migrated.rows[0]!.resultEnvelope!)).toEqual({
+            expect(runs.rows[0]).toEqual({
+                id: "manual-run",
+                triggerId: null,
+                causeKind: "manual",
+                causeTriggerKind: null,
+                causeTriggerRevision: null,
+                causeScheduledFor: null,
+                occurrenceKey: null,
+                legacyManualIdempotencyKey: null,
+                resultEnvelope: null,
+                executionInputEnvelope: null,
+                causeOccurredMatchesDueAt: false,
+                causeScheduledMatchesDueAt: null,
+            });
+            expect(runs.rows[1]).toMatchObject({
+                id: "scheduled-run",
+                triggerId: "automation",
+                causeKind: "trigger",
+                causeTriggerKind: "schedule",
+                causeTriggerRevision: 0,
+                legacyManualIdempotencyKey: null,
+                executionInputEnvelope: null,
+                causeOccurredMatchesDueAt: true,
+                causeScheduledMatchesDueAt: true,
+            });
+            expect(runs.rows[1]!.occurrenceKey).toHaveLength(43);
+            expect(JSON.parse(runs.rows[1]!.resultEnvelope!)).toEqual({
                 t: "legacySummaryCiphertext",
                 c: " exact legacy ",
             });
-            expect(migrated.rows[0]!.revision).toBe(0);
-            await expect(db.exec(`DELETE FROM "Automation" WHERE "id" = 'automation';`)).rejects.toThrow();
+            const dstBoundary = await db.query<{
+                id: string; causeKind: string; causeScheduledFor: Date | null;
+                causeOccurredMatchesDueAt: boolean; causeScheduledMatchesDueAt: boolean | null;
+            }>(`
+                SELECT "id", "causeKind"::text AS "causeKind", "causeScheduledFor",
+                    "causeOccurredAt" = "dueAt" AS "causeOccurredMatchesDueAt",
+                    "causeScheduledFor" = "dueAt" AS "causeScheduledMatchesDueAt"
+                FROM "AutomationRun" WHERE "id" IN ('cron-dst-run', 'manual-dst-run')
+                ORDER BY "id"
+            `);
+            expect(dstBoundary.rows[0]).toMatchObject({
+                id: "cron-dst-run",
+                causeKind: "trigger",
+                causeOccurredMatchesDueAt: true,
+                causeScheduledMatchesDueAt: true,
+            });
+            expect(dstBoundary.rows[1]).toMatchObject({
+                id: "manual-dst-run",
+                causeKind: "manual",
+                causeScheduledFor: null,
+                causeScheduledMatchesDueAt: null,
+            });
+            const assignments = await db.query<{ runId: string; machineId: string; priority: number }>(`
+                SELECT "runId", "machineId", "priority" FROM "AutomationRunAssignment" ORDER BY "runId"
+            `);
+            expect(assignments.rows).toEqual([
+                { runId: "cron-dst-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "manual-dst-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "manual-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "scheduled-run", machineId: "machine-enabled", priority: 7 },
+            ]);
+            const firstTriggerOccurrenceKey = "E".repeat(43);
+            const secondTriggerOccurrenceKey = "F".repeat(43);
+            await db.exec(`
+                INSERT INTO "AutomationTrigger" ("id", "automationId", "kind", "scheduleKind", "everyMs", "updatedAt")
+                    VALUES ('second-trigger', 'automation', 'schedule', 'interval', 60000, CURRENT_TIMESTAMP);
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "triggerId", "causeKind", "causeTriggerKind",
+                    "causeTriggerRevision", "causeOccurredAt", "causeScheduledFor", "occurrenceKey",
+                    "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES
+                    ('first-shared-occurrence', 'automation', 'account', 'automation', 'trigger', 'schedule', 0,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${firstTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('second-shared-occurrence', 'automation', 'account', 'second-trigger', 'trigger', 'schedule', 0,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${secondTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            `);
+            await expect(db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "triggerId", "causeKind", "causeTriggerKind",
+                    "causeTriggerRevision", "causeOccurredAt", "causeScheduledFor", "occurrenceKey",
+                    "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('duplicate-trigger-occurrence', 'automation', 'account', 'automation', 'trigger', 'schedule', 0,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${firstTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `)).rejects.toThrow();
+            const occurrenceKey = "A".repeat(43);
+            await db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "replyContextEnvelope",
+                    "replyHandoffActionPluginId", "replyHandoffActionLocalId", "replyHandoffTargetMachineId",
+                    "replyHandoffTargetMachineInstallationId", "replyHandoffTargetMaterializationId",
+                    "replyHandoffId", "replyHandoffState", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('conversation-run', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP, '${occurrenceKey}',
+                    '{"t":"plain","v":{}}', '{}', 'reply context', 'plugin', 'action', 'machine',
+                    'installation', 'materialization', 'handoff-a', 'awaitingResult',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `);
+            const appOwnedOccurrenceKey = "D".repeat(43);
+            await db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "replyContextEnvelope",
+                    "replyHandoffActionPluginId", "replyHandoffActionLocalId", "replyHandoffTargetMachineId",
+                    "replyHandoffTargetMachineInstallationId", "replyHandoffTargetMaterializationId",
+                    "replyHandoffId", "replyHandoffState", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('app-owned-conversation-key', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP,
+                    '${appOwnedOccurrenceKey}', '{"t":"plain","v":{}}', '{}', 'reply context',
+                    'plugin', 'action', 'machine', 'installation', 'materialization', 'handoff-d', 'awaitingResult',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `);
+            await expect(db.exec(`UPDATE "AutomationRun" SET "idempotencyKey" = 'manual-namespace' WHERE "id" = 'conversation-run'`)).rejects.toThrow();
+            await expect(db.exec(`UPDATE "AutomationRun" SET "idempotencyKey" = 'not-null' WHERE "id" = 'scheduled-run'`)).rejects.toThrow();
+            await expect(db.exec(`
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "scheduleKind", "updatedAt"
+                ) VALUES ('invalid-cron', 'automation', 'schedule', 'cron', CURRENT_TIMESTAMP)
+            `)).rejects.toThrow();
+            await expect(db.exec(`
+                UPDATE "AutomationRun" SET "causeKind" = 'manual' WHERE "id" = 'scheduled-run'
+            `)).rejects.toThrow();
+            // Predecessor terminal history keeps its null execution input: the
+            // transition never synthesizes recipe bytes that it cannot know.
+            for (const terminalState of AUTOMATION_RUN_TERMINAL_STATES) {
+                await db.query(`
+                    INSERT INTO "AutomationRun" (
+                        "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",
+                        "scheduledAt", "dueAt", "updatedAt"
+                    ) VALUES ($1, 'automation', 'account', $2, 'manual',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                `, [`terminal-null-input-${terminalState}`, terminalState]);
+            }
+            for (const state of ["queued", "claimed", "running"] as const) {
+                await expect(db.query(`
+                    INSERT INTO "AutomationRun" (
+                        "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",
+                        "scheduledAt", "dueAt", "updatedAt"
+                    ) VALUES ($1, 'automation', 'account', $2, 'manual',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                `, [`nonterminal-null-input-${state}`, state])).rejects.toThrow();
+            }
+            await db.exec(`
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "eventPluginId", "eventLocalId", "sourceSelectorId",
+                    "sourceContractVersion", "observationTransport", "definitionEnvelope",
+                    "watcherMachineId", "watcherMachineInstallationId", "watcherPluginId",
+                    "watcherMaterializationId", "updatedAt"
+                ) VALUES ('checkpointed-event', 'automation', 'pluginEvent', 'plugin', 'checkpointed',
+                    'checkpointed-source', 1, 'checkpointedPull', '{}', 'machine-enabled', 'installation',
+                    'plugin', 'materialization', CURRENT_TIMESTAMP);
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "eventPluginId", "eventLocalId", "sourceSelectorId",
+                    "sourceContractVersion", "observationTransport", "definitionEnvelope",
+                    "webhookEndpointId", "observationStartsAt", "updatedAt"
+                ) VALUES ('durable-event', 'automation', 'pluginEvent', 'plugin', 'durable',
+                    'durable-source', 1, 'durablePush', '{}', 'endpoint', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                UPDATE "AutomationTrigger" SET
+                    "enabled" = false,
+                    "deletedAt" = CURRENT_TIMESTAMP,
+                    "definitionEnvelope" = NULL,
+                    "observationTransport" = NULL,
+                    "webhookEndpointId" = NULL,
+                    "observationStartsAt" = NULL,
+                    "watcherMachineId" = NULL,
+                    "watcherMachineInstallationId" = NULL,
+                    "watcherPluginId" = NULL,
+                    "watcherMaterializationId" = NULL
+                WHERE "id" IN ('checkpointed-event', 'durable-event');
+            `);
+            const deletedEvents = await db.query<{
+                id: string; eventPluginId: string; eventLocalId: string; sourceSelectorId: string;
+                sourceContractVersion: number; definitionEnvelope: string | null;
+                observationTransport: string | null;
+            }>(`
+                SELECT "id", "eventPluginId", "eventLocalId", "sourceSelectorId", "sourceContractVersion",
+                    "definitionEnvelope", "observationTransport"
+                FROM "AutomationTrigger"
+                WHERE "id" IN ('checkpointed-event', 'durable-event')
+                ORDER BY "id"
+            `);
+            expect(deletedEvents.rows).toEqual([
+                {
+                    id: "checkpointed-event",
+                    eventPluginId: "plugin",
+                    eventLocalId: "checkpointed",
+                    sourceSelectorId: "checkpointed-source",
+                    sourceContractVersion: 1,
+                    definitionEnvelope: null,
+                    observationTransport: null,
+                },
+                {
+                    id: "durable-event",
+                    eventPluginId: "plugin",
+                    eventLocalId: "durable",
+                    sourceSelectorId: "durable-source",
+                    sourceContractVersion: 1,
+                    definitionEnvelope: null,
+                    observationTransport: null,
+                },
+            ]);
+            // The signed V3 request binds exactly one durable outcome,
+            // including an empty outcome with no Run.
+            const postgresReplayFingerprint = "P".repeat(43);
+            await db.exec(`
+                INSERT INTO "AutomationWorkerClaimReceipt" (
+                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                ) VALUES ('${postgresReplayFingerprint}', 'account', 'machine-enabled',
+                    'installation-enabled', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+            `);
+            await expect(db.exec(`
+                INSERT INTO "AutomationWorkerClaimReceipt" (
+                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                ) VALUES ('${postgresReplayFingerprint}', 'account', 'machine-enabled',
+                    'installation-enabled', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+            `)).rejects.toThrow();
         } finally {
             await db.close();
         }
     });
 
-    it("rebuilds SQLite owners without losing retained Run history", async () => {
-        const db = new DatabaseSync(":memory:");
+    it("migrates SQLite data, preserves retained history, and enforces final trigger/Run invariants", async () => {
+        const db = createSqlitePredecessor();
         try {
-            db.exec(`
-                PRAGMA foreign_keys=ON;
-                CREATE TABLE "Account" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Machine" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Session" ("id" TEXT NOT NULL PRIMARY KEY);
-                CREATE TABLE "Automation" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "accountId" TEXT NOT NULL,
-                    "name" TEXT NOT NULL,
-                    "description" TEXT,
-                    "enabled" BOOLEAN NOT NULL DEFAULT true,
-                    "scheduleKind" TEXT NOT NULL,
-                    "scheduleExpr" TEXT,
-                    "everyMs" INTEGER,
-                    "timezone" TEXT,
-                    "targetType" TEXT NOT NULL,
-                    "templateCiphertext" TEXT NOT NULL,
-                    "templateVersion" INTEGER NOT NULL DEFAULT 0,
-                    "nextRunAt" DATETIME,
-                    "lastRunAt" DATETIME,
-                    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "updatedAt" DATETIME NOT NULL,
-                    CONSTRAINT "Automation_accountId_fkey"
-                        FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE
-                );
-                CREATE TABLE "AutomationAssignment" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "automationId" TEXT NOT NULL,
-                    "machineId" TEXT NOT NULL,
-                    "enabled" BOOLEAN NOT NULL DEFAULT true,
-                    "priority" INTEGER NOT NULL DEFAULT 0,
-                    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "updatedAt" DATETIME NOT NULL,
-                    CONSTRAINT "AutomationAssignment_automationId_fkey"
-                        FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-                    CONSTRAINT "AutomationAssignment_machineId_fkey"
-                        FOREIGN KEY ("machineId") REFERENCES "Machine"("id") ON DELETE CASCADE ON UPDATE CASCADE
-                );
-                CREATE TABLE "AutomationRun" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "automationId" TEXT NOT NULL,
-                    "accountId" TEXT NOT NULL,
-                    "state" TEXT NOT NULL DEFAULT 'queued',
-                    "scheduledAt" DATETIME NOT NULL,
-                    "dueAt" DATETIME NOT NULL,
-                    "claimedAt" DATETIME,
-                    "startedAt" DATETIME,
-                    "finishedAt" DATETIME,
-                    "claimedByMachineId" TEXT,
-                    "leaseExpiresAt" DATETIME,
-                    "attempt" INTEGER NOT NULL DEFAULT 0,
-                    "summaryCiphertext" TEXT,
-                    "errorCode" TEXT,
-                    "errorMessage" TEXT,
-                    "producedSessionId" TEXT,
-                    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "updatedAt" DATETIME NOT NULL,
-                    CONSTRAINT "AutomationRun_automationId_fkey"
-                        FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-                    CONSTRAINT "AutomationRun_accountId_fkey"
-                        FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-                    CONSTRAINT "AutomationRun_claimedByMachineId_fkey"
-                        FOREIGN KEY ("claimedByMachineId") REFERENCES "Machine"("id") ON DELETE SET NULL ON UPDATE CASCADE,
-                    CONSTRAINT "AutomationRun_producedSessionId_fkey"
-                        FOREIGN KEY ("producedSessionId") REFERENCES "Session"("id") ON DELETE SET NULL ON UPDATE CASCADE
-                );
-                CREATE TABLE "AutomationRunEvent" (
-                    "id" TEXT NOT NULL PRIMARY KEY,
-                    "runId" TEXT NOT NULL,
-                    "ts" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    "type" TEXT NOT NULL,
-                    "payload" TEXT,
-                    CONSTRAINT "AutomationRunEvent_runId_fkey"
-                        FOREIGN KEY ("runId") REFERENCES "AutomationRun"("id") ON DELETE CASCADE ON UPDATE CASCADE
-                );
-                INSERT INTO "Account" ("id") VALUES ('account');
-                INSERT INTO "Machine" ("id") VALUES ('machine');
-                INSERT INTO "Automation" (
-                    "id", "accountId", "name", "scheduleKind", "targetType", "templateCiphertext", "updatedAt"
-                ) VALUES ('automation', 'account', 'legacy schedule', 'interval', 'new_session', '{}', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationAssignment" (
-                    "id", "automationId", "machineId", "updatedAt"
-                ) VALUES ('assignment', 'automation', 'machine', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationRun" (
-                    "id", "automationId", "accountId", "scheduledAt", "dueAt", "summaryCiphertext", "updatedAt"
-                ) VALUES ('run', 'automation', 'account', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ' exact legacy ', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationRunEvent" ("id", "runId", "type") VALUES ('event', 'run', 'queued');
-            `);
-
-            db.exec(await read(
-                "prisma/sqlite/migrations/20260816230000_add_manual_automation_triggers/migration.sql",
-            ));
-            db.exec(`
-                INSERT INTO "Automation" (
-                    "id", "accountId", "name", "scheduleKind", "targetType", "templateCiphertext", "updatedAt"
-                ) VALUES ('manual-automation', 'account', 'preview manual', 'manual', 'new_session', '{}', CURRENT_TIMESTAMP);
-                INSERT INTO "AutomationRun" (
-                    "id", "automationId", "accountId", "scheduledAt", "dueAt", "idempotencyKey", "updatedAt"
-                ) VALUES (
-                    'manual-run', 'manual-automation', 'account', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-                    'preview-build-41', CURRENT_TIMESTAMP
-                );
-            `);
-
-            await applySqliteMigrationThroughCanonicalExecutor(
-                db,
-                await read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
-            );
+            await applySqliteMigrationThroughCanonicalExecutor(db, await read(migrationPaths[1]));
             expect(db.prepare(`
-                SELECT a."triggerKind", a."scheduleKind", r."idempotencyKey", r."originKind"
-                FROM "Automation" a
-                JOIN "AutomationRun" r ON r."automationId" = a."id"
-                WHERE a."id" = 'manual-automation'
+                SELECT "id", "automationId", "kind", "enabled", "scheduleKind", "everyMs", "timezone"
+                FROM "AutomationTrigger"
             `).all()).toEqual([{
-                triggerKind: "manual",
-                scheduleKind: null,
-                idempotencyKey: "preview-build-41",
-                originKind: "manual",
+                id: "automation",
+                automationId: "automation",
+                kind: "schedule",
+                enabled: 1,
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                timezone: "UTC",
             }]);
-            expect(
-                () => db.exec(`UPDATE "AutomationRun" SET "scheduledAt" = NULL WHERE "id" = 'run';`),
-            ).toThrow();
-            expect(
-                () => db.exec(`UPDATE "Automation" SET "triggerKind" = 'pluginEvent' WHERE "id" = 'automation';`),
-            ).toThrow();
-            expect(
-                () => db.exec(`UPDATE "Automation" SET "triggerKind" = 'conversation' WHERE "id" = 'automation';`),
-            ).toThrow();
-            db.exec(`
-                UPDATE "Automation"
-                SET
-                    "scheduleKind" = NULL,
-                    "triggerKind" = 'pluginEvent',
-                    "triggerEventPluginId" = 'com.example.source',
-                    "triggerEventLocalId" = 'issue.opened',
-                    "triggerSourceSelectorId" = 'selector-1',
-                    "triggerSourceContractVersion" = 1,
-                    "triggerObservationTransport" = 'durablePush',
-                    "triggerWebhookEndpointId" = 'endpoint-1',
-                    "triggerObservationStartsAt" = CURRENT_TIMESTAMP,
-                    "triggerDefinitionEnvelope" = '{"t":"plain","v":{}}'
-                WHERE "id" = 'automation';
-            `);
-            expect(
-                () => db.exec(`UPDATE "Automation" SET "triggerSourceSelectorId" = NULL WHERE "id" = 'automation';`),
-            ).toThrow();
-            expect(
-                () => db.exec(`UPDATE "AutomationRun" SET "originKind" = 'pluginEvent' WHERE "id" = 'run';`),
-            ).toThrow();
-            db.exec(`
-                UPDATE "AutomationRun"
-                SET
-                    "originKind" = 'pluginEvent',
-                    "originOccurredAt" = CURRENT_TIMESTAMP,
-                    "occurrenceKey" = 'occurrence-1',
-                    "originSourceSelectorId" = 'selector-1',
-                    "triggerEvidenceEnvelope" = '{"t":"plain","v":{}}'
-                WHERE "id" = 'run';
-            `);
-            expect(
-                () => db.exec(`
-                    UPDATE "AutomationRun"
-                    SET "occurrenceEvidenceEqualityTag" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                    WHERE "id" = 'run';
-                `),
-            ).toThrow();
-            expect(
-                () => db.exec(`
-                    UPDATE "AutomationRun"
-                    SET "triggerEvidenceEnvelope" = '{"t":"encrypted","c":"ciphertext"}'
-                    WHERE "id" = 'run';
-                `),
-            ).toThrow();
-            db.exec(`
-                UPDATE "AutomationRun"
-                SET
-                    "triggerEvidenceEnvelope" = '{"t":"encrypted","c":"ciphertext"}',
-                    "occurrenceEvidenceEqualityTag" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                WHERE "id" = 'run';
-            `);
-            db.exec(`
-                UPDATE "AutomationRun"
-                SET
-                    "originKind" = 'conversation',
-                    "originSourceSelectorId" = NULL
-                WHERE "id" = 'run';
-            `);
             expect(db.prepare(`
-                SELECT "originKind", "originSourceSelectorId"
+                SELECT "id", "triggerId", "causeKind", "causeTriggerKind", "causeTriggerRevision",
+                    "causeScheduledFor", "occurrenceKey", "idempotencyKey"
                 FROM "AutomationRun"
-                WHERE "id" = 'run'
-            `).all()).toEqual([{
-                originKind: "conversation",
-                originSourceSelectorId: null,
-            }]);
-            expect(db.prepare(`SELECT "runId" FROM "AutomationRunEvent" WHERE "id" = 'event'`).all()).toEqual([
-                { runId: "run" },
+                WHERE "id" IN ('manual-run', 'scheduled-run')
+                ORDER BY "id"
+            `).all()).toEqual([
+                {
+                    id: "manual-run",
+                    triggerId: null,
+                    causeKind: "manual",
+                    causeTriggerKind: null,
+                    causeTriggerRevision: null,
+                    causeScheduledFor: null,
+                    occurrenceKey: null,
+                    idempotencyKey: null,
+                },
+                {
+                    id: "scheduled-run",
+                    triggerId: "automation",
+                    causeKind: "trigger",
+                    causeTriggerKind: "schedule",
+                    causeTriggerRevision: 0,
+                    causeScheduledFor: "2026-08-27T10:01:00.000Z",
+                    occurrenceKey: expect.stringMatching(/^.{43}$/),
+                    idempotencyKey: null,
+                },
             ]);
-            const [legacyRun] = db.prepare(`
-                SELECT "summaryCiphertext", "resultEnvelope"
-                FROM "AutomationRun"
-                WHERE "id" = 'run'
-            `).all() as Array<{ summaryCiphertext: string | null; resultEnvelope: string | null }>;
-            expect(legacyRun?.summaryCiphertext).toBe(" exact legacy ");
-            expect(JSON.parse(legacyRun?.resultEnvelope ?? "")).toEqual({
+            expect(db.prepare(`
+                SELECT "runId", "machineId", "priority" FROM "AutomationRunAssignment" ORDER BY "runId"
+            `).all()).toEqual([
+                { runId: "cron-dst-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "manual-dst-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "manual-run", machineId: "machine-enabled", priority: 7 },
+                { runId: "scheduled-run", machineId: "machine-enabled", priority: 7 },
+            ]);
+            expect(db.prepare(`
+                SELECT "id", "causeKind", "causeOccurredAt", "causeScheduledFor" FROM "AutomationRun"
+                WHERE "id" IN ('cron-dst-run', 'manual-dst-run') ORDER BY "id"
+            `).all()).toEqual([
+                {
+                    id: "cron-dst-run",
+                    causeKind: "trigger",
+                    causeOccurredAt: "2026-10-25T01:00:00.000Z",
+                    causeScheduledFor: "2026-10-25T01:00:00.000Z",
+                },
+                {
+                    id: "manual-dst-run",
+                    causeKind: "manual",
+                    causeOccurredAt: expect.any(String),
+                    causeScheduledFor: null,
+                },
+            ]);
+            expect(db.prepare("SELECT runId FROM AutomationRunEvent WHERE id = 'event'").all()).toEqual([{ runId: "scheduled-run" }]);
+            const migratedResult = db.prepare(`
+                SELECT "resultEnvelope" FROM "AutomationRun" WHERE "id" = 'scheduled-run'
+            `).get() as { resultEnvelope: string };
+            expect(JSON.parse(migratedResult.resultEnvelope)).toEqual({
                 t: "legacySummaryCiphertext",
                 c: " exact legacy ",
             });
+            const firstTriggerOccurrenceKey = "E".repeat(43);
+            const secondTriggerOccurrenceKey = "F".repeat(43);
+            db.exec(`
+                INSERT INTO "AutomationTrigger" ("id", "automationId", "kind", "scheduleKind", "everyMs", "updatedAt")
+                    VALUES ('second-trigger', 'automation', 'schedule', 'interval', 60000, CURRENT_TIMESTAMP);
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "triggerId", "causeKind", "causeTriggerKind",
+                    "causeTriggerRevision", "causeOccurredAt", "causeScheduledFor", "occurrenceKey",
+                    "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES
+                    ('first-shared-occurrence', 'automation', 'account', 'automation', 'trigger', 'schedule', 0,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${firstTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    ('second-shared-occurrence', 'automation', 'account', 'second-trigger', 'trigger', 'schedule', 0,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${secondTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            `);
+            expect(() => db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "triggerId", "causeKind", "causeTriggerKind",
+                    "causeTriggerRevision", "causeOccurredAt", "causeScheduledFor", "occurrenceKey",
+                    "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('duplicate-trigger-occurrence', 'automation', 'account', 'automation', 'trigger', 'schedule', 0,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${firstTriggerOccurrenceKey}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `)).toThrow();
+            const appOwnedOccurrenceKey = "D".repeat(43);
+            db.prepare(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "replyContextEnvelope",
+                    "replyHandoffActionPluginId", "replyHandoffActionLocalId", "replyHandoffTargetMachineId",
+                    "replyHandoffTargetMachineInstallationId", "replyHandoffTargetMaterializationId",
+                    "replyHandoffId", "replyHandoffState", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('app-owned-conversation-key', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP,
+                    ?, '{"t":"plain","v":{}}', '{}', 'reply context', 'plugin', 'action', 'machine',
+                    'installation', 'materialization', 'handoff-d', 'awaitingResult',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(appOwnedOccurrenceKey);
+            expect(() => db.prepare(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "replyContextEnvelope",
+                    "replyHandoffActionPluginId", "replyHandoffActionLocalId", "replyHandoffTargetMachineId",
+                    "replyHandoffTargetMachineInstallationId", "replyHandoffTargetMaterializationId",
+                    "replyHandoffId", "replyHandoffState", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('duplicate-conversation-key', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP,
+                    ?, '{"t":"plain","v":{}}', '{}', 'reply context', 'plugin', 'action', 'machine',
+                    'installation', 'materialization', 'handoff-duplicate', 'awaitingResult',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(appOwnedOccurrenceKey)).toThrow();
+            const missingIdentityKey = "C".repeat(43);
+            expect(() => db.prepare(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "replyHandoffState", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('missing-handoff-identity', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP, ?,
+                    '{"t":"plain","v":{}}', '{}', 'accepted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(missingIdentityKey)).toThrow();
+            expect(() => db.exec(`
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "updatedAt"
+                ) VALUES ('missing-schedule-discriminant', 'automation', 'schedule', CURRENT_TIMESTAMP)
+            `)).toThrow();
+            expect(() => db.exec(`
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "sourceSessionId", "sourceTurnId", "updatedAt"
+                ) VALUES ('missing-lifecycle-discriminant', 'automation', 'sessionLifecycle',
+                    'session', 'turn', CURRENT_TIMESTAMP)
+            `)).toThrow();
+            db.exec(`
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "eventPluginId", "eventLocalId",
+                    "sourceSelectorId", "sourceContractVersion", "observationTransport",
+                    "definitionEnvelope", "watcherMachineId", "watcherMachineInstallationId",
+                    "watcherPluginId", "watcherMaterializationId", "updatedAt"
+                ) VALUES ('checkpointed-event', 'automation', 'pluginEvent', 'plugin', 'checkpointed',
+                    'checkpointed-source', 1, 'checkpointedPull', '{}', 'machine-enabled', 'installation',
+                    'plugin', 'materialization', CURRENT_TIMESTAMP);
+                INSERT INTO "AutomationTrigger" (
+                    "id", "automationId", "kind", "eventPluginId", "eventLocalId",
+                    "sourceSelectorId", "sourceContractVersion", "observationTransport",
+                    "definitionEnvelope", "webhookEndpointId", "observationStartsAt", "updatedAt"
+                ) VALUES ('durable-event', 'automation', 'pluginEvent', 'plugin', 'durable',
+                    'durable-source', 1, 'durablePush', '{}', 'endpoint', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `);
+            expect(() => db.exec(`
+                UPDATE "AutomationTrigger" SET
+                    "enabled" = false,
+                    "deletedAt" = CURRENT_TIMESTAMP,
+                    "definitionEnvelope" = NULL,
+                    "observationTransport" = NULL,
+                    "webhookEndpointId" = NULL,
+                    "observationStartsAt" = NULL,
+                    "watcherMachineId" = NULL,
+                    "watcherMachineInstallationId" = NULL,
+                    "watcherPluginId" = NULL,
+                    "watcherMaterializationId" = NULL
+                WHERE "id" IN ('checkpointed-event', 'durable-event')
+            `)).not.toThrow();
             expect(db.prepare(`
-                SELECT "automationId", "machineId"
-                FROM "AutomationAssignment"
-                WHERE "id" = 'assignment'
-            `).all()).toEqual([{
-                automationId: "automation",
-                machineId: "machine",
-            }]);
-            expect(db.prepare(`SELECT "revision" FROM "AutomationRun" WHERE "id" = 'run'`).all()).toEqual([
-                { revision: 0 },
+                SELECT "id", "eventPluginId", "eventLocalId", "sourceSelectorId", "sourceContractVersion",
+                    "definitionEnvelope", "observationTransport"
+                FROM "AutomationTrigger"
+                WHERE "id" IN ('checkpointed-event', 'durable-event')
+                ORDER BY "id"
+            `).all()).toEqual([
+                {
+                    id: "checkpointed-event",
+                    eventPluginId: "plugin",
+                    eventLocalId: "checkpointed",
+                    sourceSelectorId: "checkpointed-source",
+                    sourceContractVersion: 1,
+                    definitionEnvelope: null,
+                    observationTransport: null,
+                },
+                {
+                    id: "durable-event",
+                    eventPluginId: "plugin",
+                    eventLocalId: "durable",
+                    sourceSelectorId: "durable-source",
+                    sourceContractVersion: 1,
+                    definitionEnvelope: null,
+                    observationTransport: null,
+                },
             ]);
-            expect(() => db.exec(`DELETE FROM "Automation" WHERE "id" = 'automation';`)).toThrow();
+            db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",
+                    "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('terminal-historical-null-input', 'automation', 'account', 'succeeded', 'manual',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `);
+            for (const state of ["queued", "claimed", "running"] as const) {
+                expect(() => db.prepare(`
+                    INSERT INTO "AutomationRun" (
+                        "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",
+                        "scheduledAt", "dueAt", "updatedAt"
+                    ) VALUES (?, 'automation', 'account', ?, 'manual',
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                `).run(`nonterminal-null-input-${state}`, state)).toThrow();
+            }
+            // Empty signed claim outcomes are durable and uniquely fenced.
+            const replayFingerprint = "R".repeat(43);
+            db.exec(`
+                INSERT INTO "AutomationWorkerClaimReceipt" (
+                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                ) VALUES ('${replayFingerprint}', 'account', 'machine-enabled',
+                    'installation-enabled', datetime('now', '+5 minutes'))
+            `);
+            expect(() => db.exec(`
+                INSERT INTO "AutomationWorkerClaimReceipt" (
+                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                ) VALUES ('${replayFingerprint}', 'account', 'machine-enabled',
+                    'installation-enabled', datetime('now', '+5 minutes'))
+            `)).toThrow();
             expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        } finally {
+            db.close();
+        }
+    });
+
+    it("deploys the SQLite migration twice and converges on one applied ledger record", async () => {
+        const db = createSqlitePredecessor();
+        try {
+            const sql = await read(migrationPaths[1]);
+            await applySqliteMigrationThroughCanonicalExecutor(db, sql);
+            // The second canonical deploy must be a ledger no-op: same name,
+            // same checksum, no duplicate DDL, schema unchanged.
+            await applySqliteMigrationThroughCanonicalExecutor(db, sql);
+            expect(db.prepare(`
+                SELECT migration_name, checksum FROM _prisma_migrations
+                WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL AND migration_name = ?
+            `).all(migrationId)).toHaveLength(1);
+            expect(db.prepare(`
+                SELECT count(*) AS count FROM sqlite_master
+                WHERE type = 'table' AND name = 'AutomationWorkerClaimReceipt'
+            `).get()).toEqual({ count: 1 });
         } finally {
             db.close();
         }

@@ -1,7 +1,7 @@
 CREATE TABLE "review_comment_publication_correlations" (
     "publication_correlation_id" TEXT NOT NULL PRIMARY KEY,
     "account_id" TEXT NOT NULL,
-    "comment_id" TEXT NOT NULL,
+    "comment_id" TEXT,
     "target_key" TEXT NOT NULL,
     "target_json" TEXT NOT NULL,
     "created_at" BIGINT NOT NULL,

@@ -34,7 +34,6 @@ const REPLY_CONTEXT_ENVELOPE = {
             automationId: AUTOMATION_ID,
             occurrenceKey: OCCURRENCE_KEY,
         },
-        templateVersion: 1,
         opaqueContext: {
             conversationId: "conversation-1",
             messageId: "message-1",
@@ -79,12 +78,8 @@ describe("Automation reply handoff worker", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                // Channel admission supplies the Conversation Run origin; the
-                // Definition itself remains a normal schedule.
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
+                // Channel admission supplies the direct Conversation Run cause;
+                // the reusable Automation needs no automatic trigger.
             },
         });
         await db.automationRun.create({
@@ -93,8 +88,9 @@ describe("Automation reply handoff worker", () => {
                 automationId: AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "succeeded",
-                originKind: "conversation",
-                originOccurredAt: NOW,
+                triggerId: null,
+                causeKind: "conversation",
+                causeOccurredAt: NOW,
                 occurrenceKey: OCCURRENCE_KEY,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 resultEnvelope: JSON.stringify(RESULT_ENVELOPE),
@@ -170,6 +166,11 @@ describe("Automation reply handoff worker", () => {
                 runId: RUN_ID,
                 automationId: AUTOMATION_ID,
                 occurrenceKey: OCCURRENCE_KEY,
+                cause: {
+                    kind: "conversation",
+                    occurrenceKey: OCCURRENCE_KEY,
+                    occurredAt: NOW.getTime(),
+                },
                 accountCurrentness: claimedCurrentness,
                 resultEnvelope: RESULT_ENVELOPE,
                 replyContextEnvelope: REPLY_CONTEXT_ENVELOPE,
@@ -227,5 +228,56 @@ describe("Automation reply handoff worker", () => {
             where: { id: RUN_ID },
             select: { replyHandoffState: true, replyHandoffDueAt: true },
         })).resolves.toEqual({ replyHandoffState: "blocked", replyHandoffDueAt: null });
+    });
+
+    it("retries an Action execution failure because the target handler effect may be ambiguous", async () => {
+        await seedReadyHandoff();
+
+        await runAutomationReplyHandoffWorkerPass({
+            now: NOW,
+            dispatch: async () => ({ kind: "unavailable", code: "actionExecutionFailed" }),
+        });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({
+            replyHandoffState: "ready",
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+        });
+    });
+
+    it("retries an invalid matched-Action result because custody may already have committed", async () => {
+        await seedReadyHandoff();
+
+        await runAutomationReplyHandoffWorkerPass({
+            now: NOW,
+            dispatch: async () => ({ kind: "unavailable", code: "contractInvalid" }),
+        });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({
+            replyHandoffState: "ready",
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+        });
+    });
+
+    it("retries a malformed dispatch response because custody may already have committed", async () => {
+        await seedReadyHandoff();
+
+        await runAutomationReplyHandoffWorkerPass({
+            now: NOW,
+            dispatch: async () => ({ kind: "settled", settlement: { kind: "accepted" } } as never),
+        });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({
+            replyHandoffState: "ready",
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+        });
     });
 });

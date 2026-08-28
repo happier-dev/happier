@@ -69,6 +69,7 @@ model Account {
     AccountPetPackage      AccountPetPackage[]
     AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
+    ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
     ProviderAccountUsageRecord    ProviderAccountUsageRecord[]
     ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
@@ -109,6 +110,7 @@ model Account {
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
+    automationWorkerClaimReceipts AutomationWorkerClaimReceipt[]
     automationEventCatalogState AutomationEventCatalogState?
     automationEventSourceCatalogStatuses AutomationEventSourceCatalogStatus[]
     SessionFolderAssignment SessionFolderAssignment[]
@@ -1262,7 +1264,6 @@ model AutomationTrigger {
     watcherMachineInstallationId String?
     watcherPluginId              String?
     watcherMaterializationId     String?
-    filterEnvelope               String?
     definitionEnvelope           String?
     sessionLifecycleEvent        AutomationSessionLifecycleEvent?
     sourceSessionId              String?
@@ -1272,9 +1273,9 @@ model AutomationTrigger {
     eventSourceStatus            AutomationEventSourceStatus?
 
     @@index([automationId, enabled, updatedAt])
-    @@index([automationId, enabled, kind, eventPluginId, eventLocalId], map: "AutomationTrigger_event_lookup_idx")
-    @@index([automationId, enabled, watcherMachineId, watcherMaterializationId], map: "AutomationTrigger_watcher_lookup_idx")
-    @@index([automationId, enabled, nextRunAt], map: "AutomationTrigger_schedule_due_idx")
+    @@index([enabled, kind, eventPluginId, eventLocalId], map: "AutomationTrigger_event_lookup_idx")
+    @@index([enabled, watcherMachineId, watcherMaterializationId], map: "AutomationTrigger_watcher_lookup_idx")
+    @@index([kind, enabled, deletedAt, nextRunAt, id], map: "AutomationTrigger_schedule_due_idx")
     @@index([sourceSessionId, sourceTurnId], map: "AutomationTrigger_session_lifecycle_lookup_idx")
 }
 
@@ -1305,7 +1306,10 @@ model AutomationRun {
     causeKind          AutomationRunCauseKind @default(trigger)
     causeTriggerKind   AutomationTriggerKind?
     causeTriggerRevision Int?
+    causeEventPluginId String?
+    causeEventLocalId String?
     causeOccurredAt    DateTime?
+    causeScheduledFor DateTime?
     causeSessionLifecycleEvent AutomationSessionLifecycleEvent?
     causeSourceSessionId String?
     causeSourceTurnId String?
@@ -1347,12 +1351,12 @@ model AutomationRun {
     summaryCiphertext  String?
     errorCode          String?
     errorMessage       String?
-    contentRemovedAt   DateTime?
     producedSessionId  String?
     producedSession    Session?           @relation("AutomationRunProducedSession", fields: [producedSessionId], references: [id], onDelete: SetNull)
     createdAt          DateTime           @default(now())
     updatedAt          DateTime           @updatedAt
     events             AutomationRunEvent[]
+    assignments        AutomationRunAssignment[]
 
     @@index([accountId, state, dueAt])
     @@index([accountId, causeKind, state])
@@ -1362,8 +1366,37 @@ model AutomationRun {
     @@index([state, dueAt])
     @@index([replyHandoffState, replyHandoffDueAt])
     @@unique([triggerId, occurrenceKey])
-    @@unique([automationId, occurrenceKey])
+    @@unique([automationId, causeKind, occurrenceKey], map: "AutomationRun_automationId_causeKind_occurrenceKey_key")
     @@unique([automationId, legacyManualIdempotencyKey], map: "AutomationRun_automationId_idempotencyKey_key")
+    @@index([triggerId, state])
+}
+
+/// Atomic replay result for one signed V3 claim request. This intentionally
+/// records both claimed and empty outcomes; a Run-row nonce cannot fence an
+/// empty response from claiming later work.
+model AutomationWorkerClaimReceipt {
+    id                    String   @id @db.VarChar(64)
+    accountId             String
+    account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    machineId             String
+    machineInstallationId String
+    runId                 String?
+    claimedAttempt        Int?
+    expiresAt             DateTime
+    createdAt             DateTime @default(now())
+
+    @@index([accountId, machineId])
+    @@index([expiresAt])
+}
+
+model AutomationRunAssignment {
+    runId     String
+    run       AutomationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+    machineId String
+    priority  Int           @default(0)
+
+    @@id([runId, machineId])
+    @@index([machineId, priority])
 }
 
 model AutomationRunEvent {
@@ -1390,11 +1423,11 @@ model AutomationEventSourceStatus {
     eventPluginId                   String
     eventLocalId                    String
     sourceSelectorId                String
-    templateVersion                 Int
+    triggerRevision                 Int
     reporterMachineId               String
     reporterMachineInstallationId   String
     reporterMaterializationId       String
-    reporterImmutableGenerationId   String? @db.VarChar(256)
+    reporterImmutableGenerationId   String @db.VarChar(256)
     state                           AutomationEventSourceStatusState
     code                            String?
     lastObservedAt                  DateTime?
@@ -1415,6 +1448,7 @@ model AutomationEventSourceCatalogStatus {
     reporterMachineId               String
     reporterMachineInstallationId   String
     reporterMaterializationId       String @db.VarChar(256)
+    reporterImmutableGenerationId   String @db.VarChar(256)
     scopeKey                        String
     observedRevision                BigInt
     adoptedRevision                 BigInt?
@@ -1553,6 +1587,28 @@ model ProviderAccountUsageRecord {
 
     @@index([accountId, providerId])
     @@index([accountId, status])
+}
+
+/// Bounded compatibility storage for sealed quota snapshots written by the
+/// released server-v0.2.1 V2 route. Current writes use
+/// ProviderAccountUsageRecord; the released row is removed when that exact
+/// service/profile is replaced or explicitly deleted.
+model ServiceAccountQuotaSnapshot {
+    id           String   @id @default(cuid())
+    accountId    String
+    account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    vendor       String
+    profileId    String   @default("default")
+    snapshot     Bytes
+    status       String?
+    fetchedAt    DateTime?
+    staleAfterMs Int?
+    metadata     Json?
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+
+    @@unique([accountId, vendor, profileId])
+    @@index([accountId])
 }
 
 model ConnectedServiceUsageSource {
@@ -2292,13 +2348,13 @@ model ReviewCommentEvent {
 model ReviewCommentPublicationCorrelation {
     publicationCorrelationId String @id @map("publication_correlation_id")
     accountId                 String @map("account_id")
-    commentId                 String @map("comment_id")
+    commentId                 String? @map("comment_id")
     targetKey                 String @map("target_key")
     targetJson                String @map("target_json")
     createdAt                 BigInt @map("created_at")
 
     account Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
-    comment ReviewComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+    comment ReviewComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
 
     @@unique([accountId, commentId, targetKey], map: "review_comment_publication_target_key")
     @@map("review_comment_publication_correlations")

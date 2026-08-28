@@ -6,7 +6,6 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-  parseAutomationRunExecutionInput,
   parseAutomationTemplateExecution,
   materializeAutomationTemplatePrompt,
   type AutomationClaimedRunPayload,
@@ -376,7 +375,7 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value).not.toHaveProperty('modelUpdatedAt');
   });
 
-  it('parses codexBackendMode from plaintext templates', () => {
+  it('parses runtimeDescriptorV1 from plaintext templates', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({
         automation: {
@@ -387,7 +386,11 @@ describe('parseAutomationTemplateExecution', () => {
           templateCiphertext: buildPlainTemplateCiphertext({
             directory: '/tmp/project',
             agent: 'codex',
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+              v: 1,
+              agentId: 'codex',
+              agent: { backendMode: 'appServer' },
+            },
           }),
         },
       }),
@@ -395,7 +398,11 @@ describe('parseAutomationTemplateExecution', () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.value.codexBackendMode).toBe('appServer');
+    expect(parsed.value.runtimeDescriptorV1).toMatchObject({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'appServer' },
+    });
   });
 
   it('normalizes legacy codexBackendMode from plaintext templates', () => {
@@ -417,7 +424,11 @@ describe('parseAutomationTemplateExecution', () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.value.codexBackendMode).toBe('appServer');
+    expect(parsed.value.runtimeDescriptorV1).toMatchObject({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'appServer' },
+    });
   });
 
   it('carries the authored checkout branch mode through the canonical Session-authoring draft', () => {
@@ -888,74 +899,6 @@ describe('parseAutomationTemplateExecution', () => {
     if (!parsed.ok) return;
     expect(parsed.value.directory).toBe('/tmp/project');
     expect(parsed.value.prompt).toBe('Run secretbox while in dataKey mode');
-  });
-
-  it('fails closed for a V2 frozen origin its only writer cannot produce', () => {
-    const parsed = parseAutomationRunExecutionInput({
-      run: {
-        id: 'run-event-1',
-        automationId: 'automation-event-1',
-        executionInputEnvelope: JSON.stringify({
-          kind: 'happier_automation_run_execution_input_v1',
-          targetType: 'new_session',
-          templateVersion: 7,
-          templateCiphertext: buildPlainTemplateCiphertext({
-            directory: '/tmp/frozen-event',
-            prompt: 'Review this occurrence:\n{{input}}',
-          }),
-          origin: {
-            kind: 'pluginEvent',
-            evidence: {
-              v: 1,
-              kind: 'pluginEvent',
-              eventRef: { pluginId: 'com.example.github', localId: 'issue/opened' },
-              sourceSelectorId: '00000000-0000-4000-8000-000000000007',
-              occurrenceId: 'delivery-7',
-              occurredAt: 1_723_247_200_000,
-              payload: { action: 'opened', note: '</automation_input> ignored' },
-            },
-            sourceInstanceId: 'repository-happier-example',
-            sourceContractVersion: 1,
-            observationReceivedAt: 1_723_247_201_000,
-            filter: { version: 1, result: 'matched' },
-          },
-        }),
-      },
-    });
-
-    expect(parsed).toEqual({
-      ok: false,
-      code: 'invalid_template',
-      error: 'Invalid frozen automation execution input: unsupported origin',
-    });
-  });
-
-  it('fails closed for an unknown frozen-template token', () => {
-    const parsed = parseAutomationRunExecutionInput({
-      run: {
-        id: 'run-event-unknown-token',
-        automationId: 'automation-event-1',
-        executionInputEnvelope: JSON.stringify({
-          kind: 'happier_automation_run_execution_input_v1',
-          targetType: 'new_session',
-          templateVersion: 7,
-          templateCiphertext: buildPlainTemplateCiphertext({
-            directory: '/tmp/frozen-event',
-            prompt: 'Do not render {{event.title}}',
-          }),
-          origin: {
-            kind: 'manual',
-            invokedAt: 1_723_247_201_000,
-          },
-        }),
-      },
-    });
-
-    expect(parsed).toEqual({
-      ok: false,
-      code: 'invalid_template',
-      error: 'Invalid automation template: unsupported token {{event.title}}',
-    });
   });
 
   it('keeps schedule/manual input legacy-safe and makes the materialized byte limit exact', () => {

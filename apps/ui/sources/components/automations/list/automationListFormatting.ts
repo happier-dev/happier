@@ -1,6 +1,9 @@
-import type { AutomationRunStateV3, AutomationV3RunOrigin } from '@happier-dev/protocol';
-
-import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
+import type {
+    AutomationRunCause,
+    AutomationRunStateV3,
+    AutomationSessionLifecycleTriggerStatus,
+    AutomationTriggerListItem,
+} from '@happier-dev/protocol';
 import { t, type TranslationKey } from '@/text';
 
 export function formatAutomationScheduleLabel(automation: {
@@ -27,34 +30,79 @@ export function formatAutomationScheduleLabel(automation: {
 }
 
 /** Public definition summaries expose trigger identity, never source configuration. */
-export function formatAutomationTriggerLabel(trigger: AutomationDefinition['trigger']): string {
+export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem): string {
     switch (trigger.kind) {
-        case 'manual':
-            return t('automations.list.manual');
         case 'schedule':
             return formatAutomationScheduleLabel({ schedule: trigger.schedule });
         case 'pluginEvent':
             return t('automations.list.event', { eventId: trigger.eventRef.localId });
+        case 'sessionLifecycle':
+            return t('automations.list.sessionLifecycleParentTurn', { sessionId: trigger.scope.sourceSessionId });
     }
 }
 
-/** Shared presentation key for the immutable origin union on list and detail surfaces. */
-export function getAutomationRunOriginTranslationKey(
-    origin: AutomationV3RunOrigin,
-): 'automations.detail.runMeta.origin.scheduled'
-    | 'automations.detail.runMeta.origin.manual'
-    | 'automations.detail.runMeta.origin.pluginEvent'
-    | 'automations.detail.runMeta.origin.conversation' {
-    switch (origin.kind) {
-        case 'scheduled':
-            return 'automations.detail.runMeta.origin.scheduled';
-        case 'manual':
-            return 'automations.detail.runMeta.origin.manual';
-        case 'pluginEvent':
-            return 'automations.detail.runMeta.origin.pluginEvent';
-        case 'conversation':
-            return 'automations.detail.runMeta.origin.conversation';
+/**
+ * Status is projected by each canonical trigger owner. Keeping this formatter
+ * beside the shared trigger label prevents list/detail surfaces from inventing
+ * their own lifecycle or Event state machines.
+ */
+export function formatAutomationTriggerStatusLabel(
+    trigger: AutomationTriggerListItem,
+    automationEnabled = true,
+): string {
+    if (trigger.kind === 'sessionLifecycle') {
+        return t(AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS[trigger.status.state]);
     }
+    if (!automationEnabled) return t('automations.detail.status.paused');
+    if (!trigger.enabled) return t('automations.detail.status.paused');
+    if (trigger.kind === 'pluginEvent') {
+        return trigger.sourceStatus === null
+            ? t('automations.detail.event.sourceStatusUnreported')
+            : t(`settingsPlugins.eventAutomationComposer.sourceStatusState.${trigger.sourceStatus.state}`);
+    }
+    return t('automations.detail.status.active');
+}
+
+const AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS = {
+    waiting: 'automations.detail.trigger.status.waiting',
+    paused: 'automations.detail.trigger.status.paused',
+    triggered: 'automations.detail.trigger.status.triggered',
+    running: 'automations.detail.trigger.status.running',
+    finished: 'automations.detail.trigger.status.finished',
+    sourceFailed: 'automations.detail.trigger.status.sourceFailed',
+    sourceCancelled: 'automations.detail.trigger.status.sourceCancelled',
+    sourceUnavailable: 'automations.detail.trigger.status.sourceUnavailable',
+} as const satisfies Record<AutomationSessionLifecycleTriggerStatus['state'], TranslationKey>;
+
+/** Shared presentation key for the sole immutable Run-cause union. */
+export function getAutomationRunCauseTranslationKey(
+    cause: AutomationRunCause,
+): 'automations.detail.runMeta.cause.schedule'
+    | 'automations.detail.runMeta.cause.pluginEvent'
+    | 'automations.detail.runMeta.cause.sessionLifecycle'
+    | 'automations.detail.runMeta.cause.manual'
+    | 'automations.detail.runMeta.cause.conversation' {
+    switch (cause.kind) {
+        case 'manual':
+            return 'automations.detail.runMeta.cause.manual';
+        case 'conversation':
+            return 'automations.detail.runMeta.cause.conversation';
+        case 'trigger':
+            if (cause.triggerKind === 'schedule') return 'automations.detail.runMeta.cause.schedule';
+            if (cause.triggerKind === 'pluginEvent') return 'automations.detail.runMeta.cause.pluginEvent';
+            return 'automations.detail.runMeta.cause.sessionLifecycle';
+    }
+}
+
+export function getAutomationRunCauseAt(cause: AutomationRunCause): number {
+    return cause.kind === 'manual' ? cause.invokedAt : cause.occurredAt;
+}
+
+export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string {
+    if (cause.kind === 'trigger' && cause.triggerKind === 'pluginEvent') {
+        return t('automations.list.event', { eventId: cause.evidence.eventRef.localId });
+    }
+    return t(getAutomationRunCauseTranslationKey(cause));
 }
 
 /**

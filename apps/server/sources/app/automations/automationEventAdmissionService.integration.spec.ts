@@ -13,7 +13,7 @@ import {
     AutomationEventAdmitResultV1Schema,
     AutomationEventStoredDefinitionsReadHttpRequestV1Schema,
     AutomationSourceSelectorIdV1Schema,
-    MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
+    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     buildAutomationPluginEventOccurrenceEvidenceV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -21,9 +21,10 @@ import {
     createAccountScopedCryptoMaterialSnapshotV1,
     deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
     deriveAutomationOccurrenceKeyV1,
-    freezeAutomationRunPluginEventExecutionRecipeV1,
     normalizePluginReleaseFactsV1,
+    parseAutomationRunExecutionRecipeV1,
     serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
     sealAccountScopedBlobCiphertext,
     sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
     sealAutomationRunTriggerEvidenceEnvelopeV1,
@@ -35,6 +36,7 @@ import {
     type PluginJsonSchemaV2,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { registerAutomationEventRoutes } from "@/app/api/routes/automations/registerAutomationEventRoutes";
@@ -54,7 +56,7 @@ import {
     admitAutomationEventV1 as admitAutomationEventV1Impl,
 } from "./automationEventAdmissionService";
 import { claimAutomationRun } from "./automationClaimService";
-import { deleteAutomation, setAutomationEnabled } from "./automationCrudService";
+import { setAutomationEnabled } from "./automationCrudService";
 import { startAutomationRun } from "./automationRunService";
 
 const ACCOUNT_ID = "account-automation-event-admission";
@@ -65,11 +67,14 @@ const SERVER_IDENTITY_ID = "srv_automationEventAdmissionCurrent1";
 const PLUGIN_ID = "com.acme.github";
 const PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
 const AUTOMATION_ID = "automation-event-admission";
+const TRIGGER_ID = "automation-event-admission-trigger";
 const SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
     "8123c1f4-5566-4f77-8a88-1234567890ab",
 );
 const SECOND_AUTOMATION_ID = "automation-event-admission-second";
+const SECOND_TRIGGER_ID = "automation-event-admission-trigger-second";
 const SECOND_SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
     "7123c1f4-5566-4f77-8a88-1234567890ab",
 );
@@ -163,8 +168,16 @@ function readRequiredFunction<T>(record: DynamicRecord, key: string): T {
 
 async function loadCurrentAutomationAdmissionSources(): Promise<CurrentAutomationAdmissionSources> {
     const cliAutomationSourceRoot = "../../../../cli/src/plugins/runtime/automations/";
-    const githubObservationSourceRoot = "../../../../../packages/plugins/scm-github/src/observations/";
-    const [executorModule, adoptedSetModule, observerModule, checkpointModule, contractsModule] = await Promise.all([
+    const githubPluginSourceRoot = "../../../../../packages/plugins/scm-github/src/";
+    const githubObservationSourceRoot = `${githubPluginSourceRoot}observations/`;
+    const [
+        executorModule,
+        adoptedSetModule,
+        observerModule,
+        checkpointModule,
+        contractsModule,
+        eventsModule,
+    ] = await Promise.all([
         import(/* @vite-ignore */ new URL(
             `${cliAutomationSourceRoot}automationEventActionExecutor.ts`,
             import.meta.url,
@@ -185,6 +198,10 @@ async function loadCurrentAutomationAdmissionSources(): Promise<CurrentAutomatio
             `${githubObservationSourceRoot}githubProviderContracts.ts`,
             import.meta.url,
         ).href),
+        import(/* @vite-ignore */ new URL(
+            `${githubPluginSourceRoot}githubAutomationEvents.ts`,
+            import.meta.url,
+        ).href),
     ]);
     if (
         !isRecord(executorModule)
@@ -192,11 +209,14 @@ async function loadCurrentAutomationAdmissionSources(): Promise<CurrentAutomatio
         || !isRecord(observerModule)
         || !isRecord(checkpointModule)
         || !isRecord(contractsModule)
+        || !isRecord(eventsModule)
         || !isRecord(checkpointModule.GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD)
+        || !isRecord(eventsModule.GITHUB_AUTOMATION_EVENT_LOCAL_IDS)
     ) {
         throw new Error("current Automation Event sources are unavailable");
     }
     const checkpointFields = checkpointModule.GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD;
+    const eventLocalIds = eventsModule.GITHUB_AUTOMATION_EVENT_LOCAL_IDS;
     return {
         createEventActionExecutor: readRequiredFunction<
             CurrentAutomationAdmissionSources["createEventActionExecutor"]
@@ -220,7 +240,7 @@ async function loadCurrentAutomationAdmissionSources(): Promise<CurrentAutomatio
         github: {
             pluginId: readRequiredString(contractsModule, "GITHUB_PLUGIN_ID"),
             connectedAccountId: readRequiredString(contractsModule, "GITHUB_CONNECTED_ACCOUNT_ID"),
-            eventId: readRequiredString(contractsModule, "GITHUB_AUTOMATION_REPOSITORY_EVENT_ID"),
+            eventId: readRequiredString(eventLocalIds, "push"),
             backgroundServiceId: readRequiredString(
                 contractsModule,
                 "GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID",
@@ -379,6 +399,7 @@ function releaseFacts(params: Readonly<{
     const supportedObservationTransports = params.supportedObservationTransports
         ?? ["checkpointedPull"];
     const supportsDurablePush = supportedObservationTransports.includes("durablePush");
+    const sourceConfigSchema = { type: "object", additionalProperties: false } as const;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: PLUGIN_ID, version },
         archiveDigestSha256: params.archiveDigestSha256 ?? `sha256:${"a".repeat(64)}`,
@@ -391,14 +412,26 @@ function releaseFacts(params: Readonly<{
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: supportsDurablePush ? [{
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: sourceConfigSchema,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+                        sourceContractVersion,
+                        sourceConfigSchema,
+                    ),
+                }, ...(supportsDurablePush ? [{
                     id: "receive-repository-events",
                     title: "Receive repository events",
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
                     execution: { target: "daemon" },
-                }] : [],
+                }] : [])],
                 events: [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -416,7 +449,8 @@ function releaseFacts(params: Readonly<{
                                     localId: "repository-events",
                                 },
                             } : {}),
-                            sourceConfigSchema: { type: "object", additionalProperties: false },
+                            sourceConfigSchema,
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -454,7 +488,19 @@ function githubReleaseFacts(params: Readonly<{
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: [],
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up GitHub repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: GITHUB_SOURCE_CONFIG_SCHEMA,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+                        params.sourceContractVersion,
+                        GITHUB_SOURCE_CONFIG_SCHEMA,
+                    ),
+                }],
                 events: [{
                     id: params.eventId,
                     kind: "event",
@@ -467,6 +513,7 @@ function githubReleaseFacts(params: Readonly<{
                             sourceContractVersion: params.sourceContractVersion,
                             supportedObservationTransports: ["checkpointedPull"],
                             sourceConfigSchema: GITHUB_SOURCE_CONFIG_SCHEMA,
+                            setupActionRef: { pluginId: params.pluginId, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -486,7 +533,7 @@ function strictEventDefinitionRecipe(params: Readonly<{
     prompt: string;
     templateVersion?: number;
 }>): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: params.templateVersion ?? 1,
         template: { t: "plain", v: { v: 1, prompt: params.prompt } },
@@ -515,7 +562,7 @@ function strictExecutionRunEventDefinitionRecipe(params: Readonly<{
     prompt: string;
     templateVersion?: number;
 }>): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: params.templateVersion ?? 1,
         template: { t: "plain", v: { v: 1, prompt: params.prompt } },
@@ -543,7 +590,7 @@ function encryptedStrictEventDefinitionRecipe(params: Readonly<{
     prompt: string;
     templateVersion?: number;
 }>): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: params.templateVersion ?? 1,
         template: {
@@ -576,10 +623,11 @@ function encryptedStrictEventDefinitionRecipe(params: Readonly<{
 
 function triggerDefinitionEnvelope(params: Readonly<{
     automationId?: string;
+    triggerId?: string;
+    triggerRevision?: number;
     filter?: PluginJsonValueV2;
     maximumObservationAgeMs?: number | null;
     sourceSelectorId?: AutomationSourceSelectorIdV1;
-    templateVersion?: number;
     sourceInstanceId?: string;
     webhookRoutingSourceInstanceId?: string;
 }> = {}): string {
@@ -588,7 +636,8 @@ function triggerDefinitionEnvelope(params: Readonly<{
         binding: {
             v: 1,
             automationId: params.automationId ?? AUTOMATION_ID,
-            templateVersion: params.templateVersion ?? 1,
+            triggerId: params.triggerId ?? TRIGGER_ID,
+            triggerRevision: params.triggerRevision ?? 1,
             triggerKind: "pluginEvent",
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
             sourceSelectorId: params.sourceSelectorId ?? SOURCE_SELECTOR_ID,
@@ -611,6 +660,8 @@ function githubTriggerDefinitionEnvelope(
     github: CurrentAutomationAdmissionSources["github"],
     params: Readonly<{
         automationId?: string;
+        triggerId?: string;
+        triggerRevision?: number;
         sourceSelectorId?: AutomationSourceSelectorIdV1;
     }> = {},
 ): string {
@@ -619,7 +670,8 @@ function githubTriggerDefinitionEnvelope(
         binding: {
             v: 1,
             automationId: params.automationId ?? AUTOMATION_ID,
-            templateVersion: 1,
+            triggerId: params.triggerId ?? TRIGGER_ID,
+            triggerRevision: params.triggerRevision ?? 1,
             triggerKind: "pluginEvent",
             eventRef: {
                 pluginId: github.pluginId,
@@ -654,7 +706,7 @@ function githubTriggerDefinitionEnvelope(
 function input(params: Readonly<{
     occurrenceId?: string;
     occurredAt?: number;
-    templateVersion?: number;
+    triggerRevision?: number;
     payload?: PluginJsonValueV2;
 }> = {}) {
     return {
@@ -665,7 +717,8 @@ function input(params: Readonly<{
         payload: params.payload ?? { action: "opened" },
         definitions: [{
             automationId: AUTOMATION_ID,
-            templateVersion: params.templateVersion ?? 1,
+            triggerId: TRIGGER_ID,
+            triggerRevision: params.triggerRevision ?? 1,
             sourceSelectorId: SOURCE_SELECTOR_ID,
         }],
     };
@@ -784,7 +837,6 @@ function encryptedHostEvidence(params: Readonly<{
         version: number;
         contentKeyFingerprint: string;
     }>;
-    definitionRecipe?: string;
 }>) {
     const event = AutomationEventAdmitInputV1Schema.parse(params.event);
     const hostEvidence = {
@@ -807,11 +859,15 @@ function encryptedHostEvidence(params: Readonly<{
             });
             const base = {
                 automationId: definition.automationId,
-                templateVersion: definition.templateVersion,
+                triggerId: definition.triggerId,
+                triggerRevision: definition.triggerRevision,
                 sourceSelectorId: definition.sourceSelectorId,
                 sourceContractVersion: 1,
                 observationTransport: "checkpointedPull" as const,
-                occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: definition.triggerId,
+                    evidence,
+                }),
                 occurredAt: event.occurredAt,
                 triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
                     material: params.snapshot.material,
@@ -826,6 +882,7 @@ function encryptedHostEvidence(params: Readonly<{
                         material: params.snapshot.material,
                         accountId: ACCOUNT_ID,
                         automationId: definition.automationId,
+                        triggerId: definition.triggerId,
                         evidence,
                     }),
             };
@@ -843,17 +900,10 @@ function encryptedHostEvidence(params: Readonly<{
                     (_, index) => index + 17,
                 ),
             });
-            const executionRecipe = freezeAutomationRunPluginEventExecutionRecipeV1({
-                definitionRecipe: params.definitionRecipe ?? strictEventDefinitionRecipe({ prompt: "frozen v1" }),
-                templateVersion: definition.templateVersion,
-                triggerEvidence,
-            });
-            if (executionRecipe.kind !== "available") {
-                throw new Error("Encrypted Event fixture must freeze a strict recipe");
-            }
             return {
                 ...base,
-                outcome: { kind: "matched" as const, executionRecipe: executionRecipe.serialized },
+                triggerEvidenceEnvelope: triggerEvidence,
+                outcome: { kind: "matched" as const },
             };
         }),
     };
@@ -960,21 +1010,27 @@ describe("Automation Event admission", () => {
                 accountId: ACCOUNT_ID,
                 name: "Handle repository events",
                 enabled: true,
-                scheduleKind: null,
                 targetType: "new_session",
                 templateCiphertext: strictEventDefinitionRecipe({ prompt: "frozen v1" }),
                 templateVersion: 1,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: PLUGIN_ID,
-                triggerEventLocalId: EVENT_LOCAL_ID,
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                watcherMachineId: MACHINE_ID,
-                watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
-                watcherPluginId: PLUGIN_ID,
-                watcherMaterializationId: MATERIALIZATION_ID,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope(params),
+                triggers: {
+                    create: {
+                        id: TRIGGER_ID,
+                        kind: "pluginEvent",
+                        enabled: true,
+                        revision: 1,
+                        eventPluginId: PLUGIN_ID,
+                        eventLocalId: EVENT_LOCAL_ID,
+                        sourceSelectorId: SOURCE_SELECTOR_ID,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        watcherMachineId: MACHINE_ID,
+                        watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+                        watcherPluginId: PLUGIN_ID,
+                        watcherMaterializationId: MATERIALIZATION_ID,
+                        definitionEnvelope: triggerDefinitionEnvelope(params),
+                    },
+                },
             },
         });
     }
@@ -1031,12 +1087,17 @@ describe("Automation Event admission", () => {
             where: { id: AUTOMATION_ID },
             data: {
                 name: "Handle GitHub repository Events",
-                triggerEventPluginId: params.github.pluginId,
-                triggerEventLocalId: params.github.eventId,
-                triggerSourceSelectorId: GITHUB_AUTOMATION_SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: params.github.sourceContractVersion,
+            },
+        });
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: {
+                eventPluginId: params.github.pluginId,
+                eventLocalId: params.github.eventId,
+                sourceSelectorId: GITHUB_AUTOMATION_SOURCE_SELECTOR_ID,
+                sourceContractVersion: params.github.sourceContractVersion,
                 watcherPluginId: params.github.pluginId,
-                triggerDefinitionEnvelope: githubTriggerDefinitionEnvelope(params.github),
+                definitionEnvelope: githubTriggerDefinitionEnvelope(params.github),
             },
         });
     }
@@ -1046,7 +1107,8 @@ describe("Automation Event admission", () => {
         keyPair: tweetnacl.SignKeyPair;
     }>): Promise<ReadonlyArray<Readonly<{
         automationId: string;
-        templateVersion: number;
+        triggerId: string;
+        triggerRevision: number;
         sourceSelectorId: AutomationSourceSelectorIdV1;
     }>>> {
         await seedGithubCheckpointedPull(params);
@@ -1061,49 +1123,56 @@ describe("Automation Event admission", () => {
                     accountId: ACCOUNT_ID,
                     name: `Handle GitHub repository Event ${index}`,
                     enabled: true,
-                    scheduleKind: null,
                     targetType: "new_session",
                     templateCiphertext: strictEventDefinitionRecipe({ prompt: `bounded ${index}` }),
                     templateVersion: 1,
-                    triggerKind: "pluginEvent",
-                    triggerEventPluginId: params.github.pluginId,
-                    triggerEventLocalId: params.github.eventId,
-                    triggerSourceSelectorId: sourceSelectorId,
-                    triggerSourceContractVersion: params.github.sourceContractVersion,
-                    triggerObservationTransport: "checkpointedPull",
-                    watcherMachineId: MACHINE_ID,
-                    watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
-                    watcherPluginId: params.github.pluginId,
-                    watcherMaterializationId: MATERIALIZATION_ID,
-                    triggerDefinitionEnvelope: githubTriggerDefinitionEnvelope(params.github, {
-                        automationId,
+                    triggers: { create: {
+                        id: `${automationId}-trigger`,
+                        kind: "pluginEvent",
+                        enabled: true,
+                        revision: 1,
+                        eventPluginId: params.github.pluginId,
+                        eventLocalId: params.github.eventId,
                         sourceSelectorId,
-                    }),
+                        sourceContractVersion: params.github.sourceContractVersion,
+                        observationTransport: "checkpointedPull",
+                        watcherMachineId: MACHINE_ID,
+                        watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+                        watcherPluginId: params.github.pluginId,
+                        watcherMaterializationId: MATERIALIZATION_ID,
+                        definitionEnvelope: githubTriggerDefinitionEnvelope(params.github, {
+                            automationId,
+                            triggerId: `${automationId}-trigger`,
+                            sourceSelectorId,
+                        }),
+                    } },
                 },
             });
         }
-        const automations = await db.automation.findMany({
+        const triggers = await db.automationTrigger.findMany({
             where: {
-                accountId: ACCOUNT_ID,
-                triggerEventPluginId: params.github.pluginId,
-                triggerEventLocalId: params.github.eventId,
+                automation: { accountId: ACCOUNT_ID },
+                eventPluginId: params.github.pluginId,
+                eventLocalId: params.github.eventId,
             },
             select: {
                 id: true,
-                templateVersion: true,
-                triggerSourceSelectorId: true,
+                automationId: true,
+                revision: true,
+                sourceSelectorId: true,
             },
             orderBy: { id: "asc" },
         });
-        return automations.map((automation) => {
-            if (automation.triggerSourceSelectorId === null) {
+        return triggers.map((trigger) => {
+            if (trigger.sourceSelectorId === null) {
                 throw new Error("bounded Event admission fixture lost its source selector");
             }
             return {
-                automationId: automation.id,
-                templateVersion: automation.templateVersion,
+                automationId: trigger.automationId,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
                 sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
-                    automation.triggerSourceSelectorId,
+                    trigger.sourceSelectorId,
                 ),
             };
         });
@@ -1114,7 +1183,8 @@ describe("Automation Event admission", () => {
         keyPair: tweetnacl.SignKeyPair;
         definitions: ReadonlyArray<Readonly<{
             automationId: string;
-            templateVersion: number;
+            triggerId: string;
+            triggerRevision: number;
             sourceSelectorId: AutomationSourceSelectorIdV1;
         }>>;
         beforeFirstAdmit?: () => Promise<void>;
@@ -1381,17 +1451,17 @@ describe("Automation Event admission", () => {
             reference: webhookInvocationReference,
             serverIdentityId: SERVER_IDENTITY_ID,
         }))).resolves.toMatchObject({ kind: "ready" });
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(1_723_247_200_000),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_247_200_000),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
                 watcherMaterializationId: null,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
+                definitionEnvelope: triggerDefinitionEnvelope({
                     sourceInstanceId: "repository-private-source",
                     webhookRoutingSourceInstanceId: "repository-happier-example",
                 }),
@@ -1433,10 +1503,10 @@ describe("Automation Event admission", () => {
             results: [{ kind: "rejoined", runId, checkpointSafe: true }],
         });
 
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
+                definitionEnvelope: triggerDefinitionEnvelope({
                     sourceInstanceId: "repository-other-source",
                     webhookRoutingSourceInstanceId: "routing-other-source",
                 }),
@@ -1464,10 +1534,10 @@ describe("Automation Event admission", () => {
         })).resolves.toEqual({
             results: [{ kind: "refreshDefinition", reason: "observationTargetChanged", checkpointSafe: false }],
         });
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
+                definitionEnvelope: triggerDefinitionEnvelope({
                     sourceInstanceId: "repository-private-source",
                     webhookRoutingSourceInstanceId: "repository-happier-example",
                 }),
@@ -1566,17 +1636,17 @@ describe("Automation Event admission", () => {
         await seed({ supportedObservationTransports: ["durablePush"] });
         const webhookInvocationReference = await seedCurrentDurablePushDelivery();
         const boundary = 1_723_247_201_000;
-        await db.automation.update({
-            where: { id: AUTOMATION_ID },
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(boundary),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(boundary),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
                 watcherMaterializationId: null,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
+                definitionEnvelope: triggerDefinitionEnvelope({
                     sourceInstanceId: "repository-private-source",
                     webhookRoutingSourceInstanceId: "repository-happier-example",
                 }),
@@ -1597,7 +1667,7 @@ describe("Automation Event admission", () => {
         await expect(db.automationRun.count()).resolves.toBe(0);
     });
 
-    it("freezes the strict Event recipe and occurrence evidence, then rejoins after a definition refresh", async () => {
+    it("freezes the recipe and assignments at admission while later edits affect only new occurrences", async () => {
         await seed();
 
         const admitted = await admitAutomationEventV1({
@@ -1618,14 +1688,41 @@ describe("Automation Event admission", () => {
                     prompt: "new mutable definition",
                     templateVersion: 2,
                 }),
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({ templateVersion: 2 }),
             },
+        });
+        await db.automationAssignment.create({
+            data: { automationId: AUTOMATION_ID, machineId: MACHINE_ID, enabled: true },
         });
 
         await expect(admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
-            input: input({ templateVersion: 2 }),
+            input: input(),
+        })).resolves.toEqual({
+            results: [{ kind: "rejoined", runId, checkpointSafe: true }],
+        });
+
+        const editedAdmission = await admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: input({ occurrenceId: "delivery-after-recipe-edit" }),
+        });
+        expect(editedAdmission.results).toEqual([
+            expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
+        ]);
+        const editedRunId = (editedAdmission.results[0] as { runId: string }).runId;
+
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: {
+                revision: 2,
+                definitionEnvelope: triggerDefinitionEnvelope({ triggerRevision: 2 }),
+            },
+        });
+        await expect(admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: input({ triggerRevision: 2 }),
         })).resolves.toEqual({
             results: [{ kind: "rejoined", runId, checkpointSafe: true }],
         });
@@ -1634,8 +1731,13 @@ describe("Automation Event admission", () => {
             where: { accountId: ACCOUNT_ID },
             select: {
                 id: true,
-                originKind: true,
-                originOccurredAt: true,
+                triggerId: true,
+                causeKind: true,
+                causeTriggerKind: true,
+                causeTriggerRevision: true,
+                causeEventPluginId: true,
+                causeEventLocalId: true,
+                causeOccurredAt: true,
                 occurrenceKey: true,
                 executionInputEnvelope: true,
                 triggerEvidenceEnvelope: true,
@@ -1673,18 +1775,70 @@ describe("Automation Event admission", () => {
                     },
                 },
             },
+            assignmentMachineIds: [],
         });
         expect(expectedRecipe.kind).toBe("available");
         if (expectedRecipe.kind !== "available") return;
 
-        expect(runs).toEqual([{
+        const editedOccurrenceEvidence = {
+            ...occurrenceEvidence,
+            occurrenceId: "delivery-after-recipe-edit",
+        };
+        const editedFrozenTriggerEvidence = {
+            ...editedOccurrenceEvidence,
+            sourceInstanceId: "repository-happier-example",
+            sourceContractVersion: 1,
+            observationReceivedAt: 1_723_247_201_000,
+            filter: { version: null, result: "matched" as const },
+        };
+        const editedRecipe = serializeAutomationRunExecutionRecipeV1({
+            v: 1,
+            templateVersion: 2,
+            template: { t: "plain", v: { v: 1, prompt: "new mutable definition" } },
+            triggerEvidence: { t: "plain", v: editedFrozenTriggerEvidence },
+            target: {
+                kind: "newSession",
+                spawn: {
+                    executionTarget: { serverId: "server-event-admission", machineId: MACHINE_ID },
+                    directory: "/tmp/event-admission",
+                    agentTarget: {
+                        kind: "agent",
+                        identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                    },
+                },
+            },
+            assignmentMachineIds: [MACHINE_ID],
+        });
+        if (editedRecipe.kind !== "available") {
+            throw new Error("edited Event recipe fixture must be valid");
+        }
+
+        expect(runs).toHaveLength(2);
+        expect(runs).toEqual(expect.arrayContaining([{
             id: runId,
-            originKind: "pluginEvent",
-            originOccurredAt: new Date(1_723_247_200_000),
+            triggerId: TRIGGER_ID,
+            causeKind: "trigger",
+            causeTriggerKind: "pluginEvent",
+            causeTriggerRevision: 1,
+            causeEventPluginId: PLUGIN_ID,
+            causeEventLocalId: EVENT_LOCAL_ID,
+            causeOccurredAt: new Date(1_723_247_200_000),
             occurrenceKey: expect.any(String),
             executionInputEnvelope: expectedRecipe.serialized,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: occurrenceEvidence }),
-        }]);
+        }, {
+            id: editedRunId,
+            triggerId: TRIGGER_ID,
+            causeKind: "trigger",
+            causeTriggerKind: "pluginEvent",
+            causeTriggerRevision: 1,
+            causeEventPluginId: PLUGIN_ID,
+            causeEventLocalId: EVENT_LOCAL_ID,
+            causeOccurredAt: new Date(1_723_247_200_000),
+            occurrenceKey: expect.any(String),
+            executionInputEnvelope: editedRecipe.serialized,
+            triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: editedOccurrenceEvidence }),
+        }]));
         expect(await db.session.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
         expect(await db.automationRunEvent.count()).toBe(0);
     });
@@ -1772,39 +1926,36 @@ describe("Automation Event admission", () => {
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
     });
 
-    it("keeps same-source Event definitions independent through admission, stale input, pause, and deletion", async () => {
+    it("keeps two same-source triggers independent through replay, currentness, pause, and deletion", async () => {
         await seed();
-        await db.automation.create({
+        await db.automationTrigger.create({
             data: {
-                id: SECOND_AUTOMATION_ID,
-                accountId: ACCOUNT_ID,
-                name: "Handle the same repository independently",
+                id: SECOND_TRIGGER_ID,
+                automationId: AUTOMATION_ID,
+                kind: "pluginEvent",
                 enabled: true,
-                scheduleKind: null,
-                targetType: "new_session",
-                templateCiphertext: strictEventDefinitionRecipe({ prompt: "frozen second definition" }),
-                templateVersion: 1,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: PLUGIN_ID,
-                triggerEventLocalId: EVENT_LOCAL_ID,
-                triggerSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
+                revision: 1,
+                eventPluginId: PLUGIN_ID,
+                eventLocalId: EVENT_LOCAL_ID,
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
                 watcherMachineId: MACHINE_ID,
                 watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
                 watcherPluginId: PLUGIN_ID,
                 watcherMaterializationId: MATERIALIZATION_ID,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                    automationId: SECOND_AUTOMATION_ID,
-                    sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                definitionEnvelope: triggerDefinitionEnvelope({
+                    triggerId: SECOND_TRIGGER_ID,
+                    sourceSelectorId: SOURCE_SELECTOR_ID,
                 }),
             },
         });
 
         const secondDefinition = {
-            automationId: SECOND_AUTOMATION_ID,
-            templateVersion: 1,
-            sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+            automationId: AUTOMATION_ID,
+            triggerId: SECOND_TRIGGER_ID,
+            triggerRevision: 1,
+            sourceSelectorId: SOURCE_SELECTOR_ID,
         };
         const firstAdmission = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
@@ -1822,21 +1973,36 @@ describe("Automation Event admission", () => {
             result.kind === "admitted" ? [result.runId] : []
         ));
         expect(new Set(runIds).size).toBe(2);
+        await expect(admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...input({ occurrenceId: "same-source-occurrence" }),
+                definitions: [input().definitions[0]!, secondDefinition],
+            },
+        })).resolves.toEqual({
+            results: [
+                { kind: "rejoined", runId: runIds[0], checkpointSafe: true },
+                { kind: "rejoined", runId: runIds[1], checkpointSafe: true },
+            ],
+        });
         const firstRunRows = await db.automationRun.findMany({
             where: { id: { in: runIds } },
-            select: { automationId: true, occurrenceKey: true, originSourceSelectorId: true },
-            orderBy: { automationId: "asc" },
+            select: { automationId: true, triggerId: true, occurrenceKey: true, causeSourceSelectorId: true },
+            orderBy: { triggerId: "asc" },
         });
         expect(firstRunRows).toEqual([
             {
                 automationId: AUTOMATION_ID,
+                triggerId: TRIGGER_ID,
                 occurrenceKey: expect.any(String),
-                originSourceSelectorId: SOURCE_SELECTOR_ID,
+                causeSourceSelectorId: SOURCE_SELECTOR_ID,
             },
             {
-                automationId: SECOND_AUTOMATION_ID,
+                automationId: AUTOMATION_ID,
+                triggerId: SECOND_TRIGGER_ID,
                 occurrenceKey: expect.any(String),
-                originSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                causeSourceSelectorId: SOURCE_SELECTOR_ID,
             },
         ]);
         expect(new Set(firstRunRows.map((run) => run.occurrenceKey)).size).toBe(2);
@@ -1846,17 +2012,19 @@ describe("Automation Event admission", () => {
             caller,
             input: {
                 ...input({ occurrenceId: "stale-second-definition" }),
-                definitions: [{ ...secondDefinition, templateVersion: 0 }],
+                definitions: [input().definitions[0]!, { ...secondDefinition, triggerRevision: 0 }],
             },
         })).resolves.toEqual({
-            results: [{ kind: "refreshDefinition", reason: "definitionStale", checkpointSafe: false }],
+            results: [
+                expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
+                { kind: "refreshDefinition", reason: "definitionStale", checkpointSafe: false },
+            ],
         });
-        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(2);
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(3);
 
-        await setAutomationEnabled({
-            accountId: ACCOUNT_ID,
-            automationId: AUTOMATION_ID,
-            enabled: false,
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: { enabled: false },
         });
         const afterPause = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
@@ -1871,10 +2039,29 @@ describe("Automation Event admission", () => {
             expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
         ]);
 
-        await expect(deleteAutomation({
-            accountId: ACCOUNT_ID,
-            automationId: AUTOMATION_ID,
-        })).resolves.toBe(true);
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: {
+                enabled: false,
+                deletedAt: new Date(),
+                scheduleKind: null,
+                scheduleExpr: null,
+                everyMs: null,
+                timezone: null,
+                nextRunAt: null,
+                observationTransport: null,
+                webhookEndpointId: null,
+                observationStartsAt: null,
+                watcherMachineId: null,
+                watcherMachineInstallationId: null,
+                watcherPluginId: null,
+                watcherMaterializationId: null,
+                definitionEnvelope: null,
+                sessionLifecycleEvent: null,
+                sourceSessionId: null,
+                sourceTurnId: null,
+            },
+        });
         const afterDelete = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
@@ -1888,8 +2075,8 @@ describe("Automation Event admission", () => {
             expect.objectContaining({ kind: "admitted", checkpointSafe: true }),
         ]);
         expect(await db.automationRun.count({
-            where: { accountId: ACCOUNT_ID, automationId: SECOND_AUTOMATION_ID },
-        })).toBe(3);
+            where: { accountId: ACCOUNT_ID, automationId: AUTOMATION_ID },
+        })).toBe(5);
     });
 
     it("fails closed before durable effects when private Account currentness is stale", async () => {
@@ -1926,9 +2113,12 @@ describe("Automation Event admission", () => {
         });
         await db.automation.update({
             where: { id: AUTOMATION_ID },
+            data: { templateCiphertext: e2eeRecipe },
+        });
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
             data: {
-                templateCiphertext: e2eeRecipe,
-                triggerDefinitionEnvelope: JSON.stringify(
+                definitionEnvelope: JSON.stringify(
                     sealAutomationTriggerDefinitionStoredEnvelopeV1({
                         mode: "e2ee",
                         material: e2ee.snapshot.material,
@@ -1936,7 +2126,8 @@ describe("Automation Event admission", () => {
                         binding: {
                             v: 1,
                             automationId: AUTOMATION_ID,
-                            templateVersion: 1,
+                            triggerId: TRIGGER_ID,
+                            triggerRevision: 1,
                             triggerKind: "pluginEvent",
                             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                             sourceSelectorId: SOURCE_SELECTOR_ID,
@@ -1958,13 +2149,12 @@ describe("Automation Event admission", () => {
 
     it("evaluates a repeated encrypted definition once and expands the outcome to every supplied position", async () => {
         await seed();
-        const { e2ee, e2eeRecipe } = await configureE2eeEventAutomation();
+        const { e2ee } = await configureE2eeEventAutomation();
         const originalInput = input();
         const hostEvidence = encryptedHostEvidence({
             event: originalInput,
             snapshot: e2ee.snapshot,
             accountCurrentness: e2ee.accountCurrentness,
-            definitionRecipe: e2eeRecipe,
         });
         const definition = hostEvidence.definitions[0]!;
 
@@ -1986,13 +2176,12 @@ describe("Automation Event admission", () => {
 
     it("refuses one encrypted occurrence claimed twice with disagreeing evidence before writing any Run", async () => {
         await seed();
-        const { e2ee, e2eeRecipe } = await configureE2eeEventAutomation();
+        const { e2ee } = await configureE2eeEventAutomation();
         const originalInput = input();
         const hostEvidence = encryptedHostEvidence({
             event: originalInput,
             snapshot: e2ee.snapshot,
             accountCurrentness: e2ee.accountCurrentness,
-            definitionRecipe: e2eeRecipe,
         });
         const definition = hostEvidence.definitions[0]!;
 
@@ -2024,7 +2213,6 @@ describe("Automation Event admission", () => {
             event: originalInput,
             snapshot: e2ee.snapshot,
             accountCurrentness: e2ee.accountCurrentness,
-            definitionRecipe: e2eeRecipe,
         });
         const originalEvidence = buildAutomationPluginEventOccurrenceEvidenceV1({
             eventRef: originalInput.eventRef,
@@ -2040,12 +2228,20 @@ describe("Automation Event admission", () => {
                 automationId: AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "queued",
-                originKind: "pluginEvent",
-                originOccurredAt: new Date(originalInput.occurredAt),
-                occurrenceKey: deriveAutomationOccurrenceKeyV1(originalEvidence),
+                triggerId: TRIGGER_ID,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeOccurredAt: new Date(originalInput.occurredAt),
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: TRIGGER_ID,
+                    evidence: originalEvidence,
+                }),
                 occurrenceEvidenceEqualityTag:
                     hostEvidence.definitions[0]!.occurrenceEvidenceEqualityTag,
-                originSourceSelectorId: SOURCE_SELECTOR_ID,
+                causeSourceSelectorId: SOURCE_SELECTOR_ID,
                 triggerEvidenceEnvelope: JSON.stringify(
                     hostEvidence.definitions[0]!.triggerEvidenceEnvelope,
                 ),
@@ -2073,7 +2269,6 @@ describe("Automation Event admission", () => {
                 event: conflictingInput,
                 snapshot: e2ee.snapshot,
                 accountCurrentness: e2ee.accountCurrentness,
-                definitionRecipe: e2eeRecipe,
             }),
         })).resolves.toEqual({
             results: [{
@@ -2088,7 +2283,6 @@ describe("Automation Event admission", () => {
             event: netNewInput,
             snapshot: e2ee.snapshot,
             accountCurrentness: e2ee.accountCurrentness,
-            definitionRecipe: e2eeRecipe,
         });
         const netNewOutcome = netNewHostEvidence.definitions[0]!.outcome;
         if (netNewOutcome.kind !== "matched") throw new Error("fixture must produce a matched E2EE outcome");
@@ -2107,7 +2301,7 @@ describe("Automation Event admission", () => {
         const netNewRun = await db.automationRun.findFirstOrThrow({
             where: {
                 accountId: ACCOUNT_ID,
-                automationId: AUTOMATION_ID,
+                triggerId: TRIGGER_ID,
                 occurrenceKey: netNewHostEvidence.definitions[0]!.occurrenceKey,
             },
             select: {
@@ -2115,10 +2309,15 @@ describe("Automation Event admission", () => {
                 executionInputEnvelope: true,
             },
         });
-        expect(netNewRun).toEqual({
-            occurrenceEvidenceEqualityTag: netNewHostEvidence.definitions[0]!.occurrenceEvidenceEqualityTag,
-            executionInputEnvelope: netNewOutcome.executionRecipe,
-        });
+        expect(netNewRun.occurrenceEvidenceEqualityTag).toBe(
+            netNewHostEvidence.definitions[0]!.occurrenceEvidenceEqualityTag,
+        );
+        const frozenRecipe = parseAutomationRunExecutionRecipeV1(netNewRun.executionInputEnvelope);
+        expect(frozenRecipe.kind).toBe("available");
+        if (frozenRecipe.kind !== "available") throw new Error("admitted E2EE recipe must be readable");
+        expect(frozenRecipe.recipe.triggerEvidence).toEqual(
+            netNewHostEvidence.definitions[0]!.triggerEvidenceEnvelope,
+        );
         const skippedInput = input({ occurrenceId: "delivery-e2ee-skipped" });
         const skippedAccount = await db.account.findUniqueOrThrow({
             where: { id: ACCOUNT_ID },
@@ -2131,12 +2330,25 @@ describe("Automation Event admission", () => {
                 ...e2ee.accountCurrentness,
                 version: skippedAccount.seq,
             },
-            definitionRecipe: e2eeRecipe,
         });
         const skippedHostEvidence = AutomationEventAdmitHostEvidenceV1Schema.parse({
             ...skippedBaseEvidence,
             definitions: skippedBaseEvidence.definitions.map((definition) => ({
                 ...definition,
+                triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
+                    material: e2ee.snapshot.material,
+                    evidence: buildAutomationPluginEventOccurrenceEvidenceV1({
+                        eventRef: skippedInput.eventRef,
+                        sourceSelectorId: definition.sourceSelectorId,
+                        occurrenceId: skippedInput.occurrenceId,
+                        occurredAt: skippedInput.occurredAt,
+                        payload: skippedInput.payload,
+                    }),
+                    randomBytes: (length) => Uint8Array.from(
+                        { length },
+                        (_, index) => index + 1,
+                    ),
+                }),
                 outcome: { kind: "skipped", reason: "filtered" },
             })),
         });
@@ -2209,7 +2421,6 @@ describe("Automation Event admission", () => {
                 ...e2ee.accountCurrentness,
                 version: schemaCurrentAccount.seq,
             },
-            definitionRecipe: e2eeRecipe,
             adoptedRevision: "2",
         });
         const schemaStaleSkippedInput = input({ occurrenceId: "delivery-e2ee-schema-stale-skipped" });
@@ -2220,13 +2431,26 @@ describe("Automation Event admission", () => {
                 ...e2ee.accountCurrentness,
                 version: schemaCurrentAccount.seq,
             },
-            definitionRecipe: e2eeRecipe,
             adoptedRevision: "2",
         });
         const schemaStaleSkippedHostEvidence = AutomationEventAdmitHostEvidenceV1Schema.parse({
             ...schemaStaleSkippedBaseEvidence,
             definitions: schemaStaleSkippedBaseEvidence.definitions.map((definition) => ({
                 ...definition,
+                triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
+                    material: e2ee.snapshot.material,
+                    evidence: buildAutomationPluginEventOccurrenceEvidenceV1({
+                        eventRef: schemaStaleSkippedInput.eventRef,
+                        sourceSelectorId: definition.sourceSelectorId,
+                        occurrenceId: schemaStaleSkippedInput.occurrenceId,
+                        occurredAt: schemaStaleSkippedInput.occurredAt,
+                        payload: schemaStaleSkippedInput.payload,
+                    }),
+                    randomBytes: (length) => Uint8Array.from(
+                        { length },
+                        (_, index) => index + 1,
+                    ),
+                }),
                 outcome: { kind: "skipped", reason: "filtered" },
             })),
         });
@@ -2459,7 +2683,6 @@ describe("Automation Event admission", () => {
             machineId: MACHINE_ID,
             attempt: claimed.run.attempt,
             accountCurrentness: claimed.accountCurrentness,
-            expectedTriggerKind: "pluginEvent",
         })).resolves.toEqual(expect.objectContaining({
             run: expect.objectContaining({
                 id: admittedItem.runId,
@@ -2500,7 +2723,7 @@ describe("Automation Event admission", () => {
 
         await db.automationRun.update({
             where: { id: runId },
-            data: { originOccurredAt: new Date(1_723_247_200_001) },
+            data: { causeOccurredAt: new Date(1_723_247_200_001) },
         });
 
         await expect(admitAutomationEventV1({
@@ -2525,8 +2748,13 @@ describe("Automation Event admission", () => {
         await db.automationRun.update({
             where: { id: runId },
             data: {
-                originKind: "conversation",
-                originSourceSelectorId: null,
+                triggerId: null,
+                causeKind: "conversation",
+                causeTriggerKind: null,
+                causeTriggerRevision: null,
+                causeEventPluginId: null,
+                causeEventLocalId: null,
+                causeSourceSelectorId: null,
             },
         });
 
@@ -2567,7 +2795,7 @@ describe("Automation Event admission", () => {
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
     });
 
-    it("releases Event capacity after an expired disabled claimant is terminalized", async () => {
+    it("keeps Event capacity with an admitted Run after its Definition is disabled", async () => {
         await seed();
         await db.automationAssignment.create({
             data: {
@@ -2582,29 +2810,28 @@ describe("Automation Event admission", () => {
                 accountId: ACCOUNT_ID,
                 name: "Capacity successor definition",
                 enabled: true,
-                scheduleKind: null,
                 targetType: "new_session",
                 templateCiphertext: strictEventDefinitionRecipe({ prompt: "frozen capacity successor" }),
                 templateVersion: 1,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: PLUGIN_ID,
-                triggerEventLocalId: EVENT_LOCAL_ID,
-                triggerSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                watcherMachineId: MACHINE_ID,
-                watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
-                watcherPluginId: PLUGIN_ID,
-                watcherMaterializationId: MATERIALIZATION_ID,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                    automationId: SECOND_AUTOMATION_ID,
-                    sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
-                }),
+                triggers: { create: {
+                    id: `${SECOND_AUTOMATION_ID}-trigger`, kind: "pluginEvent", enabled: true, revision: 1,
+                    eventPluginId: PLUGIN_ID, eventLocalId: EVENT_LOCAL_ID,
+                    sourceSelectorId: SECOND_SOURCE_SELECTOR_ID, sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull", watcherMachineId: MACHINE_ID,
+                    watcherMachineInstallationId: MACHINE_INSTALLATION_ID, watcherPluginId: PLUGIN_ID,
+                    watcherMaterializationId: MATERIALIZATION_ID,
+                    definitionEnvelope: triggerDefinitionEnvelope({
+                        automationId: SECOND_AUTOMATION_ID,
+                        triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+                        sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                    }),
+                } },
             },
         });
         const successorDefinition = {
             automationId: SECOND_AUTOMATION_ID,
-            templateVersion: 1,
+            triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+            triggerRevision: 1,
             sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
         };
         const leasedAdmission = await admitAutomationEventV1({
@@ -2634,76 +2861,84 @@ describe("Automation Event admission", () => {
         const now = new Date();
         const futureDueAt = new Date(now.getTime() + 60 * 60 * 1_000);
         await db.automationRun.createMany({
-            data: Array.from({ length: MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT - 1 }, (_, index) => ({
+            data: Array.from({ length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1 }, (_, index) => ({
                 id: `retired-capacity-run-${index}`,
                 automationId: SECOND_AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "queued",
-                originKind: "pluginEvent",
-                originOccurredAt: now,
+                triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeOccurredAt: now,
                 occurrenceKey: `retired-capacity-occurrence-${index}`,
-                originSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                causeSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: now,
                 dueAt: futureDueAt,
             })),
         });
 
-        await expect(admitAutomationEventV1({
+        const capacityAdmission = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 ...input({ occurrenceId: "retired-capacity-blocked" }),
                 definitions: [successorDefinition],
             },
-        })).resolves.toEqual({
-            results: [{
-                kind: "blocked",
-                reason: "capacity",
-                checkpointSafe: false,
-            }],
         });
+        expect(capacityAdmission.results).toEqual([{
+            kind: "blocked",
+            reason: "capacity",
+            checkpointSafe: false,
+        }]);
 
         await expect(claimAutomationRun({
             accountId: ACCOUNT_ID,
             machineId: MACHINE_ID,
             leaseDurationMs: 30_000,
             expectedTriggerKind: "pluginEvent",
-        })).resolves.toEqual({ run: null, accountCurrentness: null });
+        })).resolves.toMatchObject({
+            run: { id: leasedRunId, state: "claimed", claimedByMachineId: MACHINE_ID, attempt: 2 },
+        });
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: leasedRunId },
             select: { state: true, errorCode: true, claimedByMachineId: true, leaseExpiresAt: true },
         })).resolves.toEqual({
-            state: "cancelled",
-            errorCode: "automation_retired_after_lease_expiry",
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
+            state: "claimed",
+            errorCode: null,
+            claimedByMachineId: MACHINE_ID,
+            leaseExpiresAt: expect.any(Date),
         });
 
-        await expect(admitAutomationEventV1({
+        const stillAtCapacity = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 ...input({ occurrenceId: "retired-capacity-released" }),
                 definitions: [successorDefinition],
             },
-        })).resolves.toEqual({
-            results: [{
-                kind: "admitted",
-                runId: expect.any(String),
-                checkpointSafe: true,
-            }],
         });
+        expect(stillAtCapacity.results).toEqual([{
+            kind: "blocked",
+            reason: "capacity",
+            checkpointSafe: false,
+        }]);
         await expect(db.automationRun.count({
             where: {
                 accountId: ACCOUNT_ID,
-                originKind: { in: ["pluginEvent", "conversation"] },
+                OR: [
+                    { causeKind: "conversation" },
+                    { causeKind: "trigger", causeTriggerKind: "pluginEvent" },
+                ],
                 state: { in: ["queued", "claimed", "running"] },
             },
-        })).resolves.toBe(MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT);
+        })).resolves.toBe(MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT);
     });
 
-    it("releases Event admission capacity when disabling queued automatic Run origins", async () => {
+    it("retains admitted Event capacity when disabling their Automation", async () => {
         await seed();
         await db.automation.create({
             data: {
@@ -2711,29 +2946,28 @@ describe("Automation Event admission", () => {
                 accountId: ACCOUNT_ID,
                 name: "Capacity successor definition",
                 enabled: true,
-                scheduleKind: null,
                 targetType: "new_session",
                 templateCiphertext: strictEventDefinitionRecipe({ prompt: "frozen capacity successor" }),
                 templateVersion: 1,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: PLUGIN_ID,
-                triggerEventLocalId: EVENT_LOCAL_ID,
-                triggerSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                watcherMachineId: MACHINE_ID,
-                watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
-                watcherPluginId: PLUGIN_ID,
-                watcherMaterializationId: MATERIALIZATION_ID,
-                triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                    automationId: SECOND_AUTOMATION_ID,
-                    sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
-                }),
+                triggers: { create: {
+                    id: `${SECOND_AUTOMATION_ID}-trigger`, kind: "pluginEvent", enabled: true, revision: 1,
+                    eventPluginId: PLUGIN_ID, eventLocalId: EVENT_LOCAL_ID,
+                    sourceSelectorId: SECOND_SOURCE_SELECTOR_ID, sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull", watcherMachineId: MACHINE_ID,
+                    watcherMachineInstallationId: MACHINE_INSTALLATION_ID, watcherPluginId: PLUGIN_ID,
+                    watcherMaterializationId: MATERIALIZATION_ID,
+                    definitionEnvelope: triggerDefinitionEnvelope({
+                        automationId: SECOND_AUTOMATION_ID,
+                        triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+                        sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                    }),
+                } },
             },
         });
         const successorDefinition = {
             automationId: SECOND_AUTOMATION_ID,
-            templateVersion: 1,
+            triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+            triggerRevision: 1,
             sourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
         };
         const now = new Date();
@@ -2747,10 +2981,15 @@ describe("Automation Event admission", () => {
                     automationId: AUTOMATION_ID,
                     accountId: ACCOUNT_ID,
                     state: "queued",
-                    originKind: "pluginEvent",
-                    originOccurredAt: now,
+                    triggerId: TRIGGER_ID,
+                    causeKind: "trigger",
+                    causeTriggerKind: "pluginEvent",
+                    causeTriggerRevision: 1,
+                    causeEventPluginId: PLUGIN_ID,
+                    causeEventLocalId: EVENT_LOCAL_ID,
+                    causeOccurredAt: now,
                     occurrenceKey: "disabled-capacity-plugin-event-occurrence",
-                    originSourceSelectorId: SOURCE_SELECTOR_ID,
+                    causeSourceSelectorId: SOURCE_SELECTOR_ID,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     scheduledAt: now,
                     dueAt,
@@ -2760,25 +2999,30 @@ describe("Automation Event admission", () => {
                     automationId: AUTOMATION_ID,
                     accountId: ACCOUNT_ID,
                     state: "queued",
-                    originKind: "conversation",
-                    originOccurredAt: now,
+                    causeKind: "conversation",
+                    causeOccurredAt: now,
                     occurrenceKey: "disabled-capacity-conversation-occurrence",
-                    originSourceSelectorId: null,
+                    causeSourceSelectorId: null,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     scheduledAt: now,
                     dueAt,
                 },
                 ...Array.from(
-                    { length: MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT - 2 },
+                    { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 2 },
                     (_, index) => ({
                         id: `disabled-capacity-retained-${index}`,
                         automationId: SECOND_AUTOMATION_ID,
                         accountId: ACCOUNT_ID,
                         state: "queued" as const,
-                        originKind: "pluginEvent" as const,
-                        originOccurredAt: now,
+                        triggerId: `${SECOND_AUTOMATION_ID}-trigger`,
+                        causeKind: "trigger" as const,
+                        causeTriggerKind: "pluginEvent" as const,
+                        causeTriggerRevision: 1,
+                        causeEventPluginId: PLUGIN_ID,
+                        causeEventLocalId: EVENT_LOCAL_ID,
+                        causeOccurredAt: now,
                         occurrenceKey: `disabled-capacity-retained-occurrence-${index}`,
-                        originSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
+                        causeSourceSelectorId: SECOND_SOURCE_SELECTOR_ID,
                         triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                         scheduledAt: now,
                         dueAt,
@@ -2787,20 +3031,19 @@ describe("Automation Event admission", () => {
             ],
         });
 
-        await expect(admitAutomationEventV1({
+        const capacityAdmission = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 ...input({ occurrenceId: "disabled-capacity-blocked" }),
                 definitions: [successorDefinition],
             },
-        })).resolves.toEqual({
-            results: [{
-                kind: "blocked",
-                reason: "capacity",
-                checkpointSafe: false,
-            }],
         });
+        expect(capacityAdmission.results).toEqual([{
+            kind: "blocked",
+            reason: "capacity",
+            checkpointSafe: false,
+        }]);
 
         await expect(setAutomationEnabled({
             accountId: ACCOUNT_ID,
@@ -2813,71 +3056,77 @@ describe("Automation Event admission", () => {
         })).resolves.toEqual(expect.arrayContaining([
             {
                 id: disabledPluginEventRunId,
-                state: "cancelled",
-                finishedAt: expect.any(Date),
+                state: "queued",
+                finishedAt: null,
             },
             {
                 id: disabledConversationRunId,
-                state: "cancelled",
-                finishedAt: expect.any(Date),
+                state: "queued",
+                finishedAt: null,
             },
         ]));
 
-        await expect(admitAutomationEventV1({
+        const retainedCapacityAdmission = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
             input: {
                 ...input({ occurrenceId: "disabled-capacity-released" }),
                 definitions: [successorDefinition],
             },
-        })).resolves.toEqual({
-            results: [{
-                kind: "admitted",
-                runId: expect.any(String),
-                checkpointSafe: true,
-            }],
         });
+        expect(retainedCapacityAdmission.results).toEqual([{
+            kind: "blocked",
+            reason: "capacity",
+            checkpointSafe: false,
+        }]);
         await expect(db.automationRun.count({
             where: {
                 accountId: ACCOUNT_ID,
-                originKind: { in: ["pluginEvent", "conversation"] },
+                OR: [
+                    { causeKind: "conversation" },
+                    { causeKind: "trigger", causeTriggerKind: "pluginEvent" },
+                ],
                 state: { in: ["queued", "claimed", "running"] },
             },
-        })).resolves.toBe(MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT - 1);
+        })).resolves.toBe(MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT);
     });
 
-    it("blocks a net-new Event Run when the Account automatic-origin capacity is exhausted", async () => {
+    it("blocks checkpoint advancement without creating a Run when Event capacity is exhausted", async () => {
         await seed();
         const now = new Date();
         await db.automationRun.createMany({
-            data: Array.from({ length: MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT }, (_, index) => ({
+            data: Array.from({ length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT }, (_, index) => ({
                 id: `capacity-run-${index}`,
                 automationId: AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "queued",
-                originKind: "pluginEvent",
-                originOccurredAt: now,
+                triggerId: TRIGGER_ID,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeOccurredAt: now,
                 occurrenceKey: `capacity-occurrence-${index}`,
-                originSourceSelectorId: SOURCE_SELECTOR_ID,
+                causeSourceSelectorId: SOURCE_SELECTOR_ID,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: now,
                 dueAt: now,
             })),
         });
 
-        await expect(admitAutomationEventV1({
+        const capacityAdmission = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
             input: input({ occurrenceId: "capacity-next" }),
-        })).resolves.toEqual({
-            results: [{
-                kind: "blocked",
-                reason: "capacity",
-                checkpointSafe: false,
-            }],
         });
+        expect(capacityAdmission.results).toEqual([{
+            kind: "blocked",
+            reason: "capacity",
+            checkpointSafe: false,
+        }]);
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } }))
-            .toBe(MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT);
+            .toBe(MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT);
 
         await db.automationRun.update({
             where: { id: "capacity-run-9999" },
@@ -2910,10 +3159,13 @@ describe("Automation Event admission", () => {
         await expect(db.automationRun.count({
             where: {
                 accountId: ACCOUNT_ID,
-                originKind: { in: ["pluginEvent", "conversation"] },
+                OR: [
+                    { causeKind: "conversation" },
+                    { causeKind: "trigger", causeTriggerKind: "pluginEvent" },
+                ],
                 state: { in: ["queued", "claimed", "running"] },
             },
-        })).resolves.toBe(MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT);
+        })).resolves.toBe(MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT);
         await expect(db.automationRun.findUnique({
             where: { id: "capacity-run-9999" },
             select: {
@@ -2928,6 +3180,77 @@ describe("Automation Event admission", () => {
             executionAttempt: 3,
             errorCode: "execution_run_retry_exhausted",
         });
+    });
+
+    it("blocks every net-new Event candidate when the complete request would exceed capacity", async () => {
+        await seed();
+        await db.automationTrigger.create({
+            data: {
+                id: SECOND_TRIGGER_ID,
+                automationId: AUTOMATION_ID,
+                kind: "pluginEvent",
+                enabled: true,
+                revision: 1,
+                eventPluginId: PLUGIN_ID,
+                eventLocalId: EVENT_LOCAL_ID,
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
+                watcherMachineId: MACHINE_ID,
+                watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+                watcherPluginId: PLUGIN_ID,
+                watcherMaterializationId: MATERIALIZATION_ID,
+                definitionEnvelope: triggerDefinitionEnvelope({
+                    triggerId: SECOND_TRIGGER_ID,
+                    sourceSelectorId: SOURCE_SELECTOR_ID,
+                }),
+            },
+        });
+        const now = new Date();
+        await db.automationRun.createMany({
+            data: Array.from({ length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1 }, (_, index) => ({
+                id: `batch-capacity-run-${index}`,
+                automationId: AUTOMATION_ID,
+                accountId: ACCOUNT_ID,
+                state: "queued" as const,
+                triggerId: TRIGGER_ID,
+                causeKind: "trigger" as const,
+                causeTriggerKind: "pluginEvent" as const,
+                causeTriggerRevision: 1,
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeOccurredAt: now,
+                occurrenceKey: `batch-capacity-occurrence-${index}`,
+                causeSourceSelectorId: SOURCE_SELECTOR_ID,
+                triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                scheduledAt: now,
+                dueAt: now,
+            })),
+        });
+
+        const result = await admitAutomationEventV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...input({ occurrenceId: "batch-capacity-next" }),
+                definitions: [
+                    input().definitions[0]!,
+                    {
+                        automationId: AUTOMATION_ID,
+                        triggerId: SECOND_TRIGGER_ID,
+                        triggerRevision: 1,
+                        sourceSelectorId: SOURCE_SELECTOR_ID,
+                    },
+                ],
+            },
+        });
+
+        expect(result.results).toEqual([
+            { kind: "blocked", reason: "capacity", checkpointSafe: false },
+            { kind: "blocked", reason: "capacity", checkpointSafe: false },
+        ]);
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } }))
+            .resolves.toBe(MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1);
     });
 
     it("rejects a payload outside the current Event schema before creating a Run", async () => {

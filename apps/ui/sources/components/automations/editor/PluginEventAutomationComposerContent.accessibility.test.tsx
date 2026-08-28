@@ -89,19 +89,6 @@ describe('PluginEventAutomationComposerContent accessibility', () => {
             validation: { kind: 'rejected', reason: 'offline' },
         }] satisfies readonly PluginMachineExecutionOriginCandidateV1[];
         const model: PluginEventAutomationComposerModel = {
-            mode: 'event',
-            setMode: vi.fn(),
-            isEditingEvent: false,
-            editTarget: null,
-            targetKind: 'newSession',
-            setTargetKind: vi.fn(),
-            existingSessionOptions: [],
-            selectedExistingSessionId: null,
-            selectExistingSession: vi.fn(),
-            existingSessionAvailability: null,
-            executionPermissionMode: 'read_only',
-            setExecutionPermissionMode: vi.fn(),
-            resolveExecutionTarget: vi.fn(() => null),
             eligibleEvents: [event],
             eventCatalogStatus: 'ready',
             selectedEvent: event,
@@ -118,6 +105,7 @@ describe('PluginEventAutomationComposerContent accessibility', () => {
                 isCurrent: () => false,
             }),
             sourceStatus: 'idle',
+            sourceFailure: null,
             sourceDisplayLabel: null,
             sourceInstanceId: null,
             availableObservationTransports: ['checkpointedPull'],
@@ -152,6 +140,7 @@ describe('PluginEventAutomationComposerContent accessibility', () => {
             setMaximumObservationAgeMsText: vi.fn(),
             maximumObservationAgeMsValid: false,
             createDraft: null,
+            invalidateConfiguredSource: vi.fn(),
             revision: 0,
         };
 
@@ -179,5 +168,33 @@ describe('PluginEventAutomationComposerContent accessibility', () => {
         ));
         expect(alertTexts).toHaveLength(3);
         expect(politeAlertTexts).toHaveLength(3);
+
+        expect(screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.accessibilityLabel)
+            .toBe('automations.detail.event.watcherTitle');
+        await screen.update(<PluginEventAutomationComposerContent
+            model={{
+                ...model,
+                availableObservationTransports: ['durablePush'],
+                observationTransport: 'durablePush',
+            }}
+        />);
+        expect(screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.accessibilityLabel)
+            .toBe('automations.detail.event.observationPlacementTitle');
+        await screen.update(<PluginEventAutomationComposerContent
+            model={{
+                ...model,
+                sourceStatus: 'unavailable',
+                sourceFailure: {
+                    code: 'channels_connection_required',
+                    reason: 'channels_connection_required',
+                    remediation: {
+                        kind: 'openSettings',
+                        path: '/settings/plugins/happier.channels/connections',
+                    },
+                },
+            }}
+        />);
+        expect(screen.findByProps({ testID: 'automation-event-source-open-settings' }).props.accessibilityRole)
+            .toBe('button');
     });
 });

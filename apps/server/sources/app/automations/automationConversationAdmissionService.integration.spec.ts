@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import tweetnacl from "tweetnacl";
 
 import {
-    MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT,
+    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     AutomationConversationAdmitInputV1Schema,
     buildAutomationConversationOccurrenceEvidenceV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -11,12 +11,13 @@ import {
     deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
     normalizePluginReleaseFactsV1,
     openAutomationConversationReplyContextStoredEnvelopeV1,
+    parseAutomationRunExecutionRecipeV1,
     sealAccountScopedBlobCiphertext,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
     sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
     sealAutomationRunTriggerEvidenceEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
-    serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
     type AutomationConversationResultDeliveryV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
@@ -56,6 +57,7 @@ const caller = {
     machineId: MACHINE_ID,
     machineInstallationId: MACHINE_INSTALLATION_ID,
     materializationId: MATERIALIZATION_ID,
+    immutableGenerationId: "generation-channels-1",
 } as const;
 
 const releaseFacts = normalizePluginReleaseFactsV1({
@@ -79,26 +81,34 @@ const releaseFacts = normalizePluginReleaseFactsV1({
     },
 });
 
-function strictConversationRunRecipe(): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+function strictConversationRunRecipe(
+    target: Readonly<
+        | { kind: "executionRun" }
+        | { kind: "existingSession"; sessionId: string }
+    > = { kind: "executionRun" },
+    templateVersion = 3,
+): string {
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
-        templateVersion: 3,
+        templateVersion,
         template: {
             t: "plain",
             v: { v: 1, prompt: "Respond to the Conversation message." },
         },
         triggerEvidence: null,
-        target: {
-            kind: "executionRun",
-            request: {
-                intent: "task",
-                backendTarget: { kind: "builtInAgent", agentId: "codex" },
-                permissionMode: "read_only",
-                retentionPolicy: "ephemeral",
-                runClass: "bounded",
-                ioMode: "request_response",
+        target: target.kind === "existingSession"
+            ? target
+            : {
+                kind: "executionRun",
+                request: {
+                    intent: "task",
+                    backendTarget: { kind: "builtInAgent", agentId: "codex" },
+                    permissionMode: "read_only",
+                    retentionPolicy: "ephemeral",
+                    runClass: "bounded",
+                    ioMode: "request_response",
+                },
             },
-        },
     });
     if (serialized.kind !== "available") {
         throw new Error("Failed to construct a strict Conversation Run execution recipe");
@@ -124,7 +134,6 @@ function conversationInput(params: Readonly<{
     return {
         automationId: AUTOMATION_ID,
         bindingId: BINDING_ID,
-        templateVersion: 3,
         occurrenceId: "conversation-occurrence-admission",
         occurredAt: 1_723_247_200_000,
         sender: { id: "sender-1" },
@@ -166,7 +175,6 @@ async function admitAutomationConversationV1(
                 replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
                     mode: "plain",
                     correspondence: { automationId: input.automationId, occurrenceKey },
-                    templateVersion: input.templateVersion,
                     opaqueContext: input.resultDelivery.opaqueContext,
                 }),
             };
@@ -194,6 +202,7 @@ type E2eeAccountFixture = Readonly<{
  */
 async function configureE2eeAccount(params: Readonly<{
     resealAutomationTemplate?: boolean;
+    target?: "executionRun" | "existingSession";
 }> = {}): Promise<E2eeAccountFixture> {
     const signing = tweetnacl.sign.keyPair();
     const content = tweetnacl.box.keyPair();
@@ -222,9 +231,13 @@ async function configureE2eeAccount(params: Readonly<{
         select: { seq: true },
     });
     if (params.resealAutomationTemplate !== false) {
+        const target = params.target ?? "executionRun";
         await db.automation.update({
             where: { id: AUTOMATION_ID },
-            data: { templateCiphertext: encryptedConversationDefinitionRecipe(snapshot) },
+            data: {
+                targetType: target === "existingSession" ? "existing_session" : "execution_run",
+                templateCiphertext: encryptedConversationDefinitionRecipe(snapshot, target),
+            },
         });
     }
     return {
@@ -242,8 +255,9 @@ async function configureE2eeAccount(params: Readonly<{
 
 function encryptedConversationDefinitionRecipe(
     snapshot: ReturnType<typeof createAccountScopedCryptoMaterialSnapshotV1>,
+    target: "executionRun" | "existingSession" = "executionRun",
 ): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: 3,
         template: {
@@ -256,17 +270,19 @@ function encryptedConversationDefinitionRecipe(
             }),
         },
         triggerEvidence: null,
-        target: {
-            kind: "executionRun",
-            request: {
-                intent: "task",
-                backendTarget: { kind: "builtInAgent", agentId: "codex" },
-                permissionMode: "read_only",
-                retentionPolicy: "ephemeral",
-                runClass: "bounded",
-                ioMode: "request_response",
+        target: target === "existingSession"
+            ? { kind: "existingSession", sessionId: "session-conversation-target" }
+            : {
+                kind: "executionRun",
+                request: {
+                    intent: "task",
+                    backendTarget: { kind: "builtInAgent", agentId: "codex" },
+                    permissionMode: "read_only",
+                    retentionPolicy: "ephemeral",
+                    runClass: "bounded",
+                    ioMode: "request_response",
+                },
             },
-        },
     });
     if (serialized.kind !== "available") {
         throw new Error("Encrypted Conversation admission fixture must use a valid strict recipe");
@@ -316,7 +332,6 @@ function encryptedConversationHostEvidence(params: Readonly<{
                     (_, index) => (index + params.nonceSeed + 193) % 251,
                 ),
                 correspondence: { automationId: input.automationId, occurrenceKey },
-                templateVersion: input.templateVersion,
                 opaqueContext: resultDelivery.opaqueContext,
             }),
         };
@@ -325,7 +340,6 @@ function encryptedConversationHostEvidence(params: Readonly<{
         t: "encrypted" as const,
         accountCurrentness: params.account.accountCurrentness,
         automationId: input.automationId,
-        templateVersion: input.templateVersion,
         occurrenceKey,
         occurredAt: params.occurredAt ?? input.occurredAt,
         triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
@@ -444,10 +458,22 @@ describe("Automation Conversation admission database boundary", () => {
                 targetType: "execution_run",
                 templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
-                triggerKind: "manual",
             },
         });
     });
+
+    async function configurePlainExistingSessionTarget(): Promise<void> {
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: {
+                targetType: "existing_session",
+                templateCiphertext: strictConversationRunRecipe({
+                    kind: "existingSession",
+                    sessionId: "session-conversation-target",
+                }),
+            },
+        });
+    }
 
     it("persists resultDelivery:none without handoff facts, a wake, or a claim", async () => {
         const input = conversationInput({ resultDelivery: { kind: "none" } });
@@ -466,8 +492,9 @@ describe("Automation Conversation admission database boundary", () => {
         const run = await db.automationRun.findUniqueOrThrow({
             where: { id: admitted.runId },
             select: {
-                originKind: true,
-                originOccurredAt: true,
+                causeKind: true,
+                causeOccurredAt: true,
+                triggerId: true,
                 occurrenceKey: true,
                 triggerEvidenceEnvelope: true,
                 executionDispatchState: true,
@@ -486,9 +513,10 @@ describe("Automation Conversation admission database boundary", () => {
         });
 
         expect(run).toEqual({
-            originKind: "conversation",
-            originOccurredAt: new Date(input.occurredAt),
-            occurrenceKey: expect.any(String),
+            causeKind: "conversation",
+            causeOccurredAt: new Date(input.occurredAt),
+            triggerId: null,
+            occurrenceKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
             triggerEvidenceEnvelope: expect.any(String),
             executionDispatchState: "notStarted",
             replyContextEnvelope: null,
@@ -525,7 +553,70 @@ describe("Automation Conversation admission database boundary", () => {
         });
     });
 
-    it("feeds one Automation from several conversation bindings without disturbing its trigger", async () => {
+    it("rejects final-result delivery for executionRun before persistence and admits the same request for a Session target", async () => {
+        const unsupportedInput = conversationInput();
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: AUTOMATION_ID,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({
+            kind: "notVerified",
+            reason: "resultDeliveryUnsupported",
+        });
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: unsupportedInput,
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "resultDeliveryUnsupported",
+            checkpointSafe: false,
+        });
+        await expect(db.automationRun.count({
+            where: { automationId: AUTOMATION_ID },
+        })).resolves.toBe(0);
+
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: {
+                targetType: "existing_session",
+                templateCiphertext: strictConversationRunRecipe({
+                    kind: "existingSession",
+                    sessionId: "session-conversation-target",
+                }),
+            },
+        });
+
+        await expect(verifyAutomationConversationTargetV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                automationId: AUTOMATION_ID,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({ kind: "verified" });
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...unsupportedInput,
+                occurrenceId: "conversation-occurrence-session-target",
+            },
+        })).resolves.toEqual({
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
+        });
+        await expect(db.automationRun.count({
+            where: { automationId: AUTOMATION_ID },
+        })).resolves.toBe(1);
+    });
+
+    it("feeds one zero-trigger Automation from several conversation bindings without inventing a trigger", async () => {
         // A Discord thread and a Telegram chat can both drive the same daily
         // Automation. Each binding keeps its own occurrence identity, so both
         // admit distinct Runs against one durable target.
@@ -555,11 +646,11 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(db.automationRun.count({
             where: { accountId: ACCOUNT_ID, automationId: AUTOMATION_ID },
         })).resolves.toBe(2);
-        // The Automation's own trigger is untouched by either binding.
+        // Direct conversation invocation is a cause, never a synthetic trigger.
         await expect(db.automation.findUniqueOrThrow({
             where: { id: AUTOMATION_ID },
-            select: { triggerKind: true, triggerDefinitionEnvelope: true },
-        })).resolves.toEqual({ triggerKind: "manual", triggerDefinitionEnvelope: null });
+            select: { triggers: { select: { id: true } } },
+        })).resolves.toEqual({ triggers: [] });
     });
 
     it("rejoins only the same logical Channels caller across a materialization rollover", async () => {
@@ -692,17 +783,18 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
     });
 
-    it("releases automatic-origin capacity after an exhausted execution Run is terminally failed", async () => {
+    it("releases Conversation Run capacity after an exhausted execution Run is terminally failed", async () => {
         const now = new Date();
         await db.automationRun.createMany({
-            data: Array.from({ length: MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT }, (_, index) => ({
+            data: Array.from({ length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT }, (_, index) => ({
                 id: `conversation-capacity-run-${index}`,
                 automationId: AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "queued" as const,
-                originKind: "conversation" as const,
-                originOccurredAt: now,
+                causeKind: "conversation" as const,
+                causeOccurredAt: now,
                 occurrenceKey: `conversation-capacity-occurrence-${index}`,
+                legacyManualIdempotencyKey: null,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: now,
                 dueAt: now,
@@ -773,7 +865,14 @@ describe("Automation Conversation admission database boundary", () => {
                 targetType: "execution_run",
                 templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
-                triggerKind: "schedule",
+            },
+        });
+        await db.automationTrigger.create({
+            data: {
+                automationId: secondAutomationId,
+                kind: "schedule",
+                enabled: true,
+                revision: 1,
                 scheduleKind: "interval",
                 everyMs: 60_000,
             },
@@ -904,6 +1003,7 @@ describe("Automation Conversation admission database boundary", () => {
             machineId: MACHINE_ID,
             machineInstallationId: MACHINE_INSTALLATION_ID,
             materializationId: externalMaterializationId,
+            immutableGenerationId: "generation-slack-bridge-1",
         } as const;
         const externalBindingId = "binding-acme-slack-bridge";
 
@@ -917,10 +1017,20 @@ describe("Automation Conversation admission database boundary", () => {
                 accountId: ACCOUNT_ID,
                 name: "Slack bridge conversation",
                 enabled: true,
-                targetType: "execution_run",
-                templateCiphertext: strictConversationRunRecipe(),
+                targetType: "existing_session",
+                templateCiphertext: strictConversationRunRecipe({
+                    kind: "existingSession",
+                    sessionId: "session-slack-bridge-target",
+                }),
                 templateVersion: 3,
-                triggerKind: "schedule",
+            },
+        });
+        await db.automationTrigger.create({
+            data: {
+                automationId: scheduledAutomationId,
+                kind: "schedule",
+                enabled: true,
+                revision: 1,
                 scheduleKind: "interval",
                 everyMs: 60_000,
             },
@@ -953,13 +1063,19 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller: externalCaller,
-            input: { automationId: created.automationId, expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: {
+                automationId: created.automationId,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({ kind: "verified" });
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller,
-            input: { automationId: created.automationId, expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: {
+                automationId: created.automationId,
+                resultDelivery: "finalResult",
+            },
+        })).resolves.toEqual({ kind: "verified" });
 
         await expect(admitAutomationConversationV1({
             accountId: ACCOUNT_ID,
@@ -967,7 +1083,6 @@ describe("Automation Conversation admission database boundary", () => {
             input: {
                 automationId: created.automationId,
                 bindingId: externalBindingId,
-                templateVersion: 3,
                 occurrenceId: "slack:event:1",
                 occurredAt: 1_724_000_000_000,
                 sender: { id: "U-123" },
@@ -1072,8 +1187,8 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: ACCOUNT_ID,
             caller: externalCaller,
-            input: { automationId: AUTOMATION_ID, expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: { automationId: AUTOMATION_ID },
+        })).resolves.toEqual({ kind: "verified" });
         await expect(listAutomationConversationTargetsV1({
             accountId: ACCOUNT_ID,
             caller: externalCaller,
@@ -1081,7 +1196,6 @@ describe("Automation Conversation admission database boundary", () => {
         })).resolves.toEqual({
             items: [{
                 automationId: AUTOMATION_ID,
-                templateVersion: 3,
                 label: "Conversation admission",
                 execution: { targetType: "execution_run", enabled: true },
             }],
@@ -1103,6 +1217,7 @@ describe("Automation Conversation admission database boundary", () => {
     });
 
     it("freezes finalResult custody and rejects a rejoin with a changed opaque context", async () => {
+        await configurePlainExistingSessionTarget();
         const input = conversationInput();
         const finalResultDelivery = input.resultDelivery;
         if (finalResultDelivery.kind !== "finalResult") {
@@ -1158,7 +1273,6 @@ describe("Automation Conversation admission database boundary", () => {
                     automationId: AUTOMATION_ID,
                     occurrenceKey: expect.any(String),
                 },
-                templateVersion: 3,
                 opaqueContext: finalResultDelivery.opaqueContext,
             },
         });
@@ -1254,7 +1368,6 @@ describe("Automation Conversation admission database boundary", () => {
                     automationId: AUTOMATION_ID,
                     occurrenceKey: expect.any(String),
                 },
-                templateVersion: 3,
                 opaqueContext: finalResultDelivery.opaqueContext,
             },
         });
@@ -1274,6 +1387,7 @@ describe("Automation Conversation admission database boundary", () => {
             });
         }],
     ] as const)("rejoins an exact frozen final-result handoff after %s", async (_description, mutate) => {
+        await configurePlainExistingSessionTarget();
         const input = conversationInput();
         const finalResultDelivery = input.resultDelivery;
         if (finalResultDelivery.kind !== "finalResult") {
@@ -1300,7 +1414,6 @@ describe("Automation Conversation admission database boundary", () => {
                     automationId: AUTOMATION_ID,
                     occurrenceKey: expect.any(String),
                 },
-                templateVersion: 3,
             },
         });
         const accountChangesBeforeReplay = await db.accountChange.count({
@@ -1352,6 +1465,86 @@ describe("Automation Conversation admission database boundary", () => {
         })).resolves.toEqual(frozenHandoff);
     });
 
+    it("uses the current recipe at first admission and preserves that Run and handoff on replay", async () => {
+        const target = {
+            kind: "existingSession" as const,
+            sessionId: "session-conversation-target",
+        };
+        const currentRecipe = strictConversationRunRecipe(target, 4);
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: {
+                targetType: "existing_session",
+                templateCiphertext: currentRecipe,
+                templateVersion: 4,
+            },
+        });
+
+        const input = conversationInput();
+        const admitted = await admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input,
+        });
+        if (admitted.kind !== "admitted") throw new Error("Expected Conversation admission");
+
+        const frozen = await db.automationRun.findUniqueOrThrow({
+            where: { id: admitted.runId },
+            select: {
+                executionInputEnvelope: true,
+                replyContextEnvelope: true,
+                replyHandoffId: true,
+            },
+        });
+        if (frozen.executionInputEnvelope === null) throw new Error("Expected frozen Conversation recipe");
+        const frozenRecipe = parseAutomationRunExecutionRecipeV1(frozen.executionInputEnvelope);
+        expect(frozenRecipe).toMatchObject({
+            kind: "available",
+            recipe: {
+                templateVersion: 4,
+                target,
+            },
+        });
+        if (frozenRecipe.kind !== "available") throw new Error("Expected frozen Conversation recipe");
+        expect(frozenRecipe.recipe.triggerEvidence).not.toBeNull();
+        expect(JSON.parse(frozen.replyContextEnvelope!)).toMatchObject({
+            t: "plain",
+            v: {
+                correspondence: {
+                    automationId: AUTOMATION_ID,
+                    occurrenceKey: expect.any(String),
+                },
+                opaqueContext: FINAL_RESULT_DELIVERY.opaqueContext,
+            },
+        });
+        expect(JSON.parse(frozen.replyContextEnvelope!).v).not.toHaveProperty("templateVersion");
+
+        await db.automation.update({
+            where: { id: AUTOMATION_ID },
+            data: {
+                templateCiphertext: strictConversationRunRecipe(target, 5),
+                templateVersion: 5,
+            },
+        });
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input,
+        })).resolves.toEqual({
+            kind: "rejoined",
+            runId: admitted.runId,
+            checkpointSafe: true,
+        });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: admitted.runId },
+            select: {
+                executionInputEnvelope: true,
+                replyContextEnvelope: true,
+                replyHandoffId: true,
+            },
+        })).resolves.toEqual(frozen);
+    });
+
     it("admits an E2EE Conversation occurrence from sealed host evidence and rejoins its replay by tag", async () => {
         const account = await configureE2eeAccount();
         const hostEvidence = encryptedConversationHostEvidence({ account, nonceSeed: 1 });
@@ -1371,23 +1564,25 @@ describe("Automation Conversation admission database boundary", () => {
         const run = await db.automationRun.findUniqueOrThrow({
             where: { id: admitted.runId },
             select: {
-                originKind: true,
-                originOccurredAt: true,
+                triggerId: true,
+                causeKind: true,
+                causeOccurredAt: true,
                 occurrenceKey: true,
                 occurrenceEvidenceEqualityTag: true,
-                originSourceSelectorId: true,
+                causeSourceSelectorId: true,
                 triggerEvidenceEnvelope: true,
                 executionInputEnvelope: true,
                 replyContextEnvelope: true,
                 replyHandoffState: true,
             },
         });
-        expect(run.originKind).toBe("conversation");
-        expect(run.originOccurredAt).toEqual(new Date(hostEvidence.occurredAt));
+        expect(run.triggerId).toBeNull();
+        expect(run.causeKind).toBe("conversation");
+        expect(run.causeOccurredAt).toEqual(new Date(hostEvidence.occurredAt));
         expect(run.occurrenceKey).toBe(hostEvidence.occurrenceKey);
         expect(run.occurrenceEvidenceEqualityTag)
             .toBe(hostEvidence.occurrenceEvidenceEqualityTag);
-        expect(run.originSourceSelectorId).toBeNull();
+        expect(run.causeSourceSelectorId).toBeNull();
         expect(run.replyContextEnvelope).toBeNull();
         expect(run.replyHandoffState).toBe("none");
         expect(JSON.parse(run.triggerEvidenceEnvelope ?? "null"))
@@ -1440,7 +1635,7 @@ describe("Automation Conversation admission database boundary", () => {
     });
 
     it("freezes an E2EE final-result handoff before the Run exists and retains it for the actual Run", async () => {
-        const account = await configureE2eeAccount();
+        const account = await configureE2eeAccount({ target: "existingSession" });
         const hostEvidence = encryptedConversationHostEvidence({
             account,
             nonceSeed: 31,
@@ -1489,7 +1684,6 @@ describe("Automation Conversation admission database boundary", () => {
                 automationId: AUTOMATION_ID,
                 occurrenceKey: hostEvidence.occurrenceKey,
             },
-            templateVersion: 3,
             opaqueContext: FINAL_RESULT_DELIVERY.opaqueContext,
         });
 
@@ -1507,6 +1701,28 @@ describe("Automation Conversation admission database boundary", () => {
             runId: admitted.runId,
             checkpointSafe: true,
         });
+    });
+
+    it("rejects an E2EE executionRun final result before persistence", async () => {
+        const account = await configureE2eeAccount();
+        const hostEvidence = encryptedConversationHostEvidence({
+            account,
+            nonceSeed: 41,
+            resultDelivery: FINAL_RESULT_DELIVERY,
+        });
+
+        await expect(admitEncryptedAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            hostEvidence,
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "resultDeliveryUnsupported",
+            checkpointSafe: false,
+        });
+        await expect(db.automationRun.count({
+            where: { automationId: AUTOMATION_ID },
+        })).resolves.toBe(0);
     });
 
     it("keeps each Account mode on its own admission arm", async () => {

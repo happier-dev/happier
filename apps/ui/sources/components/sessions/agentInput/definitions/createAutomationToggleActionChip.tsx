@@ -5,8 +5,7 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import {
     AutomationSettingsPopoverContent,
 } from '@/components/sessions/agentInput/components/AutomationSettingsPopoverContent';
-import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
-import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -15,9 +14,10 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT
 export function createAutomationToggleActionChip(params: Readonly<{
     enabled: boolean;
     label: string;
-    value: AutomationSettingsValue;
-    onChange: (next: AutomationSettingsValue) => void;
-    eventComposer?: PluginEventAutomationComposerModel | null;
+    value: NewSessionAutomationDraft;
+    onChange: (next: NewSessionAutomationDraft) => void;
+    machineId?: string | null;
+    targetServerId?: string | null;
 }>): AgentInputExtraActionChip {
     const maxWidthCapEnabled = 680;
     const maxWidthCapDisabled = Math.round(maxWidthCapEnabled / 2);
@@ -34,7 +34,8 @@ export function createAutomationToggleActionChip(params: Readonly<{
                 <AutomationSettingsPopoverContent
                     value={params.value}
                     onChange={params.onChange}
-                    eventComposer={params.eventComposer}
+                    machineId={params.machineId}
+                    targetServerId={params.targetServerId}
                 />
             ),
             maxHeightCap: 620,

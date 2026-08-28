@@ -14,7 +14,6 @@ import {
   AutomationAccountCurrentnessWitnessV1Schema,
   ExecutionRunStartResponseSchema,
   ExecutionRunStopResponseSchema,
-  MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   materializeAutomationRunExecutionRecipeV1,
   sealAutomationRunResultStoredEnvelopeV1,
   sealAutomationRunFailureDetailStoredEnvelopeV1,
@@ -25,6 +24,7 @@ import {
   sameAutomationAccountCurrentnessWitnessV1,
   validateAutomationRunExecutionRecipeOuterV1,
   type AutomationAccountCurrentnessWitnessV1,
+  type AutomationRunCause,
   type AutomationRunExecutionRecipeV1,
   type AutomationV3WorkerExecutionDispatchOutcome,
   type AutomationV3WorkerResultDelivery,
@@ -46,7 +46,6 @@ import { isAuthoritativeAutomationRunCancellation } from './automationRunCancell
 import { runAutomationAgainstExistingSession } from './automationRunExistingSession';
 import { runAutomationAsNewSession } from './automationRunNewSession';
 import {
-  parseAutomationRunExecutionInput,
   parseAutomationTemplateExecution,
   type ParsedAutomationExecution,
   type AutomationTemplateEncryption,
@@ -84,6 +83,7 @@ function normalizeRunFailure(params: {
 }
 
 type AutomationV3RunFailureSettlement = Readonly<{
+  protocol: 'v3';
   runId: string;
   machineId: string;
   attempt: number;
@@ -96,6 +96,7 @@ type AutomationV3RunFailureSettlement = Readonly<{
 }>;
 
 type AutomationV2RunFailureSettlement = Readonly<{
+  protocol: 'v2';
   runId: string;
   machineId: string;
   attempt: number;
@@ -109,6 +110,7 @@ type AutomationV2RunFailureSettlement = Readonly<{
 
 type AutomationRunClaimClient = Readonly<{
   startRun: (params: {
+    protocol: 'v2' | 'v3';
     runId: string;
     machineId: string;
     attempt: number;
@@ -116,12 +118,14 @@ type AutomationRunClaimClient = Readonly<{
     accountCurrentness?: AutomationAccountCurrentnessWitnessV1;
   }) => Promise<AutomationAccountCurrentnessWitnessV1 | null | void>;
   heartbeatRun: (params: {
+    protocol: 'v2' | 'v3';
     runId: string;
     machineId: string;
     attempt: number;
     leaseDurationMs: number;
   }) => Promise<void>;
   succeedRun: (params: {
+    protocol: 'v2' | 'v3';
     runId: string;
     machineId: string;
     attempt: number;
@@ -132,6 +136,7 @@ type AutomationRunClaimClient = Readonly<{
   }) => Promise<void>;
   failRun: (params: AutomationV3RunFailureSettlement | AutomationV2RunFailureSettlement) => Promise<void>;
   settleExecutionDispatch?: (params: {
+    protocol: 'v3';
     runId: string;
     machineId: string;
     attempt: number;
@@ -151,7 +156,7 @@ type ExecuteAutomationAction = (
       kind: 'automationRun';
       runId: string;
       automationId: string;
-      origin: 'schedule' | 'manual' | 'event' | 'conversation';
+      cause: AutomationRunCause;
     }>;
   }>,
 ) => Promise<
@@ -228,6 +233,7 @@ function createV3RunFailureSettlement(params: Readonly<{
     // failure or create a raw-compatible fallback transport.
   }
   return {
+    protocol: 'v3',
     runId: params.claimed.run.id,
     machineId: params.machineId,
     attempt: params.claimed.run.attempt,
@@ -312,7 +318,6 @@ async function settleStrictV3SessionFinalResult(params: Readonly<{
       idOrPrefix: params.sessionId,
       localId: params.localId,
       timeoutMs: params.timeoutMs,
-      maxResultTextUtf8Bytes: MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
     });
   } catch {
     // A read failure has no terminal Session evidence. Lease recovery rejoins
@@ -327,7 +332,6 @@ async function settleStrictV3SessionFinalResult(params: Readonly<{
       case 'session_id_ambiguous':
       case 'unsupported':
       case 'invalid_local_id':
-      case 'invalid_result_text_utf8_byte_limit':
         await params.fail(
           `session_result_${observed.code}`,
           `Automation final-result Session read cannot continue: ${observed.code}`,
@@ -356,12 +360,8 @@ async function settleStrictV3SessionFinalResult(params: Readonly<{
   }
   if (observed.result.kind === 'terminal_no_result') {
     await params.fail(
-      observed.result.reason === 'missing_final_assistant_text'
-        ? 'session_final_result_missing'
-        : 'session_final_result_exceeds_utf8_byte_limit',
-      observed.result.reason === 'missing_final_assistant_text'
-        ? 'Session turn completed without a final assistant text result'
-        : 'Session final assistant text exceeds the Automation result UTF-8 byte limit',
+      'session_final_result_missing',
+      'Session turn completed without a final assistant text result',
     );
     return;
   }
@@ -716,7 +716,7 @@ async function executeStrictV3Run(params: Readonly<{
 
   const materialized = materializeAutomationRunExecutionRecipeV1({
     recipe: params.recipe,
-    origin: params.claimed.run.origin,
+    cause: params.claimed.run.cause,
     accountCurrentness: claimCurrentness,
     runId: params.claimed.run.id,
     ...(opened.openedContent === undefined ? {} : { openedContent: opened.openedContent }),
@@ -761,6 +761,7 @@ async function executeStrictV3Run(params: Readonly<{
   let rawStartCurrentness: AutomationAccountCurrentnessWitnessV1 | null | void;
   try {
     rawStartCurrentness = await params.claimClient.startRun({
+      protocol: 'v3',
       runId: params.claimed.run.id,
       machineId: params.machineId,
       attempt: params.claimed.run.attempt,
@@ -888,6 +889,7 @@ async function executeStrictV3Run(params: Readonly<{
           timeoutMs: params.leaseDurationMs,
           isCurrent: params.isCurrent,
           succeed: async (resultEnvelope) => await params.claimClient.succeedRun({
+            protocol: 'v3',
             runId: params.claimed.run.id,
             machineId: params.machineId,
             attempt: params.claimed.run.attempt,
@@ -904,6 +906,7 @@ async function executeStrictV3Run(params: Readonly<{
         return;
       }
       await params.claimClient.succeedRun({
+        protocol: 'v3',
         runId: params.claimed.run.id,
         machineId: params.machineId,
         attempt: params.claimed.run.attempt,
@@ -942,11 +945,7 @@ async function executeStrictV3Run(params: Readonly<{
       kind: 'automationRun' as const,
       runId: params.claimed.run.id,
       automationId: params.claimed.automation.id,
-      origin: params.claimed.run.origin.kind === 'pluginEvent'
-        ? 'event' as const
-        : params.claimed.run.origin.kind === 'scheduled'
-          ? 'schedule' as const
-          : params.claimed.run.origin.kind,
+      cause: params.claimed.run.cause,
     };
     let knownNativeRunId: string | null = null;
     let stopAttempted = false;
@@ -992,6 +991,7 @@ async function executeStrictV3Run(params: Readonly<{
       settled: AutomationV3WorkerExecutionDispatchOutcome,
     ): Promise<void> => {
       await params.claimClient.settleExecutionDispatch!({
+        protocol: 'v3',
         runId: params.claimed.run.id,
         machineId: params.machineId,
         attempt: params.claimed.run.attempt,
@@ -1107,6 +1107,7 @@ async function executeStrictV3Run(params: Readonly<{
         timeoutMs: params.leaseDurationMs,
         isCurrent: params.isCurrent,
         succeed: async (resultEnvelope) => await params.claimClient.succeedRun({
+          protocol: 'v3',
           runId: params.claimed.run.id,
           machineId: params.machineId,
           attempt: params.claimed.run.attempt,
@@ -1123,6 +1124,7 @@ async function executeStrictV3Run(params: Readonly<{
       return;
     }
     await params.claimClient.succeedRun({
+      protocol: 'v3',
       runId: params.claimed.run.id,
       machineId: params.machineId,
       attempt: params.claimed.run.attempt,
@@ -1201,6 +1203,7 @@ export async function executeClaimedRun(params: {
       heartbeatMs,
       onHeartbeat: async () => {
         await claimClient.heartbeatRun({
+          protocol: claimed.protocol,
           runId: claimed.run.id,
           machineId,
           attempt,
@@ -1255,100 +1258,18 @@ export async function executeClaimedRun(params: {
           return;
         }
 
-        // V2 frozen bytes remain a read-only predecessor adapter while the
-        // server's Event producer migration is pending. It never writes or
-        // reconstructs a strict recipe, and all V3 lifecycle transitions
-        // below still carry C then S.
-        const parsedTemplate = parseAutomationRunExecutionInput({
-          run: {
-            id: claimed.run.id,
-            automationId: claimed.run.automationId,
-            executionInputEnvelope: claimed.run.executionInputEnvelope,
-          },
-        }, encryption);
-        if (!parsedTemplate.ok) {
-          await failV3ClaimedRunBeforeStart({
-            machineId,
-            claimed,
-            claimClient,
-            signal: executionController.signal,
-            isCurrent,
-            resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
-            errorCode: parsedTemplate.code,
-            errorMessage: parsedTemplate.error,
-          });
-          return;
-        }
-
-        const currentnessBeforeStart = await resolveMatchingAutomationCurrentness({
-          signal: executionController.signal,
-          expected: claimed.accountCurrentness,
-          resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
-        });
-        if (!currentnessBeforeStart || !isCurrent()) return;
-
-        let rawStartCurrentness: AutomationAccountCurrentnessWitnessV1 | null | void;
-        try {
-          rawStartCurrentness = await claimClient.startRun({
-            runId: claimed.run.id,
-            machineId,
-            attempt,
-            accountCurrentness: claimed.accountCurrentness,
-          });
-        } catch {
-          return;
-        }
-        if (!isCurrent()) return;
-        const startCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(rawStartCurrentness);
-        if (!startCurrentness.success) return;
-        let currentnessBeforeEffect: AvailableAutomationAccountEncryptionV1 | null = null;
-
-        await executeParsedAutomationTemplate({
-          credentials: params.credentials,
+        // Current V3 has one cause-bound recipe model. Its unreleased
+        // predecessor is not a compatibility reader; released V2 remains
+        // isolated on the distinct V2 claim branch below.
+        await failV3ClaimedRunBeforeStart({
           machineId,
           claimed,
-          spawnSession,
-          machineAdmissionTransport: params.machineAdmissionTransport,
+          claimClient,
           signal: executionController.signal,
           isCurrent,
-          template: parsedTemplate.value,
-          beforeTargetEffect: async () => {
-            const currentness = await resolveMatchingAutomationCurrentness({
-              signal: executionController.signal,
-              expected: startCurrentness.data,
-              resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
-            });
-            if (currentness === null) return false;
-            currentnessBeforeEffect = currentness;
-            return true;
-          },
-          onPromptSessionId: (sessionId) => {
-            cancellationPromptSessionId = sessionId;
-          },
-          onProducedNewSessionId: (sessionId) => {
-            knownProducedNewSessionId = sessionId;
-            if (currentnessBeforeEffect !== null) {
-              knownProducedNewSessionEncryption = currentnessBeforeEffect;
-            }
-          },
-          fail: async (errorCode, errorMessage, producedSessionId) => {
-            if (currentnessBeforeEffect === null) return;
-            await claimClient.failRun(createV3RunFailureSettlement({
-              machineId,
-              claimed,
-              accountEncryption: currentnessBeforeEffect,
-              ...(producedSessionId === undefined ? {} : { producedSessionId }),
-              errorCode,
-              errorMessage,
-            }));
-          },
-          succeed: async (producedSessionId) => await claimClient.succeedRun({
-            runId: claimed.run.id,
-            machineId,
-            attempt,
-            accountCurrentness: startCurrentness.data,
-            producedSessionId,
-          }),
+          resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
+          errorCode: 'invalid_template',
+          errorMessage: 'Frozen automation execution recipe is invalid',
         });
       } catch (error) {
         const authoritativeCancellation = isAuthoritativeAutomationRunCancellation(params.signal);
@@ -1389,7 +1310,7 @@ export async function executeClaimedRun(params: {
       return;
     }
 
-    await claimClient.startRun({ runId: claimed.run.id, machineId, attempt });
+    await claimClient.startRun({ protocol: 'v2', runId: claimed.run.id, machineId, attempt });
     if (!isCurrent()) return;
 
     const parsedTemplate = parseAutomationTemplateExecution({
@@ -1409,6 +1330,7 @@ export async function executeClaimedRun(params: {
     if (!parsedTemplate.ok) {
       if (!isCurrent()) return;
       await claimClient.failRun({
+        protocol: 'v2',
         runId: claimed.run.id,
         machineId,
         attempt,
@@ -1435,6 +1357,7 @@ export async function executeClaimedRun(params: {
         knownProducedNewSessionId = sessionId;
       },
       fail: async (errorCode, errorMessage, producedSessionId) => await claimClient.failRun({
+        protocol: 'v2',
         runId: claimed.run.id,
         machineId,
         attempt,
@@ -1443,6 +1366,7 @@ export async function executeClaimedRun(params: {
         errorMessage,
       }),
       succeed: async (producedSessionId) => await claimClient.succeedRun({
+        protocol: 'v2',
         runId: claimed.run.id,
         machineId,
         attempt,
@@ -1457,6 +1381,7 @@ export async function executeClaimedRun(params: {
     // not settle; authoritative cancellation may retain only the known
     // canonical new-Session identity.
     await claimClient.failRun({
+      protocol: 'v2',
       runId: claimed.run.id,
       machineId,
       attempt,

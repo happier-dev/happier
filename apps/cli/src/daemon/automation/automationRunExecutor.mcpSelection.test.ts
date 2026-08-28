@@ -1,5 +1,7 @@
 import {
   AutomationSourceSelectorIdV1Schema,
+  AutomationRunCauseSchema,
+  AutomationTriggerIdSchema,
   createAccountScopedCryptoMaterialSnapshotV1,
   deriveAutomationOccurrenceKeyV1,
   isAutomationSessionStartRequestCiphertextV1,
@@ -62,10 +64,13 @@ function availableCurrentness(witness: typeof CLAIM_CURRENTNESS | typeof START_C
 function buildStrictClaimedRun(params: {
   recipe: unknown;
   runId?: string;
-  origin?: unknown;
+  cause?: unknown;
   accountCurrentness?: unknown;
   resultDelivery?: unknown;
 }): ClaimableRunPayload {
+  const cause = AutomationRunCauseSchema.parse(
+    params.cause ?? { kind: 'manual' as const, invokedAt: 1_723_247_201_000 },
+  );
   const serialized = serializeAutomationRunExecutionRecipeV1(params.recipe);
   if (serialized.kind !== 'available') {
     throw new Error('Strict Automation recipe fixture must serialize');
@@ -77,7 +82,8 @@ function buildStrictClaimedRun(params: {
       automationId: 'automation-1',
       attempt: 1,
       executionInputEnvelope: serialized.serialized,
-      origin: params.origin ?? { kind: 'manual', invokedAt: 1_723_247_201_000 },
+      triggerId: cause.kind === 'trigger' ? cause.triggerId : null,
+      cause,
       resultDelivery: params.resultDelivery ?? { kind: 'none' },
     },
     automation: {
@@ -96,6 +102,7 @@ function strictExistingSessionRecipe(params: {
 } = {}) {
   return {
     v: 1,
+    assignmentMachineIds: ['machine-1'],
     templateVersion: 1,
     template: params.templateEnvelope ?? {
       t: 'plain' as const,
@@ -117,6 +124,7 @@ function strictNewSessionRecipe(params: {
   const machineId = params.machineId ?? 'machine-1';
   return {
     v: 1,
+    assignmentMachineIds: ['machine-1'],
     templateVersion: 1,
     template: params.templateEnvelope ?? {
       t: 'plain' as const,
@@ -169,7 +177,7 @@ const finalResultConversationEvidence = {
   observationReceivedAt: 1_723_247_201_001,
 } as const;
 
-const finalResultConversationOrigin = {
+const finalResultConversationCause = {
   kind: 'conversation' as const,
   occurrenceKey: deriveAutomationOccurrenceKeyV1({
     v: finalResultConversationEvidence.v,
@@ -187,6 +195,7 @@ const finalResultConversationOrigin = {
 function strictExecutionRunRecipe(params: { triggerEvidence?: typeof executionRunEventEvidence } = {}) {
   return {
     v: 1,
+    assignmentMachineIds: ['machine-1'],
     templateVersion: 1,
     template: {
       t: 'plain' as const,
@@ -280,6 +289,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     });
 
     expect(claimClient.startRun).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -293,6 +303,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     }));
     expect(spawnSession).not.toHaveBeenCalled();
     expect(claimClient.succeedRun).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -341,7 +352,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
         recipe: strictExistingSessionRecipe({
           triggerEvidence: { t: 'plain', v: finalResultConversationEvidence },
         }),
-        origin: finalResultConversationOrigin,
+        cause: finalResultConversationCause,
         resultDelivery: {
           kind: 'finalResult',
           accountId: 'account-1',
@@ -364,7 +375,6 @@ describe('executeClaimedRun (mcpSelection)', () => {
       idOrPrefix: 'session-existing',
       localId: 'automation:run-strict',
       timeoutMs: 120_000,
-      maxResultTextUtf8Bytes: 256 * 1024,
     });
     expect(succeedRun).toHaveBeenCalledOnce();
     const succeedCall = succeedRun.mock.calls[0]?.[0];
@@ -472,7 +482,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
           templateEnvelope: { t: 'encrypted', c: encryptedTemplate },
           triggerEvidence: { t: 'encrypted', c: encryptedTriggerEvidence },
         }),
-        origin: finalResultConversationOrigin,
+        cause: finalResultConversationCause,
         resultDelivery: {
           kind: 'finalResult',
           accountId: 'account-1',
@@ -718,6 +728,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     await executeClaimedRun(execution);
 
     expect(claimClient.startRun).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -732,7 +743,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
         t: 'plain',
         v: expect.objectContaining({
           creationKey: 'automation-run:run-strict',
-          initialMessage: 'create the strict Session',
+          initialInput: { text: 'create the strict Session' },
           executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
         }),
       },
@@ -740,6 +751,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     expect(spawnSession).not.toHaveBeenCalled();
     expect(enqueueAutomationPrompt).not.toHaveBeenCalled();
     expect(claimClient.succeedRun).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -833,7 +845,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
       kind: 'available',
       input: expect.objectContaining({
         creationKey: 'automation-run:run-strict',
-        initialMessage: 'create the strict Session',
+        initialInput: { text: 'create the strict Session' },
       }),
     }));
     expect(claimClient.succeedRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -892,7 +904,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
       attempt: 1,
       requestEnvelope: { t: 'plain', v: expect.objectContaining({
         creationKey: 'automation-run:run-strict',
-        initialMessage: 'create the strict Session',
+        initialInput: { text: 'create the strict Session' },
         executionTarget: { serverId: 'server-1', machineId: 'machine-2' },
       }) },
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
@@ -940,6 +952,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(nonretryable.failRun).toHaveBeenCalledOnce();
     expect(nonretryable.failRun).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -1026,7 +1039,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     expect(dispatchSessionServerStart.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       requestEnvelope: { t: 'plain', v: expect.objectContaining({
         creationKey: 'automation-run:run-strict',
-        initialMessage: 'create the strict Session',
+        initialInput: { text: 'create the strict Session' },
       }) },
     }));
     expect(claimClient.succeedRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -1368,6 +1381,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     });
 
     const knownSession = {
+      protocol: 'v3' as const,
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -1533,19 +1547,28 @@ describe('executeClaimedRun (mcpSelection)', () => {
       claimed: buildStrictClaimedRun({
         recipe: strictExecutionRunRecipe({ triggerEvidence: executionRunEventEvidence }),
         runId: 'run-stable-execution',
-        origin: {
-          kind: 'pluginEvent',
+        cause: {
+          kind: 'trigger',
+          triggerId: AutomationTriggerIdSchema.parse('trigger-stable-execution'),
+          triggerRevision: 1,
+          triggerKind: 'pluginEvent',
           occurrenceKey: deriveAutomationOccurrenceKeyV1({
-            v: executionRunEventEvidence.v,
-            kind: executionRunEventEvidence.kind,
+            triggerId: AutomationTriggerIdSchema.parse('trigger-stable-execution'),
+            evidence: {
+              v: executionRunEventEvidence.v,
+              kind: executionRunEventEvidence.kind,
+              eventRef: executionRunEventEvidence.eventRef,
+              sourceSelectorId: executionRunEventEvidence.sourceSelectorId,
+              occurrenceId: executionRunEventEvidence.occurrenceId,
+              occurredAt: executionRunEventEvidence.occurredAt,
+              payload: executionRunEventEvidence.payload,
+            },
+          }),
+          occurredAt: executionRunEventEvidence.occurredAt,
+          evidence: {
             eventRef: executionRunEventEvidence.eventRef,
             sourceSelectorId: executionRunEventEvidence.sourceSelectorId,
-            occurrenceId: executionRunEventEvidence.occurrenceId,
-            occurredAt: executionRunEventEvidence.occurredAt,
-            payload: executionRunEventEvidence.payload,
-          }),
-          sourceSelectorId: executionRunEventEvidence.sourceSelectorId,
-          occurredAt: executionRunEventEvidence.occurredAt,
+          },
         },
       }),
     });
@@ -1567,11 +1590,17 @@ describe('executeClaimedRun (mcpSelection)', () => {
           kind: 'automationRun',
           runId: 'run-stable-execution',
           automationId: 'automation-1',
-          origin: 'event',
+          cause: expect.objectContaining({
+            kind: 'trigger',
+            triggerId: 'trigger-stable-execution',
+            triggerRevision: 1,
+            triggerKind: 'pluginEvent',
+          }),
         },
       }),
     );
     expect(claimClient.settleExecutionDispatch).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-stable-execution',
       machineId: 'machine-1',
       attempt: 1,
@@ -1623,7 +1652,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
           ...strictExecutionRunRecipe(),
           triggerEvidence: { t: 'plain', v: finalResultConversationEvidence },
         },
-        origin: finalResultConversationOrigin,
+        cause: finalResultConversationCause,
         resultDelivery: {
           kind: 'finalResult',
           accountId: 'account-1',
@@ -1675,6 +1704,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(executeAction).toHaveBeenCalledOnce();
     expect(claimClient.settleExecutionDispatch).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -1728,6 +1758,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     });
 
     expect(claimClient.settleExecutionDispatch).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -1765,6 +1796,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     });
 
     expect(claimClient.settleExecutionDispatch).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -1873,6 +1905,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     // returned is reported to the one dispatch settlement owner. Cancellation
     // still owns the Run terminality; only the pointer is retained.
     expect(claimClient.settleExecutionDispatch).toHaveBeenCalledWith({
+      protocol: 'v3',
       runId: 'run-strict',
       machineId: 'machine-1',
       attempt: 1,
@@ -2169,7 +2202,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
     }));
   });
 
-  it('uses the V3 Run-frozen recipe when the Automation definition has since changed', async () => {
+  it('rejects the unreleased origin-era V3 frozen-input shape instead of executing it', async () => {
     const spawnSession = vi.fn(async (): Promise<SpawnSessionResult> => ({ type: 'success', sessionId: 'sess_frozen' }));
     const claimClient = {
       startRun: vi.fn(async () => START_CURRENTNESS),
@@ -2184,7 +2217,8 @@ describe('executeClaimedRun (mcpSelection)', () => {
         automationId: 'automation-1',
         attempt: 1,
         resultDelivery: { kind: 'none' },
-        origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+        triggerId: null,
+        cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
         executionInputEnvelope: JSON.stringify({
           kind: 'happier_automation_run_execution_input_v1',
           targetType: 'new_session',
@@ -2193,7 +2227,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
             kind: 'happier_automation_template_plain_v1',
             payload: { directory: '/tmp/frozen-definition' },
           }),
-          origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+          cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
         }),
       },
       automation: {
@@ -2217,17 +2251,16 @@ describe('executeClaimedRun (mcpSelection)', () => {
       claimed: claimedWithFrozenRecipe,
     });
 
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/tmp/frozen-definition',
-    }));
-    expect(claimClient.succeedRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(claimClient.startRun).not.toHaveBeenCalled();
+    expect(claimClient.succeedRun).not.toHaveBeenCalled();
+    expect(claimClient.failRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-frozen',
-      attempt: 1,
-      accountCurrentness: START_CURRENTNESS,
+      errorCode: 'invalid_template',
     }));
   });
 
-  it('retains the V2-frozen V3 Session when its first terminal settlement request loses its response', async () => {
+  it('does not enter predecessor settlement recovery for an origin-era V3 frozen input', async () => {
     const sessionId = 'sess-frozen-settlement-fallback';
     const succeedRun = vi.fn().mockRejectedValueOnce(new Error('frozen settlement transport failed before commit'));
     const failRun = vi.fn(async () => {});
@@ -2245,7 +2278,8 @@ describe('executeClaimedRun (mcpSelection)', () => {
         automationId: 'automation-1',
         attempt: 1,
         resultDelivery: { kind: 'none' },
-        origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+        triggerId: null,
+        cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
         executionInputEnvelope: JSON.stringify({
           kind: 'happier_automation_run_execution_input_v1',
           targetType: 'new_session',
@@ -2254,7 +2288,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
             kind: 'happier_automation_template_plain_v1',
             payload: { directory: '/tmp/frozen-settlement-fallback' },
           }),
-          origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
+          cause: { kind: 'manual', invokedAt: 1_723_247_201_000 },
         }),
       },
       automation: {
@@ -2278,21 +2312,13 @@ describe('executeClaimedRun (mcpSelection)', () => {
       claimed: claimedWithFrozenRecipe,
     });
 
-    expect(succeedRun).toHaveBeenCalledWith({
-      runId: 'run-frozen-settlement-fallback',
-      machineId: 'machine-1',
-      attempt: 1,
-      accountCurrentness: START_CURRENTNESS,
-      producedSessionId: sessionId,
-    });
-    expect(spawnSession).toHaveBeenCalledOnce();
+    expect(succeedRun).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
     expect(failRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-frozen-settlement-fallback',
       machineId: 'machine-1',
       attempt: 1,
-      accountCurrentness: START_CURRENTNESS,
-      producedSessionId: sessionId,
-      errorCode: 'unexpected_error',
+      errorCode: 'invalid_template',
     }));
   });
 
@@ -2328,6 +2354,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(spawnSession).not.toHaveBeenCalled();
     expect(claimClient.failRun).toHaveBeenCalledWith({
+      protocol: 'v2',
       runId: 'run-1',
       machineId: 'machine-1',
       attempt: 1,

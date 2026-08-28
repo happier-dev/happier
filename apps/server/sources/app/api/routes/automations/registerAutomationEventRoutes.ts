@@ -99,9 +99,7 @@ export function registerAutomationEventRoutes(
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,
                     materializationId: request.body.caller.materialization.materializationId,
-                    ...(request.body.caller.immutableGenerationId === undefined
-                        ? {}
-                        : { immutableGenerationId: request.body.caller.immutableGenerationId }),
+                    immutableGenerationId: request.body.caller.immutableGenerationId,
                 },
                 input: request.body.input,
                 ...(request.body.webhookInvocationReference === undefined
@@ -170,9 +168,7 @@ export function registerAutomationEventRoutes(
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,
                     materializationId: request.body.caller.materialization.materializationId,
-                    ...(request.body.caller.immutableGenerationId === undefined
-                        ? {}
-                        : { immutableGenerationId: request.body.caller.immutableGenerationId }),
+                    immutableGenerationId: request.body.caller.immutableGenerationId,
                 },
                 // Preserve the signed mode-specific body.  In particular the
                 // encrypted arm has no semantic Event input for the route or
@@ -221,9 +217,7 @@ export function registerAutomationEventRoutes(
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,
                     materializationId: request.body.caller.materialization.materializationId,
-                    ...(request.body.caller.immutableGenerationId === undefined
-                        ? {}
-                        : { immutableGenerationId: request.body.caller.immutableGenerationId }),
+                    immutableGenerationId: request.body.caller.immutableGenerationId,
                 },
                 input: request.body.input,
             }));

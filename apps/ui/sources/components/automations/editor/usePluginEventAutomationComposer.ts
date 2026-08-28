@@ -1,13 +1,11 @@
 import * as React from 'react';
 
 import {
-    type AutomationRunExecutionTargetV1,
     type AutomationEventFilterV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type ExecutionRunDetachedStartRequestV1,
     type PluginMachineExecutionOriginV1,
     type PluginProjectionInstalledPackageV2,
-    type SessionServerStartSpawnDraftV1,
+    arePluginMachineMaterializationRefsEqual,
     validateAutomationEventFilterAgainstPayloadSchemaV1,
 } from '@happier-dev/protocol';
 
@@ -24,28 +22,12 @@ import {
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
-import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/sessionRouteHydrationState';
-import { resolveExistingSessionAutomationAvailability, type ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
-import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
-import {
-    storage,
-    useSession,
-    useSessionListIndexByServerId,
-    useSessionListRowRenderablesForItems,
-    useSessions,
-    useSettings,
-} from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
     useActivePluginAccountAvailabilityReader,
     useActivePluginAccountAvailabilityReleaseClassifier,
 } from '@/sync/domains/plugins/availability/projection';
 import {
     arePluginContributionIdentitiesEqual,
-    arePluginMachineMaterializationRefsEqual,
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import {
@@ -53,7 +35,6 @@ import {
     resolveCurrentPluginEventAutomationEligibleEvent,
     supportsPluginEventAutomationObservationTransport,
     type PluginEventAutomationCreateDraft,
-    type PluginEventAutomationEditTarget,
     type PluginEventAutomationObservationDraft,
 } from './pluginEventAutomationDraft';
 import {
@@ -72,19 +53,12 @@ import {
     buildPluginEventAutomationPayloadBrowser,
     type PluginEventAutomationPayloadBrowser,
 } from './pluginEventAutomationPayloadBrowser';
-import { configurePluginEventAutomationSetup } from './pluginEventAutomationSetup';
 import {
-    resolvePluginEventAutomationTarget,
-    type PluginEventAutomationResolvedTarget,
-    type PluginEventAutomationTargetKind,
-} from './pluginEventAutomationTarget';
-import {
-    buildPluginEventAutomationExistingSessionOptions,
-    type PluginEventAutomationExistingSessionOption,
-} from './pluginEventAutomationExistingSessionOptions';
-export type { PluginEventAutomationExistingSessionOption } from './pluginEventAutomationExistingSessionOptions';
-
-type EventComposerMode = 'schedule' | 'event';
+    arePluginEventAutomationEligibleSetupPresentationsEqual as sameEligibleEvent,
+    configurePluginEventAutomationSetup,
+    getPluginEventAutomationEligibleSetupPresentationKey as eventPresentationKey,
+    type PluginEventAutomationSetupFailure,
+} from './pluginEventAutomationSetup';
 
 export type PluginEventAutomationComposerSourceStatus =
     | 'idle'
@@ -92,11 +66,6 @@ export type PluginEventAutomationComposerSourceStatus =
     | 'configured'
     | 'unavailable';
 
-export type PluginEventAutomationInitialExistingSessionTarget = Readonly<{
-    kind: 'existingSession';
-    sessionId: string;
-    serverId: string;
-}>;
 
 type WebhookEndpointRefreshRequest = Readonly<{
     generation: number;
@@ -121,32 +90,6 @@ export type PluginEventAutomationPluginPresentation = Readonly<{
 }>;
 
 export type PluginEventAutomationComposerModel = Readonly<{
-    mode: EventComposerMode;
-    setMode: (mode: EventComposerMode) => void;
-    /** Event edits cannot be reinterpreted as a retained V2 schedule update. */
-    isEditingEvent: boolean;
-    /** Narrow direct-detail CAS fact for the incumbent patch writer. */
-    editTarget: PluginEventAutomationEditTarget | null;
-    /** Event creation chooses exactly one durable protocol target arm. */
-    targetKind: PluginEventAutomationTargetKind;
-    setTargetKind: (kind: PluginEventAutomationTargetKind) => void;
-    existingSessionOptions: readonly PluginEventAutomationExistingSessionOption[];
-    selectedExistingSessionId: string | null;
-    selectExistingSession: (option: PluginEventAutomationExistingSessionOption) => void;
-    existingSessionAvailability: ExistingSessionAutomationAvailability | null;
-    executionPermissionMode: 'no_tools' | 'read_only';
-    setExecutionPermissionMode: (mode: 'no_tools' | 'read_only') => void;
-    /**
-     * Re-reads the selected existing Session's canonical machine/control
-     * target at submit time; the caller supplies only fresh arm-local inputs.
-     */
-    resolveExecutionTarget: (params: Readonly<{
-        newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
-        executionRun?: Readonly<{
-            machineId: string | null;
-            request: ExecutionRunDetachedStartRequestV1 | null;
-        }> | null;
-    }>) => PluginEventAutomationResolvedTarget | null;
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     eventCatalogStatus: 'ready' | 'unavailable';
     selectedEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
@@ -155,6 +98,7 @@ export type PluginEventAutomationComposerModel = Readonly<{
         event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     ) => PluginEventAutomationPluginPresentation;
     sourceStatus: PluginEventAutomationComposerSourceStatus;
+    sourceFailure: PluginEventAutomationSetupFailure | null;
     sourceDisplayLabel: string | null;
     sourceInstanceId: string | null;
     configureSource: () => void;
@@ -197,31 +141,14 @@ export type PluginEventAutomationComposerModel = Readonly<{
     maximumObservationAgeMsValid: boolean;
     /** Non-persisted strict writer input; null until every owner-local fact is valid/current. */
     createDraft: PluginEventAutomationCreateDraft | null;
+    /**
+     * Discards source facts whose materialization/currentness failed at the
+     * final completion boundary. The incumbent source owner performs the
+     * reset so the row returns to a recoverable configuration state.
+     */
+    invalidateConfiguredSource: () => void;
     revision: number;
 }>;
-
-function sameEligibleEvent(
-    left: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    right: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-): boolean {
-    return arePluginContributionIdentitiesEqual(left.event.identity, right.event.identity)
-        && left.event.immutableGenerationId === right.event.immutableGenerationId
-        && arePluginContributionIdentitiesEqual(left.setupAction.identity, right.setupAction.identity)
-        && left.setupAction.immutableGenerationId === right.setupAction.immutableGenerationId;
-}
-
-function eventPresentationKey(
-    event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-): string {
-    return JSON.stringify([
-        event.event.identity.pluginId,
-        event.event.identity.localId,
-        event.event.immutableGenerationId,
-        event.setupAction.identity.pluginId,
-        event.setupAction.identity.localId,
-        event.setupAction.immutableGenerationId,
-    ]);
-}
 
 type PluginEventAutomationPresentationState = Readonly<{
     projectionPhase: DaemonMergedProjectionPhase;
@@ -306,27 +233,6 @@ function readMaximumObservationAgeMs(value: string): Readonly<{
         : { value: null, valid: false };
 }
 
-function normalizeSessionTargetId(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
-function readSessionListIndexSessionItems(
-    indexByServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>,
-): readonly Extract<SessionListIndexItem, { type: 'session' }>[] {
-    const items: Extract<SessionListIndexItem, { type: 'session' }>[] = [];
-    for (const [recordServerId, indexItems] of Object.entries(indexByServerId)) {
-        const serverId = normalizeSessionTargetId(recordServerId);
-        if (!serverId || !Array.isArray(indexItems)) continue;
-        for (const item of indexItems) {
-            if (item.type !== 'session') continue;
-            items.push(item.serverId ? item : { ...item, serverId });
-        }
-    }
-    return Object.freeze(items);
-}
-
 /**
  * The Event-specific part of the ordinary new-session Automation composer.
  * It reads the one daemon-projected cold Event catalog, borrows the generic
@@ -339,65 +245,18 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     projectionPhase: DaemonMergedProjectionPhase;
     projectionInputs: DaemonMergedProjectionInputs | null;
     initialEditSeed?: PluginEventAutomationEditSeed | null;
-    initialExistingSessionServerId?: string | null;
-    initialExistingSessionTarget?: PluginEventAutomationInitialExistingSessionTarget | null;
 }>): PluginEventAutomationComposerModel {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const availabilityReader = useActivePluginAccountAvailabilityReader();
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const machineSnapshots = useAllProfileMachineInventorySnapshots();
     const initialEditSeed = params.initialEditSeed ?? null;
-    const editTarget = React.useMemo<PluginEventAutomationEditTarget | null>(() => {
-        if (
-            !initialEditSeed
-            || initialEditSeed.automationId.trim().length === 0
-            || initialEditSeed.automationId !== initialEditSeed.automationId.trim()
-            || !Number.isSafeInteger(initialEditSeed.expectedTemplateVersion)
-            || initialEditSeed.expectedTemplateVersion < 0
-        ) {
-            return null;
-        }
-        return Object.freeze({
-            automationId: initialEditSeed.automationId,
-            expectedTemplateVersion: initialEditSeed.expectedTemplateVersion,
-        });
-    }, [initialEditSeed]);
-    const initialExistingSessionTarget = params.initialExistingSessionTarget ?? null;
-    const initialTargetKind = initialEditSeed?.target.kind
-        ?? (initialExistingSessionTarget ? 'existingSession' : 'newSession');
-    const [targetKind, setTargetKindState] = React.useState<PluginEventAutomationTargetKind>(initialTargetKind);
-    const initialExistingSessionSelection = React.useMemo<PluginEventAutomationExistingSessionOption | null>(() => {
-        const sessionId = initialEditSeed?.target.kind === 'existingSession'
-            ? initialEditSeed.target.sessionId
-            : initialExistingSessionTarget?.sessionId;
-        if (!sessionId) return null;
-        const handoffServerId = initialExistingSessionTarget?.sessionId === sessionId
-            ? initialExistingSessionTarget.serverId
-            : null;
-        return Object.freeze({
-            sessionId,
-            serverId: normalizeSessionTargetId(handoffServerId)
-                ?? normalizeSessionTargetId(params.initialExistingSessionServerId)
-                ?? resolveServerIdForSessionIdFromLocalCache(sessionId),
-            label: sessionId,
-        });
-    }, [initialEditSeed, initialExistingSessionTarget, params.initialExistingSessionServerId]);
-    const [selectedExistingSession, setSelectedExistingSession] = React.useState<PluginEventAutomationExistingSessionOption | null>(
-        initialExistingSessionSelection,
-    );
-    const [executionPermissionMode, setExecutionPermissionModeState] = React.useState<'no_tools' | 'read_only'>(() => (
-        initialEditSeed?.target.kind === 'executionRun'
-            ? initialEditSeed.target.request.permissionMode
-            : 'read_only'
-    ));
-    const [mode, setModeState] = React.useState<EventComposerMode>(() => (
-        editTarget || initialExistingSessionTarget ? 'event' : 'schedule'
-    ));
     const [selectedEvent, setSelectedEvent] = React.useState<DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null>(null);
     const selectedEventRef = React.useRef(selectedEvent);
     selectedEventRef.current = selectedEvent;
     const [configuredSetup, setConfiguredSetup] = React.useState<PluginEventAutomationCreateDraft | null>(null);
     const [sourceStatus, setSourceStatus] = React.useState<PluginEventAutomationComposerSourceStatus>('idle');
+    const [sourceFailure, setSourceFailure] = React.useState<PluginEventAutomationSetupFailure | null>(null);
     const [observationTransport, setObservationTransportState] = React.useState<
         PluginEventAutomationObservationDraft['kind']
     >('checkpointedPull');
@@ -422,6 +281,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpoint(null);
         setSeededWebhookBinding(null);
         setSourceStatus('idle');
+        setSourceFailure(null);
     }, []);
     React.useEffect(() => {
         const retirement = accountLifetime?.onRetire(eraseConfiguredSource);
@@ -453,125 +313,43 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const nextFilterClauseIdRef = React.useRef(0);
     const [maximumObservationAgeMsText, setMaximumObservationAgeMsText] = React.useState('');
     const [revision, advanceRevision] = React.useReducer((value: number) => value + 1, 0);
-    const settings = useSettings();
-    const sessions = useSessions() ?? [];
-    const sessionListIndexByServerId = useSessionListIndexByServerId();
-    const sessionListItems = React.useMemo(
-        () => readSessionListIndexSessionItems(sessionListIndexByServerId),
-        [sessionListIndexByServerId],
-    );
-    const sessionListRowRenderablesByKey = useSessionListRowRenderablesForItems(sessionListItems);
-    const existingSessionOptions = React.useMemo(
-        () => buildPluginEventAutomationExistingSessionOptions({
-            sessionListItems,
-            sessionListRowRenderablesByKey,
-            sessions,
-        }),
-        [sessionListItems, sessionListRowRenderablesByKey, sessions],
-    );
-    const selectedExistingSessionId = selectedExistingSession?.sessionId ?? null;
-    const selectedExistingSessionServerId = selectedExistingSession?.serverId ?? null;
-    const existingSessionHydration = useHydrateSessionForRoute(
-        selectedExistingSessionId ?? '',
-        'PluginEventAutomationComposer.hydrateExistingSessionTarget',
-        selectedExistingSessionServerId ? { serverId: selectedExistingSessionServerId } : undefined,
-    );
-    const selectedExistingSessionRecord = useSession(selectedExistingSessionId ?? '');
-    const selectedExistingSessionMachineTarget = selectedExistingSessionId
-        ? readMachineControlTargetForSession(selectedExistingSessionId)
-        : null;
-    const selectedExistingSessionDekBase64 = selectedExistingSessionId
-        ? sync.getSessionEncryptionKeyBase64ForResume(selectedExistingSessionId)
-        : null;
-    const existingSessionAvailability = React.useMemo<ExistingSessionAutomationAvailability | null>(() => {
-        if (!selectedExistingSessionId) return null;
-        return resolveExistingSessionAutomationAvailability({
-            sessionHydrated: isSessionRouteHydrationAvailable(existingSessionHydration),
-            session: selectedExistingSessionRecord,
-            machineIdOverride: selectedExistingSessionMachineTarget?.machineId ?? null,
-            sessionDekBase64: selectedExistingSessionDekBase64,
-            accountSettings: settings,
-        });
-    }, [
-        existingSessionHydration,
-        selectedExistingSessionDekBase64,
-        selectedExistingSessionId,
-        selectedExistingSessionMachineTarget?.machineId,
-        selectedExistingSessionRecord,
-        settings,
-    ]);
-    // Editing an Event may move it between the three approved target arms.
-    // The replacement writer rewrites the whole strict recipe for future
-    // Runs, and submit re-derives the assignment and capability facts for the
-    // arm that is actually saved, so no editor-local arm lock is needed.
-    const setTargetKind = React.useCallback((nextKind: PluginEventAutomationTargetKind) => {
-        setTargetKindState(nextKind);
-        advanceRevision();
-    }, []);
-    const selectExistingSession = React.useCallback((option: PluginEventAutomationExistingSessionOption) => {
-        const selected = existingSessionOptions.find((candidate) => (
-            candidate.sessionId === option.sessionId
-            && candidate.serverId === option.serverId
-        ));
-        if (!selected) return;
-        setSelectedExistingSession(selected);
-        advanceRevision();
-    }, [existingSessionOptions]);
-    const setExecutionPermissionMode = React.useCallback((nextMode: 'no_tools' | 'read_only') => {
-        setExecutionPermissionModeState(nextMode);
-        advanceRevision();
-    }, []);
-    const targetStateRef = React.useRef<Readonly<{
-        targetKind: PluginEventAutomationTargetKind;
-        selectedExistingSession: PluginEventAutomationExistingSessionOption | null;
-    }> | null>(null);
-    targetStateRef.current = { targetKind, selectedExistingSession };
-    const resolveExecutionTarget = React.useCallback((input: Readonly<{
-        newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
-        executionRun?: Readonly<{
-            machineId: string | null;
-            request: ExecutionRunDetachedStartRequestV1 | null;
-        }> | null;
-    }>): PluginEventAutomationResolvedTarget | null => {
-        const current = targetStateRef.current;
-        if (!current) return null;
-        if (current.targetKind !== 'existingSession') {
-            return resolvePluginEventAutomationTarget({
-                kind: current.targetKind,
-                ...(input.newSessionSpawn ? { newSessionSpawn: input.newSessionSpawn } : {}),
-                ...(input.executionRun ? {
-                    executionRun: {
-                        machineId: input.executionRun.machineId ?? '',
-                        request: input.executionRun.request,
-                    },
-                } : {}),
-            });
-        }
-
-        const selected = current.selectedExistingSession;
-        if (!selected) return null;
-        const session = storage.getState().sessions[selected.sessionId] ?? null;
-        const availability = resolveExistingSessionAutomationAvailability({
-            sessionHydrated: session !== null,
-            session,
-            machineIdOverride: readMachineControlTargetForSession(selected.sessionId)?.machineId ?? null,
-            sessionDekBase64: sync.getSessionEncryptionKeyBase64ForResume(selected.sessionId),
-            accountSettings: storage.getState().settings,
-        });
-        return resolvePluginEventAutomationTarget({
-            kind: 'existingSession',
-            existingSession: {
-                sessionId: selected.sessionId,
-                availability,
-            },
-        });
-    }, []);
-
     const eligibleEvents = React.useMemo(() => (
         params.projectionPhase === 'ready' && params.projectionInputs?.automationEligibleEvents
             ? params.projectionInputs.automationEligibleEvents
             : []
     ), [params.projectionInputs?.automationEligibleEvents, params.projectionPhase]);
+    React.useEffect(() => {
+        const selected = selectedEventRef.current;
+        if (!selected) return;
+        const matches = eligibleEvents.filter((candidate) => (
+            arePluginContributionIdentitiesEqual(candidate.event.identity, selected.event.identity)
+        ));
+        const current = matches.length === 1 ? matches[0]! : null;
+        if (
+            !current
+            || current.event.immutableGenerationId !== selected.event.immutableGenerationId
+            || !arePluginContributionIdentitiesEqual(
+                current.setupAction.identity,
+                selected.setupAction.identity,
+            )
+            || current.setupAction.immutableGenerationId !== selected.setupAction.immutableGenerationId
+        ) {
+            setSelectedEvent(null);
+            setConfiguredSetup(null);
+            setSourceStatus('unavailable');
+            setSourceFailure(null);
+            setWebhookEndpoint(null);
+            advanceRevision();
+            return;
+        }
+        if (!sameEligibleEvent(current, selected)) {
+            // The semantic Event and setup Action remain current, but the cold
+            // physical setup presentation was replaced. Swap in that exact
+            // row so the setup scope retires the predecessor renderer.
+            setSelectedEvent(current);
+            advanceRevision();
+        }
+    }, [eligibleEvents]);
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const
@@ -721,6 +499,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setObservationTransportState(kind);
         setConfiguredSetup(null);
         setSourceStatus('idle');
+        setSourceFailure(null);
         setWebhookEndpoint(null);
         advanceRevision();
     }, []);
@@ -731,27 +510,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSelectedEvent(current);
         setConfiguredSetup(null);
         setSourceStatus('idle');
+        setSourceFailure(null);
         setSelectedWatcherOrigin(null);
         setFilterClauses([]);
         setObservationTransportState('checkpointedPull');
         setWebhookEndpoint(null);
         advanceRevision();
     }, [eligibleEvents]);
-
-    const setMode = React.useCallback((nextMode: EventComposerMode) => {
-        if (editTarget && nextMode === 'schedule') return;
-        setModeState(nextMode);
-        if (nextMode === 'schedule') {
-            setSelectedEvent(null);
-            setConfiguredSetup(null);
-            setSourceStatus('idle');
-            setSelectedWatcherOrigin(null);
-            setFilterClauses([]);
-            setObservationTransportState('checkpointedPull');
-            setWebhookEndpoint(null);
-        }
-        advanceRevision();
-    }, [editTarget]);
 
     const selectWatcher = React.useCallback((candidate: PluginMachineExecutionOriginCandidateV1) => {
         const selected = selectedEventRef.current;
@@ -765,6 +530,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSelectedWatcherOrigin(composePluginMachineExecutionOriginV1(candidate.materialization));
         setConfiguredSetup(null);
         setSourceStatus('idle');
+        setSourceFailure(null);
         setWebhookEndpoint(null);
         advanceRevision();
     }, []);
@@ -781,31 +547,26 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     }, [availabilityReader, classifyRelease, selectedWatcherOrigin]);
 
     const appliedEditSeedKeyRef = React.useRef<string | null>(null);
-    const editSeedKey = editTarget
-        ? `${editTarget.automationId}:${editTarget.expectedTemplateVersion}`
+    const editSeedKey = initialEditSeed
+        ? JSON.stringify([
+            initialEditSeed.automationId,
+            initialEditSeed.triggerId,
+            initialEditSeed.expectedTriggerRevision,
+            initialEditSeed.eventRef.pluginId,
+            initialEditSeed.eventRef.localId,
+            initialEditSeed.source.sourceInstanceId,
+            initialEditSeed.observation.kind,
+            initialEditSeed.observation.kind === 'checkpointedPull'
+                ? initialEditSeed.observation.watcherMaterializationRef
+                : [
+                    initialEditSeed.observation.webhookEndpointId,
+                    initialEditSeed.observation.webhookRoutingSourceInstanceId,
+                    initialEditSeed.observation.endpointMaterializationRef ?? null,
+                ],
+            initialEditSeed.filter,
+            initialEditSeed.maximumObservationAgeMs,
+        ])
         : null;
-    const appliedTargetSeedKeyRef = React.useRef<string | null>(null);
-    React.useEffect(() => {
-        if (editTarget) setModeState('event');
-    }, [editTarget]);
-    React.useEffect(() => {
-        if (!initialEditSeed || !editSeedKey || appliedTargetSeedKeyRef.current === editSeedKey) return;
-        setTargetKindState(initialEditSeed.target.kind);
-        if (initialEditSeed.target.kind === 'existingSession') {
-            const sessionId = initialEditSeed.target.sessionId;
-            setSelectedExistingSession({
-                sessionId,
-                serverId: normalizeSessionTargetId(params.initialExistingSessionServerId)
-                    ?? resolveServerIdForSessionIdFromLocalCache(sessionId),
-                label: sessionId,
-            });
-        }
-        if (initialEditSeed.target.kind === 'executionRun') {
-            setExecutionPermissionModeState(initialEditSeed.target.request.permissionMode);
-        }
-        appliedTargetSeedKeyRef.current = editSeedKey;
-        advanceRevision();
-    }, [editSeedKey, initialEditSeed, params.initialExistingSessionServerId]);
     // Keyed on the exact persisted identities rather than the seed object, so
     // a caller that rebuilds the seed on every render cannot turn this into a
     // request storm against the endpoint owner.
@@ -871,7 +632,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         // currently holds it.
         const seededMaterializationRef = seedObservation.kind === 'checkpointedPull'
             ? seedObservation.watcherMaterializationRef
-            : seededWebhookBinding?.targetMaterialization ?? null;
+            : seedObservation.endpointMaterializationRef
+                ?? seededWebhookBinding?.targetMaterialization
+                ?? null;
         const watcher = event && seededMaterializationRef
             ? watcherCandidates.find((candidate) => (
                 isPluginMachineExecutionOriginCandidateSelectable(candidate)
@@ -906,6 +669,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (!authoringDraft || !event || !watcherOrigin) {
             setConfiguredSetup(null);
             setSourceStatus('unavailable');
+            setSourceFailure(null);
             return;
         }
 
@@ -927,6 +691,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             resolveFreshWatcherOrigin: () => null,
         }));
         setSourceStatus('configured');
+        setSourceFailure(null);
         appliedEditSeedKeyRef.current = editSeedKey;
         advanceRevision();
     }, [
@@ -937,15 +702,16 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         seededWebhookBinding,
         watcherCandidates,
     ]);
+    const selectedEventPresentationKey = selectedEvent
+        ? eventPresentationKey(selectedEvent)
+        : null;
     const setupScope = React.useMemo(
         () => new AbortController(),
         [
             accountLifetime,
             params.machineId,
             params.serverId,
-            selectedEvent?.event.immutableGenerationId,
-            selectedEvent?.event.identity.localId,
-            selectedEvent?.event.identity.pluginId,
+            selectedEventPresentationKey,
             selectedWatcherOrigin?.materializationRef.machineId,
             selectedWatcherOrigin?.materializationRef.materializationId,
             selectedWatcherOrigin?.serverIdentityId,
@@ -963,27 +729,33 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         void (async () => {
             const event = selectedEventRef.current;
             if (!event || !accountLifetime || setupScope.signal.aborted) {
+                setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
             }
             if (!filter.valid || !maximumObservationAgeMs.valid) {
+                setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
             }
             const currentEvent = eligibleEvents.find((candidate) => sameEligibleEvent(candidate, event)) ?? null;
             if (!currentEvent) {
+                setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
             }
             if (!resolveExecutionOrigin()) {
+                setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
             }
             if (!supportsPluginEventAutomationObservationTransport(currentEvent, effectiveObservationTransport)) {
+                setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
             }
             setSourceStatus('settingUp');
+            setSourceFailure(null);
             setWebhookEndpoint(null);
             const configured = await configurePluginEventAutomationSetup({
                 eligibleEvent: currentEvent,
@@ -1007,12 +779,21 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 return;
             }
             if (configured.kind !== 'configured') {
+                setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
+                    ? {
+                        code: configured.code,
+                        reason: configured.reason,
+                        ...(configured.retryable === undefined ? {} : { retryable: configured.retryable }),
+                        ...(configured.remediation === undefined ? {} : { remediation: configured.remediation }),
+                    }
+                    : null);
                 setSourceStatus('unavailable');
                 return;
             }
             setConfiguredSetup(configured.draft);
             setWebhookEndpoint(configured.webhookEndpoint);
             setSourceStatus('configured');
+            setSourceFailure(null);
             advanceRevision();
         })();
     }, [
@@ -1091,8 +872,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
 
     const createDraft = React.useMemo<PluginEventAutomationCreateDraft | null>(() => {
         if (
-            mode !== 'event'
-            || !configuredSetup
+            !configuredSetup
             || !filter.valid
             || !maximumObservationAgeMs.valid
         ) {
@@ -1127,7 +907,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         filter.value,
         maximumObservationAgeMs.valid,
         maximumObservationAgeMs.value,
-        mode,
         resolveExecutionOrigin,
     ]);
 
@@ -1135,25 +914,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const sourceInstanceId = configuredSetup?.draft.source.sourceInstanceId ?? null;
 
     return React.useMemo(() => ({
-        mode,
-        setMode,
-        isEditingEvent: editTarget !== null,
-        editTarget,
-        targetKind,
-        setTargetKind,
-        existingSessionOptions,
-        selectedExistingSessionId,
-        selectExistingSession,
-        existingSessionAvailability,
-        executionPermissionMode,
-        setExecutionPermissionMode,
-        resolveExecutionTarget,
         eligibleEvents,
         eventCatalogStatus,
         selectedEvent,
         selectEvent: chooseEvent,
         getPluginPresentation,
         sourceStatus,
+        sourceFailure,
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
@@ -1178,6 +945,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setMaximumObservationAgeMsText,
         maximumObservationAgeMsValid: maximumObservationAgeMs.valid,
         createDraft,
+        invalidateConfiguredSource: eraseConfiguredSource,
         revision,
     }), [
         addFilterClause,
@@ -1185,8 +953,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         chooseEvent,
         configureSource,
         createDraft,
-        editTarget,
         effectiveObservationTransport,
+        eraseConfiguredSource,
         setObservationTransport,
         webhookEndpoint,
         webhookEndpointId,
@@ -1194,34 +962,24 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         refreshWebhookEndpoint,
         eligibleEvents,
         eventCatalogStatus,
-        existingSessionAvailability,
-        existingSessionOptions,
-        executionPermissionMode,
         filterClauses,
         filter.valid,
         getPluginPresentation,
         maximumObservationAgeMs.valid,
         maximumObservationAgeMsText,
-        mode,
         revision,
         payloadBrowser,
         removeFilterClause,
         selectWatcher,
         selectedEvent,
-        selectedExistingSessionId,
         selectedWatcherOrigin,
-        selectExistingSession,
-        resolveExecutionTarget,
-        setExecutionPermissionMode,
-        setMode,
-        setTargetKind,
         sourceDisplayLabel,
         sourceInstanceId,
         sourceStatus,
+        sourceFailure,
         setFilterClauseField,
         setFilterClauseOperator,
         setFilterClauseValueText,
         watcherCandidates,
-        targetKind,
     ]);
 }

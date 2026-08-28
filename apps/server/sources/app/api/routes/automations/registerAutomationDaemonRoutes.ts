@@ -5,10 +5,10 @@ import { claimAutomationRun, heartbeatAutomationRun } from "@/app/automations/au
 import { listDaemonAssignments } from "@/app/automations/automationAssignmentService";
 import { toAutomationRunV2ApiDto } from "@/app/automations/automationApiProjection";
 import { readRetainedAutomationRunExecutionInputV2ForMode } from "@/app/automations/automationStoredContentRead";
-import { resolveAutomationRunAttemptV2 } from "./automationRunAttemptV2Compatibility";
+import { decodeAutomationRunCause } from "@/app/automations/automationRunCauseCodec";
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
-    hasExactAutomationWorkerPublisher,
+    resolveExactAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
@@ -25,25 +25,31 @@ export function registerAutomationDaemonRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: "/v2/automations/runs/claim",
             machineId: request.body.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const result = await claimAutomationRun({
             accountId: request.userId,
             machineId: request.body.machineId,
             leaseDurationMs: request.body.leaseDurationMs ?? 30_000,
-            expectedTriggerKind: "schedule",
             requireV2RunRepresentability: true,
         });
+        const cause = result.run ? decodeAutomationRunCause(result.run) : null;
+        const retainedV2OriginKind = cause?.kind === "manual"
+            ? "manual" as const
+            : cause?.kind === "trigger" && cause.triggerKind === "schedule"
+                ? "scheduled" as const
+                : undefined;
         const frozenInput = result.run?.executionInputEnvelope && result.accountCurrentness
             ? readRetainedAutomationRunExecutionInputV2ForMode({
                 raw: result.run.executionInputEnvelope,
                 mode: result.accountCurrentness.mode,
-                originKind: result.run.originKind,
+                retainedV2OriginKind,
             })
             : null;
 
@@ -72,20 +78,20 @@ export function registerAutomationDaemonRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/heartbeat`,
             machineId: request.body.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const result = await heartbeatAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
             machineId: request.body.machineId,
-            attempt: resolveAutomationRunAttemptV2(request.body.attempt),
+            ...(request.body.attempt === undefined ? {} : { attempt: request.body.attempt }),
             leaseDurationMs: request.body.leaseDurationMs ?? 30_000,
-            expectedTriggerKind: "schedule",
             requireV2RunRepresentability: true,
         });
 
@@ -107,44 +113,54 @@ export function registerAutomationDaemonRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: "/v2/automations/daemon/assignments",
             machineId: request.query.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const rows = await listDaemonAssignments({
             accountId: request.userId,
             machineId: request.query.machineId,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
 
         return {
-            assignments: rows.map((row) => ({
-                machineId: row.machineId,
-                enabled: row.enabled,
-                priority: row.priority,
-                updatedAt: row.updatedAt.getTime(),
-                automation: {
-                    id: row.automation.id,
-                    name: row.automation.name,
-                    enabled: row.automation.enabled,
-                    schedule: {
-                        kind: row.automation.scheduleKind,
-                        scheduleExpr: row.automation.scheduleExpr,
-                        everyMs: row.automation.everyMs,
-                        timezone: row.automation.timezone,
+            assignments: rows.map((row) => {
+                const trigger = row.automation.triggers[0];
+                if (!trigger || trigger.kind !== "schedule" || trigger.scheduleKind === null) {
+                    throw new Error("V2 assignment is missing its sole schedule trigger");
+                }
+                return {
+                    machineId: row.machineId,
+                    enabled: row.enabled,
+                    priority: row.priority,
+                    updatedAt: row.updatedAt.getTime(),
+                    automation: {
+                        id: row.automation.id,
+                        name: row.automation.name,
+                        enabled: row.automation.enabled,
+                        schedule: {
+                            kind: trigger.scheduleKind,
+                            scheduleExpr: trigger.scheduleExpr,
+                            everyMs: trigger.everyMs,
+                            timezone: trigger.timezone,
+                        },
+                        targetType: row.automation.targetType,
+                        templateCiphertext: row.automation.templateCiphertext,
+                        templateVersion: row.automation.templateVersion,
+                        // Released V2 workers use this field as their assignment wake cursor.
+                        // The assignment owner already folds schedule, queued-Run, lease, and
+                        // retirement wakes into nextClaimAt; projecting mutable trigger state
+                        // here would make a worker sleep past an earlier canonical wake.
+                        nextRunAt: row.nextClaimAt?.getTime() ?? null,
+                        lastRunAt: row.automation.lastRunAt ? row.automation.lastRunAt.getTime() : null,
+                        updatedAt: row.automation.updatedAt.getTime(),
                     },
-                    targetType: row.automation.targetType,
-                    templateCiphertext: row.automation.templateCiphertext,
-                    templateVersion: row.automation.templateVersion,
-                    nextRunAt: row.automation.nextRunAt ? row.automation.nextRunAt.getTime() : null,
-                    lastRunAt: row.automation.lastRunAt ? row.automation.lastRunAt.getTime() : null,
-                    updatedAt: row.automation.updatedAt.getTime(),
-                },
-            })),
+                };
+            }),
         };
     });
 }

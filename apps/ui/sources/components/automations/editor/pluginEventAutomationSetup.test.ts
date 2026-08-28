@@ -14,10 +14,13 @@ import type { PluginContributedActionDispatch } from '@/components/plugins/actio
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 
 import {
-    buildPlainPluginEventAutomationExecutionRecipe,
-    buildPluginEventAutomationDefinitionCreateRequest,
+    buildPluginEventAutomationTriggerInput,
 } from './pluginEventAutomationDraft';
-import { configurePluginEventAutomationSetup } from './pluginEventAutomationSetup';
+import {
+    arePluginEventAutomationEligibleSetupPresentationsEqual,
+    configurePluginEventAutomationSetup,
+    getPluginEventAutomationEligibleSetupPresentationKey,
+} from './pluginEventAutomationSetup';
 
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
@@ -114,6 +117,42 @@ DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
                 ],
             },
         },
+    });
+}
+
+function eligibleEventWithSetupSurface(
+    immutableGenerationId = 'github-generation-a',
+): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
+    const event = eligibleEvent(immutableGenerationId);
+    return Object.freeze({
+        ...event,
+        event: Object.freeze({
+            ...event.event,
+            automation: Object.freeze({
+                ...event.event.automation,
+                source: Object.freeze({
+                    ...event.event.automation.source,
+                    setupSurface: Object.freeze({ renderer: 'setup/repository-picker' }),
+                }),
+            }),
+        }),
+        setupSurface: Object.freeze({
+            contribution: event.event.identity,
+            immutableGenerationId,
+            projectionGeneration: GENERATION,
+            selectedRenderer: Object.freeze({
+                identity: Object.freeze({ pluginId: PLUGIN_ID, localId: 'setup/repository-picker' }),
+                availability: Object.freeze({ state: 'available' }),
+            }),
+            executionOrigin: Object.freeze({
+                serverIdentityId: SERVER_IDENTITY_ID,
+                materializationRef: Object.freeze({
+                    pluginId: PLUGIN_ID,
+                    machineId: MACHINE_ID,
+                    materializationId: MATERIALIZATION_ID,
+                }),
+            }),
+        }) as never,
     });
 }
 
@@ -304,6 +343,244 @@ function durablePushSetupParams(
 }
 
 describe('Plugin Event Automation setup orchestration', () => {
+    it('keys equality on the exact optional renderer projection and execution origin', () => {
+        const original = eligibleEventWithSetupSurface();
+        const replacement = Object.freeze({
+            ...original,
+            setupSurface: Object.freeze({
+                ...original.setupSurface!,
+                projectionGeneration: original.setupSurface!.projectionGeneration + 1,
+                selectedRenderer: Object.freeze({
+                    ...original.setupSurface!.selectedRenderer,
+                    identity: Object.freeze({
+                        pluginId: PLUGIN_ID,
+                        localId: 'setup/repository-picker-hosted',
+                    }),
+                }),
+                executionOrigin: Object.freeze({
+                    ...original.setupSurface!.executionOrigin,
+                    materializationRef: Object.freeze({
+                        ...original.setupSurface!.executionOrigin.materializationRef,
+                        materializationId: 'github-materialization-b',
+                    }),
+                }),
+            }),
+        });
+
+        expect(arePluginEventAutomationEligibleSetupPresentationsEqual(original, original)).toBe(true);
+        expect(arePluginEventAutomationEligibleSetupPresentationsEqual(original, replacement)).toBe(false);
+        expect(getPluginEventAutomationEligibleSetupPresentationKey(original))
+            .not.toBe(getPluginEventAutomationEligibleSetupPresentationKey(replacement));
+    });
+
+    it('validates custom-surface input through the same setup Action form before canonical dispatch', async () => {
+        const event = eligibleEventWithSetupSurface();
+        const genericPresenter = vi.fn();
+        const presentSetupSurface = vi.fn(async () => ({
+            kind: 'completed' as const,
+            input: {
+                repository: 'happier-dev/happier',
+                credentialRef: ACCOUNT,
+            },
+        }));
+        const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({
+            ok: true as const,
+            result: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+        }));
+
+        await expect(configurePluginEventAutomationSetup({
+            eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
+            filter: null,
+            maximumObservationAgeMs: null,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveExecutionOrigin: () => executionOrigin(),
+            loadCurrentProjection: async () => projectionInputs(event),
+            resolveConnectedAccountOptions: vi.fn(async () => ({
+                supported: true as const,
+                result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+            })),
+            present: genericPresenter,
+            presentSetupSurface,
+            dispatch,
+        })).resolves.toMatchObject({ kind: 'configured' });
+
+        expect(genericPresenter).not.toHaveBeenCalled();
+        expect(presentSetupSurface).toHaveBeenCalledWith(expect.objectContaining({
+            eligibleEvent: event,
+            accountLifetime: ACCOUNT_LIFETIME,
+        }));
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            input: {
+                repository: 'happier-dev/happier',
+                credentialRef: ACCOUNT,
+            },
+            contributedAction: expect.objectContaining({
+                expectedImmutableGenerationId: 'github-generation-a',
+            }),
+        }));
+    });
+
+    it('rejects invalid or cancelled custom-surface input without dispatching the setup Action', async () => {
+        const event = eligibleEventWithSetupSurface();
+        const dispatch = vi.fn<PluginContributedActionDispatch>();
+        const base = {
+            eligibleEvent: event,
+            observationTransport: 'checkpointedPull' as const,
+            filter: null,
+            maximumObservationAgeMs: null,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveExecutionOrigin: () => executionOrigin(),
+            loadCurrentProjection: async () => projectionInputs(event),
+            resolveConnectedAccountOptions: vi.fn(async () => ({
+                supported: true as const,
+                result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+            })),
+            dispatch,
+        };
+
+        await expect(configurePluginEventAutomationSetup({
+            ...base,
+            presentSetupSurface: async () => ({ kind: 'completed', input: { repository: '' } }),
+        })).resolves.toEqual({ kind: 'unavailable' });
+        await expect(configurePluginEventAutomationSetup({
+            ...base,
+            presentSetupSurface: async () => ({ kind: 'cancelled' }),
+        })).resolves.toEqual({ kind: 'unavailable' });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the canonical generic Action form when the optional renderer is unavailable', async () => {
+        const available = eligibleEventWithSetupSurface();
+        const event = Object.freeze({
+            ...available,
+            setupSurface: Object.freeze({
+                ...available.setupSurface!,
+                selectedRenderer: Object.freeze({
+                    ...available.setupSurface!.selectedRenderer,
+                    availability: Object.freeze({
+                        state: 'fallback' as const,
+                        reason: 'artifact_unavailable',
+                        diagnostics: ['artifact_unavailable'],
+                    }),
+                }),
+            }),
+        });
+        const presentSetupSurface = vi.fn();
+        const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({
+            ok: true as const,
+            result: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+        }));
+
+        await expect(configurePluginEventAutomationSetup({
+            eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
+            filter: null,
+            maximumObservationAgeMs: null,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveExecutionOrigin: () => executionOrigin(),
+            loadCurrentProjection: async () => projectionInputs(event),
+            resolveConnectedAccountOptions: vi.fn(async () => ({
+                supported: true as const,
+                result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+            })),
+            presentSetupSurface,
+            present: ({ form }) => {
+                form.replaceInput({
+                    repository: 'happier-dev/happier',
+                    credentialRef: ACCOUNT,
+                });
+                void form.submit();
+            },
+            dispatch,
+        })).resolves.toMatchObject({ kind: 'configured' });
+        expect(presentSetupSurface).not.toHaveBeenCalled();
+        expect(dispatch).toHaveBeenCalledOnce();
+    });
+
+    it('revalidates exact generation after custom-surface settlement before dispatch', async () => {
+        const original = eligibleEventWithSetupSurface('github-generation-a');
+        const replacement = eligibleEvent('github-generation-b');
+        const loadCurrentProjection = vi.fn()
+            .mockResolvedValueOnce(projectionInputs(original))
+            .mockResolvedValueOnce(projectionInputs(replacement));
+        const dispatch = vi.fn<PluginContributedActionDispatch>();
+
+        await expect(configurePluginEventAutomationSetup({
+            eligibleEvent: original,
+            observationTransport: 'checkpointedPull',
+            filter: null,
+            maximumObservationAgeMs: null,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveExecutionOrigin: () => executionOrigin(),
+            loadCurrentProjection,
+            resolveConnectedAccountOptions: vi.fn(async () => ({
+                supported: true as const,
+                result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+            })),
+            presentSetupSurface: async () => ({
+                kind: 'completed',
+                input: { repository: 'happier-dev/happier', credentialRef: ACCOUNT },
+            }),
+            dispatch,
+        })).resolves.toEqual({ kind: 'stale', reason: 'event_retired' });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('retires a custom settlement when the exact projected setup renderer is replaced', async () => {
+        const original = eligibleEventWithSetupSurface();
+        const replacement = Object.freeze({
+            ...original,
+            setupSurface: Object.freeze({
+                ...original.setupSurface!,
+                projectionGeneration: GENERATION + 1,
+                selectedRenderer: Object.freeze({
+                    ...original.setupSurface!.selectedRenderer,
+                    identity: Object.freeze({
+                        pluginId: PLUGIN_ID,
+                        localId: 'setup/repository-picker-replacement',
+                    }),
+                }),
+            }),
+        });
+        const loadCurrentProjection = vi.fn()
+            .mockResolvedValueOnce(projectionInputs(original))
+            .mockResolvedValueOnce(projectionInputs(replacement));
+        const dispatch = vi.fn<PluginContributedActionDispatch>();
+
+        await expect(configurePluginEventAutomationSetup({
+            eligibleEvent: original,
+            observationTransport: 'checkpointedPull',
+            filter: null,
+            maximumObservationAgeMs: null,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveExecutionOrigin: () => executionOrigin(),
+            loadCurrentProjection,
+            resolveConnectedAccountOptions: vi.fn(async () => ({
+                supported: true as const,
+                result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+            })),
+            presentSetupSurface: async () => ({
+                kind: 'completed',
+                input: { repository: 'happier-dev/happier', credentialRef: ACCOUNT },
+            }),
+            dispatch,
+        })).resolves.toEqual({ kind: 'stale', reason: 'event_retired' });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
     it('uses the exact Event setup Action form, restores the selected Account, and dispatches with its immutable generation', async () => {
         const event = eligibleEvent();
         const loadCurrentProjection = vi.fn(async () => projectionInputs(event));
@@ -389,32 +666,10 @@ describe('Plugin Event Automation setup orchestration', () => {
         const changedWatcherOrigin = result.draft.resolveFreshWatcherOrigin();
         expect(changedWatcherOrigin).not.toBeNull();
         if (!changedWatcherOrigin) throw new Error('expected current watcher origin');
-        const executionRecipe = buildPlainPluginEventAutomationExecutionRecipe({
-            templateVersion: 0,
-            prompt: 'Triage {{input}}',
-            target: {
-                kind: 'newSession',
-                spawn: {
-                    executionTarget: { serverId: 'server-account-a', machineId: 'executor-machine' },
-                    directory: '/workspace/acme',
-                    agentTarget: {
-                        kind: 'agent',
-                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                    },
-                },
-            },
-        });
-        expect(executionRecipe).not.toBeNull();
-        if (!executionRecipe) return;
-        expect(buildPluginEventAutomationDefinitionCreateRequest({
-            name: 'Repository triage',
-            description: null,
-            enabled: true,
+        expect(buildPluginEventAutomationTriggerInput({
             eligibleEvents: [event],
             draft: result.draft.draft,
             watcherOrigin: changedWatcherOrigin.origin,
-            executionRecipe,
-            assignments: [{ machineId: 'executor-machine', enabled: true, priority: 100 }],
         })).toBeNull();
     });
 
@@ -592,7 +847,16 @@ describe('Plugin Event Automation setup orchestration', () => {
                         displayLabel: 'acme/widgets',
                     },
                 }
-                : { ok: false as const, code: 'stale_surface' as const, reason: 'watcher_origin_retired' };
+                : {
+                    ok: false as const,
+                    code: 'stale_surface' as const,
+                    reason: 'watcher_origin_retired',
+                    retryable: false,
+                    remediation: {
+                        kind: 'openSettings' as const,
+                        path: '/settings/plugins/happier.channels/connections',
+                    },
+                };
         });
 
         const result = await configurePluginEventAutomationSetup({
@@ -617,7 +881,16 @@ describe('Plugin Event Automation setup orchestration', () => {
             dispatch,
         });
 
-        expect(result).toEqual({ kind: 'unavailable' });
+        expect(result).toEqual({
+            kind: 'unavailable',
+            code: 'watcher_origin_retired',
+            reason: 'watcher_origin_retired',
+            retryable: false,
+            remediation: {
+                kind: 'openSettings',
+                path: '/settings/plugins/happier.channels/connections',
+            },
+        });
         expect(dispatch).toHaveBeenCalledTimes(1);
     });
 
@@ -654,33 +927,12 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         const watcherOrigin = result.draft.resolveFreshWatcherOrigin();
         if (!watcherOrigin) throw new Error('expected current watcher origin');
-        const executionRecipe = buildPlainPluginEventAutomationExecutionRecipe({
-            templateVersion: 0,
-            prompt: 'Triage {{input}}',
-            target: {
-                kind: 'newSession',
-                spawn: {
-                    executionTarget: { serverId: 'server-account-a', machineId: 'executor-machine' },
-                    directory: '/workspace/acme',
-                    agentTarget: {
-                        kind: 'agent',
-                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                    },
-                },
-            },
-        });
-        if (!executionRecipe) throw new Error('expected execution recipe');
-        const request = buildPluginEventAutomationDefinitionCreateRequest({
-            name: 'Repository triage',
-            description: null,
-            enabled: true,
+        const trigger = buildPluginEventAutomationTriggerInput({
             eligibleEvents: [event],
             draft: result.draft.draft,
             watcherOrigin: watcherOrigin.origin,
-            executionRecipe,
-            assignments: [{ machineId: 'executor-machine', enabled: true, priority: 100 }],
         });
-        expect(request?.trigger.observationTransport).toEqual({
+        expect(trigger?.observationTransport).toEqual({
             kind: 'durablePush',
             webhookEndpointId: WEBHOOK_ENDPOINT_ID,
             endpointMaterializationRef: {

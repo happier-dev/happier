@@ -1,11 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
+    AutomationRunExecutionRecipeV1Schema,
     AutomationSourceSelectorIdV1Schema,
     normalizePluginReleaseFactsV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     sealAccountScopedBlobCiphertext,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -24,13 +26,20 @@ const PLUGIN_ID = "com.acme.github";
 const PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
 const DURABLE_PUSH_ENDPOINT_ID = "wh_ep_AAECAwQFBgcICQoLDA0ODw";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
+const SOURCE_CONFIG_SCHEMA = { type: "object", additionalProperties: false } as const;
 
 const caller = {
     pluginId: PLUGIN_ID,
     machineId: MACHINE_ID,
     machineInstallationId: MACHINE_INSTALLATION_ID,
     materializationId: MATERIALIZATION_ID,
+    immutableGenerationId: "github-stored-definition-generation-a",
 } as const;
+
+function triggerId(index: number): string {
+    return `automation-trigger-${String(index).padStart(4, "0")}`;
+}
 
 function sourceSelector(index: number) {
     return AutomationSourceSelectorIdV1Schema.parse(
@@ -55,14 +64,23 @@ function releaseFacts(params: Readonly<{
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: supportsDurablePush ? [{
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: SOURCE_CONFIG_SCHEMA,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, SOURCE_CONFIG_SCHEMA),
+                }, ...(supportsDurablePush ? [{
                     id: "receive-repository-events",
                     title: "Receive repository events",
                     scopes: ["global"],
                     surfaces: ["plugin"],
                     dangerLevel: "safe",
                     execution: { target: "daemon" },
-                }] : [],
+                }] : [])],
                 events: [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -80,7 +98,8 @@ function releaseFacts(params: Readonly<{
                                     localId: "repository-events",
                                 },
                             } : {}),
-                            sourceConfigSchema: { type: "object", additionalProperties: false },
+                            sourceConfigSchema: SOURCE_CONFIG_SCHEMA,
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -108,41 +127,65 @@ function automationDefinition(index: number) {
         accountId: ACCOUNT_ID,
         name: `Observe repository ${index}`,
         enabled: true,
-        scheduleKind: null,
         targetType: "new_session" as const,
-        templateCiphertext: JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { prompt: "observe" },
-        }),
+        templateCiphertext: JSON.stringify(AutomationRunExecutionRecipeV1Schema.parse({
+            v: 1,
+            templateVersion: index,
+            template: { t: "plain", v: { v: 1, prompt: "observe" } },
+            triggerEvidence: null,
+            target: {
+                kind: "newSession",
+                spawn: {
+                    executionTarget: { serverId: "server", machineId: "machine" },
+                    directory: "/tmp/automation-stored-definition",
+                    agentTarget: {
+                        kind: "agent",
+                        identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                    },
+                },
+            },
+        })),
         templateVersion: index,
-        triggerKind: "pluginEvent" as const,
-        triggerEventPluginId: PLUGIN_ID,
-        triggerEventLocalId: EVENT_LOCAL_ID,
-        triggerSourceSelectorId: sourceSelector(index),
-        triggerSourceContractVersion: 1,
-        triggerObservationTransport: "checkpointedPull" as const,
+    };
+}
+
+function automationTrigger(index: number) {
+    const automationId = `automation-${String(index).padStart(4, "0")}`;
+    const id = triggerId(index);
+    return {
+        id,
+        automationId,
+        kind: "pluginEvent" as const,
+        enabled: true,
+        revision: index,
+        eventPluginId: PLUGIN_ID,
+        eventLocalId: EVENT_LOCAL_ID,
+        sourceSelectorId: sourceSelector(index),
+        sourceContractVersion: 1,
+        observationTransport: "checkpointedPull" as const,
         watcherMachineId: MACHINE_ID,
         watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
         watcherPluginId: PLUGIN_ID,
         watcherMaterializationId: MATERIALIZATION_ID,
-        triggerDefinitionEnvelope: JSON.stringify(
+        definitionEnvelope: JSON.stringify(
             sealAutomationTriggerDefinitionStoredEnvelopeV1({
                 mode: "plain",
                 binding: {
                     v: 1,
-                    automationId: id,
-                    templateVersion: index,
+                    automationId,
+                    triggerId: id,
+                    triggerRevision: index,
                     triggerKind: "pluginEvent",
                     eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                     sourceSelectorId: sourceSelector(index),
                 },
                 definition: {
-                v: 1,
-                sourceInstanceId: `repository-${index}`,
-                sourceConfig: { repositoryId: index },
-                displayLabel: `Repository ${index}`,
-                filter: null,
-                maximumObservationAgeMs: null,
+                    v: 1,
+                    sourceInstanceId: `repository-${index}`,
+                    sourceConfig: { repositoryId: index },
+                    displayLabel: `Repository ${index}`,
+                    filter: null,
+                    maximumObservationAgeMs: null,
                 },
             }),
         ),
@@ -237,6 +280,9 @@ describe("Automation Event stored-definition projection", () => {
         });
         await db.automation.createMany({
             data: Array.from({ length: definitionCount }, (_, index) => automationDefinition(index + 1)),
+        });
+        await db.automationTrigger.createMany({
+            data: Array.from({ length: definitionCount }, (_, index) => automationTrigger(index + 1)),
         });
         await db.automationEventCatalogState.create({
             data: { accountId: ACCOUNT_ID, eventSourceDefinitionsRevision: 7n },
@@ -372,7 +418,8 @@ describe("Automation Event stored-definition projection", () => {
         expect(first.definitions).toHaveLength(500);
         expect(first.definitions[0]).toMatchObject({
             automationId: "automation-0001",
-            templateVersion: 1,
+            triggerId: triggerId(1),
+            triggerRevision: 1,
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
             sourceSelectorId: sourceSelector(1),
             storedDefinitionEnvelope: { t: "plain" },
@@ -394,7 +441,11 @@ describe("Automation Event stored-definition projection", () => {
             kind: "page",
             revision: "7",
             nextCursor: null,
-            definitions: [{ automationId: "automation-0501", templateVersion: 501 }],
+            definitions: [{
+                automationId: "automation-0501",
+                triggerId: triggerId(501),
+                triggerRevision: 501,
+            }],
         });
         await expect(readAutomationEventStoredDefinitionsV1({
             accountId: ACCOUNT_ID,
@@ -424,8 +475,8 @@ describe("Automation Event stored-definition projection", () => {
             },
         })).resolves.toEqual({ kind: "cursorStale", currentRevision: "8" });
 
-        await db.automation.update({
-            where: { id: "automation-0001" },
+        await db.automationTrigger.update({
+            where: { id: triggerId(1) },
             data: { watcherMaterializationId: "materialization-moved" },
         });
         await db.automationEventCatalogState.update({
@@ -443,42 +494,105 @@ describe("Automation Event stored-definition projection", () => {
         });
     });
 
+    it("lists every matching Event trigger without choosing one trigger from an Automation", async () => {
+        await seed(1);
+        const secondTriggerId = "automation-trigger-0001-second";
+        const secondSelector = sourceSelector(92);
+        await db.automationTrigger.create({
+            data: {
+                ...automationTrigger(1),
+                id: secondTriggerId,
+                revision: 2,
+                sourceSelectorId: secondSelector,
+                definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    mode: "plain",
+                    binding: {
+                        v: 1,
+                        automationId: "automation-0001",
+                        triggerId: secondTriggerId,
+                        triggerRevision: 2,
+                        triggerKind: "pluginEvent",
+                        eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                        sourceSelectorId: secondSelector,
+                    },
+                    definition: {
+                        v: 1,
+                        sourceInstanceId: "repository-92",
+                        sourceConfig: { repositoryId: 92 },
+                        displayLabel: "Repository 92",
+                        filter: null,
+                        maximumObservationAgeMs: null,
+                    },
+                })),
+            },
+        });
+
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { transport: { kind: "checkpointedPull" } },
+        })).resolves.toMatchObject({
+            kind: "page",
+            definitions: [{
+                automationId: "automation-0001",
+                triggerId: triggerId(1),
+                triggerRevision: 1,
+            }, {
+                automationId: "automation-0001",
+                triggerId: secondTriggerId,
+                triggerRevision: 2,
+            }],
+        });
+    });
+
     it("classifies only retired checkpoint identities at one unchanged catalog revision", async () => {
         await seed(5);
         const eventRef = { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID } as const;
         const candidates = [
             {
                 automationId: "automation-absent",
+                triggerId: "automation-trigger-absent",
+                triggerRevision: 1,
                 eventRef,
                 sourceSelectorId: sourceSelector(91),
                 sourceContractVersion: 1,
             },
             {
                 automationId: "automation-0001",
+                triggerId: triggerId(1),
+                triggerRevision: 1,
                 eventRef,
                 sourceSelectorId: sourceSelector(1),
                 sourceContractVersion: 1,
             },
             {
                 automationId: "automation-0002",
+                triggerId: triggerId(2),
+                triggerRevision: 2,
                 eventRef,
                 sourceSelectorId: sourceSelector(2),
                 sourceContractVersion: 1,
             },
             {
                 automationId: "automation-0003",
+                triggerId: triggerId(3),
+                triggerRevision: 3,
                 eventRef,
                 sourceSelectorId: sourceSelector(3),
                 sourceContractVersion: 1,
             },
             {
                 automationId: "automation-0004",
+                triggerId: triggerId(4),
+                triggerRevision: 4,
                 eventRef,
                 sourceSelectorId: sourceSelector(4),
                 sourceContractVersion: 1,
             },
             {
                 automationId: "automation-0005",
+                triggerId: triggerId(5),
+                triggerRevision: 5,
                 eventRef,
                 sourceSelectorId: sourceSelector(5),
                 sourceContractVersion: 1,
@@ -488,31 +602,38 @@ describe("Automation Event stored-definition projection", () => {
             where: { id: "automation-0001" },
             data: { enabled: false, deletedAt: new Date("2026-08-19T00:00:00.000Z") },
         });
-        await db.automation.update({
-            where: { id: "automation-0002" },
-            data: { triggerSourceSelectorId: sourceSelector(92) },
+        await db.automationTrigger.update({
+            where: { id: triggerId(2) },
+            data: { sourceSelectorId: sourceSelector(92) },
         });
-        await db.automation.update({
-            where: { id: "automation-0003" },
-            data: { triggerSourceContractVersion: 2 },
+        await db.automationTrigger.update({
+            where: { id: triggerId(3) },
+            data: { sourceContractVersion: 2 },
         });
         await db.automation.update({
             where: { id: "automation-0004" },
             data: { enabled: false },
-        });
-        await db.automation.update({
-            where: { id: "automation-0005" },
-            data: { enabled: false, deletedAt: new Date("2026-08-19T00:00:00.000Z") },
         });
         await db.automationRun.create({
             data: {
                 id: "run-retains-soft-deleted-automation",
                 automationId: "automation-0005",
                 accountId: ACCOUNT_ID,
+                triggerId: triggerId(5),
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 5,
+                causeOccurredAt: new Date("2026-08-18T00:00:00.000Z"),
+                occurrenceKey: "event-retains-deleted-trigger",
+                causeEventPluginId: PLUGIN_ID,
+                causeEventLocalId: EVENT_LOCAL_ID,
+                causeSourceSelectorId: sourceSelector(5),
+                triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: new Date("2026-08-18T00:00:00.000Z"),
                 dueAt: new Date("2026-08-18T00:00:00.000Z"),
             },
         });
+        await db.automationTrigger.delete({ where: { id: triggerId(5) } });
 
         await expect(readAutomationEventStoredDefinitionsV1({
             accountId: ACCOUNT_ID,
@@ -561,23 +682,24 @@ describe("Automation Event stored-definition projection", () => {
             data: { normalizedManifest: durableRelease.normalizedManifest },
         });
         const webhookInvocationReference = await seedCurrentDurablePushDelivery();
-        await db.automation.update({
-            where: { id: "automation-0001" },
+        await db.automationTrigger.update({
+            where: { id: triggerId(1) },
             data: {
-                triggerObservationTransport: "durablePush",
-                triggerWebhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
-                triggerObservationStartsAt: new Date(1_723_247_200_000),
+                observationTransport: "durablePush",
+                webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_247_200_000),
                 watcherMachineId: null,
                 watcherMachineInstallationId: null,
                 watcherPluginId: null,
                 watcherMaterializationId: null,
-                triggerDefinitionEnvelope: JSON.stringify(
+                definitionEnvelope: JSON.stringify(
                     sealAutomationTriggerDefinitionStoredEnvelopeV1({
                         mode: "plain",
                         binding: {
                             v: 1,
                             automationId: "automation-0001",
-                            templateVersion: 1,
+                            triggerId: triggerId(1),
+                            triggerRevision: 1,
                             triggerKind: "pluginEvent",
                             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                             sourceSelectorId: sourceSelector(1),
@@ -660,14 +782,14 @@ describe("Automation Event stored-definition projection", () => {
     it("fails closed before disclosure when Account mode and a stored definition envelope disagree", async () => {
         await seed(1);
         const encrypted = sealAccountScopedBlobCiphertext({
-            kind: "automation_trigger_evidence",
+            kind: "automation_trigger_definition",
             material: { type: "dataKey", machineKey: new Uint8Array(32).fill(7) },
             payload: { v: 1 },
             randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
         });
-        await db.automation.update({
-            where: { id: "automation-0001" },
-            data: { triggerDefinitionEnvelope: JSON.stringify({ t: "encrypted", c: encrypted }) },
+        await db.automationTrigger.update({
+            where: { id: triggerId(1) },
+            data: { definitionEnvelope: JSON.stringify({ t: "encrypted", c: encrypted }) },
         });
 
         await expect(readAutomationEventStoredDefinitionsV1({

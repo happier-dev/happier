@@ -3,56 +3,89 @@ import React from 'react';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
-export type AutomationRunNowState = 'idle' | 'running' | 'queued';
+export type AutomationRunNowState = 'idle' | 'submitting' | 'acknowledged';
 
 /**
- * Sole owner of the per-Automation "Run now" pending state and its in-flight
- * guard. The screen owns the controller so a virtualized row that scrolls out
- * of view cannot drop an in-flight guard and let the same Automation be started
- * twice, and so the queued acknowledgement survives recycling.
+ * Sole UI owner of Run Now invocation and pending acknowledgement. State is
+ * module-scoped so list/detail navigation and virtualized row recycling cannot
+ * create competing guards for the same Automation.
  */
 export type AutomationRunNowController = Readonly<{
     stateFor: (automationId: string) => AutomationRunNowState;
-    runNow: (automationId: string) => Promise<void>;
+    runNow: (automationId: string, options?: Readonly<{
+        isInvocationCurrent?: () => boolean;
+    }>) => Promise<void>;
 }>;
 
-const QUEUED_ACKNOWLEDGEMENT_MS = 2500;
+const ACKNOWLEDGEMENT_MS = 2500;
+const stateById = new Map<string, AutomationRunNowState>();
+const inFlightIds = new Set<string>();
+const listeners = new Set<() => void>();
+let snapshotVersion = 0;
 
-export function useAutomationRunNowController(): AutomationRunNowController {
-    const [stateById, setStateById] = React.useState<Record<string, AutomationRunNowState>>({});
-    const inFlightIdsRef = React.useRef(new Set<string>());
+function publishState(automationId: string, state: AutomationRunNowState): void {
+    if (state === 'idle') stateById.delete(automationId);
+    else stateById.set(automationId, state);
+    snapshotVersion += 1;
+    for (const listener of listeners) listener();
+}
 
-    const runNow = React.useCallback(async (automationId: string) => {
-        if (inFlightIdsRef.current.has(automationId)) return;
-        inFlightIdsRef.current.add(automationId);
-        try {
-            setStateById((prev) => ({ ...prev, [automationId]: 'running' }));
-            await sync.runAutomationNow(automationId);
-            setStateById((prev) => ({ ...prev, [automationId]: 'queued' }));
-            setTimeout(() => {
-                setStateById((prev) => {
-                    if (prev[automationId] !== 'queued') return prev;
-                    const { [automationId]: _ignored, ...rest } = prev;
-                    return rest;
-                });
-            }, QUEUED_ACKNOWLEDGEMENT_MS);
-        } catch (error) {
+function subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+async function runAutomationNow(
+    automationId: string,
+    options?: Readonly<{
+        isInvocationCurrent?: () => boolean;
+        isAuthorityCurrent?: () => boolean;
+    }>,
+): Promise<void> {
+    if (inFlightIds.has(automationId)) return;
+    inFlightIds.add(automationId);
+    const isCurrent = options?.isInvocationCurrent ?? (() => true);
+    const isAuthorityCurrent = options?.isAuthorityCurrent ?? (() => true);
+    try {
+        publishState(automationId, 'submitting');
+        await sync.runAutomationNow(automationId);
+        if (!isAuthorityCurrent()) {
+            publishState(automationId, 'idle');
+            return;
+        }
+        publishState(automationId, 'acknowledged');
+        setTimeout(() => {
+            if (stateById.get(automationId) === 'acknowledged') publishState(automationId, 'idle');
+        }, ACKNOWLEDGEMENT_MS);
+    } catch (error) {
+        publishState(automationId, 'idle');
+        if (isAuthorityCurrent() && isCurrent()) {
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.detail.runFailed'),
             );
-            setStateById((prev) => {
-                const { [automationId]: _ignored, ...rest } = prev;
-                return rest;
-            });
-        } finally {
-            inFlightIdsRef.current.delete(automationId);
         }
-    }, []);
+    } finally {
+        inFlightIds.delete(automationId);
+    }
+}
+
+export function useAutomationRunNowController(): AutomationRunNowController {
+    React.useSyncExternalStore(subscribe, () => snapshotVersion, () => snapshotVersion);
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
 
     return React.useMemo(() => ({
-        stateFor: (automationId: string) => stateById[automationId] ?? 'idle',
-        runNow,
-    }), [runNow, stateById]);
+        stateFor: (automationId: string) => stateById.get(automationId) ?? 'idle',
+        runNow: async (automationId, options) => {
+            if (accountLifetime !== null && !accountLifetime.isCurrent()) return;
+            await runAutomationNow(automationId, {
+                ...(options?.isInvocationCurrent
+                    ? { isInvocationCurrent: options.isInvocationCurrent }
+                    : {}),
+                isAuthorityCurrent: () => accountLifetime?.isCurrent() ?? true,
+            });
+        },
+    }), [accountLifetime, snapshotVersion]);
 }

@@ -4,11 +4,17 @@ import {
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
 import { mergeSpawnSessionOptions } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import type { SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol';
+
+type AutomationNewSessionTemplate = SpawnSessionOptions & Readonly<{
+  checkoutCreationDraft?: SessionAuthoringCheckoutCreationDraftV1;
+}>;
 
 export async function runAutomationAsNewSession(params: {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   runId: string;
-  template: SpawnSessionOptions;
+  template: AutomationNewSessionTemplate;
 }): Promise<SpawnSessionResult> {
   const normalizedRunId = params.runId.trim();
   if (!normalizedRunId) {
@@ -18,9 +24,29 @@ export async function runAutomationAsNewSession(params: {
       errorMessage: 'automation run id is required for a new session',
     };
   }
+  const { checkoutCreationDraft, ...rawSpawnTemplate } = params.template;
+  let spawnTemplate: SpawnSessionOptions = rawSpawnTemplate;
+  if (checkoutCreationDraft !== undefined) {
+    const prepared = await prepareSessionCreationTarget({
+      request: {
+        directory: rawSpawnTemplate.directory,
+        checkoutCreationDraft,
+      },
+    });
+    if (!prepared.ok) {
+      return {
+        type: 'error',
+        errorCode: prepared.code === 'invalid_directory'
+          ? SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST
+          : SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: `automation checkout preparation failed: ${prepared.code}`,
+      };
+    }
+    spawnTemplate = { ...rawSpawnTemplate, directory: prepared.directory };
+  }
   return await params.spawnSession(
     mergeSpawnSessionOptions(
-      params.template,
+      spawnTemplate,
       {
         approvedNewDirectoryCreation: true,
         spawnNonce: `automation:${normalizedRunId}`,

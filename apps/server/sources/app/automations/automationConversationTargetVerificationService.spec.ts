@@ -44,14 +44,12 @@ const caller = {
 function listedRow(params: Readonly<{
     id: string;
     name: string;
-    templateVersion: number;
     targetType?: "new_session" | "existing_session" | "execution_run";
     enabled?: boolean;
 }>) {
     return {
         id: params.id,
         name: params.name,
-        templateVersion: params.templateVersion,
         targetType: params.targetType ?? "execution_run",
         enabled: params.enabled ?? true,
     };
@@ -63,31 +61,44 @@ const scheduleAutomation: AutomationListItem = {
     name: "Daily digest",
     description: null,
     enabled: true,
-    triggerKind: "schedule",
-    scheduleKind: "interval",
-    scheduleExpr: null,
-    everyMs: 60_000,
-    timezone: null,
     targetType: "execution_run",
     templateCiphertext: "strict-definition",
     templateVersion: 3,
-    triggerEventPluginId: null,
-    triggerEventLocalId: null,
-    triggerSourceSelectorId: null,
-    triggerSourceContractVersion: null,
-    triggerObservationTransport: null,
-    triggerWebhookEndpointId: null,
-    triggerObservationStartsAt: null,
-    watcherMachineId: null,
-    watcherMachineInstallationId: null,
-    watcherPluginId: null,
-    watcherMaterializationId: null,
-    triggerDefinitionEnvelope: null,
-    nextRunAt: null,
     lastRunAt: null,
     createdAt: new Date("2026-08-12T00:00:00.000Z"),
     updatedAt: new Date("2026-08-12T00:00:00.000Z"),
     assignments: [],
+    triggers: [{
+        id: "trigger-schedule-1",
+        automationId: "automation-1",
+        kind: "schedule",
+        enabled: true,
+        revision: 1,
+        deletedAt: null,
+        scheduleKind: "interval",
+        scheduleExpr: null,
+        everyMs: 60_000,
+        timezone: null,
+        nextRunAt: null,
+        eventPluginId: null,
+        eventLocalId: null,
+        sourceSelectorId: null,
+        sourceContractVersion: null,
+        observationTransport: null,
+        webhookEndpointId: null,
+        observationStartsAt: null,
+        watcherMachineId: null,
+        watcherMachineInstallationId: null,
+        watcherPluginId: null,
+        watcherMaterializationId: null,
+        definitionEnvelope: null,
+        sessionLifecycleEvent: null,
+        sourceSessionId: null,
+        sourceTurnId: null,
+        createdAt: new Date("2026-08-12T00:00:00.000Z"),
+        updatedAt: new Date("2026-08-12T00:00:00.000Z"),
+        eventSourceStatus: null,
+    }],
 };
 
 describe("Automation conversation target verification", () => {
@@ -104,8 +115,8 @@ describe("Automation conversation target verification", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
-            input: { automationId: "automation-1", expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: { automationId: "automation-1" },
+        })).resolves.toEqual({ kind: "verified" });
 
         expect(mocks.loadAutomation).toHaveBeenCalledWith(expect.anything(), {
             accountId: "account-1",
@@ -120,17 +131,19 @@ describe("Automation conversation target verification", () => {
             await expect(verifyAutomationConversationTargetV1({
                 accountId: "account-1",
                 caller,
-                input: { automationId: "automation-hidden", expectedTemplateVersion: 3 },
+                input: { automationId: "automation-hidden" },
             })).resolves.toEqual({ kind: "notVerified", reason: "notFound" });
         },
     );
 
-    it("returns templateVersionMismatch without the current version or content", async () => {
+    it("verifies the current Automation without exposing or pinning its recipe version", async () => {
+        mocks.loadAutomation.mockResolvedValue({ ...scheduleAutomation, templateVersion: 4 });
+
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
-            input: { automationId: "automation-1", expectedTemplateVersion: 2 },
-        })).resolves.toEqual({ kind: "notVerified", reason: "templateVersionMismatch" });
+            input: { automationId: "automation-1" },
+        })).resolves.toEqual({ kind: "verified" });
     });
 
     it("rejects final-result delivery for an execution-run target", async () => {
@@ -139,7 +152,6 @@ describe("Automation conversation target verification", () => {
             caller,
             input: {
                 automationId: "automation-1",
-                expectedTemplateVersion: 3,
                 resultDelivery: "finalResult",
             },
         })).resolves.toEqual({ kind: "notVerified", reason: "resultDeliveryUnsupported" });
@@ -151,8 +163,8 @@ describe("Automation conversation target verification", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
-            input: { automationId: "automation-1", expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: { automationId: "automation-1" },
+        })).resolves.toEqual({ kind: "verified" });
     });
 
     it("verifies for any current plugin caller and fails closed on stale materialization", async () => {
@@ -161,8 +173,8 @@ describe("Automation conversation target verification", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller: { ...caller, pluginId: "com.acme.other" },
-            input: { automationId: "automation-1", expectedTemplateVersion: 3 },
-        })).resolves.toEqual({ kind: "verified", templateVersion: 3 });
+            input: { automationId: "automation-1" },
+        })).resolves.toEqual({ kind: "verified" });
         mocks.loadAutomation.mockClear();
 
         mocks.assertCurrentCaller.mockRejectedValueOnce(
@@ -171,16 +183,16 @@ describe("Automation conversation target verification", () => {
         await expect(verifyAutomationConversationTargetV1({
             accountId: "account-1",
             caller,
-            input: { automationId: "automation-1", expectedTemplateVersion: 3 },
+            input: { automationId: "automation-1" },
         })).rejects.toBeInstanceOf(AutomationConversationTargetVerificationCallerError);
         expect(mocks.loadAutomation).not.toHaveBeenCalled();
     });
 
     it("lists a bounded ID keyset of every Account Automation without selecting target content", async () => {
         mocks.listAutomations.mockResolvedValue([
-            listedRow({ id: "automation-1", name: "Current target", templateVersion: 0 }),
-            listedRow({ id: "automation-2", name: "x".repeat(129), templateVersion: 2 }),
-            listedRow({ id: "automation-3", name: "Lookahead only", templateVersion: 4 }),
+            listedRow({ id: "automation-1", name: "Current target" }),
+            listedRow({ id: "automation-2", name: "x".repeat(129) }),
+            listedRow({ id: "automation-3", name: "Lookahead only" }),
         ]);
 
         await expect(listAutomationConversationTargetsV1({
@@ -191,13 +203,11 @@ describe("Automation conversation target verification", () => {
             items: [
                 {
                     automationId: "automation-1",
-                    templateVersion: 0,
                     label: "Current target",
                     execution: { targetType: "execution_run", enabled: true },
                 },
                 {
                     automationId: "automation-2",
-                    templateVersion: 2,
                     label: "automation-2",
                     execution: { targetType: "execution_run", enabled: true },
                 },
@@ -216,7 +226,6 @@ describe("Automation conversation target verification", () => {
             select: {
                 id: true,
                 name: true,
-                templateVersion: true,
                 targetType: true,
                 enabled: true,
             },
@@ -225,7 +234,7 @@ describe("Automation conversation target verification", () => {
 
     it("uses the server default and falls back to the ID for a noncanonical stored name", async () => {
         mocks.listAutomations.mockResolvedValue([
-            listedRow({ id: "automation-1", name: "   ", templateVersion: 3 }),
+            listedRow({ id: "automation-1", name: "   " }),
         ]);
 
         await expect(listAutomationConversationTargetsV1({
@@ -235,7 +244,6 @@ describe("Automation conversation target verification", () => {
         })).resolves.toEqual({
             items: [{
                 automationId: "automation-1",
-                templateVersion: 3,
                 label: "automation-1",
                 execution: { targetType: "execution_run", enabled: true },
             }],

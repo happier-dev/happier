@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 import {
-    AutomationRunExecutionRecipeV1Schema,
+    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationSourceSelectorIdV1Schema,
     normalizePluginReleaseFactsV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
     PluginWebhookEndpointEnsureInputV1Schema,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
@@ -13,7 +16,13 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { eventRouter } from "@/app/events/eventRouter";
 import { ensurePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
 
-import { createAutomation, updateAutomation } from "./automationCrudService";
+import {
+    createAutomation,
+    deleteAutomationTrigger,
+    reconcileAutomationDefinition,
+    updateAutomation,
+    updateAutomationTrigger,
+} from "./automationCrudService";
 import { AutomationValidationError } from "./automationValidation";
 
 const SERVER_IDENTITY_ID = "srv_automationDurablePush1";
@@ -22,6 +31,7 @@ const PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
 const WEBHOOK_LOCAL_ID = "repository-webhook";
 const HANDLER_ACTION_LOCAL_ID = "receive-repository-webhook";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
 const MACHINE_ID = "push-writer-machine";
 const MACHINE_INSTALLATION_ID = "push-writer-installation";
 const MATERIALIZATION_ID = "push-writer-materialization";
@@ -60,7 +70,7 @@ const NEW_SESSION_TARGET = {
 } as const;
 
 function executionRecipe(templateVersion: number) {
-    return AutomationRunExecutionRecipeV1Schema.parse({
+    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
         v: 1,
         templateVersion,
         template: { t: "plain", v: { v: 1, prompt: `Push recipe ${templateVersion}` } },
@@ -71,6 +81,12 @@ function executionRecipe(templateVersion: number) {
 
 function releaseFacts(params: Readonly<{ supportsDurablePush: boolean }>) {
     const { supportsDurablePush } = params;
+    const sourceConfigSchema = {
+        type: "object",
+        properties: { repositoryId: { type: "string" } },
+        required: ["repositoryId"],
+        additionalProperties: false,
+    } as const;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: PLUGIN_ID, version: PLUGIN_VERSION },
         archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -88,6 +104,15 @@ function releaseFacts(params: Readonly<{ supportsDurablePush: boolean }>) {
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
                 actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: sourceConfigSchema,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
+                }, {
                     id: HANDLER_ACTION_LOCAL_ID,
                     title: "Receive repository webhook",
                     scopes: ["global"],
@@ -121,12 +146,8 @@ function releaseFacts(params: Readonly<{ supportsDurablePush: boolean }>) {
                                     },
                                 }
                                 : {}),
-                            sourceConfigSchema: {
-                                type: "object",
-                                properties: { repositoryId: { type: "string" } },
-                                required: ["repositoryId"],
-                                additionalProperties: false,
-                            },
+                            sourceConfigSchema,
+                            setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -225,6 +246,7 @@ function pushTrigger(params: Readonly<{
 }>) {
     return {
         kind: "pluginEvent" as const,
+        enabled: true,
         eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
         sourceInstanceId: params.sourceInstanceId ?? "repository-1",
         sourceContractVersion: 1,
@@ -241,6 +263,93 @@ function pushTrigger(params: Readonly<{
         filter: null,
         maximumObservationAgeMs: 60_000,
     };
+}
+
+function pullTrigger(params: Readonly<{
+    sourceInstanceId?: string;
+    displayLabel?: string;
+}> = {}) {
+    const sourceInstanceId = params.sourceInstanceId ?? "repository-pull-1";
+    return {
+        kind: "pluginEvent" as const,
+        enabled: true,
+        eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+        sourceInstanceId,
+        sourceContractVersion: 1,
+        sourceConfig: { repositoryId: sourceInstanceId },
+        displayLabel: params.displayLabel ?? sourceInstanceId,
+        observationTransport: {
+            kind: "checkpointedPull" as const,
+            watcherMaterializationRef: MATERIALIZATION_REF,
+        },
+        filter: null,
+        maximumObservationAgeMs: 60_000,
+    };
+}
+
+function triggerInput<T>(trigger: T) {
+    return { triggerId: randomUUID(), trigger };
+}
+
+async function expectPluginEventTombstone(params: Readonly<{
+    triggerId: string;
+    revision: number;
+    sourceSelectorId: string;
+}>) {
+    await expect(db.automationTrigger.findUniqueOrThrow({
+        where: { id: params.triggerId },
+        select: {
+            kind: true,
+            enabled: true,
+            revision: true,
+            deletedAt: true,
+            eventPluginId: true,
+            eventLocalId: true,
+            sourceSelectorId: true,
+            sourceContractVersion: true,
+            scheduleKind: true,
+            scheduleExpr: true,
+            everyMs: true,
+            timezone: true,
+            nextRunAt: true,
+            observationTransport: true,
+            webhookEndpointId: true,
+            observationStartsAt: true,
+            watcherMachineId: true,
+            watcherMachineInstallationId: true,
+            watcherPluginId: true,
+            watcherMaterializationId: true,
+            definitionEnvelope: true,
+            sessionLifecycleEvent: true,
+            sourceSessionId: true,
+            sourceTurnId: true,
+        },
+    })).resolves.toEqual({
+        kind: "pluginEvent",
+        enabled: false,
+        revision: params.revision + 1,
+        deletedAt: expect.any(Date),
+        eventPluginId: PLUGIN_ID,
+        eventLocalId: EVENT_LOCAL_ID,
+        sourceSelectorId: params.sourceSelectorId,
+        sourceContractVersion: 1,
+        scheduleKind: null,
+        scheduleExpr: null,
+        everyMs: null,
+        timezone: null,
+        nextRunAt: null,
+        observationTransport: null,
+        webhookEndpointId: null,
+        observationStartsAt: null,
+        watcherMachineId: null,
+        watcherMachineInstallationId: null,
+        watcherPluginId: null,
+        watcherMaterializationId: null,
+        definitionEnvelope: null,
+        sessionLifecycleEvent: null,
+        sourceSessionId: null,
+        sourceTurnId: null,
+    });
 }
 
 describe("Automation durable-push authoring", () => {
@@ -278,6 +387,7 @@ describe("Automation durable-push authoring", () => {
             () => db.automationEventSourceStatus.deleteMany(),
             () => db.automationEventCatalogState.deleteMany(),
             () => db.automationRun.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.pluginWebhookEndpointOperation.deleteMany(),
@@ -303,33 +413,36 @@ describe("Automation durable-push authoring", () => {
                 name: "Repository webhooks",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                triggers: [triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
         });
 
-        expect(created).toMatchObject({
-            triggerKind: "pluginEvent",
-            triggerObservationTransport: "durablePush",
-            triggerWebhookEndpointId: endpoint.webhookEndpointId,
+        expect(created.triggers).toEqual([expect.objectContaining({
+            kind: "pluginEvent",
+            eventPluginId: PLUGIN_ID,
+            eventLocalId: EVENT_LOCAL_ID,
+            observationTransport: "durablePush",
+            webhookEndpointId: endpoint.webhookEndpointId,
             watcherMachineId: null,
             watcherMachineInstallationId: null,
             watcherPluginId: null,
             watcherMaterializationId: null,
-        });
-        const persisted = await db.automation.findUniqueOrThrow({
-            where: { id: created.id },
+        })]);
+        const createdTrigger = created.triggers[0]!;
+        const persisted = await db.automationTrigger.findUniqueOrThrow({
+            where: { id: createdTrigger.id },
             select: {
-                triggerObservationTransport: true,
-                triggerWebhookEndpointId: true,
-                triggerObservationStartsAt: true,
+                observationTransport: true,
+                webhookEndpointId: true,
+                observationStartsAt: true,
                 watcherMachineId: true,
             },
         });
-        expect(persisted.triggerObservationTransport).toBe("durablePush");
-        expect(persisted.triggerWebhookEndpointId).toBe(endpoint.webhookEndpointId);
-        expect(persisted.triggerObservationStartsAt).toBeInstanceOf(Date);
+        expect(persisted.observationTransport).toBe("durablePush");
+        expect(persisted.webhookEndpointId).toBe(endpoint.webhookEndpointId);
+        expect(persisted.observationStartsAt).toBeInstanceOf(Date);
         expect(persisted.watcherMachineId).toBeNull();
 
         // The endpoint-routing source instance is retained privately in the
@@ -339,14 +452,15 @@ describe("Automation durable-push authoring", () => {
             binding: {
                 v: 1,
                 automationId: created.id,
-                templateVersion: 1,
+                triggerId: createdTrigger.id,
+                triggerRevision: createdTrigger.revision,
                 triggerKind: "pluginEvent",
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
-                    created.triggerSourceSelectorId,
+                    createdTrigger.sourceSelectorId,
                 ),
             },
-            envelope: JSON.parse(created.triggerDefinitionEnvelope!),
+            envelope: JSON.parse(createdTrigger.definitionEnvelope!),
         });
         expect(opened.kind).toBe("available");
         expect(AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse(
@@ -367,10 +481,10 @@ describe("Automation durable-push authoring", () => {
                 name: "Wrong routing source",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({
+                triggers: [triggerInput(pushTrigger({
                     webhookEndpointId: endpoint.webhookEndpointId,
                     routingSourceInstanceId: "github:installation:9999",
-                }),
+                }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
@@ -386,7 +500,7 @@ describe("Automation durable-push authoring", () => {
                 name: "Revoked endpoint",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                triggers: [triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
@@ -415,13 +529,15 @@ describe("Automation durable-push authoring", () => {
                 name: "Unconfirmed endpoint",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                triggers: [triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
         })).resolves.toMatchObject({
-            triggerObservationTransport: "durablePush",
-            triggerWebhookEndpointId: endpoint.webhookEndpointId,
+            triggers: [expect.objectContaining({
+                observationTransport: "durablePush",
+                webhookEndpointId: endpoint.webhookEndpointId,
+            })],
         });
     });
 
@@ -435,12 +551,123 @@ describe("Automation durable-push authoring", () => {
                 name: "Unsupported transport",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                triggers: [triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
         })).rejects.toBeInstanceOf(AutomationValidationError);
         expect(await db.automation.count()).toBe(0);
+    });
+
+    it("soft-deletes checkpointed-pull and durable-push triggers through the one CRUD tombstone", async () => {
+        const account = await seedAccount();
+        const endpoint = await ensureEndpoint(account.id, "ensure-durable-push-delete-0001");
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Delete Event transports",
+                description: null,
+                enabled: true,
+                triggers: [
+                    triggerInput(pullTrigger()),
+                    triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId })),
+                ],
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: MACHINE_ID }],
+            },
+        });
+        const pull = created.triggers.find((trigger) => (
+            trigger.kind === "pluginEvent"
+            && trigger.observationTransport === "checkpointedPull"
+        ))!;
+        const push = created.triggers.find((trigger) => (
+            trigger.kind === "pluginEvent"
+            && trigger.observationTransport === "durablePush"
+        ))!;
+        if (pull.kind !== "pluginEvent" || push.kind !== "pluginEvent") {
+            throw new Error("Expected checkpointed-pull and durable-push Event triggers");
+        }
+
+        await expect(deleteAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: pull.id,
+            expectedRevision: pull.revision,
+        })).resolves.toMatchObject({
+            triggers: [expect.objectContaining({ id: push.id })],
+        });
+        await expectPluginEventTombstone({
+            triggerId: pull.id,
+            revision: pull.revision,
+            sourceSelectorId: pull.sourceSelectorId,
+        });
+
+        await expect(deleteAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: push.id,
+            expectedRevision: push.revision,
+        })).resolves.toMatchObject({ triggers: [] });
+        await expectPluginEventTombstone({
+            triggerId: push.id,
+            revision: push.revision,
+            sourceSelectorId: push.sourceSelectorId,
+        });
+    });
+
+    it("atomically removes checkpointed-pull and durable-push triggers through plural reconciliation", async () => {
+        const account = await seedAccount();
+        const endpoint = await ensureEndpoint(account.id, "ensure-durable-push-delete-0002");
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Reconcile Event transports",
+                description: "Both rows use the same tombstone arm",
+                enabled: true,
+                triggers: [
+                    triggerInput(pullTrigger({ sourceInstanceId: "repository-pull-2" })),
+                    triggerInput(pushTrigger({
+                        webhookEndpointId: endpoint.webhookEndpointId,
+                        sourceInstanceId: "repository-push-2",
+                    })),
+                ],
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: MACHINE_ID }],
+            },
+        });
+        expect(created.triggers).toHaveLength(2);
+
+        await expect(reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: created.templateVersion,
+                name: created.name,
+                description: created.description,
+                enabled: created.enabled,
+                assignments: created.assignments.map((assignment) => ({
+                    machineId: assignment.machineId,
+                    enabled: assignment.enabled,
+                    priority: assignment.priority,
+                })),
+                triggers: [],
+                removedTriggers: created.triggers.map((trigger) => ({
+                    triggerId: trigger.id,
+                    expectedRevision: trigger.revision,
+                })),
+            },
+        })).resolves.toMatchObject({ triggers: [] });
+
+        for (const trigger of created.triggers) {
+            if (trigger.kind !== "pluginEvent") {
+                throw new Error("Expected only plugin Event trigger fixtures");
+            }
+            await expectPluginEventTombstone({
+                triggerId: trigger.id,
+                revision: trigger.revision,
+                sourceSelectorId: trigger.sourceSelectorId,
+            });
+        }
     });
 
     it("preserves the observation boundary across a cosmetic edit and resets it when eligibility changes", async () => {
@@ -453,52 +680,56 @@ describe("Automation durable-push authoring", () => {
                 name: "Repository webhooks",
                 description: null,
                 enabled: true,
-                pluginEvent: pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                triggers: [triggerInput(pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }))],
                 executionRecipe: executionRecipe(1),
                 assignments: [{ machineId: MACHINE_ID }],
             },
         });
-        const firstBoundary = created.triggerObservationStartsAt;
+        const createdTrigger = created.triggers[0]!;
+        const firstBoundary = createdTrigger.observationStartsAt;
         expect(firstBoundary).toBeInstanceOf(Date);
 
-        const relabelled = await updateAutomation({
+        const renamed = await updateAutomation({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
             expectedTemplateVersion: 1,
             input: {
-                name: "Repository webhooks",
-                description: null,
-                enabled: true,
-                pluginEvent: pushTrigger({
-                    webhookEndpointId: endpoint.webhookEndpointId,
-                    displayLabel: "Repository one",
-                }),
+                name: "Renamed repository webhooks",
                 executionRecipe: executionRecipe(2),
-                assignments: [{ machineId: MACHINE_ID }],
             },
         });
-        expect(relabelled?.triggerObservationStartsAt?.getTime())
+        expect(renamed?.triggers[0]).toMatchObject({
+            id: createdTrigger.id,
+            revision: createdTrigger.revision,
+        });
+        expect(renamed?.triggers[0]?.observationStartsAt?.getTime())
             .toBe(firstBoundary!.getTime());
 
-        const refiltered = await updateAutomation({
+        const relabelled = await updateAutomationTrigger({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
-            expectedTemplateVersion: 2,
-            input: {
-                name: "Repository webhooks",
-                description: null,
-                enabled: true,
-                pluginEvent: {
-                    ...pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
-                    maximumObservationAgeMs: 120_000,
-                },
-                executionRecipe: executionRecipe(3),
-                assignments: [{ machineId: MACHINE_ID }],
+            triggerId: createdTrigger.id,
+            expectedRevision: createdTrigger.revision,
+            trigger: pushTrigger({
+                webhookEndpointId: endpoint.webhookEndpointId,
+                displayLabel: "Repository one",
+            }),
+        });
+        expect(relabelled?.triggers[0]?.observationStartsAt?.getTime())
+            .toBe(firstBoundary!.getTime());
+
+        const relabelledTrigger = relabelled!.triggers[0]!;
+        const refiltered = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: relabelledTrigger.id,
+            expectedRevision: relabelledTrigger.revision,
+            trigger: {
+                ...pushTrigger({ webhookEndpointId: endpoint.webhookEndpointId }),
+                maximumObservationAgeMs: 120_000,
             },
         });
-        expect(refiltered?.triggerObservationStartsAt?.getTime())
+        expect(refiltered?.triggers[0]?.observationStartsAt?.getTime())
             .toBeGreaterThan(firstBoundary!.getTime());
     });
 });

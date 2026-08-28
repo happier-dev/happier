@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
     normalizePluginReleaseFactsV1,
-    serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
 import { db, initDbPostgres } from "@/storage/db";
@@ -43,7 +43,7 @@ function releaseFacts() {
 }
 
 function strictConversationRunRecipe(): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
         v: 1,
         templateVersion: 1,
         template: {
@@ -176,15 +176,19 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     accountId: account.id,
                     name: "PostgreSQL Conversation admission contract",
                     enabled: true,
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     targetType: "execution_run",
                     templateCiphertext: strictConversationRunRecipe(),
                     templateVersion: 1,
-                    // Channels binds to this scheduled Automation and creates
-                    // a Conversation Run without changing its definition trigger.
-                    triggerKind: "schedule",
-                    triggerDefinitionEnvelope: null,
+                },
+            });
+            await db.automationTrigger.create({
+                data: {
+                    automationId,
+                    kind: "schedule",
+                    enabled: true,
+                    revision: 1,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
                 },
             });
 
@@ -194,11 +198,11 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                 machineId,
                 machineInstallationId,
                 materializationId,
+                immutableGenerationId: `generation-${suffix}`,
             };
             const input = (occurrenceId: string) => ({
                 automationId,
                 bindingId,
-                templateVersion: 1,
                 occurrenceId,
                 occurredAt: 1_723_247_200_000,
                 sender: { id: "sender-postgres" },

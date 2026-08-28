@@ -4,6 +4,7 @@ import {
     deriveAutomationOccurrenceKeyV1,
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    sealAutomationRunFailureDetailStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
@@ -26,7 +27,7 @@ import {
 } from "./automationCrudService";
 import { claimAutomationRun, heartbeatAutomationRun } from "./automationClaimService";
 import { cancelAutomationRun } from "./automationRunService";
-import { assertAllOriginAutomationRunMigrationToE2ee } from "./automationAccountEncryptionMigrationRuns.testkit";
+import { assertAllCauseAutomationRunMigrationToE2ee } from "./automationAccountEncryptionMigrationRuns.testkit";
 
 const SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
     "8a2e26d2-5b2b-4e9b-a57f-68ca5e575dc7",
@@ -39,14 +40,15 @@ const TRIGGER_DEFINITION_MATERIAL = {
 
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
-    templateVersion: number;
-    triggerKind: "pluginEvent";
+    triggerId: string;
+    triggerRevision: number;
     mode: "plain" | "e2ee";
 }>): string {
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        templateVersion: params.templateVersion,
+        triggerId: params.triggerId,
+        triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
             pluginId: "com.example.github",
@@ -123,21 +125,6 @@ function buildEncryptedTemplate(ciphertext: string): string {
     });
 }
 
-function buildExecutionInput(params: Readonly<{
-    templateCiphertext: string;
-    origin:
-        | Readonly<{ kind: "scheduled"; scheduledFor: number }>
-        | Readonly<{ kind: "manual"; invokedAt: number }>;
-}>): string {
-    return JSON.stringify({
-        kind: "happier_automation_run_execution_input_v1",
-        targetType: "new_session",
-        templateVersion: 1,
-        templateCiphertext: params.templateCiphertext,
-        origin: params.origin,
-    });
-}
-
 function buildStrictExecutionInput(recipe: unknown): string {
     const serialized = serializeAutomationRunExecutionRecipeV1(recipe);
     if (serialized.kind !== "available") {
@@ -166,23 +153,28 @@ function strictRunTarget() {
     };
 }
 
-function buildStrictPlainEventOrConversationExecutionInput(params: Readonly<{
+function buildStrictPlainExecutionInput(params: Readonly<{
     templateVersion: number;
     prompt: string;
-    evidence: unknown;
+    evidence: unknown | null;
+    assignmentMachineIds?: readonly string[];
 }>): string {
     return buildStrictExecutionInput({
         v: 1,
         templateVersion: params.templateVersion,
         template: { t: "plain", v: { v: 1, prompt: params.prompt } },
-        triggerEvidence: { t: "plain", v: params.evidence },
+        triggerEvidence: params.evidence === null
+            ? null
+            : { t: "plain", v: params.evidence },
         target: strictRunTarget(),
+        assignmentMachineIds: [...(params.assignmentMachineIds ?? [])],
     });
 }
 
-function buildStrictEncryptedEventOrConversationExecutionInput(params: Readonly<{
+function buildStrictEncryptedExecutionInput(params: Readonly<{
     runId: string;
     templateVersion: number;
+    retainsOccurrenceEvidence: boolean;
 }>): string {
     return buildStrictExecutionInput({
         v: 1,
@@ -191,11 +183,14 @@ function buildStrictEncryptedEventOrConversationExecutionInput(params: Readonly<
             t: "encrypted",
             c: "replacement-encrypted-execution-input-" + params.runId,
         },
-        triggerEvidence: {
-            t: "encrypted",
-            c: "replacement-encrypted-evidence-" + params.runId,
-        },
+        triggerEvidence: params.retainsOccurrenceEvidence
+            ? {
+                t: "encrypted",
+                c: "replacement-encrypted-evidence-" + params.runId,
+            }
+            : null,
         target: strictRunTarget(),
+        assignmentMachineIds: ["machine-account-encryption-migration"],
     });
 }
 
@@ -218,13 +213,12 @@ function buildPlainResultEnvelope(params: Readonly<{
 function buildPlainReplyContextEnvelope(params: Readonly<{
     automationId: string;
     occurrenceKey: string;
-}>, templateVersion: number): string {
+}>): string {
     return JSON.stringify({
         t: "plain",
         v: {
             v: 1,
             correspondence: params,
-            templateVersion,
             opaqueContext: {
                 conversationId: "conversation-account-encryption-migration",
             },
@@ -269,30 +263,59 @@ async function seedAutomationRuns() {
         select: { id: true },
     });
     const eventAutomationId = "automation-account-encryption-migration-event";
+    const eventTriggerId = "trigger-account-encryption-migration-event";
+    const scheduleTriggerId = "trigger-account-encryption-migration-schedule";
     const eventAutomation = await db.automation.create({
         data: {
             id: eventAutomationId,
             accountId: account.id,
             name: "Event evidence migration",
             enabled: false,
-            triggerKind: "pluginEvent",
-            triggerEventPluginId: "com.example.github",
-            triggerEventLocalId: "repository-event",
-            triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-            triggerSourceContractVersion: 1,
-            triggerObservationTransport: "checkpointedPull",
-            triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                automationId: eventAutomationId,
-                templateVersion: 4,
-                triggerKind: "pluginEvent",
-                mode: "plain",
-            }),
+            triggers: {
+                create: [
+                    {
+                        id: eventTriggerId,
+                        kind: "pluginEvent",
+                        eventPluginId: "com.example.github",
+                        eventLocalId: "repository-event",
+                        sourceSelectorId: SOURCE_SELECTOR_ID,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: buildTriggerDefinitionEnvelope({
+                            automationId: eventAutomationId,
+                            triggerId: eventTriggerId,
+                            triggerRevision: 0,
+                            mode: "plain",
+                        }),
+                    },
+                    {
+                        id: scheduleTriggerId,
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                ],
+            },
             targetType: "new_session",
             templateCiphertext: buildPlainTemplate("migrate Event Run"),
             templateVersion: 4,
         },
-        select: { id: true, templateVersion: true, templateCiphertext: true },
+        select: {
+            id: true,
+            templateVersion: true,
+            templateCiphertext: true,
+            triggers: { select: { id: true, kind: true, revision: true } },
+        },
     });
+    const eventTrigger = eventAutomation.triggers.find(
+        (trigger) => trigger.id === eventTriggerId,
+    );
+    const scheduleTrigger = eventAutomation.triggers.find(
+        (trigger) => trigger.id === scheduleTriggerId,
+    );
+    if (!eventTrigger || !scheduleTrigger) {
+        throw new Error("Missing exact seeded Automation triggers");
+    }
     const conversationAutomationId = "automation-account-encryption-migration-conversation";
     const conversationAutomation = await db.automation.create({
         data: {
@@ -300,11 +323,7 @@ async function seedAutomationRuns() {
             accountId: account.id,
             name: "Conversation evidence migration",
             enabled: false,
-            // Conversation is retained as the Run origin below, not a definition trigger.
-            triggerKind: "schedule",
-            scheduleKind: "interval",
-            everyMs: 60_000,
-            triggerDefinitionEnvelope: null,
+            // Conversation is a direct Run cause, so no trigger row is needed.
             targetType: "new_session",
             templateCiphertext: buildPlainTemplate("migrate Conversation Run"),
             templateVersion: 6,
@@ -327,13 +346,21 @@ async function seedAutomationRuns() {
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "queued",
-            originKind: "pluginEvent",
-            originOccurredAt: new Date(eventEvidence.occurredAt),
-            occurrenceKey: deriveAutomationOccurrenceKeyV1(eventEvidence),
+            triggerId: eventTrigger.id,
+            causeKind: "trigger",
+            causeTriggerKind: "pluginEvent",
+            causeTriggerRevision: eventTrigger.revision,
+            causeEventPluginId: "com.example.github",
+            causeEventLocalId: "repository-event",
+            causeOccurredAt: new Date(eventEvidence.occurredAt),
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                triggerId: eventTrigger.id,
+                evidence: eventEvidence,
+            }),
             occurrenceEvidenceEqualityTag: null,
-            originSourceSelectorId: SOURCE_SELECTOR_ID,
+            causeSourceSelectorId: SOURCE_SELECTOR_ID,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: eventEvidence }),
-            executionInputEnvelope: buildStrictPlainEventOrConversationExecutionInput({
+            executionInputEnvelope: buildStrictPlainExecutionInput({
                 templateVersion: eventAutomation.templateVersion,
                 prompt: "migrate Event Run",
                 evidence: eventEvidence,
@@ -346,10 +373,15 @@ async function seedAutomationRuns() {
             }),
             scheduledAt: new Date("2026-08-10T10:00:00.000Z"),
             dueAt: new Date("2026-08-10T10:00:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: migrationRunContentSelect,
     });
     const conversationEvidence = buildPlainConversationEvidence();
+    const conversationRunEvidence = {
+        ...conversationEvidence,
+        observationReceivedAt: conversationEvidence.occurredAt,
+    };
     const conversationRunId = "run-account-encryption-conversation";
     const conversationCorrespondence = {
         accountId: account.id,
@@ -364,18 +396,21 @@ async function seedAutomationRuns() {
             automationId: conversationAutomation.id,
             accountId: account.id,
             state: "succeeded",
-            originKind: "conversation",
-            originOccurredAt: new Date(conversationEvidence.occurredAt),
+            triggerId: null,
+            causeKind: "conversation",
+            legacyManualIdempotencyKey: null,
+            causeOccurredAt: new Date(conversationEvidence.occurredAt),
             occurrenceKey: conversationOccurrenceKey,
             occurrenceEvidenceEqualityTag: null,
             triggerEvidenceEnvelope: JSON.stringify({
                 t: "plain",
                 v: conversationEvidence,
             }),
-            executionInputEnvelope: buildStrictPlainEventOrConversationExecutionInput({
+            executionInputEnvelope: buildStrictPlainExecutionInput({
                 templateVersion: conversationAutomation.templateVersion,
                 prompt: "migrate Conversation Run",
-                evidence: conversationEvidence,
+                evidence: conversationRunEvidence,
+                assignmentMachineIds: [replyMachine.id],
             }),
             resultEnvelope: buildPlainResultEnvelope(conversationCorrespondence),
             replyContextEnvelope: buildPlainReplyContextEnvelope(
@@ -383,7 +418,6 @@ async function seedAutomationRuns() {
                     automationId: conversationCorrespondence.automationId,
                     occurrenceKey: conversationOccurrenceKey,
                 },
-                conversationAutomation.templateVersion,
             ),
             replyHandoffActionPluginId: "happier.channels",
             replyHandoffActionLocalId: "automation/result-deliver-v1",
@@ -400,6 +434,7 @@ async function seedAutomationRuns() {
             scheduledAt: new Date("2026-08-10T10:01:00.000Z"),
             dueAt: new Date("2026-08-10T10:01:00.000Z"),
             finishedAt: new Date("2026-08-10T10:02:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: migrationRunContentSelect,
     });
@@ -409,17 +444,29 @@ async function seedAutomationRuns() {
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "queued",
-            originKind: "scheduled",
-            originOccurredAt: null,
-            executionInputEnvelope: buildExecutionInput({
-                templateCiphertext: eventAutomation.templateCiphertext,
-                origin: {
-                    kind: "scheduled",
+            triggerId: scheduleTrigger.id,
+            causeKind: "trigger",
+            causeTriggerKind: "schedule",
+            causeTriggerRevision: scheduleTrigger.revision,
+            causeOccurredAt: new Date("2026-08-10T10:03:00.000Z"),
+            causeScheduledFor: new Date("2026-08-10T10:03:00.000Z"),
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                triggerId: scheduleTrigger.id,
+                evidence: {
+                    v: 1,
+                    kind: "schedule",
                     scheduledFor: new Date("2026-08-10T10:03:00.000Z").getTime(),
                 },
             }),
+            executionInputEnvelope: buildStrictPlainExecutionInput({
+                templateVersion: eventAutomation.templateVersion,
+                prompt: "migrate Event Run",
+                evidence: null,
+                assignmentMachineIds: [replyMachine.id],
+            }),
             scheduledAt: new Date("2026-08-10T10:03:00.000Z"),
             dueAt: new Date("2026-08-10T10:03:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: migrationRunContentSelect,
     });
@@ -429,11 +476,14 @@ async function seedAutomationRuns() {
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "succeeded",
-            originKind: "manual",
-            originOccurredAt: null,
-            executionInputEnvelope: buildExecutionInput({
-                templateCiphertext: eventAutomation.templateCiphertext,
-                origin: { kind: "manual", invokedAt: 1_723_247_201_000 },
+            triggerId: null,
+            causeKind: "manual",
+            causeOccurredAt: new Date(1_723_247_201_000),
+            executionInputEnvelope: buildStrictPlainExecutionInput({
+                templateVersion: eventAutomation.templateVersion,
+                prompt: "migrate Event Run",
+                evidence: null,
+                assignmentMachineIds: [replyMachine.id],
             }),
             resultEnvelope: JSON.stringify({
                 t: "legacySummaryCiphertext",
@@ -443,6 +493,7 @@ async function seedAutomationRuns() {
             scheduledAt: new Date("2026-08-10T10:04:00.000Z"),
             dueAt: new Date("2026-08-10T10:04:00.000Z"),
             finishedAt: new Date("2026-08-10T10:05:00.000Z"),
+            assignments: { create: [{ machineId: replyMachine.id, priority: 0 }] },
         },
         select: migrationRunContentSelect,
     });
@@ -450,6 +501,8 @@ async function seedAutomationRuns() {
     return {
         account,
         eventAutomation,
+        eventTrigger,
+        scheduleTrigger,
         conversationAutomation,
         eventRun,
         conversationRun,
@@ -461,7 +514,7 @@ async function seedAutomationRuns() {
 function buildEncryptedRunMigrationItem(params: Readonly<{
     runId: string;
     expectedRunRevision: number;
-    originKind: "pluginEvent" | "conversation" | "scheduled" | "manual";
+    runKind: "pluginEvent" | "conversation" | "scheduled" | "manual";
     templateVersion: number;
     retainsOccurrenceEvidence: boolean;
     resultEnvelope: string | null;
@@ -480,23 +533,11 @@ function buildEncryptedRunMigrationItem(params: Readonly<{
         occurrenceEvidenceEqualityTag: params.retainsOccurrenceEvidence
             ? E2EE_TAG
             : null,
-        executionInputEnvelope:
-            params.originKind === "pluginEvent" || params.originKind === "conversation"
-                ? buildStrictEncryptedEventOrConversationExecutionInput({
-                    runId: params.runId,
-                    templateVersion: params.templateVersion,
-                })
-                : buildExecutionInput({
-                    templateCiphertext: buildEncryptedTemplate(
-                        "replacement-encrypted-execution-input-" + params.runId,
-                    ),
-                    origin: params.originKind === "scheduled"
-                        ? {
-                            kind: "scheduled",
-                            scheduledFor: new Date("2026-08-10T10:03:00.000Z").getTime(),
-                        }
-                        : { kind: "manual", invokedAt: 1_723_247_201_000 },
-                }),
+        executionInputEnvelope: buildStrictEncryptedExecutionInput({
+            runId: params.runId,
+            templateVersion: params.templateVersion,
+            retainsOccurrenceEvidence: params.retainsOccurrenceEvidence,
+        }),
         resultEnvelope: params.resultEnvelope === null
             ? null
             : JSON.stringify({
@@ -515,6 +556,7 @@ function buildEncryptedRunMigrationItem(params: Readonly<{
                 t: "encrypted",
                 c: "replacement-encrypted-receipt-" + params.runId,
             }),
+        failureDetailEnvelope: null,
     };
 }
 
@@ -522,7 +564,11 @@ function buildDirective(params: Readonly<{
     automations: ReadonlyArray<{
         automationId: string;
         expectedTemplateVersion: number;
-        triggerDefinitionEnvelope?: string | null;
+        triggerDefinitionEnvelopes?: ReadonlyArray<{
+            triggerId: string;
+            triggerRevision: number;
+            envelope: string;
+        }>;
     }>;
     runs?: ReadonlyArray<ReturnType<typeof buildEncryptedRunMigrationItem>>;
 }>) {
@@ -536,9 +582,7 @@ function buildDirective(params: Readonly<{
                 payloadCiphertext:
                     "replacement-encrypted-template-" + automation.automationId,
             }),
-            ...(automation.triggerDefinitionEnvelope === undefined
-                ? {}
-                : { triggerDefinitionEnvelope: automation.triggerDefinitionEnvelope }),
+            triggerDefinitionEnvelopes: automation.triggerDefinitionEnvelopes ?? [],
         })),
         ...(params.runs === undefined ? {} : { runs: params.runs }),
     });
@@ -554,6 +598,7 @@ async function createPlainPluginEventAutomation(params: Readonly<{
     enabled: boolean;
     deletedAt?: Date | null;
 }>) {
+    const triggerId = `${params.automationId}-event-trigger`;
     return await db.automation.create({
         data: {
             id: params.automationId,
@@ -561,41 +606,60 @@ async function createPlainPluginEventAutomation(params: Readonly<{
             name: "Catalog revision migration " + params.automationId,
             enabled: params.enabled,
             deletedAt: params.deletedAt ?? null,
-            triggerKind: "pluginEvent",
-            triggerEventPluginId: "com.example.github",
-            triggerEventLocalId: "repository-event",
-            triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-            triggerSourceContractVersion: 1,
-            triggerObservationTransport: "checkpointedPull",
-            triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                automationId: params.automationId,
-                templateVersion: 1,
-                triggerKind: "pluginEvent",
-                mode: "plain",
-            }),
+            triggers: {
+                create: {
+                    id: triggerId,
+                    kind: "pluginEvent",
+                    eventPluginId: "com.example.github",
+                    eventLocalId: "repository-event",
+                    sourceSelectorId: SOURCE_SELECTOR_ID,
+                    sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull",
+                    definitionEnvelope: buildTriggerDefinitionEnvelope({
+                        automationId: params.automationId,
+                        triggerId,
+                        triggerRevision: 0,
+                        mode: "plain",
+                    }),
+                },
+            },
             targetType: "new_session",
             templateCiphertext: buildPlainTemplate(
                 "catalog revision migration " + params.automationId,
             ),
             templateVersion: 1,
         },
-        select: { id: true, templateVersion: true },
+        select: {
+            id: true,
+            templateVersion: true,
+            triggers: { select: { id: true, revision: true } },
+        },
     });
 }
 
 function buildPluginEventMigrationItem(params: Readonly<{
     id: string;
     templateVersion: number;
+    triggers: ReadonlyArray<{ id: string; revision: number }>;
 }>) {
+    const triggerId = `${params.id}-event-trigger`;
+    const trigger = params.triggers.find((candidate) => candidate.id === triggerId);
+    if (!trigger) {
+        throw new Error(`Missing exact Event trigger ${triggerId}`);
+    }
     return {
         automationId: params.id,
         expectedTemplateVersion: params.templateVersion,
-        triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-            automationId: params.id,
-            templateVersion: params.templateVersion + 1,
-            triggerKind: "pluginEvent",
-            mode: "e2ee",
-        }),
+        triggerDefinitionEnvelopes: [{
+            triggerId: trigger.id,
+            triggerRevision: trigger.revision,
+            envelope: buildTriggerDefinitionEnvelope({
+                automationId: params.id,
+                triggerId: trigger.id,
+                triggerRevision: trigger.revision,
+                mode: "e2ee",
+            }),
+        }],
     };
 }
 
@@ -607,12 +671,16 @@ function buildMigrationDirectiveForSeed(
             {
                 automationId: seeded.eventAutomation.id,
                 expectedTemplateVersion: seeded.eventAutomation.templateVersion,
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: seeded.eventAutomation.id,
-                    templateVersion: seeded.eventAutomation.templateVersion + 1,
-                    triggerKind: "pluginEvent",
-                    mode: "e2ee",
-                }),
+                triggerDefinitionEnvelopes: [{
+                    triggerId: seeded.eventTrigger.id,
+                    triggerRevision: seeded.eventTrigger.revision,
+                    envelope: buildTriggerDefinitionEnvelope({
+                        automationId: seeded.eventAutomation.id,
+                        triggerId: seeded.eventTrigger.id,
+                        triggerRevision: seeded.eventTrigger.revision,
+                        mode: "e2ee",
+                    }),
+                }],
             },
             {
                 automationId: seeded.conversationAutomation.id,
@@ -624,7 +692,7 @@ function buildMigrationDirectiveForSeed(
             buildEncryptedRunMigrationItem({
                 runId: seeded.eventRun.id,
                 expectedRunRevision: seeded.eventRun.revision,
-                originKind: "pluginEvent",
+                runKind: "pluginEvent",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: true,
                 resultEnvelope: seeded.eventRun.resultEnvelope,
@@ -635,7 +703,7 @@ function buildMigrationDirectiveForSeed(
             buildEncryptedRunMigrationItem({
                 runId: seeded.conversationRun.id,
                 expectedRunRevision: seeded.conversationRun.revision,
-                originKind: "conversation",
+                runKind: "conversation",
                 templateVersion: seeded.conversationAutomation.templateVersion,
                 retainsOccurrenceEvidence: true,
                 resultEnvelope: seeded.conversationRun.resultEnvelope,
@@ -646,7 +714,7 @@ function buildMigrationDirectiveForSeed(
             buildEncryptedRunMigrationItem({
                 runId: seeded.scheduledRun.id,
                 expectedRunRevision: seeded.scheduledRun.revision,
-                originKind: "scheduled",
+                runKind: "scheduled",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: false,
                 resultEnvelope: seeded.scheduledRun.resultEnvelope,
@@ -657,7 +725,7 @@ function buildMigrationDirectiveForSeed(
             buildEncryptedRunMigrationItem({
                 runId: seeded.manualRun.id,
                 expectedRunRevision: seeded.manualRun.revision,
-                originKind: "manual",
+                runKind: "manual",
                 templateVersion: seeded.eventAutomation.templateVersion,
                 retainsOccurrenceEvidence: false,
                 resultEnvelope: seeded.manualRun.resultEnvelope,
@@ -682,6 +750,7 @@ describe("Automation account-encryption Run migration directive", () => {
             resultEnvelope: null,
             replyContextEnvelope: null,
             replyHandoffReceiptEnvelope: null,
+            failureDetailEnvelope: null,
         };
 
         expect({
@@ -740,8 +809,13 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: account.id,
                 name: "Inconsistent Account migration",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildEncryptedTemplate("private-migration-template-sentinel"),
                 templateVersion: 1,
@@ -763,8 +837,218 @@ describe("Automation account-encryption Run migration (integration)", () => {
         })).resolves.toEqual({ id: automation.id });
     });
 
-    it("atomically migrates every retained all-origin private envelope and converts a predecessor result", async () => {
-        await assertAllOriginAutomationRunMigrationToE2ee();
+    it("atomically migrates every retained Run-cause private envelope and converts a predecessor result", async () => {
+        await assertAllCauseAutomationRunMigrationToE2ee();
+    });
+
+    it("migrates a current failure detail through E2EE rekey and E2EE to plain", async () => {
+        const binding = createSignedAccountContentBinding();
+        const account = await db.account.create({
+            data: {
+                encryptionMode: "e2ee",
+                ...binding,
+            },
+            select: { id: true },
+        });
+        const machine = await db.machine.create({
+            data: {
+                id: "machine-account-encryption-migration",
+                accountId: account.id,
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const automation = await db.automation.create({
+            data: {
+                id: "automation-account-encryption-failure-detail-directions",
+                accountId: account.id,
+                name: "Failure-detail migration directions",
+                enabled: false,
+                targetType: "new_session",
+                templateCiphertext: buildEncryptedTemplate(
+                    "failure-detail-source-template",
+                ),
+                templateVersion: 1,
+            },
+            select: { id: true, templateVersion: true },
+        });
+        const runId = "run-account-encryption-failure-detail-directions";
+        const sourceFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "e2ee",
+                correspondence: { automationId: automation.id, runId },
+                detail: "source encrypted failure detail",
+                material: TRIGGER_DEFINITION_MATERIAL,
+                randomBytes: (length) => new Uint8Array(length).fill(4),
+            }),
+        );
+        const run = await db.automationRun.create({
+            data: {
+                id: runId,
+                automationId: automation.id,
+                accountId: account.id,
+                state: "failed",
+                causeKind: "manual",
+                causeOccurredAt: new Date("2026-08-10T11:00:00.000Z"),
+                executionInputEnvelope: buildStrictEncryptedExecutionInput({
+                    runId,
+                    templateVersion: automation.templateVersion,
+                    retainsOccurrenceEvidence: false,
+                }),
+                errorCode: "provider_failed",
+                errorMessage: sourceFailureDetail,
+                scheduledAt: new Date("2026-08-10T11:00:00.000Z"),
+                dueAt: new Date("2026-08-10T11:00:00.000Z"),
+                finishedAt: new Date("2026-08-10T11:00:30.000Z"),
+                assignments: { create: [{ machineId: machine.id, priority: 0 }] },
+            },
+            select: { id: true, revision: true },
+        });
+
+        const rekeyedFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "e2ee",
+                correspondence: { automationId: automation.id, runId: run.id },
+                detail: "rekeyed encrypted failure detail",
+                material: TRIGGER_DEFINITION_MATERIAL,
+                randomBytes: (length) => new Uint8Array(length).fill(5),
+            }),
+        );
+        const rekeyedExecutionInput = buildStrictEncryptedExecutionInput({
+            runId: run.id,
+            templateVersion: automation.templateVersion,
+            retainsOccurrenceEvidence: false,
+        });
+        const rekeyDirective = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
+            action: "migrate",
+            templates: [{
+                automationId: automation.id,
+                expectedTemplateVersion: automation.templateVersion,
+                templateCiphertext: buildEncryptedTemplate(
+                    "failure-detail-rekeyed-template",
+                ),
+                triggerDefinitionEnvelopes: [],
+            }],
+            runs: [{
+                runId: run.id,
+                expectedRunRevision: run.revision,
+                triggerEvidenceEnvelope: null,
+                occurrenceEvidenceEqualityTag: null,
+                executionInputEnvelope: rekeyedExecutionInput,
+                resultEnvelope: null,
+                replyContextEnvelope: null,
+                replyHandoffReceiptEnvelope: null,
+                failureDetailEnvelope: rekeyedFailureDetail,
+            }],
+        });
+        await expect(inTx(async (tx) =>
+            await migrateAutomationAccountEncryptionInTx({
+                tx,
+                accountId: account.id,
+                toMode: "e2ee",
+                directive: rekeyDirective,
+            }),
+        )).resolves.toEqual({ status: "applied" });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: {
+                revision: true,
+                executionInputEnvelope: true,
+                errorMessage: true,
+            },
+        })).resolves.toEqual({
+            revision: run.revision + 1,
+            executionInputEnvelope: rekeyedExecutionInput,
+            errorMessage: rekeyedFailureDetail,
+        });
+
+        const plainFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "plain",
+                correspondence: { automationId: automation.id, runId: run.id },
+                detail: "plain failure detail",
+            }),
+        );
+        const plainExecutionInput = buildStrictPlainExecutionInput({
+            templateVersion: automation.templateVersion,
+            prompt: "plain failure-detail target",
+            evidence: null,
+            assignmentMachineIds: [machine.id],
+        });
+        const toPlainDirective = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
+            action: "migrate",
+            templates: [{
+                automationId: automation.id,
+                expectedTemplateVersion: automation.templateVersion + 1,
+                templateCiphertext: buildPlainTemplate(
+                    "plain failure-detail target",
+                ),
+                triggerDefinitionEnvelopes: [],
+            }],
+            runs: [{
+                runId: run.id,
+                expectedRunRevision: run.revision + 1,
+                triggerEvidenceEnvelope: null,
+                occurrenceEvidenceEqualityTag: null,
+                executionInputEnvelope: plainExecutionInput,
+                resultEnvelope: null,
+                replyContextEnvelope: null,
+                replyHandoffReceiptEnvelope: null,
+                failureDetailEnvelope: plainFailureDetail,
+            }],
+        });
+        await expect(inTx(async (tx) =>
+            await migrateAutomationAccountEncryptionInTx({
+                tx,
+                accountId: account.id,
+                toMode: "plain",
+                directive: toPlainDirective,
+            }),
+        )).resolves.toEqual({ status: "applied" });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: {
+                revision: true,
+                executionInputEnvelope: true,
+                errorMessage: true,
+            },
+        })).resolves.toEqual({
+            revision: run.revision + 2,
+            executionInputEnvelope: plainExecutionInput,
+            errorMessage: plainFailureDetail,
+        });
+    });
+
+    it("fails closed before any mutation when a current Run has malformed failure-detail content", async () => {
+        const seeded = await seedAutomationRuns();
+        const directive = buildMigrationDirectiveForSeed(seeded);
+        await db.automationRun.update({
+            where: { id: seeded.eventRun.id },
+            data: { errorMessage: "malformed-current-failure-detail" },
+        });
+
+        await expect(inTx(async (tx) =>
+            await migrateAutomationAccountEncryptionInTx({
+                tx,
+                accountId: seeded.account.id,
+                toMode: "e2ee",
+                directive,
+            }),
+        )).resolves.toEqual({ status: "invalid_content" });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.eventRun.id },
+            select: { revision: true, errorMessage: true },
+        })).resolves.toEqual({
+            revision: seeded.eventRun.revision,
+            errorMessage: "malformed-current-failure-detail",
+        });
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: seeded.eventAutomation.id },
+            select: { templateVersion: true, templateCiphertext: true },
+        })).resolves.toEqual({
+            templateVersion: seeded.eventAutomation.templateVersion,
+            templateCiphertext: seeded.eventAutomation.templateCiphertext,
+        });
     });
 
     it("advances the Event catalog revision exactly once when migration rewrites visible enabled Event definitions", async () => {
@@ -874,9 +1158,13 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: migrationAccount.id,
                 name: "Catalog revision schedule migration",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildPlainTemplate("catalog revision schedule"),
                 templateVersion: 1,
@@ -933,9 +1221,13 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: clearAccount.id,
                 name: "Catalog revision schedule clear",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildPlainTemplate("catalog revision clear"),
                 templateVersion: 1,
@@ -978,50 +1270,17 @@ describe("Automation account-encryption Run migration (integration)", () => {
         })).resolves.toEqual({ eventSourceDefinitionsRevision: 41n });
     });
 
-    it("rejects a retained V2 execution input on an Event Run before Account migration", async () => {
-        const seeded = await seedAutomationRuns();
-        const retainedV2EventInput = buildExecutionInput({
-            templateCiphertext: seeded.eventAutomation.templateCiphertext,
-            origin: { kind: "manual", invokedAt: 1_723_247_201_000 },
-        });
-        const sourceEventRun = await db.automationRun.update({
-            where: { id: seeded.eventRun.id },
-            data: { executionInputEnvelope: retainedV2EventInput },
-            select: migrationRunContentSelect,
-        });
-        const directive = buildMigrationDirectiveForSeed({
-            ...seeded,
-            eventRun: sourceEventRun,
-        });
-
-        await expect(inTx(async (tx) =>
-            await migrateAutomationAccountEncryptionInTx({
-                tx,
-                accountId: seeded.account.id,
-                toMode: "e2ee",
-                directive,
-            }),
-        )).resolves.toEqual({ status: "invalid_content" });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: seeded.eventRun.id },
-            select: migrationRunContentSelect,
-        })).resolves.toEqual(sourceEventRun);
-        await expect(db.account.findUniqueOrThrow({
-            where: { id: seeded.account.id },
-            select: { encryptionMode: true },
-        })).resolves.toEqual({ encryptionMode: "plain" });
-    });
-
     it("migrates one bound Event definition with its template in both directions and rekey, and leaves both untouched on invalid or stale targets", async () => {
         const account = await db.account.create({
             data: { encryptionMode: "plain" },
             select: { id: true },
         });
         const automationId = "automation-account-encryption-paired-definition";
+        const triggerId = "trigger-account-encryption-paired-definition";
         const sourceEnvelope = buildTriggerDefinitionEnvelope({
             automationId,
-            templateVersion: 1,
-            triggerKind: "pluginEvent",
+            triggerId,
+            triggerRevision: 0,
             mode: "plain",
         });
         const automation = await db.automation.create({
@@ -1030,13 +1289,18 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: account.id,
                 name: "Paired trigger-definition migration",
                 enabled: false,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.example.github",
-                triggerEventLocalId: "repository-event",
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: sourceEnvelope,
+                triggers: {
+                    create: {
+                        id: triggerId,
+                        kind: "pluginEvent",
+                        eventPluginId: "com.example.github",
+                        eventLocalId: "repository-event",
+                        sourceSelectorId: SOURCE_SELECTOR_ID,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: sourceEnvelope,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildPlainTemplate("paired definition source"),
                 templateVersion: 1,
@@ -1045,14 +1309,19 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 id: true,
                 templateCiphertext: true,
                 templateVersion: true,
+                triggers: { select: { id: true, revision: true } },
             },
         });
+        const trigger = automation.triggers.find(
+            (candidate) => candidate.id === triggerId,
+        );
+        if (!trigger) throw new Error(`Missing exact Event trigger ${triggerId}`);
 
         const encryptedTemplate = buildEncryptedTemplate("paired-encrypted-template");
         const encryptedEnvelope = buildTriggerDefinitionEnvelope({
             automationId: automation.id,
-            templateVersion: automation.templateVersion + 1,
-            triggerKind: "pluginEvent",
+            triggerId: trigger.id,
+            triggerRevision: trigger.revision,
             mode: "e2ee",
         });
         const missingDefinitionTarget = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
@@ -1061,6 +1330,7 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: automation.templateVersion,
                 templateCiphertext: encryptedTemplate,
+                triggerDefinitionEnvelopes: [],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1076,12 +1346,40 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: automation.templateCiphertext,
             templateVersion: automation.templateVersion,
-            triggerDefinitionEnvelope: sourceEnvelope,
+            triggers: [{ definitionEnvelope: sourceEnvelope }],
+        });
+        const omittedDefinitionTarget = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
+            action: "migrate",
+            templates: [{
+                automationId: automation.id,
+                expectedTemplateVersion: automation.templateVersion,
+                templateCiphertext: encryptedTemplate,
+            }],
+        });
+        await expect(inTx(async (tx) =>
+            await migrateAutomationAccountEncryptionInTx({
+                tx,
+                accountId: account.id,
+                toMode: "e2ee",
+                directive: omittedDefinitionTarget,
+            }),
+        )).resolves.toEqual({ status: "migration_incomplete" });
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: automation.id },
+            select: {
+                templateCiphertext: true,
+                templateVersion: true,
+                triggers: { select: { definitionEnvelope: true } },
+            },
+        })).resolves.toEqual({
+            templateCiphertext: automation.templateCiphertext,
+            templateVersion: automation.templateVersion,
+            triggers: [{ definitionEnvelope: sourceEnvelope }],
         });
         const invalidTarget = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
             action: "migrate",
@@ -1089,10 +1387,14 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: automation.templateVersion,
                 templateCiphertext: encryptedTemplate,
-                triggerDefinitionEnvelope: JSON.stringify({
-                    t: "encrypted",
-                    c: "wrong-purpose-definition-target",
-                }),
+                triggerDefinitionEnvelopes: [{
+                    triggerId: trigger.id,
+                    triggerRevision: trigger.revision,
+                    envelope: JSON.stringify({
+                        t: "encrypted",
+                        c: "wrong-purpose-definition-target",
+                    }),
+                }],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1108,12 +1410,12 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: automation.templateCiphertext,
             templateVersion: automation.templateVersion,
-            triggerDefinitionEnvelope: sourceEnvelope,
+            triggers: [{ definitionEnvelope: sourceEnvelope }],
         });
 
         const toEncrypted = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
@@ -1122,7 +1424,11 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: automation.templateVersion,
                 templateCiphertext: encryptedTemplate,
-                triggerDefinitionEnvelope: encryptedEnvelope,
+                triggerDefinitionEnvelopes: [{
+                    triggerId: trigger.id,
+                    triggerRevision: trigger.revision,
+                    envelope: encryptedEnvelope,
+                }],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1138,12 +1444,12 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: encryptedTemplate,
             templateVersion: 2,
-            triggerDefinitionEnvelope: encryptedEnvelope,
+            triggers: [{ definitionEnvelope: encryptedEnvelope }],
         });
 
         await db.account.update({
@@ -1156,8 +1462,8 @@ describe("Automation account-encryption Run migration (integration)", () => {
         const rekeyTemplate = buildEncryptedTemplate("paired-rekey-template");
         const rekeyEnvelope = buildTriggerDefinitionEnvelope({
             automationId: automation.id,
-            templateVersion: 3,
-            triggerKind: "pluginEvent",
+            triggerId: trigger.id,
+            triggerRevision: trigger.revision,
             mode: "e2ee",
         });
         const rekey = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
@@ -1166,7 +1472,11 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: 2,
                 templateCiphertext: rekeyTemplate,
-                triggerDefinitionEnvelope: rekeyEnvelope,
+                triggerDefinitionEnvelopes: [{
+                    triggerId: trigger.id,
+                    triggerRevision: trigger.revision,
+                    envelope: rekeyEnvelope,
+                }],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1182,18 +1492,18 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: rekeyTemplate,
             templateVersion: 3,
-            triggerDefinitionEnvelope: rekeyEnvelope,
+            triggers: [{ definitionEnvelope: rekeyEnvelope }],
         });
         const plainTemplate = buildPlainTemplate("paired plain target");
         const plainEnvelope = buildTriggerDefinitionEnvelope({
             automationId: automation.id,
-            templateVersion: 4,
-            triggerKind: "pluginEvent",
+            triggerId: trigger.id,
+            triggerRevision: trigger.revision,
             mode: "plain",
         });
         const toPlain = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
@@ -1202,7 +1512,11 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: 3,
                 templateCiphertext: plainTemplate,
-                triggerDefinitionEnvelope: plainEnvelope,
+                triggerDefinitionEnvelopes: [{
+                    triggerId: trigger.id,
+                    triggerRevision: trigger.revision,
+                    envelope: plainEnvelope,
+                }],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1218,12 +1532,12 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: plainTemplate,
             templateVersion: 4,
-            triggerDefinitionEnvelope: plainEnvelope,
+            triggers: [{ definitionEnvelope: plainEnvelope }],
         });
 
         await db.automation.update({
@@ -1236,12 +1550,16 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 expectedTemplateVersion: 4,
                 templateCiphertext: encryptedTemplate,
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: automation.id,
-                    templateVersion: 5,
-                    triggerKind: "pluginEvent",
-                    mode: "e2ee",
-                }),
+                triggerDefinitionEnvelopes: [{
+                    triggerId: trigger.id,
+                    triggerRevision: trigger.revision,
+                    envelope: buildTriggerDefinitionEnvelope({
+                        automationId: automation.id,
+                        triggerId: trigger.id,
+                        triggerRevision: trigger.revision,
+                        mode: "e2ee",
+                    }),
+                }],
             }],
         });
         await expect(inTx(async (tx) =>
@@ -1257,12 +1575,12 @@ describe("Automation account-encryption Run migration (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
+                triggers: { select: { definitionEnvelope: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: plainTemplate,
             templateVersion: 5,
-            triggerDefinitionEnvelope: plainEnvelope,
+            triggers: [{ definitionEnvelope: plainEnvelope }],
         });
     });
 
@@ -1446,7 +1764,7 @@ describe("Automation account-encryption Run migration (integration)", () => {
         })).resolves.toEqual(seeded.manualRun);
     });
 
-    it("refuses an older signed migration inventory that omits any retained all-origin Run", async () => {
+    it("refuses an older signed migration inventory that omits any retained Run cause", async () => {
         const seeded = await seedAutomationRuns();
         const directive = buildDirective({
             automations: [
@@ -1496,8 +1814,14 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: account.id,
                 name: "Oversized retained Run inventory",
                 enabled: false,
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        id: "trigger-account-encryption-too-large",
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildPlainTemplate("oversized migration"),
                 templateVersion: 1,
@@ -1506,8 +1830,13 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 id: true,
                 templateCiphertext: true,
                 templateVersion: true,
+                triggers: { select: { id: true, revision: true } },
             },
         });
+        const scheduleTrigger = automation.triggers.find(
+            (candidate) => candidate.id === "trigger-account-encryption-too-large",
+        );
+        if (!scheduleTrigger) throw new Error("Missing exact oversized schedule trigger");
         await db.automationRun.createMany({
             data: Array.from({
                 length: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS + 1,
@@ -1516,10 +1845,20 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "queued" as const,
-                originKind: "scheduled" as const,
-                executionInputEnvelope: buildExecutionInput({
-                    templateCiphertext: automation.templateCiphertext,
-                    origin: { kind: "scheduled", scheduledFor: index },
+                triggerId: scheduleTrigger.id,
+                causeKind: "trigger" as const,
+                causeTriggerKind: "schedule" as const,
+                causeTriggerRevision: scheduleTrigger.revision,
+                causeOccurredAt: new Date(index),
+                causeScheduledFor: new Date(index),
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: scheduleTrigger.id,
+                    evidence: { v: 1, kind: "schedule", scheduledFor: index },
+                }),
+                executionInputEnvelope: buildStrictPlainExecutionInput({
+                    templateVersion: automation.templateVersion,
+                    prompt: "oversized migration",
+                    evidence: null,
                 }),
                 scheduledAt: new Date(index),
                 dueAt: new Date(index),
@@ -1569,41 +1908,48 @@ describe("Automation account-encryption Run migration (integration)", () => {
             },
             select: { id: true },
         });
+        const eventAutomationId = "automation-encryption-transition-current-pages-event";
+        const eventTriggerId = "trigger-encryption-transition-current-pages-event";
         const eventAutomation = await db.automation.create({
             data: {
-                id: "automation-encryption-transition-current-pages-event",
+                id: eventAutomationId,
                 accountId: account.id,
                 name: "Current Event source page",
                 enabled: false,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.example.github",
-                triggerEventLocalId: "repository-event",
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: "automation-encryption-transition-current-pages-event",
-                    templateVersion: 1,
-                    triggerKind: "pluginEvent",
-                    mode: "e2ee",
-                }),
+                triggers: {
+                    create: {
+                        id: eventTriggerId,
+                        kind: "pluginEvent",
+                        eventPluginId: "com.example.github",
+                        eventLocalId: "repository-event",
+                        sourceSelectorId: SOURCE_SELECTOR_ID,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: buildTriggerDefinitionEnvelope({
+                            automationId: eventAutomationId,
+                            triggerId: eventTriggerId,
+                            triggerRevision: 0,
+                            mode: "e2ee",
+                        }),
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: buildEncryptedTemplate("current-page-event-template"),
                 templateVersion: 1,
             },
-            select: { id: true },
+            select: { id: true, triggers: { select: { id: true, revision: true } } },
         });
+        const eventTrigger = eventAutomation.triggers.find(
+            (candidate) => candidate.id === eventTriggerId,
+        );
+        if (!eventTrigger) throw new Error(`Missing exact Event trigger ${eventTriggerId}`);
         const conversationAutomation = await db.automation.create({
             data: {
                 id: "automation-encryption-transition-current-pages-conversation",
                 accountId: account.id,
                 name: "Current Conversation source page",
                 enabled: false,
-                // The retained Conversation Run witnesses use this scheduled definition.
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
+                // Conversation admission remains direct and creates no trigger row.
                 targetType: "new_session",
                 templateCiphertext: buildEncryptedTemplate("current-page-conversation-template"),
                 templateVersion: 1,
@@ -1623,6 +1969,18 @@ describe("Automation account-encryption Run migration (integration)", () => {
         // Keep this witness distinct from E2EE_TAG while retaining canonical
         // base64url encoding.
         const conversationTag = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA";
+        const eventFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "e2ee",
+                correspondence: {
+                    automationId: eventAutomation.id,
+                    runId: "run-current-page-event-witness",
+                },
+                detail: "exact current-page failure detail",
+                material: TRIGGER_DEFINITION_MATERIAL,
+                randomBytes: (length) => new Uint8Array(length).fill(8),
+            }),
+        );
         await db.automationRun.createMany({
             data: [
                 ...Array.from({ length: 499 }, (_, index) => ({
@@ -1630,14 +1988,30 @@ describe("Automation account-encryption Run migration (integration)", () => {
                     accountId: account.id,
                     automationId: eventAutomation.id,
                     state: "queued" as const,
-                    originKind: "pluginEvent" as const,
-                    originOccurredAt: new Date(occurredAt.getTime() + index),
-                    occurrenceKey: `current-page-event-${index}`,
+                    triggerId: eventTrigger.id,
+                    causeKind: "trigger" as const,
+                    causeTriggerKind: "pluginEvent" as const,
+                    causeTriggerRevision: eventTrigger.revision,
+                    causeEventPluginId: "com.example.github",
+                    causeEventLocalId: "repository-event",
+                    causeOccurredAt: new Date(occurredAt.getTime() + index),
+                    occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                        triggerId: eventTrigger.id,
+                        evidence: {
+                            ...buildPlainEventEvidence(),
+                            occurrenceId: `current-page-event-${index}`,
+                        },
+                    }),
                     occurrenceEvidenceEqualityTag: E2EE_TAG,
-                    originSourceSelectorId: SOURCE_SELECTOR_ID,
+                    causeSourceSelectorId: SOURCE_SELECTOR_ID,
                     triggerEvidenceEnvelope: JSON.stringify({
                         t: "encrypted",
                         c: `current-page-event-evidence-${index}`,
+                    }),
+                    executionInputEnvelope: buildStrictEncryptedExecutionInput({
+                        runId: `run-current-page-event-${String(index).padStart(3, "0")}`,
+                        templateVersion: 1,
+                        retainsOccurrenceEvidence: true,
                     }),
                     scheduledAt: occurredAt,
                     dueAt: occurredAt,
@@ -1647,12 +2021,29 @@ describe("Automation account-encryption Run migration (integration)", () => {
                     accountId: account.id,
                     automationId: eventAutomation.id,
                     state: "queued" as const,
-                    originKind: "pluginEvent" as const,
-                    originOccurredAt: occurredAt,
-                    occurrenceKey: "current-page-event-witness",
+                    triggerId: eventTrigger.id,
+                    causeKind: "trigger" as const,
+                    causeTriggerKind: "pluginEvent" as const,
+                    causeTriggerRevision: eventTrigger.revision,
+                    causeEventPluginId: "com.example.github",
+                    causeEventLocalId: "repository-event",
+                    causeOccurredAt: occurredAt,
+                    occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                        triggerId: eventTrigger.id,
+                        evidence: {
+                            ...buildPlainEventEvidence(),
+                            occurrenceId: "current-page-event-witness",
+                        },
+                    }),
                     occurrenceEvidenceEqualityTag: E2EE_TAG,
-                    originSourceSelectorId: SOURCE_SELECTOR_ID,
+                    causeSourceSelectorId: SOURCE_SELECTOR_ID,
                     triggerEvidenceEnvelope: eventEvidence,
+                    executionInputEnvelope: buildStrictEncryptedExecutionInput({
+                        runId: "run-current-page-event-witness",
+                        templateVersion: 1,
+                        retainsOccurrenceEvidence: true,
+                    }),
+                    errorMessage: eventFailureDetail,
                     scheduledAt: occurredAt,
                     dueAt: occurredAt,
                 },
@@ -1661,11 +2052,32 @@ describe("Automation account-encryption Run migration (integration)", () => {
                     accountId: account.id,
                     automationId: conversationAutomation.id,
                     state: "queued" as const,
-                    originKind: "conversation" as const,
-                    originOccurredAt: occurredAt,
-                    occurrenceKey: "current-page-conversation-witness",
+                    triggerId: null,
+                    causeKind: "conversation" as const,
+                    legacyManualIdempotencyKey: null,
+                    causeOccurredAt: occurredAt,
+                    occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                        ...buildPlainConversationEvidence(),
+                        occurrenceId: "current-page-conversation-witness",
+                    }),
                     occurrenceEvidenceEqualityTag: conversationTag,
                     triggerEvidenceEnvelope: conversationEvidence,
+                    executionInputEnvelope: buildStrictEncryptedExecutionInput({
+                        runId: "run-current-page-conversation-witness",
+                        templateVersion: 1,
+                        retainsOccurrenceEvidence: true,
+                    }),
+                    replyContextEnvelope: JSON.stringify({
+                        t: "encrypted",
+                        c: "current-page-conversation-reply-context",
+                    }),
+                    replyHandoffActionPluginId: "happier.channels",
+                    replyHandoffActionLocalId: "automation/result-deliver-v1",
+                    replyHandoffTargetMachineId: "machine-account-encryption-migration",
+                    replyHandoffTargetMachineInstallationId: "installation-account-encryption-migration",
+                    replyHandoffTargetMaterializationId: "materialization-account-encryption-migration",
+                    replyHandoffId: "handoff-current-page-conversation-witness",
+                    replyHandoffState: "awaitingResult" as const,
                     scheduledAt: occurredAt,
                     dueAt: occurredAt,
                 },
@@ -1718,18 +2130,30 @@ describe("Automation account-encryption Run migration (integration)", () => {
         expect(eventWitness.source).toMatchObject({
             triggerEvidenceEnvelope: eventEvidence,
             occurrenceEvidenceEqualityTag: E2EE_TAG,
+            failureDetailEnvelope: eventFailureDetail,
         });
         expect(conversationWitness.source).toMatchObject({
             triggerEvidenceEnvelope: conversationEvidence,
             occurrenceEvidenceEqualityTag: conversationTag,
         });
+        const rekeyedEventFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "e2ee",
+                correspondence: {
+                    automationId: eventAutomation.id,
+                    runId: "run-current-page-event-witness",
+                },
+                detail: "rekeyed current-page failure detail",
+                material: TRIGGER_DEFINITION_MATERIAL,
+                randomBytes: (length) => new Uint8Array(length).fill(9),
+            }),
+        );
         const stageItems = [eventWitness, conversationWitness].map((item) => ({
             kind: "run" as const,
             runId: item.runId,
             automationId: item.automationId,
             expectedRevision: item.revision,
-            originKind: item.originKind,
-            occurrenceKey: item.occurrenceKey,
+            cause: item.cause,
             source: item.source,
             target: {
                 triggerEvidenceEnvelope: item.source.triggerEvidenceEnvelope,
@@ -1740,6 +2164,10 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 replyContextEnvelope: item.source.replyContextEnvelope,
                 replyHandoffReceiptEnvelope:
                     item.source.replyHandoffReceiptEnvelope,
+                failureDetailEnvelope:
+                    item.runId === eventWitness.runId
+                        ? rekeyedEventFailureDetail
+                        : item.source.failureDetailEnvelope,
             },
         }));
         await expect(inTx(async (tx) => (
@@ -1767,6 +2195,7 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 id: true,
                 triggerEvidenceEnvelope: true,
                 occurrenceEvidenceEqualityTag: true,
+                errorMessage: true,
             },
         });
         expect(retainedWitnesses).toEqual([
@@ -1774,153 +2203,85 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 id: "run-current-page-conversation-witness",
                 triggerEvidenceEnvelope: conversationEvidence,
                 occurrenceEvidenceEqualityTag: conversationTag,
+                errorMessage: null,
             },
             {
                 id: "run-current-page-event-witness",
                 triggerEvidenceEnvelope: eventEvidence,
                 occurrenceEvidenceEqualityTag: E2EE_TAG,
+                errorMessage: rekeyedEventFailureDetail,
             },
         ]);
-    });
 
-    it("skips more than one legacy page of compacted schedule history while retaining Event rejoin evidence in the staged census", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-encryption-transition-compacted-history",
-                ...createSignedAccountContentBinding(),
-                encryptionMode: "e2ee",
-            },
-            select: { id: true },
-        });
-        const scheduleAutomation = await db.automation.create({
-            data: {
-                id: "automation-encryption-transition-compacted-history",
-                accountId: account.id,
-                name: "Compacted history source",
-                enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                targetType: "new_session",
-                templateCiphertext: buildEncryptedTemplate("compacted-history-template"),
-                templateVersion: 1,
-            },
-            select: { id: true },
-        });
-        const eventAutomation = await db.automation.create({
-            data: {
-                id: "automation-encryption-transition-retained-event",
-                accountId: account.id,
-                name: "Retained Event evidence source",
-                enabled: false,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.example.github",
-                triggerEventLocalId: "repository-event",
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: "automation-encryption-transition-retained-event",
-                    templateVersion: 1,
-                    triggerKind: "pluginEvent",
-                    mode: "e2ee",
-                }),
-                targetType: "new_session",
-                templateCiphertext: buildEncryptedTemplate("retained-event-template"),
-                templateVersion: 1,
-            },
-            select: { id: true },
-        });
-        const compactedAt = new Date("2026-08-12T00:00:00.000Z");
-        await db.automationRun.createMany({
-            data: Array.from({ length: 501 }, (_, index) => ({
-                id: `run-encryption-transition-compacted-${index}`,
-                accountId: account.id,
-                automationId: scheduleAutomation.id,
-                state: "succeeded" as const,
-                originKind: "scheduled" as const,
-                scheduledAt: new Date(1_724_000_000_000 + index),
-                dueAt: new Date(1_724_000_000_000 + index),
-                finishedAt: new Date(1_724_000_000_000 + index),
-                contentRemovedAt: compactedAt,
-            })),
-        });
-        const retainedRun = await db.automationRun.create({
-            data: {
-                id: "run-encryption-transition-retained-event",
-                accountId: account.id,
-                automationId: eventAutomation.id,
-                state: "succeeded",
-                originKind: "pluginEvent",
-                originOccurredAt: compactedAt,
-                occurrenceKey: "retained-event-occurrence",
-                occurrenceEvidenceEqualityTag: E2EE_TAG,
-                originSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerEvidenceEnvelope: JSON.stringify({
-                    t: "encrypted",
-                    c: "retained-event-evidence",
-                }),
-                scheduledAt: compactedAt,
-                dueAt: compactedAt,
-                finishedAt: compactedAt,
-            },
-            select: { id: true },
-        });
-
-        const inspected = await inTx(async (tx) => (
-            await inspectAutomationAccountEncryptionTransitionInTx({
-                tx,
-                accountId: account.id,
-                sourceMode: "e2ee",
-            })
-        ));
-        expect(inspected.status).toBe("complete");
-        if (inspected.status !== "complete") {
-            throw new Error("Expected compacted-history transition inventory to be complete");
-        }
-        expect(inspected.page.runCount).toBe(1);
-        expect(inspected.page.items.filter((item) => item.kind === "run"))
-            .toEqual([expect.objectContaining({ runId: retainedRun.id })]);
-        expect(inspected.page.nextCursor).toBeUndefined();
-
-        const retainedInventory = inspected.page.items.find(
-            (item) => item.kind === "run",
+        const rekeyedEventStageItem = stageItems.find(
+            (item) => item.runId === eventWitness.runId,
         );
-        if (!retainedInventory || retainedInventory.kind !== "run") {
-            throw new Error("Expected retained Event evidence in the staged inventory");
+        if (!rekeyedEventStageItem) {
+            throw new Error("Expected the rekeyed Event stage item");
         }
-        const target = {
-            triggerEvidenceEnvelope: retainedInventory.source.triggerEvidenceEnvelope,
-            occurrenceEvidenceEqualityTag:
-                retainedInventory.source.occurrenceEvidenceEqualityTag,
-            executionInputEnvelope: retainedInventory.source.executionInputEnvelope,
-            resultEnvelope: retainedInventory.source.resultEnvelope,
-            replyContextEnvelope: retainedInventory.source.replyContextEnvelope,
-            replyHandoffReceiptEnvelope:
-                retainedInventory.source.replyHandoffReceiptEnvelope,
+        const plainEventFailureDetail = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "plain",
+                correspondence: {
+                    automationId: eventAutomation.id,
+                    runId: eventWitness.runId,
+                },
+                detail: "plain current-page failure detail",
+            }),
+        );
+        const plainEventEvidence = JSON.stringify({
+            t: "plain",
+            v: buildPlainEventEvidence(),
+        });
+        const toPlainStageItem = {
+            kind: "run" as const,
+            runId: eventWitness.runId,
+            automationId: eventWitness.automationId,
+            expectedRevision: eventWitness.revision + 1,
+            cause: eventWitness.cause,
+            source: rekeyedEventStageItem.target,
+            target: {
+                triggerEvidenceEnvelope: plainEventEvidence,
+                occurrenceEvidenceEqualityTag: null,
+                executionInputEnvelope: null,
+                resultEnvelope: null,
+                replyContextEnvelope: null,
+                replyHandoffReceiptEnvelope: null,
+                failureDetailEnvelope: plainEventFailureDetail,
+            },
         };
         await expect(inTx(async (tx) => (
             await validateAutomationAccountEncryptionTransitionStageInTx({
                 tx,
                 accountId: account.id,
                 fromMode: "e2ee",
-                toMode: "e2ee",
-                items: [{
-                    kind: "run",
-                    runId: retainedInventory.runId,
-                    automationId: retainedInventory.automationId,
-                    expectedRevision: retainedInventory.revision,
-                    originKind: retainedInventory.originKind,
-                    occurrenceKey: retainedInventory.occurrenceKey,
-                    source: {
-                        ...retainedInventory.source,
-                        occurrenceEvidenceEqualityTag:
-                            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-                    },
-                    target,
-                }],
+                toMode: "plain",
+                items: [toPlainStageItem],
             })
-        ))).resolves.toEqual({ status: "migration_incomplete" });
+        ))).resolves.toEqual({ status: "validated" });
+        await expect(inTx(async (tx) => (
+            await applyAutomationAccountEncryptionTransitionStageInTx({
+                tx,
+                accountId: account.id,
+                fromMode: "e2ee",
+                toMode: "plain",
+                items: [toPlainStageItem],
+            })
+        ))).resolves.toEqual({ status: "applied" });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: eventWitness.runId },
+            select: {
+                revision: true,
+                triggerEvidenceEnvelope: true,
+                occurrenceEvidenceEqualityTag: true,
+                errorMessage: true,
+            },
+        })).resolves.toEqual({
+            revision: eventWitness.revision + 2,
+            triggerEvidenceEnvelope: plainEventEvidence,
+            occurrenceEvidenceEqualityTag: null,
+            errorMessage: plainEventFailureDetail,
+        });
     });
 
     it("rejects a migration after canonical cancellation advances the Run revision", async () => {

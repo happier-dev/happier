@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
 
 import {
-    AutomationRunExecutionRecipeV1Schema,
+    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     normalizePluginReleaseFactsV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
 } from "@happier-dev/protocol";
+import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
 import {
-    AutomationTemplateMutationConflictError,
+    AutomationTriggerMutationConflictError,
     createAutomation,
     deleteAutomation,
     setAutomationEnabled,
     updateAutomation,
+    updateAutomationTrigger,
 } from "./automationCrudService";
 import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 import { AutomationStoredContentReadError } from "./automationStoredContentRead";
@@ -25,6 +28,7 @@ const EVENT_PLUGIN_ID = "com.happier.event-crud-dbcontract";
 const EVENT_PLUGIN_VERSION = "1.0.0";
 const EVENT_LOCAL_ID = "repository-event";
 const SERVER_IDENTITY_ID = "srv_eventCrudDbcontract";
+const SETUP_ACTION_LOCAL_ID = "setup-repository-source";
 
 function resolveContractProviderFromEnv(): "postgres" | "mysql" {
     const raw = String(
@@ -38,6 +42,12 @@ function resolveContractProviderFromEnv(): "postgres" | "mysql" {
 }
 
 function eventWriterReleaseFacts() {
+    const sourceConfigSchema = {
+        type: "object",
+        additionalProperties: false,
+        properties: { repositoryId: { type: "string" } },
+        required: ["repositoryId"],
+    } as const;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: EVENT_PLUGIN_ID, version: EVENT_PLUGIN_VERSION },
         archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -54,7 +64,16 @@ function eventWriterReleaseFacts() {
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
-                actions: [],
+                actions: [{
+                    id: SETUP_ACTION_LOCAL_ID,
+                    title: "Set up repository source",
+                    scopes: ["global"],
+                    surfaces: ["plugin"],
+                    dangerLevel: "safe",
+                    execution: { target: "daemon" },
+                    inputSchema: sourceConfigSchema,
+                    resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
+                }],
                 events: [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -73,14 +92,8 @@ function eventWriterReleaseFacts() {
                         source: {
                             sourceContractVersion: 1,
                             supportedObservationTransports: ["checkpointedPull"],
-                            sourceConfigSchema: {
-                                type: "object",
-                                additionalProperties: false,
-                                properties: {
-                                    repositoryId: { type: "string" },
-                                },
-                                required: ["repositoryId"],
-                            },
+                            sourceConfigSchema,
+                            setupActionRef: { pluginId: EVENT_PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
@@ -104,7 +117,7 @@ function eventExecutionRecipe(params: Readonly<{
     templateVersion: number;
     machineId: string;
 }>) {
-    return AutomationRunExecutionRecipeV1Schema.parse({
+    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
         v: 1,
         templateVersion: params.templateVersion,
         template: {
@@ -139,6 +152,7 @@ function eventWriterTrigger(
 ) {
     return {
         kind: "pluginEvent" as const,
+        enabled: true,
         eventRef: { pluginId: EVENT_PLUGIN_ID, localId: EVENT_LOCAL_ID },
         sourceInstanceId,
         sourceContractVersion: 1,
@@ -292,16 +306,16 @@ describe("Automation Event CRUD database contract", () => {
             input: {
                 name: "Repository updates",
                 enabled: true,
-                pluginEvent: eventWriterTrigger(account, firstSource, privateDisplayLabel),
+                triggers: [eventWriterTrigger(account, firstSource, privateDisplayLabel)],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: account.machineId,
                 }),
             },
         });
-        const firstSelector = AutomationSourceSelectorIdV1Schema.parse(
-            created.triggerSourceSelectorId,
-        );
+        const createdTrigger = created.triggers[0]!;
+        const createdTriggerId = AutomationTriggerIdSchema.parse(createdTrigger.id);
+        const firstSelector = AutomationSourceSelectorIdV1Schema.parse(createdTrigger.sourceSelectorId);
         expect(await readEventCatalogRevision(account.id)).toBe(1n);
 
         const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({
@@ -309,12 +323,13 @@ describe("Automation Event CRUD database contract", () => {
             binding: {
                 v: 1,
                 automationId: created.id,
-                templateVersion: 1,
+                triggerId: createdTriggerId,
+                triggerRevision: createdTrigger.revision,
                 triggerKind: "pluginEvent",
                 eventRef: { pluginId: EVENT_PLUGIN_ID, localId: EVENT_LOCAL_ID },
                 sourceSelectorId: firstSelector,
             },
-            envelope: JSON.parse(created.triggerDefinitionEnvelope ?? "null"),
+            envelope: JSON.parse(createdTrigger.definitionEnvelope ?? "null"),
         });
         expect(opened).toMatchObject({
             kind: "available",
@@ -325,79 +340,89 @@ describe("Automation Event CRUD database contract", () => {
             },
         });
         const listItem = toAutomationDefinitionListItemApiDto(created);
-        expect(listItem).not.toHaveProperty("triggerDefinitionEnvelope");
+        expect(listItem.triggers[0]).not.toHaveProperty("definitionEnvelope");
         expect(JSON.stringify(listItem)).not.toContain(privateDisplayLabel);
 
-        const sameSource = await updateAutomation({
+        const recipeEdited = await updateAutomation({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
             expectedTemplateVersion: 1,
             input: {
-                name: "Repository updates",
-                enabled: true,
-                pluginEvent: eventWriterTrigger(account, firstSource, "Private renamed repository"),
+                name: "Renamed repository updates",
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 2,
                     machineId: account.machineId,
                 }),
             },
         });
-        expect(sameSource).toEqual(expect.objectContaining({
-            templateVersion: 2,
-            triggerSourceSelectorId: firstSelector,
+        expect(recipeEdited).toEqual(expect.objectContaining({ templateVersion: 2 }));
+        expect(recipeEdited?.triggers[0]).toEqual(expect.objectContaining({
+            id: createdTrigger.id,
+            revision: createdTrigger.revision,
+            sourceSelectorId: firstSelector,
+        }));
+        expect(await readEventCatalogRevision(account.id)).toBe(1n);
+
+        const sameSource = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: createdTrigger.id,
+            expectedRevision: createdTrigger.revision,
+            trigger: eventWriterTrigger(account, firstSource, "Private renamed repository"),
+        });
+        const sameSourceTrigger = sameSource?.triggers[0]!;
+        expect(sameSourceTrigger).toEqual(expect.objectContaining({
+            id: createdTrigger.id,
+            revision: createdTrigger.revision + 1,
+            sourceSelectorId: firstSelector,
         }));
         expect(await readEventCatalogRevision(account.id)).toBe(2n);
 
         const secondSource = `repository-second-${randomUUID()}`;
-        const changedSource = await updateAutomation({
+        const changedSource = await updateAutomationTrigger({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
-            expectedTemplateVersion: 2,
-            input: {
-                name: "Repository updates",
-                enabled: true,
-                pluginEvent: eventWriterTrigger(account, secondSource),
-                executionRecipe: eventExecutionRecipe({
-                    templateVersion: 3,
-                    machineId: account.machineId,
-                }),
-            },
+            triggerId: createdTrigger.id,
+            expectedRevision: sameSourceTrigger.revision,
+            trigger: eventWriterTrigger(account, secondSource),
         });
-        expect(changedSource).toEqual(expect.objectContaining({ templateVersion: 3 }));
-        expect(changedSource?.triggerSourceSelectorId).not.toBe(firstSelector);
+        const changedTrigger = changedSource?.triggers[0]!;
+        expect(changedTrigger).toEqual(expect.objectContaining({
+            id: createdTrigger.id,
+            revision: createdTrigger.revision + 2,
+            eventPluginId: EVENT_PLUGIN_ID,
+            eventLocalId: EVENT_LOCAL_ID,
+        }));
+        expect(changedTrigger.sourceSelectorId).not.toBe(firstSelector);
         expect(AutomationSourceSelectorIdV1Schema.safeParse(
-            changedSource?.triggerSourceSelectorId,
+            changedTrigger.sourceSelectorId,
         ).success).toBe(true);
         expect(await readEventCatalogRevision(account.id)).toBe(3n);
 
-        await expect(updateAutomation({
+        await expect(updateAutomationTrigger({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
-            expectedTemplateVersion: 2,
-            input: {
-                name: "Stale update",
-                enabled: true,
-                pluginEvent: eventWriterTrigger(account, `repository-stale-${randomUUID()}`),
-                executionRecipe: eventExecutionRecipe({
-                    templateVersion: 3,
-                    machineId: account.machineId,
-                }),
-            },
-        })).rejects.toBeInstanceOf(AutomationTemplateMutationConflictError);
+            triggerId: createdTrigger.id,
+            expectedRevision: sameSourceTrigger.revision,
+            trigger: eventWriterTrigger(account, `repository-stale-${randomUUID()}`),
+        })).rejects.toBeInstanceOf(AutomationTriggerMutationConflictError);
         expect(await db.automation.findUniqueOrThrow({
             where: { id: created.id },
             select: {
                 name: true,
                 templateVersion: true,
-                triggerSourceSelectorId: true,
+                triggers: {
+                    where: { deletedAt: null },
+                    select: { sourceSelectorId: true, revision: true },
+                },
             },
         })).toEqual({
-            name: "Repository updates",
-            templateVersion: 3,
-            triggerSourceSelectorId: changedSource?.triggerSourceSelectorId,
+            name: "Renamed repository updates",
+            templateVersion: 2,
+            triggers: [{
+                sourceSelectorId: changedTrigger.sourceSelectorId,
+                revision: createdTrigger.revision + 2,
+            }],
         });
         expect(await readEventCatalogRevision(account.id)).toBe(3n);
 
@@ -405,7 +430,6 @@ describe("Automation Event CRUD database contract", () => {
             accountId: account.id,
             automationId: created.id,
             enabled: false,
-            expectedTriggerKind: "pluginEvent",
         });
         expect(paused).toEqual(expect.objectContaining({ enabled: false }));
         expect(await readEventCatalogRevision(account.id)).toBe(4n);
@@ -413,14 +437,12 @@ describe("Automation Event CRUD database contract", () => {
             accountId: account.id,
             automationId: created.id,
             enabled: true,
-            expectedTriggerKind: "pluginEvent",
         });
         expect(resumed).toEqual(expect.objectContaining({ enabled: true }));
         expect(await readEventCatalogRevision(account.id)).toBe(5n);
         await expect(deleteAutomation({
             accountId: account.id,
             automationId: created.id,
-            expectedTriggerKind: "pluginEvent",
         })).resolves.toBe(true);
         expect(await readEventCatalogRevision(account.id)).toBe(6n);
         expect(await db.automation.findUniqueOrThrow({
@@ -433,7 +455,7 @@ describe("Automation Event CRUD database contract", () => {
         expect(await db.account.findUniqueOrThrow({
             where: { id: account.id },
             select: { seq: true },
-        })).toEqual({ seq: account.seq + 6 });
+        })).toEqual({ seq: account.seq + 7 });
 
         const e2ee = await seedEventWriterAccount("e2ee");
         await expect(createAutomation({
@@ -441,7 +463,7 @@ describe("Automation Event CRUD database contract", () => {
             input: {
                 name: "E2EE Event writer is unavailable",
                 enabled: true,
-                pluginEvent: eventWriterTrigger(e2ee, `repository-e2ee-${randomUUID()}`),
+                triggers: [eventWriterTrigger(e2ee, `repository-e2ee-${randomUUID()}`)],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: e2ee.machineId,
@@ -452,26 +474,19 @@ describe("Automation Event CRUD database contract", () => {
         expect(await readEventCatalogRevision(e2ee.id)).toBeNull();
     });
 
-    it("allows competing Event-source resumes beyond the former aggregate definition ceiling", async () => {
+    it("keeps multiple Event trigger rows independently identifiable and resumable", async () => {
         const account = await seedEventWriterAccount();
-        const left = await createAutomation({
+        const leftSource = `capacity-left-${randomUUID()}`;
+        const rightSource = `capacity-right-${randomUUID()}`;
+        const created = await createAutomation({
             accountId: account.id,
             input: {
-                name: "Capacity left",
-                enabled: false,
-                pluginEvent: eventWriterTrigger(account, `capacity-left-${randomUUID()}`),
-                executionRecipe: eventExecutionRecipe({
-                    templateVersion: 1,
-                    machineId: account.machineId,
-                }),
-            },
-        });
-        const right = await createAutomation({
-            accountId: account.id,
-            input: {
-                name: "Capacity right",
-                enabled: false,
-                pluginEvent: eventWriterTrigger(account, `capacity-right-${randomUUID()}`),
+                name: "Independent Event sources",
+                enabled: true,
+                triggers: [
+                    { ...eventWriterTrigger(account, leftSource), enabled: false },
+                    { ...eventWriterTrigger(account, rightSource), enabled: false },
+                ],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: account.machineId,
@@ -484,55 +499,50 @@ describe("Automation Event CRUD database contract", () => {
             select: { seq: true },
         })).seq;
 
-        await db.automation.createMany({
-            data: Array.from(
-                { length: 10_000 },
-                (_, index) => ({
-                    id: `event-crud-capacity-${index}-${randomUUID()}`,
-                    accountId: account.id,
-                    name: `Event capacity ${index}`,
-                    enabled: true,
-                    triggerKind: "pluginEvent" as const,
-                    triggerEventPluginId: EVENT_PLUGIN_ID,
-                    triggerEventLocalId: EVENT_LOCAL_ID,
-                    triggerSourceSelectorId: `event-crud-capacity-selector-${index}`,
-                    triggerSourceContractVersion: 1,
-                    triggerObservationTransport: "checkpointedPull" as const,
-                    triggerDefinitionEnvelope: "retained-capacity-fixture",
-                    targetType: "new_session" as const,
-                    templateCiphertext: "retained-capacity-fixture",
-                }),
-            ),
-        });
-
         const outcomes = await Promise.allSettled([
-            setAutomationEnabled({
+            updateAutomationTrigger({
                 accountId: account.id,
-                automationId: left.id,
+                automationId: created.id,
+                triggerId: created.triggers[0]!.id,
+                expectedRevision: created.triggers[0]!.revision,
                 enabled: true,
-                expectedTriggerKind: "pluginEvent",
             }),
-            setAutomationEnabled({
+            updateAutomationTrigger({
                 accountId: account.id,
-                automationId: right.id,
+                automationId: created.id,
+                triggerId: created.triggers[1]!.id,
+                expectedRevision: created.triggers[1]!.revision,
                 enabled: true,
-                expectedTriggerKind: "pluginEvent",
             }),
         ]);
         const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
         expect(fulfilled).toHaveLength(2);
-        expect(await db.automation.count({
+        expect(await db.automationTrigger.findMany({
             where: {
-                accountId: account.id,
-                triggerKind: "pluginEvent",
+                automationId: created.id,
+                kind: "pluginEvent",
                 enabled: true,
                 deletedAt: null,
             },
-        })).toBe(10_002);
+            select: {
+                id: true,
+                revision: true,
+                eventPluginId: true,
+                eventLocalId: true,
+                sourceSelectorId: true,
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        })).toEqual(created.triggers.map((trigger) => ({
+            id: trigger.id,
+            revision: trigger.revision + 1,
+            eventPluginId: EVENT_PLUGIN_ID,
+            eventLocalId: EVENT_LOCAL_ID,
+            sourceSelectorId: trigger.sourceSelectorId,
+        })));
         expect(await readEventCatalogRevision(account.id)).toBe(2n);
         expect(await db.account.findUniqueOrThrow({
             where: { id: account.id },
             select: { seq: true },
         })).toEqual({ seq: resumeSeq + 2 });
-    }, 120_000);
+    });
 });

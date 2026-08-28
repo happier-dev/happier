@@ -39,7 +39,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     }, async (request) => {
         const rows = await listAutomations({
             accountId: request.userId,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         return rows.map(toAutomationV2ApiDto);
@@ -103,7 +102,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
         const row = await getAutomation({
             accountId: request.userId,
             automationId: request.params.id,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         if (!row) {
@@ -144,7 +142,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
             const existing = await getAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,
-                expectedTriggerKind: "schedule",
                 requireV2DefinitionRepresentability: true,
             });
             const legacyExisting = existing && isAutomationDefinitionRepresentableInV2(existing)
@@ -163,7 +160,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
                 accountId: request.userId,
                 automationId: request.params.id,
                 input,
-                expectedTriggerKind: "schedule",
                 requireV2DefinitionRepresentability: true,
             });
             if (!updated) {
@@ -189,7 +185,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
         const deleted = await deleteAutomation({
             accountId: request.userId,
             automationId: request.params.id,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         if (!deleted) {
@@ -208,7 +203,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
             accountId: request.userId,
             automationId: request.params.id,
             enabled: false,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         if (!updated) {
@@ -227,7 +221,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
             accountId: request.userId,
             automationId: request.params.id,
             enabled: true,
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         if (!updated) {
@@ -248,7 +241,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
             const run = await runAutomationNow({
                 accountId: request.userId,
                 automationId: request.params.id,
-                expectedTriggerKind: "schedule",
                 requireV2DefinitionRepresentability: true,
                 ...(headers["idempotency-key"]
                     ? { idempotencyKey: headers["idempotency-key"] }
@@ -284,7 +276,6 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
             automationId: request.params.id,
             limit: request.query?.limit ?? 20,
             cursor: request.query?.cursor,
-            expectedTriggerKind: "schedule",
             requireV2RunRepresentability: true,
         });
         if (!result) {

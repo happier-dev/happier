@@ -1,6 +1,8 @@
 import {
+    arePluginMachineMaterializationRefsEqual,
     type AutomationEventFilterV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+    type PluginDiagnosticRemediationV1,
 } from '@happier-dev/protocol';
 import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 import type { MutableRefObject } from 'react';
@@ -37,6 +39,17 @@ import {
     type PluginEventAutomationWebhookEndpoint,
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
+import {
+    presentPluginEventAutomationSetupSurface,
+    type PluginEventAutomationSetupSurfaceSettlement,
+} from './presentPluginEventAutomationSetupSurface';
+
+export type PluginEventAutomationSetupFailure = Readonly<{
+    code: string;
+    reason: string;
+    retryable?: boolean;
+    remediation?: PluginDiagnosticRemediationV1;
+}>;
 
 type SetupOutcome =
     | Readonly<{
@@ -49,20 +62,92 @@ type SetupOutcome =
          */
         webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
     }>
-    | Readonly<{ kind: 'unavailable' }>
+    | (Readonly<{ kind: 'unavailable' }> & Partial<PluginEventAutomationSetupFailure>)
     | Readonly<{ kind: 'stale'; reason: 'event_retired' }>;
 
 export type PluginEventAutomationWebhookEndpointEnsurer =
     typeof ensurePluginEventAutomationWebhookEndpoint;
 
-function sameEligibleEvent(
+function isSetupSurfaceObjectInput(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function arePluginEventAutomationEligibleSetupPresentationsEqual(
     left: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     right: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 ): boolean {
     return arePluginContributionIdentitiesEqual(left.event.identity, right.event.identity)
         && left.event.immutableGenerationId === right.event.immutableGenerationId
         && arePluginContributionIdentitiesEqual(left.setupAction.identity, right.setupAction.identity)
-        && left.setupAction.immutableGenerationId === right.setupAction.immutableGenerationId;
+        && left.setupAction.immutableGenerationId === right.setupAction.immutableGenerationId
+        && sameSetupSurface(left.setupSurface, right.setupSurface);
+}
+
+function sameSetupSurface(
+    left: DaemonContributionRegistryProjectionAutomationEligibleEventV1['setupSurface'],
+    right: DaemonContributionRegistryProjectionAutomationEligibleEventV1['setupSurface'],
+): boolean {
+    if (left === undefined || right === undefined) return left === right;
+    return arePluginContributionIdentitiesEqual(left.contribution, right.contribution)
+        && left.immutableGenerationId === right.immutableGenerationId
+        && left.projectionGeneration === right.projectionGeneration
+        && arePluginContributionIdentitiesEqual(
+            left.selectedRenderer.identity,
+            right.selectedRenderer.identity,
+        )
+        && left.executionOrigin.serverIdentityId === right.executionOrigin.serverIdentityId
+        && arePluginMachineMaterializationRefsEqual(
+            left.executionOrigin.materializationRef,
+            right.executionOrigin.materializationRef,
+        );
+}
+
+export function getPluginEventAutomationEligibleSetupPresentationKey(
+    event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+): string {
+    const surface = event.setupSurface;
+    return JSON.stringify([
+        event.event.identity.pluginId,
+        event.event.identity.localId,
+        event.event.immutableGenerationId,
+        event.setupAction.identity.pluginId,
+        event.setupAction.identity.localId,
+        event.setupAction.immutableGenerationId,
+        surface ? [
+            surface.contribution.pluginId,
+            surface.contribution.localId,
+            surface.immutableGenerationId,
+            surface.projectionGeneration,
+            surface.selectedRenderer.identity.pluginId,
+            surface.selectedRenderer.identity.localId,
+            surface.executionOrigin.serverIdentityId,
+            surface.executionOrigin.materializationRef.machineId,
+            surface.executionOrigin.materializationRef.materializationId,
+            surface.executionOrigin.materializationRef.pluginId,
+        ] : null,
+    ]);
+}
+
+function hasExactCurrentSetupPresentation(
+    event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+    origin: FreshPluginMachineExecutionOriginV1,
+): boolean {
+    if (
+        event.event.identity.pluginId !== event.setupAction.identity.pluginId
+        || event.event.immutableGenerationId !== event.setupAction.immutableGenerationId
+    ) return false;
+    const surface = event.setupSurface;
+    return surface === undefined || (
+        arePluginContributionIdentitiesEqual(surface.contribution, event.event.identity)
+        && surface.immutableGenerationId === event.event.immutableGenerationId
+        && surface.selectedRenderer.identity.pluginId === event.event.identity.pluginId
+        && surface.executionOrigin.materializationRef.pluginId === event.event.identity.pluginId
+        && surface.executionOrigin.serverIdentityId === origin.origin.serverIdentityId
+        && arePluginMachineMaterializationRefsEqual(
+            surface.executionOrigin.materializationRef,
+            origin.origin.materializationRef,
+        )
+    );
 }
 
 type CurrentSetupSnapshot = Readonly<{
@@ -90,7 +175,10 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
     const event = inputs.automationEligibleEvents?.find((candidate) => (
         arePluginContributionIdentitiesEqual(candidate.event.identity, params.desiredEvent.event.identity)
     )) ?? null;
-    if (!event || !sameEligibleEvent(event, params.desiredEvent)) {
+    if (!event || !arePluginEventAutomationEligibleSetupPresentationsEqual(event, params.desiredEvent)) {
+        return { kind: 'stale', reason: 'event_retired' };
+    }
+    if (!hasExactCurrentSetupPresentation(event, origin)) {
         return { kind: 'stale', reason: 'event_retired' };
     }
     const plugin = inputs.pluginProjectionById[event.setupAction.identity.pluginId] ?? null;
@@ -166,6 +254,14 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     }>) => Promise<DaemonMergedProjectionInputs | null>;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     present?: typeof presentActionInputForm;
+    presentSetupSurface?: (params: Readonly<{
+        eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+        projection: DaemonMergedProjectionInputs;
+        machineId: string;
+        serverId: string | null;
+        accountLifetime: ActiveServerAccountScopeLifetime;
+        signal?: AbortSignal;
+    }>) => Promise<PluginEventAutomationSetupSurfaceSettlement>;
     dispatch?: PluginContributedActionDispatch;
 }>): Promise<SetupOutcome> {
     const operationScope = new AbortController();
@@ -226,6 +322,34 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const settled = selection.kind === 'form'
             ? await (async () => {
                 try {
+                    if (initial.event.setupSurface?.selectedRenderer.availability.state === 'available') {
+                        const surfaceSettlement = await (
+                            params.presentSetupSurface ?? presentPluginEventAutomationSetupSurface
+                        )({
+                            eligibleEvent: initial.event,
+                            projection: initial.inputs,
+                            machineId: initial.origin.machineTarget.target.machineId,
+                            serverId: initial.origin.machineTarget.serverId,
+                            accountLifetime: params.accountLifetime,
+                            ...(operationScope.signal ? { signal: operationScope.signal } : {}),
+                        });
+                        if (surfaceSettlement.kind === 'cancelled') {
+                            selection.form.cancel();
+                            return await selection.result;
+                        }
+                        const candidate = surfaceSettlement.input;
+                        if (!isSetupSurfaceObjectInput(candidate)) {
+                            selection.form.cancel();
+                            return { kind: 'unavailable', reason: 'invalid_input' } as const;
+                        }
+                        selection.form.replaceInput(candidate);
+                        const submitted = await selection.form.submit();
+                        if (submitted.kind !== 'settled' || !submitted.outcome.ok) {
+                            selection.form.cancel();
+                            return { kind: 'unavailable', reason: 'invalid_input' } as const;
+                        }
+                        return await selection.result;
+                    }
                     (params.present ?? presentActionInputForm)({
                         form: selection.form,
                         signal: operationScope.signal,
@@ -245,7 +369,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         if ('kind' in current) return current;
         actionSnapshotRef.current = current.actionSnapshot;
         if (
-            !sameEligibleEvent(current.event, initial.event)
+            !arePluginEventAutomationEligibleSetupPresentationsEqual(current.event, initial.event)
             || !areFreshPluginMachineExecutionOriginsCurrent(current.origin, initial.origin)
         ) {
             return { kind: 'stale', reason: 'event_retired' };
@@ -266,7 +390,16 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             signal: operationScope.signal,
             isCurrent: current.actionSnapshot.host.isCurrent,
         });
-        if (!outcome.ok || operationScope.signal.aborted) return { kind: 'unavailable' };
+        if (operationScope.signal.aborted) return { kind: 'unavailable' };
+        if (!outcome.ok) {
+            return {
+                kind: 'unavailable',
+                code: outcome.reason,
+                reason: outcome.reason,
+                ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
+                ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
+            };
+        }
         const source = validatePluginEventAutomationSetupResult({
             eligibleEvent: current.event,
             result: outcome.result,

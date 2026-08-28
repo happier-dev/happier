@@ -3,10 +3,12 @@ import {
     AutomationReplyHandoffSettlementV1Schema,
     AutomationReplyHandoffTargetV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
+    sameAutomationAccountContentIdentityV1,
     sameAutomationAccountCurrentnessWitnessV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
     type AutomationAccountCurrentnessWitnessV1,
     type AutomationReplyHandoffSettlementV1,
+    type AutomationRunCause,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 
@@ -24,6 +26,7 @@ import {
     fetchAutomationAccountCurrentnessWitnessTx,
 } from "./automationAccountCurrentness";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
+import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import type { AutomationRunItem } from "./automationTypes";
 
 export const DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS = 30_000;
@@ -40,6 +43,7 @@ export type AutomationReplyHandoffClaim = Readonly<{
     runId: string;
     handoffId: string;
     occurrenceKey: string;
+    cause: AutomationRunCause;
     attempt: number;
     /** The exact Account material authority under which these bytes were claimed. */
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
@@ -62,7 +66,19 @@ const automationReplyHandoffCandidateSelect = {
     automationId: true,
     occurrenceKey: true,
     state: true,
-    originKind: true,
+    triggerId: true,
+    causeKind: true,
+    causeTriggerKind: true,
+    causeTriggerRevision: true,
+    causeOccurredAt: true,
+    causeEventPluginId: true,
+    causeEventLocalId: true,
+    causeScheduledFor: true,
+    causeSessionLifecycleEvent: true,
+    causeSourceSessionId: true,
+    causeSourceTurnId: true,
+    causeSourceSelectorId: true,
+    createdAt: true,
     resultEnvelope: true,
     replyContextEnvelope: true,
     replyHandoffActionPluginId: true,
@@ -138,7 +154,7 @@ function handoffCandidateWhere(candidate: AutomationReplyHandoffCandidate): Pris
         automationId: candidate.automationId,
         occurrenceKey: candidate.occurrenceKey,
         state: "succeeded",
-        originKind: "conversation",
+        causeKind: "conversation",
         resultEnvelope: candidate.resultEnvelope,
         replyContextEnvelope: candidate.replyContextEnvelope,
         replyHandoffActionPluginId: candidate.replyHandoffActionPluginId,
@@ -183,6 +199,29 @@ function isClaimCurrent(
         && hasClaimedFrozenIdentity(candidate, claim);
 }
 
+/**
+ * A successful custody Action may advance the Account-wide change cursor by
+ * writing the custody row it was asked to create. Settlement may consume that
+ * post-effect content identity when the Run/target bytes are unchanged and the
+ * Account still uses the same content mode/key. Account.seq may advance again
+ * before settlement without invalidating the already-created custody. This is not redispatch
+ * authority: claim and pre-effect opening continue to require the exact
+ * witness, while encryption movement still requeues transformed bytes.
+ */
+function isClaimPostEffectSuccessorCurrent(input: Readonly<{
+    candidate: AutomationReplyHandoffCandidate;
+    claim: AutomationReplyHandoffClaim;
+    suppliedCurrentness: AutomationAccountCurrentnessWitnessV1 | undefined;
+}>): boolean {
+    if (!input.suppliedCurrentness || !hasClaimedFrozenIdentity(input.candidate, input.claim)) {
+        return false;
+    }
+    const currentness = deriveAutomationAccountCurrentnessWitness(input.candidate.account);
+    return currentness !== null
+        && sameAutomationAccountContentIdentityV1(input.claim.accountCurrentness, currentness)
+        && sameAutomationAccountContentIdentityV1(input.suppliedCurrentness, currentness);
+}
+
 function isDispatchableCandidate(candidate: AutomationReplyHandoffCandidate): boolean {
     const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
     if (!currentness || typeof candidate.occurrenceKey !== "string") return false;
@@ -217,7 +256,7 @@ function isDispatchableCandidate(candidate: AutomationReplyHandoffCandidate): bo
 function dueReplyHandoffWhere(now: Date): Prisma.AutomationRunWhereInput {
     return {
         state: "succeeded",
-        originKind: "conversation",
+        causeKind: "conversation",
         OR: [
             { replyHandoffState: "ready", replyHandoffDueAt: { lte: now } },
             { replyHandoffState: "handingOff", replyHandoffDueAt: { lt: now } },
@@ -228,7 +267,7 @@ function dueReplyHandoffWhere(now: Date): Prisma.AutomationRunWhereInput {
 function openReplyHandoffWhere(): Prisma.AutomationRunWhereInput {
     return {
         state: "succeeded",
-        originKind: "conversation",
+        causeKind: "conversation",
         replyHandoffState: { in: ["ready", "handingOff"] },
         replyHandoffDueAt: { not: null },
     };
@@ -441,6 +480,7 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
             runId: candidate.id,
             handoffId: candidate.replyHandoffId,
             occurrenceKey: candidate.occurrenceKey,
+            cause: decodeAutomationRunCause(candidate),
             attempt: candidate.replyHandoffAttempt + 1,
             accountCurrentness,
             runRevision: candidate.revision + 1,
@@ -470,6 +510,59 @@ export async function findNextAutomationReplyHandoffDueAt(_params: Readonly<{
     });
 }
 
+/**
+ * Present-user recovery for durable blocked custody. The Run remains the sole
+ * owner: recovery changes only `blocked -> ready`, retaining the exact frozen
+ * result, target, context, and handoff id so the ordinary claim/rejoin path
+ * performs the next attempt. A response-loss replay rejoins an already-ready
+ * or currently leased retry instead of creating another obligation.
+ */
+export async function retryBlockedAutomationReplyHandoff(params: Readonly<{
+    accountId: string;
+    runId: string;
+    now?: Date;
+}>): Promise<AutomationRunItem | null> {
+    const now = params.now ?? new Date();
+    if (!isValidDate(now)) return null;
+
+    return await inTx(async (tx) => {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
+        if (accountFence.status !== "ready") return null;
+        const current = await tx.automationRun.findFirst({
+            where: {
+                id: params.runId,
+                accountId: params.accountId,
+                state: "succeeded",
+                causeKind: "conversation",
+                replyHandoffState: { in: ["blocked", "ready", "handingOff"] },
+            },
+            select: automationReplyHandoffCandidateSelect,
+        });
+        if (!current) return null;
+        const candidate = current as AutomationReplyHandoffCandidate;
+        if (candidate.replyHandoffState !== "blocked") {
+            return await fetchAutomationRunItemTx(tx, candidate.id);
+        }
+
+        const retried = await tx.automationRun.updateMany({
+            where: handoffCandidateWhere(candidate),
+            data: {
+                replyHandoffState: "ready",
+                replyHandoffDueAt: now,
+                replyHandoffReceiptEnvelope: null,
+                revision: { increment: 1 },
+                updatedAt: now,
+            },
+        });
+        if (retried.count !== 1) return null;
+
+        const run = await fetchAutomationRunItemTx(tx, candidate.id);
+        if (!run) return null;
+        await publishAutomationRunMutationTx(tx, run);
+        return run;
+    });
+}
+
 function isTerminalSettlement(
     outcome: AutomationReplyHandoffSettlementV1,
 ): outcome is Exclude<
@@ -491,7 +584,7 @@ async function returnStaleClaimToReadyTx(params: Readonly<{
             accountId: params.candidate.accountId,
             automationId: params.candidate.automationId,
             state: "succeeded",
-            originKind: "conversation",
+            causeKind: "conversation",
             replyHandoffId: params.claim.handoffId,
             replyHandoffAttempt: params.claim.attempt,
             replyHandoffState: "handingOff",
@@ -604,7 +697,18 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
         ) {
             return { applied: false };
         }
-        if (!isClaimCurrent(candidate, params.claim)) {
+        const suppliedWitness = suppliedCurrentness?.success
+            ? suppliedCurrentness.data
+            : undefined;
+        const postEffectSuccessorCurrent = isClaimPostEffectSuccessorCurrent({
+            candidate,
+            claim: params.claim,
+            suppliedCurrentness: suppliedWitness,
+        });
+        if (
+            !isClaimCurrent(candidate, params.claim)
+            && !postEffectSuccessorCurrent
+        ) {
             return await returnStaleClaimToReadyTx({
                 tx,
                 candidate,
@@ -625,7 +729,14 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
             && (
                 !suppliedCurrentness.success
                 || !currentness
-                || !sameAutomationAccountCurrentnessWitnessV1(suppliedCurrentness.data, currentness)
+                || (
+                    !sameAutomationAccountCurrentnessWitnessV1(suppliedCurrentness.data, currentness)
+                    // A custody receipt was produced before a later unrelated
+                    // Account write. Its sequence may be older, but the same
+                    // mode/key plus unchanged frozen handoff still proves the
+                    // exact content authority under which the effect settled.
+                    && !(receipt?.success && postEffectSuccessorCurrent)
+                )
             )
         ) {
             return { applied: false };
@@ -666,7 +777,7 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
                 accountId: candidate.accountId,
                 automationId: candidate.automationId,
                 state: "succeeded",
-                originKind: "conversation",
+                causeKind: "conversation",
                 replyHandoffId: params.claim.handoffId,
                 replyHandoffAttempt: params.claim.attempt,
                 replyHandoffState: "handingOff",

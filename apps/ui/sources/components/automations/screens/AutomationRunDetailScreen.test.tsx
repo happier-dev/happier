@@ -10,6 +10,7 @@ const syncSpies = vi.hoisted(() => ({
     fetchAutomationRuns: vi.fn(async () => {}),
     getAutomationRunDetailInspection: vi.fn<(automationId: string, runId: string) => Promise<unknown>>(),
     cancelAutomationRun: vi.fn(async () => null),
+    retryAutomationReplyHandoff: vi.fn(async () => null),
 }));
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
@@ -66,15 +67,23 @@ installAutomationScreensCommonModuleMocks({
             if (key === 'automations.detail.runMeta.occurred') return `Occurred: ${String(params?.time ?? '')}`;
             if (key === 'automations.detail.runMeta.invoked') return `Invoked: ${String(params?.time ?? '')}`;
             if (key === 'automations.detail.runMeta.admitted') return `Admitted: ${String(params?.time ?? '')}`;
-            if (key === 'automations.detail.runMeta.originTitle') return 'Origin';
-            if (key === 'automations.detail.runMeta.origin.pluginEvent') return 'Event';
-            if (key === 'automations.detail.runMeta.origin.scheduled') return 'Scheduled';
-            if (key === 'automations.detail.runMeta.origin.manual') return 'Manual';
-            if (key === 'automations.detail.runMeta.origin.conversation') return 'Conversation';
+            if (key === 'automations.detail.runMeta.causeTitle') return 'Cause';
+            if (key === 'automations.detail.runMeta.cause.pluginEvent') return 'Event';
+            if (key === 'automations.detail.runMeta.cause.schedule') return 'Scheduled';
+            if (key === 'automations.detail.runMeta.cause.manual') return 'Manual';
+            if (key === 'automations.detail.runMeta.cause.conversation') return 'Conversation';
+            if (key === 'automations.detail.runMeta.cause.sessionLifecycle') return 'Session turn completed';
+            if (key === 'automations.list.event') return `Event: ${String(params?.eventId ?? '')}`;
+            if (key === 'automations.detail.runMeta.triggerIdentityTitle') return 'Trigger identity';
+            if (key === 'automations.detail.runMeta.triggerIdentity') return `${String(params?.id ?? '')} · revision ${String(params?.revision ?? '')}`;
+            if (key === 'automations.detail.runMeta.triggerRetired') return 'Trigger retired';
+            if (key === 'automations.detail.runMeta.triggerRetiredSubtitle') return 'The immutable cause remains available.';
+            if (key === 'automations.detail.trigger.sourceSession') return 'Source session';
+            if (key === 'automations.detail.trigger.sourceTurn') return 'Exact source turn';
             if (key === 'automations.detail.runMeta.occurrenceTitle') return 'Occurrence';
             if (key === 'automations.detail.runMeta.sourceTitle') return 'Observation source';
+            if (key === 'automations.detail.runMeta.eventReferenceTitle') return 'Event reference';
             if (key === 'automations.detail.runMeta.updated') return `Updated: ${String(params?.time ?? '')}`;
-            if (key === 'automations.detail.runMeta.contentRemoved') return 'Run content removed';
             if (key === 'automations.detail.runMeta.error') return `Error: ${String(params?.message ?? '')}`;
             if (key === 'automations.detail.runMeta.attemptTitle') return 'Attempt';
             if (key === 'automations.detail.runMeta.attempt') return `Attempt ${String(params?.attempt ?? '')}`;
@@ -208,8 +217,22 @@ describe('AutomationRunDetailScreen', () => {
         runsState.list = [{
             id: 'run-1',
             automationId: 'a1',
+            revision: 1,
+            triggerId: 'trigger-1',
+            triggerRetired: false,
             state: 'failed',
-            origin: { kind: 'pluginEvent', occurrenceKey: 'occurrence-1', sourceSelectorId: 'selector-1', occurredAt: 10 },
+            cause: {
+                kind: 'trigger',
+                triggerId: 'trigger-1',
+                triggerRevision: 3,
+                triggerKind: 'pluginEvent',
+                occurrenceKey: 'occurrence-1',
+                occurredAt: 10,
+                evidence: {
+                    eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+                    sourceSelectorId: 'selector-1',
+                },
+            },
             dueAt: 10,
             claimedAt: null,
             startedAt: null,
@@ -224,7 +247,6 @@ describe('AutomationRunDetailScreen', () => {
             replyHandoffState: 'none',
             replyHandoffAttempt: 0,
             replyHandoffDueAt: null,
-            contentRemovedAt: null,
             createdAt: 10,
             updatedAt: 11,
         }];
@@ -243,6 +265,13 @@ describe('AutomationRunDetailScreen', () => {
             ...runsState.list[0],
             state: 'cancelled',
             finishedAt: 12,
+            updatedAt: 12,
+        });
+        syncSpies.retryAutomationReplyHandoff.mockReset();
+        syncSpies.retryAutomationReplyHandoff.mockResolvedValue({
+            ...runsState.list[0],
+            replyHandoffState: 'ready',
+            replyHandoffDueAt: 12,
             updatedAt: 12,
         });
     });
@@ -294,33 +323,50 @@ describe('AutomationRunDetailScreen', () => {
         expect(screen.getTextContent()).toContain('occurrence-1');
         expect(screen.getTextContent()).toContain('Observation source');
         expect(screen.getTextContent()).toContain('selector-1');
-        const origin = screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'Origin');
-        expect(origin?.props.detail).toBe('Event');
+        expect(screen.getTextContent()).toContain('happier.scm.github/pull-request-opened-v1');
+        const cause = screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'Cause');
+        expect(cause?.props.detail).toBe('Event: pull-request-opened-v1');
+        expect(screen.getTextContent()).toContain('trigger-1 · revision 3');
         expect(syncSpies.fetchAutomationRuns).not.toHaveBeenCalled();
         await vi.waitFor(() => {
             expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
         });
     });
 
-    it('keeps compacted Run content bounded and never requests its private detail', async () => {
+    it('renders retired exact-turn history entirely from the immutable cause projection', async () => {
         runsState.list = [{
             ...runsState.list[0],
-            contentRemovedAt: 1_700_000_000_000,
-            updatedAt: 12,
+            triggerId: 'turn-trigger-retired',
+            triggerRetired: true,
+            cause: {
+                kind: 'trigger',
+                triggerId: 'turn-trigger-retired',
+                triggerRevision: 7,
+                triggerKind: 'sessionLifecycle',
+                occurrenceKey: 'turn:session-source:turn-exact',
+                occurredAt: 10,
+                evidence: {
+                    event: 'parentTurnCompleted',
+                    sourceSessionId: 'session-source',
+                    sourceTurnId: 'turn-exact',
+                },
+            },
         }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+        }));
         const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
 
         const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await act(async () => {
-            await Promise.resolve();
-        });
 
-        const removed = screen.findByTestId('automation-run-detail-content-removed');
-        expect(removed).toBeTruthy();
-        expect(removed?.props.title).toBe('Run content removed');
-        expect(typeof removed?.props.detail).toBe('string');
-        expect(removed?.props.detail.length).toBeGreaterThan(0);
-        expect(syncSpies.getAutomationRunDetailInspection).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('Session turn completed');
+        expect(screen.getTextContent()).toContain('turn-trigger-retired · revision 7');
+        expect(screen.getTextContent()).toContain('Trigger retired');
+        expect(screen.getTextContent()).toContain('session-source');
+        expect(screen.getTextContent()).toContain('turn-exact');
     });
 
     it('keeps the bounded Run cache visible when its private detail read fails', async () => {
@@ -827,6 +873,31 @@ describe('AutomationRunDetailScreen', () => {
         });
 
         expect(syncSpies.cancelAutomationRun).toHaveBeenCalledWith('run-1');
+    });
+
+    it('offers blocked reply handoff recovery through the incumbent Run owner', async () => {
+        runsState.list = [{
+            ...runsState.list[0],
+            state: 'succeeded',
+            replyHandoffState: 'blocked',
+            replyHandoffAttempt: 2,
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        const retry = screen.findByProps({ testID: 'automation-run-retry-reply-handoff' });
+
+        await act(async () => {
+            await retry.props.onPress();
+        });
+
+        expect(syncSpies.retryAutomationReplyHandoff).toHaveBeenCalledWith('run-1');
     });
 
     it('does not let a pre-cancel direct read reclaim the route after cancellation commits', async () => {

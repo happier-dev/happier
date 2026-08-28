@@ -122,7 +122,8 @@ function toWorkerClaimResponse(response: AutomationV3WorkerClaimResponse): Autom
       automationId: response.run.automationId,
       attempt: response.run.attempt,
       executionInputEnvelope: response.run.executionInputEnvelope,
-      origin: response.run.origin,
+      triggerId: response.run.triggerId,
+      cause: response.run.cause,
       resultDelivery: response.run.resultDelivery ?? { kind: 'none' },
     },
     automation: {
@@ -148,7 +149,11 @@ function toWorkerClaimResponseFromV2(response: AutomationV2ClaimResponseWire): A
   }
   return {
     protocol: 'v2',
-    run: response.run,
+    run: {
+      id: response.run.id,
+      automationId: response.run.automationId,
+      attempt: response.run.attempt,
+    },
     automation: response.automation,
   };
 }
@@ -163,7 +168,10 @@ export function createAutomationClaimClient(params: {
     ?? createDefaultPluginInstallationPublisherHeader;
   let assignmentProtocol: AutomationWorkerProtocol | null = null;
   let latestAssignmentRead = 0;
-  let runProtocol: AutomationWorkerProtocol | null = null;
+  // V3 is unreleased and has no partial-capability compatibility mode. Once
+  // this server/account client observes V3 assignments, their later absence
+  // is an error rather than authority to select the released V2 seam.
+  let hasObservedV3Assignments = false;
 
   function isMissingEndpointError(
     error: unknown,
@@ -181,14 +189,6 @@ export function createAutomationClaimClient(params: {
       throw new Error('Automation worker must fetch assignments before claiming a Run');
     }
     return assignmentProtocol;
-  }
-
-  function requireRunProtocol(): AutomationWorkerProtocol {
-    const version = runProtocol ?? assignmentProtocol;
-    if (!version) {
-      throw new Error('Automation worker must fetch assignments before using Run lifecycle endpoints');
-    }
-    return version;
   }
 
   async function workerHeaders(request: Readonly<{
@@ -224,6 +224,7 @@ export function createAutomationClaimClient(params: {
             timeout: 15_000,
           },
         );
+        hasObservedV3Assignments = true;
         if (assignmentRead === latestAssignmentRead) {
           assignmentProtocol = 'v3';
         }
@@ -232,6 +233,9 @@ export function createAutomationClaimClient(params: {
         );
       } catch (error) {
         if (!isMissingEndpointError(error, '/v3/automations/worker/assignments')) {
+          throw error;
+        }
+        if (hasObservedV3Assignments) {
           throw error;
         }
       }
@@ -256,40 +260,24 @@ export function createAutomationClaimClient(params: {
 
     async claimRun(paramsClaim: { machineId: string; leaseDurationMs: number }): Promise<AutomationClaimRunResponse> {
       const version = requireAssignmentProtocol();
-      const assignmentReadAtClaim = latestAssignmentRead;
       const body = {
         machineId: paramsClaim.machineId,
         leaseDurationMs: paramsClaim.leaseDurationMs,
       };
       if (version === 'v3') {
-        const claimUrl = `${baseUrl}/v3/automations/runs/claim`;
-        try {
-          const response = await axios.post<AutomationV3WorkerClaimResponse>(
-            claimUrl,
-            body,
-            {
-              headers: await workerHeaders({
-                method: 'POST',
-                path: '/v3/automations/runs/claim',
-                body,
-              }),
-              timeout: 15_000,
-            },
-          );
-          const result = toWorkerClaimResponse(AutomationV3WorkerClaimResponseSchema.parse(response.data));
-          runProtocol = 'v3';
-          return result;
-        } catch (error) {
-          // An older server can publish V3 read projections before it has the
-          // worker mutation family. No V3 Run has been returned at this point,
-          // so retrying its schedule-only V2 claim cannot encode a new origin.
-          if (!isMissingEndpointError(error, '/v3/automations/runs/claim')) {
-            throw error;
-          }
-          if (assignmentReadAtClaim === latestAssignmentRead) {
-            assignmentProtocol = 'v2';
-          }
-        }
+        const response = await axios.post<AutomationV3WorkerClaimResponse>(
+          `${baseUrl}/v3/automations/runs/claim`,
+          body,
+          {
+            headers: await workerHeaders({
+              method: 'POST',
+              path: '/v3/automations/runs/claim',
+              body,
+            }),
+            timeout: 15_000,
+          },
+        );
+        return toWorkerClaimResponse(AutomationV3WorkerClaimResponseSchema.parse(response.data));
       }
 
       const response = await axios.post<AutomationV2ClaimResponseWire>(
@@ -305,17 +293,17 @@ export function createAutomationClaimClient(params: {
         },
       );
       const result = toWorkerClaimResponseFromV2(response.data);
-      runProtocol = 'v2';
       return result;
     },
 
     async heartbeatRun(paramsHeartbeat: {
+      protocol: AutomationWorkerProtocol;
       runId: string;
       machineId: string;
       attempt: number;
       leaseDurationMs: number;
     }): Promise<void> {
-      const path = `/${requireRunProtocol()}/automations/runs/${encodeURIComponent(paramsHeartbeat.runId)}/heartbeat`;
+      const path = `/${paramsHeartbeat.protocol}/automations/runs/${encodeURIComponent(paramsHeartbeat.runId)}/heartbeat`;
       const body = {
         machineId: paramsHeartbeat.machineId,
         attempt: paramsHeartbeat.attempt,
@@ -332,12 +320,13 @@ export function createAutomationClaimClient(params: {
     },
 
     async startRun(paramsStart: {
+      protocol: AutomationWorkerProtocol;
       runId: string;
       machineId: string;
       attempt: number;
       accountCurrentness?: AutomationAccountCurrentnessWitnessV1;
     }): Promise<AutomationAccountCurrentnessWitnessV1 | null> {
-      const version = requireRunProtocol();
+      const version = paramsStart.protocol;
       if (version === 'v3') {
         if (!paramsStart.accountCurrentness) {
           throw new Error('Automation V3 start requires the claim Account currentness witness');
@@ -372,6 +361,7 @@ export function createAutomationClaimClient(params: {
     },
 
     async succeedRun(paramsSucceed: {
+      protocol: AutomationWorkerProtocol;
       runId: string;
       machineId: string;
       attempt: number;
@@ -379,7 +369,7 @@ export function createAutomationClaimClient(params: {
       producedSessionId?: string | null;
       resultEnvelope?: string | null;
     }): Promise<void> {
-      const version = requireRunProtocol();
+      const version = paramsSucceed.protocol;
       if (version === 'v3' && !paramsSucceed.accountCurrentness) {
         throw new Error('Automation V3 success requires the start Account currentness witness');
       }
@@ -409,15 +399,13 @@ export function createAutomationClaimClient(params: {
     },
 
     async settleExecutionDispatch(paramsSettlement: {
+      protocol: 'v3';
       runId: string;
       machineId: string;
       attempt: number;
       accountCurrentness: AutomationAccountCurrentnessWitnessV1;
       outcome: AutomationV3WorkerExecutionDispatchOutcome;
     }): Promise<void> {
-      if (requireRunProtocol() !== 'v3') {
-        throw new Error('Detached Automation execution requires the V3 worker protocol');
-      }
       const path = `/v3/automations/runs/${encodeURIComponent(paramsSettlement.runId)}/execution-dispatch/settle`;
       const body = {
         machineId: paramsSettlement.machineId,
@@ -436,6 +424,7 @@ export function createAutomationClaimClient(params: {
     },
 
     async failRun(paramsFail: {
+      protocol: AutomationWorkerProtocol;
       runId: string;
       machineId: string;
       attempt: number;
@@ -446,7 +435,7 @@ export function createAutomationClaimClient(params: {
       errorDetailEnvelope?: string | null;
       errorMessage?: string;
     }): Promise<void> {
-      const version = requireRunProtocol();
+      const version = paramsFail.protocol;
       if (version === 'v3' && !paramsFail.accountCurrentness) {
         throw new Error('Automation V3 failure requires the current Account witness');
       }

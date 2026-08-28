@@ -2,6 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
+    AutomationTriggerIdSchema,
     PluginEventAutomationSetupResultV1Schema,
     PluginMachineMaterializationV1Schema,
     PluginWebhookEndpointIdV1Schema,
@@ -39,8 +40,8 @@ type AccountLifetimeState = {
 const activeAccountLifetime = vi.hoisted((): AccountLifetimeState => ({ value: null }));
 const endpointActionExecutor = vi.hoisted(() => vi.fn<PluginWebhookEndpointUiActionExecutor>());
 
-vi.mock('@/sync/api/plugins/webhooks/endpointActions', () => ({
-    createPluginWebhookEndpointHttpActionExecutor: () => endpointActionExecutor,
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+    createFrontDoorUiActionExecutor: () => endpointActionExecutor,
 }));
 
 vi.mock('@/agents/backendCatalog/loadDaemonMergedProjectionInputs', () => ({
@@ -191,6 +192,53 @@ function eligibleEvent(): DaemonContributionRegistryProjectionAutomationEligible
     });
 }
 
+function eligibleEventWithSetupSurface(
+    projectionGeneration: number,
+    rendererLocalId: string,
+): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
+    const event = eligibleEvent();
+    return {
+        ...event,
+        event: {
+            ...event.event,
+            automation: {
+                ...event.event.automation,
+                source: {
+                    ...event.event.automation.source,
+                    setupSurface: { renderer: rendererLocalId },
+                },
+            },
+        },
+        setupSurface: {
+            contribution: event.event.identity,
+            immutableGenerationId: event.event.immutableGenerationId,
+            projectionGeneration,
+            rendererChain: [{ pluginId: PLUGIN_ID, localId: rendererLocalId }],
+            selectedRenderer: {
+                identity: { pluginId: PLUGIN_ID, localId: rendererLocalId },
+                renderer: { kind: 'hostedWeb', contributionId: rendererLocalId },
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+            },
+            executionOrigin: {
+                serverIdentityId: SERVER_IDENTITY_ID,
+                materializationRef: {
+                    machineId: WATCHER_MACHINE_ID,
+                    materializationId: MATERIALIZATION_ID,
+                    pluginId: PLUGIN_ID,
+                },
+            },
+            resourceCapability: { readable: true, dynamic: true },
+            contributorTargetedContributions: {
+                target: {
+                    pluginId: PLUGIN_ID,
+                    immutableGenerationId: event.event.immutableGenerationId,
+                },
+                points: [],
+            },
+        },
+    } as unknown as DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+}
+
 function projectionInputs(
     event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 ): DaemonMergedProjectionInputs {
@@ -217,9 +265,8 @@ function editSeed(
     });
     return {
         automationId: 'automation-event-1',
-        expectedTemplateVersion: 1,
-        name: 'Repository triage',
-        description: null,
+        triggerId: AutomationTriggerIdSchema.parse('trigger-event-1'),
+        expectedTriggerRevision: 4,
         enabled: true,
         eventRef: event.event.identity,
         source,
@@ -230,19 +277,6 @@ function editSeed(
         },
         filter: null,
         maximumObservationAgeMs: null,
-        prompt: 'Review {{input}}',
-        mentions: [],
-        target: {
-            kind: 'newSession',
-            spawn: {
-                executionTarget: { serverId: SERVER_ID, machineId: 'executor-machine' },
-                directory: '/workspace/acme',
-                agentTarget: {
-                    kind: 'agent',
-                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                },
-            },
-        },
     };
 }
 
@@ -284,6 +318,7 @@ async function configureSeededComposer() {
     expect(endpointActionExecutor).toHaveBeenCalledTimes(1);
     expect(hook.getCurrent()).toMatchObject({
         sourceStatus: 'configured',
+        sourceFailure: null,
         webhookEndpoint: {
             webhookEndpointId: WEBHOOK_ENDPOINT_ID,
             readiness: 'providerConfirmationRequired',
@@ -322,6 +357,38 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         await hook.rerender('composer-machine-b');
 
         expect(hook.getCurrent().webhookEndpointRefreshing).toBe(false);
+    });
+
+    it('retires and replaces a selected custom setup presentation when only its renderer projection changes', async () => {
+        endpointActionExecutor.mockResolvedValue(endpointReadResult());
+        const original = eligibleEventWithSetupSurface(17, 'repository-picker-native');
+        const replacement = eligibleEventWithSetupSurface(18, 'repository-picker-hosted');
+        const seed = editSeed(original);
+        const hook = await renderHook(
+            (event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => (
+                usePluginEventAutomationComposer({
+                    machineId: 'composer-machine-a',
+                    serverId: SERVER_ID,
+                    projectionPhase: 'ready',
+                    projectionInputs: projectionInputs(event),
+                    initialEditSeed: seed,
+                })
+            ),
+            { initialProps: original },
+        );
+        await flushHookEffects({ cycles: 8, turns: 3 });
+        expect(hook.getCurrent().selectedEvent?.setupSurface?.selectedRenderer.identity.localId)
+            .toBe('repository-picker-native');
+
+        await hook.rerender(replacement);
+        await flushHookEffects({ cycles: 4, turns: 3 });
+
+        expect(hook.getCurrent().selectedEvent?.setupSurface).toMatchObject({
+            projectionGeneration: 18,
+            selectedRenderer: {
+                identity: { pluginId: PLUGIN_ID, localId: 'repository-picker-hosted' },
+            },
+        });
     });
 
     it('does not let stale A clear B or admit a duplicate current reread', async () => {

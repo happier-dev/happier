@@ -13,8 +13,8 @@ export type AutomationEventCallerV1 = Readonly<{
     machineId: string;
     machineInstallationId: string;
     materializationId: string;
-    /** Exact host-stamped contributor generation, absent for older callers. */
-    immutableGenerationId?: string;
+    /** Exact host-stamped contributor generation. */
+    immutableGenerationId: string;
 }>;
 
 export class AutomationEventCurrentnessError extends Error {
@@ -134,6 +134,11 @@ function resolveCurrentAutomationEventContributionFromManifest(params: Readonly<
  * Validates the exact host-stamped plugin materialization once at the shared
  * Automation Event boundary. Source status and occurrence admission consume
  * this same currentness decision rather than resolving plugin inventory again.
+ *
+ * The caller generation remains mandatory provenance, but live immutable-
+ * generation currentness belongs to the CLI runtime registry and is checked
+ * immediately before transport. The server deliberately validates only the
+ * persisted materialization/release facts it owns here.
  */
 export async function assertCurrentAutomationEventCallerMaterializationTx(params: Readonly<{
     tx: Tx;

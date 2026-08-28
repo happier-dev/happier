@@ -23,10 +23,8 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/sessionRouteHydrationState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
-import { storeTempData } from '@/utils/sessions/tempDataStore';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -61,12 +59,9 @@ export function SessionAutomationsScreen(props: {
     const styles = stylesheet;
     const router = useRouter();
     const automations = useAutomations();
-    // The definition owner publishes the existing-Session association on the
-    // bounded list, so only a retained predecessor template — whose
-    // association is readable solely by a client that can open it — still
-    // needs a direct private read. Answering the association question by
-    // fanning private detail reads across the whole Account is neither
-    // necessary nor privacy-preserving.
+    // The bounded list does not disclose private recipe targets. Resolve only
+    // unloaded existing-Session candidates through the canonical direct
+    // definition reader before associating them with this Session.
     const undisclosedExistingSessionDefinitions = React.useMemo(
         () => automations.filter((automation) => (
             automation.targetType === 'existingSession'
@@ -115,6 +110,14 @@ export function SessionAutomationsScreen(props: {
     }));
     const currentSessionIdRef = React.useRef(props.sessionId);
     currentSessionIdRef.current = props.sessionId;
+    const mountedRef = React.useRef(true);
+    React.useEffect(() => () => {
+        mountedRef.current = false;
+    }, []);
+    const isInvocationCurrent = React.useCallback(
+        () => mountedRef.current && currentSessionIdRef.current === props.sessionId,
+        [props.sessionId],
+    );
     const refreshFailed = refreshFailure.sessionId === props.sessionId && refreshFailure.value;
     const runNow = useAutomationRunNowController();
 
@@ -208,21 +211,6 @@ export function SessionAutomationsScreen(props: {
         () => getExistingSessionAutomationUnavailableReason(availability),
         [availability],
     );
-    const eventTargetServerId = resolveServerIdForSessionIdFromLocalCache(props.sessionId);
-    const canHandOffExistingSessionEvent = availability.kind === 'ready' && eventTargetServerId !== null;
-    const handleAddEventAutomation = React.useCallback(() => {
-        if (!eventTargetServerId) return;
-        const dataId = storeTempData({
-            replacePersistedDraftSelections: true,
-            eventAutomationInitialTarget: {
-                kind: 'existingSession' as const,
-                sessionId: props.sessionId,
-                serverId: eventTargetServerId,
-            },
-        });
-        navigateWithBlurOnWeb(() => router.push(`/new?automation=1&dataId=${dataId}` as any));
-    }, [eventTargetServerId, props.sessionId, router]);
-
     if (loading && linked.length === 0) {
         return (
             <View style={styles.loading}>
@@ -291,6 +279,7 @@ export function SessionAutomationsScreen(props: {
                             automations={linked}
                             mutationsEnabled={!refreshFailed}
                             runNow={runNow}
+                            isInvocationCurrent={isInvocationCurrent}
                         />
                     )}
 
@@ -301,14 +290,6 @@ export function SessionAutomationsScreen(props: {
                             icon={<Icon name="plus" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => navigateWithBlurOnWeb(() => router.push(`/session/${props.sessionId}/automations/new` as any))}
                             disabled={availability.kind !== 'ready'}
-                        />
-                        <Item
-                            testID="session-automations-add-event-automation"
-                            title={t('automations.session.addEventAutomation')}
-                            subtitle={canHandOffExistingSessionEvent ? undefined : addAutomationUnavailableReason ?? undefined}
-                            icon={<Icon name="lightning" size={29} color={theme.colors.accent.blue} />}
-                            onPress={handleAddEventAutomation}
-                            disabled={!canHandOffExistingSessionEvent}
                         />
                     </ItemGroup>
                 </View>

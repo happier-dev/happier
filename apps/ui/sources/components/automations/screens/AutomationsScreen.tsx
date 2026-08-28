@@ -66,6 +66,11 @@ export function AutomationsScreen() {
     const [loading, setLoading] = React.useState(true);
     const [refreshFailed, setRefreshFailed] = React.useState(false);
     const runNow = useAutomationRunNowController();
+    const mountedRef = React.useRef(true);
+    React.useEffect(() => () => {
+        mountedRef.current = false;
+    }, []);
+    const isInvocationCurrent = React.useCallback(() => mountedRef.current, []);
 
     const refresh = React.useCallback(async () => {
         try {
@@ -143,11 +148,12 @@ export function AutomationsScreen() {
                     automations={item.automations}
                     mutationsEnabled={!refreshFailed}
                     runNow={runNow}
+                    isInvocationCurrent={isInvocationCurrent}
                     virtualizedSegment={{ first: item.first, last: item.last }}
                 />
             </View>
         );
-    }, [refresh, refreshFailed, runNow, styles.row, theme]);
+    }, [isInvocationCurrent, refresh, refreshFailed, runNow, styles.row, theme]);
 
 
     if (loading && automations.length === 0) {

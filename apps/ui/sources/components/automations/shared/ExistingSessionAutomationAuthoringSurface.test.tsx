@@ -23,10 +23,6 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
     ExistingSessionAutomationUnavailableNotice: (props: any) => React.createElement('ExistingSessionAutomationUnavailableNotice', props),
 }));
 
-vi.mock('@/components/sessions/agentInput/definitions/createAutomationToggleActionChip', () => ({
-    createAutomationToggleActionChip: () => ({ id: 'automation-toggle-chip' }),
-}));
-
 vi.mock('@/components/sessions/authoring/context/buildExistingSessionAutomationAuthoringContext', () => ({
     buildExistingSessionAutomationAuthoringContext: () => ({ id: 'ctx' }),
 }));
@@ -58,6 +54,7 @@ describe('ExistingSessionAutomationAuthoringSurface', () => {
             onSubmit,
             submitAccessibilityLabel: 'Create automation',
             isSubmitDisabled: false,
+            automationEditor: React.createElement('AutomationPluralEditor'),
         };
 
         const screen = await renderScreen(

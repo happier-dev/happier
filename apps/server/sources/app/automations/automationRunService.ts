@@ -13,22 +13,31 @@ import {
     type SessionServerStartDispatchResultV1,
 } from "@happier-dev/protocol";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
+import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 
 import { emitAutomationRunTransition } from "./automationChangePublisher";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
-import { enqueueNextScheduledRunIfMissingTx } from "./automationRunQueueService";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
-import { isFinalAutomationRunStatus } from "./automationSchedulingService";
+import { decodeAutomationRunCause } from "./automationRunCauseCodec";
+import { advanceAutomationScheduleCursorAfterTerminalRunTx } from "./automationRunQueueService";
 import { sanitizeAutomationErrorMessage } from "./automationSummaryService";
 import {
     assertAutomationRunFailureDetailEnvelopeOuterForMode,
     validateRetainedAutomationRunExecutionInputV2OuterForMode,
 } from "./automationStoredContentRead";
-import type {
-    AutomationRunItem,
-    AutomationRunOriginKind,
-    AutomationTriggerKind,
-} from "./automationTypes";
+import type { AutomationRunItem } from "./automationTypes";
+
+function retainedV2OriginKindForRun(run: AutomationRunItem): "scheduled" | "manual" | undefined {
+    const cause = decodeAutomationRunCause(run);
+    if (cause.kind === "manual") return "manual";
+    return cause.kind === "trigger" && cause.triggerKind === "schedule"
+        ? "scheduled"
+        : undefined;
+}
+
+function isConversationRun(run: AutomationRunItem): boolean {
+    return decodeAutomationRunCause(run).kind === "conversation";
+}
 
 type AutomationRunStartResult = Readonly<{
     run: AutomationRunItem;
@@ -55,6 +64,20 @@ async function hasExpectedAutomationAccountCurrentnessTx(params: Readonly<{
     if (!params.expected) return true;
     const observed = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
     return observed !== null && sameAutomationAccountCurrentnessWitnessV1(observed, params.expected);
+}
+
+async function hasRequiredCurrentV2MachineTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    machineId: string;
+    requireV2RunRepresentability: boolean | undefined;
+}>): Promise<boolean> {
+    return !params.requireV2RunRepresentability
+        || await readMachineAvailabilityStateInTx({
+            tx: params.tx,
+            accountId: params.accountId,
+            machineId: params.machineId,
+        }) === "available";
 }
 
 /**
@@ -114,106 +137,14 @@ async function fetchRunForAccount(params: {
     tx: any;
     accountId: string;
     runId: string;
-    expectedTriggerKind?: AutomationTriggerKind;
 }) {
     return await params.tx.automationRun.findFirst({
         where: {
             id: params.runId,
             accountId: params.accountId,
-            ...(params.expectedTriggerKind
-                ? { automation: { triggerKind: params.expectedTriggerKind } }
-                : {}),
         },
         select: automationRunItemSelect,
     });
-}
-
-/**
- * Settles queued Runs through the same durable Run lifecycle as explicit
- * cancellation. Callers use this for a pause/delete or invalidated schedule;
- * Run history is retained and no queue row is physically discarded.
- */
-export async function cancelQueuedAutomationRunsTx(params: {
-    tx: any;
-    accountId: string;
-    automationId: string;
-    originKind?: AutomationRunOriginKind;
-}): Promise<AutomationRunItem[]> {
-    const now = new Date();
-    const candidates = await params.tx.automationRun.findMany({
-        where: {
-            accountId: params.accountId,
-            automationId: params.automationId,
-            state: "queued",
-            ...(params.originKind ? { originKind: params.originKind } : {}),
-        },
-        select: { id: true },
-    });
-    if (candidates.length === 0) {
-        return [];
-    }
-
-    const candidateIds = candidates.map((run: { id: string }) => run.id);
-    const cancelled = await params.tx.automationRun.updateMany({
-        where: {
-            id: { in: candidateIds },
-            accountId: params.accountId,
-            automationId: params.automationId,
-            state: "queued",
-            ...(params.originKind ? { originKind: params.originKind } : {}),
-        },
-        data: {
-            state: "cancelled",
-            finishedAt: now,
-            revision: { increment: 1 },
-            updatedAt: now,
-        },
-    });
-    if (cancelled.count === 0) {
-        return [];
-    }
-
-    // A terminal cancellation owns the same custody conclusion as an explicit
-    // Run failure. Only an awaiting Conversation handoff changes state; none
-    // and already-terminal handoffs retain their incumbent meaning.
-    await params.tx.automationRun.updateMany({
-        where: {
-            id: { in: candidateIds },
-            accountId: params.accountId,
-            automationId: params.automationId,
-            state: "cancelled",
-            finishedAt: now,
-            replyHandoffState: "awaitingResult",
-        },
-        data: {
-            replyHandoffState: "blocked",
-            replyHandoffDueAt: null,
-            replyHandoffReceiptEnvelope: null,
-            revision: { increment: 1 },
-            updatedAt: now,
-        },
-    });
-    const terminalRuns = await params.tx.automationRun.findMany({
-        where: {
-            id: { in: candidateIds },
-            accountId: params.accountId,
-            automationId: params.automationId,
-            state: "cancelled",
-            finishedAt: now,
-        },
-        select: automationRunItemSelect,
-    });
-    if (terminalRuns.length > 0) {
-        await params.tx.automationRunEvent.createMany({
-            data: terminalRuns.map((run: { id: string }) => ({
-                runId: run.id,
-                ts: now,
-                type: "run_cancelled",
-                payload: null,
-            })),
-        });
-    }
-    return terminalRuns as AutomationRunItem[];
 }
 
 async function markRunAutomationChanged(params: { tx: any; accountId: string; automationId: string }) {
@@ -396,17 +327,6 @@ export async function retainAutomationRunProducedSession(params: {
     });
 }
 
-async function maybeEnqueueFollowUpRun(params: { tx: any; run: AutomationRunItem; now: Date }) {
-    if (!isFinalAutomationRunStatus(params.run.state)) {
-        return null;
-    }
-    return await enqueueNextScheduledRunIfMissingTx({
-        tx: params.tx,
-        automationId: params.run.automationId,
-        now: params.now,
-    });
-}
-
 /**
  * The Run terminality owner also closes the one frozen Conversation handoff.
  * No result envelope or receipt is synthesized: a failed/cancelled run cannot
@@ -442,15 +362,12 @@ async function publishFailedAutomationRunTx(params: {
     runId: string;
     previousState: AutomationRunItem["state"];
     now: Date;
-    expectedTriggerKind?: AutomationTriggerKind;
     machineId?: string;
-    enqueueFollowUp?: boolean;
 }): Promise<AutomationRunItem | null> {
     const run = await fetchRunForAccount({
         tx: params.tx,
         accountId: params.accountId,
         runId: params.runId,
-        expectedTriggerKind: params.expectedTriggerKind,
     });
     if (!run) return null;
     await blockAwaitingReplyHandoffForTerminalRunTx({
@@ -464,7 +381,6 @@ async function publishFailedAutomationRunTx(params: {
         tx: params.tx,
         accountId: params.accountId,
         runId: params.runId,
-        expectedTriggerKind: params.expectedTriggerKind,
     });
     if (!terminalRun) return null;
     await appendRunEventTx({
@@ -477,14 +393,12 @@ async function publishFailedAutomationRunTx(params: {
             errorCode: terminalRun.errorCode,
         },
     });
+    await advanceAutomationScheduleCursorAfterTerminalRunTx({
+        tx: params.tx,
+        run: terminalRun as AutomationRunItem,
+        now: params.now,
+    });
 
-    const nextRun = params.enqueueFollowUp === false
-        ? null
-        : await maybeEnqueueFollowUpRun({
-            tx: params.tx,
-            run: terminalRun as AutomationRunItem,
-            now: params.now,
-        });
     const cursor = await markRunAutomationChanged({
         tx: params.tx,
         accountId: params.accountId,
@@ -498,14 +412,6 @@ async function publishFailedAutomationRunTx(params: {
             previousState: params.previousState,
             cursor,
         });
-        if (nextRun) {
-            emitAutomationRunTransition({
-                accountId: params.accountId,
-                run: nextRun,
-                previousState: null,
-                cursor,
-            });
-        }
     });
 
     return terminalRun as AutomationRunItem;
@@ -563,17 +469,22 @@ async function settleSucceededAutomationRun(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
+    attempt?: number;
     accountCurrentness?: AutomationAccountCurrentnessWitnessV1;
     producedSessionId?: string | null;
     resultEnvelope?: string | null;
     allowLegacyResultEnvelope: boolean;
-    expectedTriggerKind?: AutomationTriggerKind;
     requireV2RunRepresentability?: boolean;
 }): Promise<AutomationRunItem | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
+        if (!await hasRequiredCurrentV2MachineTx({
+            tx,
+            accountId: params.accountId,
+            machineId: params.machineId,
+            requireV2RunRepresentability: params.requireV2RunRepresentability,
+        })) return null;
         if (!await hasExpectedAutomationAccountCurrentnessTx({
             tx,
             accountId: params.accountId,
@@ -592,7 +503,7 @@ async function settleSucceededAutomationRun(params: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
                 state: { in: ["claimed", "running"] },
                 // A permitted dispatch is settled only by the execution
                 // dispatch owner; a generic success claim cannot know the
@@ -606,25 +517,8 @@ async function settleSucceededAutomationRun(params: {
                     { executionDispatchState: { not: "dispatchPermitted" } },
                 ],
                 leaseExpiresAt: { gt: now },
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
             },
-            select: {
-                automationId: true,
-                state: true,
-                originKind: true,
-                replyContextEnvelope: true,
-                replyHandoffActionPluginId: true,
-                replyHandoffActionLocalId: true,
-                replyHandoffTargetMachineId: true,
-                replyHandoffTargetMachineInstallationId: true,
-                replyHandoffTargetMaterializationId: true,
-                replyHandoffId: true,
-                replyHandoffState: true,
-                executionInputEnvelope: true,
-                producedSessionId: true,
-            },
+            select: automationRunItemSelect,
         });
         if (!preflight) return null;
         const strictNewSession = deriveStrictNewSessionCreationTag({
@@ -653,12 +547,12 @@ async function settleSucceededAutomationRun(params: {
                 || validateRetainedAutomationRunExecutionInputV2OuterForMode({
                     raw: preflight.executionInputEnvelope,
                     mode: accountFence.account.currentness.encryptionMode,
-                    originKind: preflight.originKind,
+                    retainedV2OriginKind: retainedV2OriginKindForRun(preflight),
                 })?.kind !== "available"
             )
         ) return null;
 
-        const isConversation = preflight.originKind === "conversation";
+        const isConversation = isConversationRun(preflight);
         const isConversationHandoff = isConversation
             && preflight.replyHandoffState === "awaitingResult";
         if (
@@ -724,29 +618,23 @@ async function settleSucceededAutomationRun(params: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                attempt: preflight.attempt,
                 state: preflight.state,
                 ...(params.requireV2RunRepresentability
                     ? { executionInputEnvelope: preflight.executionInputEnvelope }
-                    : {}),
-                ...(params.requireV2RunRepresentability
-                    ? { AND: [{ originKind: preflight.originKind }] }
                     : {}),
                 ...(strictNewSession
                     ? { producedSessionId: preflight.producedSessionId }
                     : {}),
                 leaseExpiresAt: { gt: now },
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
                 ...(isConversation
                     ? {
-                        originKind: "conversation",
+                        causeKind: "conversation",
                         replyHandoffState: isConversationHandoff
                             ? "awaitingResult"
                             : "none",
                     }
-                    : { originKind: { not: "conversation" } }),
+                    : { causeKind: { not: "conversation" } }),
                 ...(resultEnvelopeAccountSeq === undefined
                     ? {}
                     : { account: { is: { seq: resultEnvelopeAccountSeq } } }),
@@ -779,7 +667,6 @@ async function settleSucceededAutomationRun(params: {
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            expectedTriggerKind: params.expectedTriggerKind,
         });
         if (!run) return null;
         await appendRunEventTx({
@@ -797,8 +684,12 @@ async function settleSucceededAutomationRun(params: {
             where: { id: run.automationId },
             data: { lastRunAt: now },
         });
+        await advanceAutomationScheduleCursorAfterTerminalRunTx({
+            tx,
+            run: run as AutomationRunItem,
+            now,
+        });
 
-        const nextRun = await maybeEnqueueFollowUpRun({ tx, run: run as AutomationRunItem, now });
         const cursor = await markRunAutomationChanged({ tx, accountId: params.accountId, automationId: run.automationId });
 
         afterTx(tx, () => {
@@ -808,14 +699,6 @@ async function settleSucceededAutomationRun(params: {
                 previousState: preflight.state,
                 cursor,
             });
-            if (nextRun) {
-                emitAutomationRunTransition({
-                    accountId: params.accountId,
-                    run: nextRun as AutomationRunItem,
-                    previousState: null,
-                    cursor,
-                });
-            }
         });
 
         return run as AutomationRunItem;
@@ -826,14 +709,19 @@ async function startAutomationRunInternal(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
+    attempt?: number;
     accountCurrentness?: AutomationAccountCurrentnessWitnessV1;
-    expectedTriggerKind?: AutomationTriggerKind;
     requireV2RunRepresentability?: boolean;
 }): Promise<AutomationRunStartResult | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
+        if (!await hasRequiredCurrentV2MachineTx({
+            tx,
+            accountId: params.accountId,
+            machineId: params.machineId,
+            requireV2RunRepresentability: params.requireV2RunRepresentability,
+        })) return null;
         if (!await hasExpectedAutomationAccountCurrentnessTx({
             tx,
             accountId: params.accountId,
@@ -847,20 +735,11 @@ async function startAutomationRunInternal(params: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
                 state: "claimed",
                 leaseExpiresAt: { gt: now },
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
             },
-            select: {
-                revision: true,
-                originKind: true,
-                executionInputEnvelope: true,
-                executionDispatchState: true,
-                executionAttempt: true,
-            },
+            select: automationRunItemSelect,
         });
         if (!candidate) return null;
         if (
@@ -870,7 +749,7 @@ async function startAutomationRunInternal(params: {
                 || validateRetainedAutomationRunExecutionInputV2OuterForMode({
                     raw: candidate.executionInputEnvelope,
                     mode: accountFence.account.currentness.encryptionMode,
-                    originKind: candidate.originKind,
+                    retainedV2OriginKind: retainedV2OriginKindForRun(candidate),
                 })?.kind !== "available"
             )
         ) return null;
@@ -889,19 +768,13 @@ async function startAutomationRunInternal(params: {
                     accountId: params.accountId,
                     revision: candidate.revision,
                     claimedByMachineId: params.machineId,
-                    attempt: params.attempt,
+                    attempt: candidate.attempt,
                     state: "claimed",
                     leaseExpiresAt: { gt: now },
                     executionInputEnvelope: candidate.executionInputEnvelope,
                     executionDispatchState: "retryWaiting",
                     executionAttempt: candidate.executionAttempt,
                     account: { is: { seq: accountFence.account.version } },
-                    ...(params.requireV2RunRepresentability
-                        ? { originKind: candidate.originKind }
-                        : {}),
-                    ...(params.expectedTriggerKind
-                        ? { automation: { triggerKind: params.expectedTriggerKind } }
-                        : {}),
                 },
                 data: {
                     state: "failed",
@@ -927,7 +800,6 @@ async function startAutomationRunInternal(params: {
                 runId: params.runId,
                 previousState: "claimed",
                 now,
-                expectedTriggerKind: params.expectedTriggerKind,
                 machineId: params.machineId,
             });
             return null;
@@ -951,21 +823,15 @@ async function startAutomationRunInternal(params: {
                 accountId: params.accountId,
                 revision: candidate.revision,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                attempt: candidate.attempt,
                 state: "claimed",
                 leaseExpiresAt: { gt: now },
                 executionInputEnvelope: candidate.executionInputEnvelope,
-                ...(params.requireV2RunRepresentability
-                    ? { originKind: candidate.originKind }
-                    : {}),
                 ...(isExecutionRun
                     ? {
                         executionDispatchState: candidate.executionDispatchState,
                         executionAttempt: candidate.executionAttempt,
                     }
-                    : {}),
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
                     : {}),
             },
             data: {
@@ -991,7 +857,6 @@ async function startAutomationRunInternal(params: {
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            expectedTriggerKind: params.expectedTriggerKind,
         });
         if (!run) return null;
         await appendRunEventTx({
@@ -1029,7 +894,6 @@ export async function startAutomationRun(params: {
     attempt: number;
     /** C: exact witness returned by a successful claim. */
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunStartResult | null> {
     return await startAutomationRunInternal(params);
 }
@@ -1039,8 +903,7 @@ export async function startAutomationRunFromV2(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
-    expectedTriggerKind?: AutomationTriggerKind;
+    attempt?: number;
 }): Promise<AutomationRunItem | null> {
     return (await startAutomationRunInternal({
         ...params,
@@ -1102,7 +965,6 @@ async function retainSupersededExecutionDispatchIdentityTx(params: Readonly<{
     attempt: number;
     outcome: AutomationExecutionDispatchOutcome;
     now: Date;
-    expectedTriggerKind?: AutomationTriggerKind;
 }>): Promise<AutomationRunItem | null> {
     if (params.outcome.kind !== "started") return null;
     const superseded = await params.tx.automationRun.findFirst({
@@ -1114,9 +976,6 @@ async function retainSupersededExecutionDispatchIdentityTx(params: Readonly<{
             state: "outcome_uncertain",
             executionDispatchState: "outcomeUnknown",
             executionNativeRunId: null,
-            ...(params.expectedTriggerKind
-                ? { automation: { triggerKind: params.expectedTriggerKind } }
-                : {}),
         },
         select: { revision: true },
     });
@@ -1145,7 +1004,6 @@ async function retainSupersededExecutionDispatchIdentityTx(params: Readonly<{
         tx: params.tx,
         accountId: params.accountId,
         runId: params.runId,
-        expectedTriggerKind: params.expectedTriggerKind,
     });
     if (!run || run.state !== "outcome_uncertain") return null;
     const cursor = await markRunAutomationChanged({
@@ -1176,7 +1034,6 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
     attempt: number;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     outcome: AutomationExecutionDispatchOutcome;
-    expectedTriggerKind?: AutomationTriggerKind;
 }>): Promise<AutomationRunItem | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
@@ -1211,9 +1068,6 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
                 state: "running",
                 leaseExpiresAt: { gt: now },
                 executionDispatchState: "dispatchPermitted",
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
             },
             select: {
                 automationId: true,
@@ -1230,7 +1084,6 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
                 attempt: params.attempt,
                 outcome: params.outcome,
                 now,
-                expectedTriggerKind: params.expectedTriggerKind,
             });
         }
 
@@ -1302,7 +1155,6 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            expectedTriggerKind: params.expectedTriggerKind,
         });
         if (!run) return null;
         await appendRunEventTx({
@@ -1325,13 +1177,16 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
             },
         });
 
-        let nextRun: AutomationRunItem | null = null;
         if (!shouldRetry) {
             await tx.automation.update({
                 where: { id: run.automationId },
                 data: { lastRunAt: now },
             });
-            nextRun = await maybeEnqueueFollowUpRun({ tx, run: run as AutomationRunItem, now });
+            await advanceAutomationScheduleCursorAfterTerminalRunTx({
+                tx,
+                run: run as AutomationRunItem,
+                now,
+            });
         }
         const cursor = await markRunAutomationChanged({
             tx,
@@ -1345,14 +1200,6 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
                 previousState: "running",
                 cursor,
             });
-            if (nextRun) {
-                emitAutomationRunTransition({
-                    accountId: params.accountId,
-                    run: nextRun,
-                    previousState: null,
-                    cursor,
-                });
-            }
         });
         return run as AutomationRunItem;
     });
@@ -1370,7 +1217,6 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
     expectedExecutionDispatchState: "dispatchPermitted" | null;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     now: Date;
-    expectedTriggerKind?: AutomationTriggerKind;
 }>): Promise<AutomationRunItem | null> {
     const updated = await params.tx.automationRun.updateMany({
         where: {
@@ -1383,13 +1229,6 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
             executionDispatchState: params.expectedExecutionDispatchState,
             leaseExpiresAt: { lt: params.now },
             account: { is: { seq: params.accountCurrentness.version } },
-            automation: {
-                enabled: true,
-                deletedAt: null,
-                ...(params.expectedTriggerKind
-                    ? { triggerKind: params.expectedTriggerKind }
-                    : {}),
-            },
         },
         data: {
             state: "outcome_uncertain",
@@ -1410,7 +1249,6 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
         tx: params.tx,
         accountId: params.accountId,
         runId: params.runId,
-        expectedTriggerKind: params.expectedTriggerKind,
     });
     if (!run) return null;
     await appendRunEventTx({
@@ -1424,146 +1262,7 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
         where: { id: run.automationId },
         data: { lastRunAt: params.now },
     });
-    const nextRun = await maybeEnqueueFollowUpRun({ tx: params.tx, run: run as AutomationRunItem, now: params.now });
-    const cursor = await markRunAutomationChanged({
-        tx: params.tx,
-        accountId: params.accountId,
-        automationId: run.automationId,
-    });
-    afterTx(params.tx, () => {
-        emitAutomationRunTransition({
-            accountId: params.accountId,
-            run: run as AutomationRunItem,
-            previousState: params.state,
-            cursor,
-        });
-        if (nextRun) {
-            emitAutomationRunTransition({
-                accountId: params.accountId,
-                run: nextRun,
-                previousState: null,
-                cursor,
-            });
-        }
-    });
-    return run as AutomationRunItem;
-}
-
-/**
- * The incumbent Run terminality owner resolves an expired lease whose
- * Definition or original claimant assignment was retired. A lease that is
- * still current remains owned by its claimant; once it expires, it cannot be
- * reclaimed through a retired Definition. A claimed Run has not crossed the
- * start boundary, while a running Run (or committed detached dispatch) may
- * already have produced an effect and therefore remains explicitly uncertain.
- *
- * `claimedByMachineId` is the durable Run's own stored claimant, used as the
- * evidence this transition is written against: it pins the row that was
- * observed and decides which assignment retirement is being resolved. It is
- * not the actor performing the recovery, so a claimant that never returns
- * cannot keep the Run nonterminal.
- */
-export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    automationId: string;
-    runId: string;
-    state: "claimed" | "running";
-    runRevision: number;
-    /** Evidence: the claimant stored on the observed Run row. */
-    claimedByMachineId: string;
-    executionInputEnvelope: string | null;
-    originKind: AutomationRunOriginKind;
-    executionDispatchState: string | null;
-    accountCurrentness: AutomationAccountCurrentnessWitnessV1;
-    now: Date;
-    expectedTriggerKind?: AutomationTriggerKind;
-    requireV2RunRepresentability?: boolean;
-}>): Promise<AutomationRunItem | null> {
-    const mayHaveStartedEffect = params.state === "running"
-        || params.executionDispatchState === "dispatchPermitted"
-        || params.executionDispatchState === "started";
-    const terminalState = mayHaveStartedEffect ? "outcome_uncertain" : "cancelled";
-    const updated = await params.tx.automationRun.updateMany({
-        where: {
-            id: params.runId,
-            accountId: params.accountId,
-            automationId: params.automationId,
-            state: params.state,
-            revision: params.runRevision,
-            claimedByMachineId: params.claimedByMachineId,
-            executionInputEnvelope: params.executionInputEnvelope,
-            leaseExpiresAt: { lt: params.now },
-            account: { is: { seq: params.accountCurrentness.version } },
-            automation: {
-                ...(params.expectedTriggerKind
-                    ? { triggerKind: params.expectedTriggerKind }
-                    : {}),
-                OR: [
-                    { enabled: false },
-                    { deletedAt: { not: null } },
-                    {
-                        assignments: {
-                            none: {
-                                machineId: params.claimedByMachineId,
-                                enabled: true,
-                            },
-                        },
-                    },
-                ],
-            },
-            ...(params.requireV2RunRepresentability
-                ? { originKind: params.originKind }
-                : {}),
-        },
-        data: {
-            state: terminalState,
-            ...(params.executionDispatchState === "dispatchPermitted"
-                ? {
-                    executionDispatchState: "outcomeUnknown",
-                    executionDispatchDueAt: null,
-                }
-                : {}),
-            finishedAt: params.now,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            errorCode: "automation_retired_after_lease_expiry",
-            errorMessage: null,
-            revision: { increment: 1 },
-            updatedAt: params.now,
-        },
-    });
-    if (updated.count !== 1) return null;
-
-    await blockAwaitingReplyHandoffForTerminalRunTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        runId: params.runId,
-        state: terminalState,
-        now: params.now,
-    });
-
-    const run = await fetchRunForAccount({
-        tx: params.tx,
-        accountId: params.accountId,
-        runId: params.runId,
-        expectedTriggerKind: params.expectedTriggerKind,
-    });
-    if (!run) return null;
-    await appendRunEventTx({
-        tx: params.tx,
-        runId: run.id,
-        type: terminalState === "outcome_uncertain" ? "run_outcome_uncertain" : "run_cancelled",
-        now: params.now,
-        payload: { reason: "automation_retired_after_lease_expiry" },
-    });
-    if (terminalState === "outcome_uncertain") {
-        await params.tx.automation.update({
-            where: { id: run.automationId },
-            data: { lastRunAt: params.now },
-        });
-    }
-    const nextRun = await maybeEnqueueFollowUpRun({
+    await advanceAutomationScheduleCursorAfterTerminalRunTx({
         tx: params.tx,
         run: run as AutomationRunItem,
         now: params.now,
@@ -1580,14 +1279,6 @@ export async function terminalizeRetiredAutomationRunAfterLeaseExpiryTx(params: 
             previousState: params.state,
             cursor,
         });
-        if (nextRun) {
-            emitAutomationRunTransition({
-                accountId: params.accountId,
-                run: nextRun,
-                previousState: null,
-                cursor,
-            });
-        }
     });
     return run as AutomationRunItem;
 }
@@ -1601,7 +1292,6 @@ export async function succeedAutomationRun(params: {
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     producedSessionId?: string | null;
     resultEnvelope?: string | null;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunItem | null> {
     return await settleSucceededAutomationRun({
         ...params,
@@ -1614,10 +1304,9 @@ export async function succeedAutomationRunFromV2(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
+    attempt?: number;
     producedSessionId?: string | null;
     summaryCiphertext?: string | null;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunItem | null> {
     const summaryCiphertext = typeof params.summaryCiphertext === "string"
         ? params.summaryCiphertext
@@ -1626,13 +1315,12 @@ export async function succeedAutomationRunFromV2(params: {
         accountId: params.accountId,
         runId: params.runId,
         machineId: params.machineId,
-        attempt: params.attempt,
+        ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
         producedSessionId: params.producedSessionId,
         resultEnvelope: summaryCiphertext === null
             ? null
             : JSON.stringify({ t: "legacySummaryCiphertext", c: summaryCiphertext }),
         allowLegacyResultEnvelope: true,
-        expectedTriggerKind: params.expectedTriggerKind,
         requireV2RunRepresentability: true,
     });
 }
@@ -1653,7 +1341,6 @@ export async function failInvalidAutomationRunBeforeClaimTx(params: {
     executionInputEnvelope: string | null;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     now: Date;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunItem | null> {
     const updated = await params.tx.automationRun.updateMany({
         where: {
@@ -1665,13 +1352,6 @@ export async function failInvalidAutomationRunBeforeClaimTx(params: {
             executionInputEnvelope: params.executionInputEnvelope,
             account: {
                 is: { seq: params.accountCurrentness.version },
-            },
-            automation: {
-                enabled: true,
-                deletedAt: null,
-                ...(params.expectedTriggerKind
-                    ? { triggerKind: params.expectedTriggerKind }
-                    : {}),
             },
         },
         data: {
@@ -1694,8 +1374,6 @@ export async function failInvalidAutomationRunBeforeClaimTx(params: {
         runId: params.runId,
         previousState: params.state,
         now: params.now,
-        expectedTriggerKind: params.expectedTriggerKind,
-        enqueueFollowUp: false,
     });
 }
 
@@ -1703,7 +1381,7 @@ async function failAutomationRunInternal(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
+    attempt?: number;
     accountCurrentness?: AutomationAccountCurrentnessWitnessV1;
     producedSessionId?: string | null;
     errorCode?: string | null;
@@ -1711,19 +1389,24 @@ async function failAutomationRunInternal(params: {
     errorDetailEnvelope?: string | null;
     /** Released-V2 raw error detail retained only by the predecessor adapter. */
     errorMessage?: string | null;
-    expectedTriggerKind?: AutomationTriggerKind;
     requireV2RunRepresentability?: boolean;
 }): Promise<AutomationRunItem | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
+        if (!await hasRequiredCurrentV2MachineTx({
+            tx,
+            accountId: params.accountId,
+            machineId: params.machineId,
+            requireV2RunRepresentability: params.requireV2RunRepresentability,
+        })) return null;
         const now = new Date();
         const previousRun = await tx.automationRun.findFirst({
             where: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
                 state: { in: ["claimed", "running"] },
                 // See settleSucceededAutomationRun: a permitted dispatch keeps
                 // its outcome with the execution dispatch settlement owner, and
@@ -1733,18 +1416,8 @@ async function failAutomationRunInternal(params: {
                     { executionDispatchState: { not: "dispatchPermitted" } },
                 ],
                 leaseExpiresAt: { gt: now },
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
             },
-            select: {
-                automationId: true,
-                state: true,
-                originKind: true,
-                executionInputEnvelope: true,
-                producedSessionId: true,
-                revision: true,
-            },
+            select: automationRunItemSelect,
         });
         if (!previousRun) {
             // Cancellation may race a completed canonical Session create. The
@@ -1756,20 +1429,10 @@ async function failAutomationRunInternal(params: {
                     id: params.runId,
                     accountId: params.accountId,
                     claimedByMachineId: params.machineId,
-                    attempt: params.attempt,
+                    ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
                     state: "cancelled",
-                    ...(params.expectedTriggerKind
-                        ? { automation: { triggerKind: params.expectedTriggerKind } }
-                        : {}),
                 },
-                select: {
-                    automationId: true,
-                    state: true,
-                    originKind: true,
-                    executionInputEnvelope: true,
-                    producedSessionId: true,
-                    revision: true,
-                },
+                select: automationRunItemSelect,
             });
             if (!cancelledRun) return null;
             if (!await hasCompatibleAutomationAccountEncryptionTx({
@@ -1786,7 +1449,7 @@ async function failAutomationRunInternal(params: {
                     || validateRetainedAutomationRunExecutionInputV2OuterForMode({
                         raw: cancelledRun.executionInputEnvelope,
                         mode: accountFence.account.currentness.encryptionMode,
-                        originKind: cancelledRun.originKind,
+                        retainedV2OriginKind: retainedV2OriginKindForRun(cancelledRun),
                     })?.kind !== "available"
                 )
             ) return null;
@@ -1805,7 +1468,6 @@ async function failAutomationRunInternal(params: {
                         tx,
                         accountId: params.accountId,
                         runId: params.runId,
-                        expectedTriggerKind: params.expectedTriggerKind,
                     })
                     : null;
             }
@@ -1814,14 +1476,11 @@ async function failAutomationRunInternal(params: {
                     id: params.runId,
                     accountId: params.accountId,
                     claimedByMachineId: params.machineId,
-                    attempt: params.attempt,
+                    attempt: cancelledRun.attempt,
                     state: "cancelled",
                     revision: cancelledRun.revision,
                     executionInputEnvelope: cancelledRun.executionInputEnvelope,
                     producedSessionId: null,
-                    ...(params.expectedTriggerKind
-                        ? { automation: { triggerKind: params.expectedTriggerKind } }
-                        : {}),
                 },
                 data: {
                     producedSessionId,
@@ -1834,7 +1493,6 @@ async function failAutomationRunInternal(params: {
                 tx,
                 accountId: params.accountId,
                 runId: params.runId,
-                expectedTriggerKind: params.expectedTriggerKind,
             });
             if (!run || run.state !== "cancelled") return null;
             const cursor = await markRunAutomationChanged({
@@ -1866,7 +1524,7 @@ async function failAutomationRunInternal(params: {
                 || validateRetainedAutomationRunExecutionInputV2OuterForMode({
                     raw: previousRun.executionInputEnvelope,
                     mode: accountFence.account.currentness.encryptionMode,
-                    originKind: previousRun.originKind,
+                    retainedV2OriginKind: retainedV2OriginKindForRun(previousRun),
                 })?.kind !== "available"
             )
         ) return null;
@@ -1902,19 +1560,15 @@ async function failAutomationRunInternal(params: {
                 id: params.runId,
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
-                attempt: params.attempt,
+                attempt: previousRun.attempt,
                 state: previousRun.state,
                 revision: previousRun.revision,
                 ...(params.requireV2RunRepresentability
                     ? {
                         executionInputEnvelope: previousRun.executionInputEnvelope,
-                        originKind: previousRun.originKind,
                     }
                     : {}),
                 leaseExpiresAt: { gt: now },
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
             },
             data: {
                 state: "failed",
@@ -1937,7 +1591,6 @@ async function failAutomationRunInternal(params: {
             runId: params.runId,
             previousState: previousRun.state,
             now,
-            expectedTriggerKind: params.expectedTriggerKind,
             machineId: params.machineId,
         });
     });
@@ -1953,7 +1606,6 @@ export async function failAutomationRun(params: {
     producedSessionId?: string | null;
     errorCode?: string | null;
     errorDetailEnvelope?: string | null;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunItem | null> {
     return await failAutomationRunInternal(params);
 }
@@ -1963,11 +1615,10 @@ export async function failAutomationRunFromV2(params: {
     accountId: string;
     runId: string;
     machineId: string;
-    attempt: number;
+    attempt?: number;
     producedSessionId?: string | null;
     errorCode?: string | null;
     errorMessage?: string | null;
-    expectedTriggerKind?: AutomationTriggerKind;
 }): Promise<AutomationRunItem | null> {
     return await failAutomationRunInternal({
         ...params,
@@ -1975,133 +1626,163 @@ export async function failAutomationRunFromV2(params: {
     });
 }
 
+type CancelledAutomationRunTxResult = Readonly<{
+    run: AutomationRunItem;
+    previousState: AutomationRunItem["state"];
+    transitionCause?: typeof AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1;
+}>;
+
+async function cancelAutomationRunRowTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    previousRun: AutomationRunItem;
+    accountEncryptionMode: "plain" | "e2ee";
+    requireV2RunRepresentability?: boolean;
+}>): Promise<CancelledAutomationRunTxResult | null> {
+    const { previousRun } = params;
+    if (
+        previousRun.state !== "queued"
+        && previousRun.state !== "claimed"
+        && previousRun.state !== "running"
+    ) return null;
+    if (
+        params.requireV2RunRepresentability
+        && (
+            !previousRun.executionInputEnvelope
+            || validateRetainedAutomationRunExecutionInputV2OuterForMode({
+                raw: previousRun.executionInputEnvelope,
+                mode: params.accountEncryptionMode,
+                retainedV2OriginKind: retainedV2OriginKindForRun(previousRun),
+            })?.kind !== "available"
+        )
+    ) return null;
+
+    const now = new Date();
+    // Dispatch permission is the boundary after which one external execution
+    // may already be running. Cancellation remains authoritative, but cannot
+    // claim that accepted external work disappeared.
+    const dispatchPermitted = previousRun.executionDispatchState === "dispatchPermitted";
+    const terminalState = dispatchPermitted ? "outcome_uncertain" : "cancelled";
+    const updated = await params.tx.automationRun.updateMany({
+        where: {
+            id: previousRun.id,
+            accountId: params.accountId,
+            state: previousRun.state,
+            revision: previousRun.revision,
+            executionDispatchState: previousRun.executionDispatchState,
+            ...(params.requireV2RunRepresentability
+                ? { executionInputEnvelope: previousRun.executionInputEnvelope }
+                : {}),
+        },
+        data: {
+            state: terminalState,
+            ...(dispatchPermitted
+                ? {
+                    executionDispatchState: "outcomeUnknown",
+                    executionDispatchDueAt: null,
+                    errorCode: "execution_run_cancelled_outcome_unknown",
+                }
+                : {}),
+            finishedAt: now,
+            revision: { increment: 1 },
+            updatedAt: now,
+        },
+    });
+    if (updated.count !== 1) return null;
+
+    await blockAwaitingReplyHandoffForTerminalRunTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        runId: previousRun.id,
+        state: terminalState,
+        now,
+    });
+
+    const run = await fetchRunForAccount({
+        tx: params.tx,
+        accountId: params.accountId,
+        runId: previousRun.id,
+    });
+    if (!run) return null;
+    await appendRunEventTx({
+        tx: params.tx,
+        runId: run.id,
+        type: dispatchPermitted ? "run_outcome_uncertain" : "run_cancelled",
+        now,
+        ...(dispatchPermitted
+            ? { payload: { reason: "cancelled_after_dispatch_permitted" } }
+            : {}),
+    });
+    await advanceAutomationScheduleCursorAfterTerminalRunTx({
+        tx: params.tx,
+        run: run as AutomationRunItem,
+        now,
+    });
+    return {
+        run: run as AutomationRunItem,
+        previousState: previousRun.state,
+        ...(dispatchPermitted
+            ? { transitionCause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 }
+            : {}),
+    };
+}
+
+async function publishCancelledAutomationRunsTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    results: readonly CancelledAutomationRunTxResult[];
+}>): Promise<void> {
+    const automationIds = [...new Set(params.results.map((result) => result.run.automationId))];
+    const cursorByAutomationId = new Map<string, number>();
+    for (const automationId of automationIds) {
+        cursorByAutomationId.set(automationId, await markRunAutomationChanged({
+            tx: params.tx,
+            accountId: params.accountId,
+            automationId,
+        }));
+    }
+    afterTx(params.tx, () => {
+        for (const result of params.results) {
+            const cursor = cursorByAutomationId.get(result.run.automationId);
+            if (cursor === undefined) continue;
+            emitAutomationRunTransition({
+                accountId: params.accountId,
+                run: result.run,
+                previousState: result.previousState,
+                cursor,
+                ...(result.transitionCause ? { transitionCause: result.transitionCause } : {}),
+            });
+        }
+    });
+}
+
 export async function cancelAutomationRun(params: {
     accountId: string;
     runId: string;
-    expectedTriggerKind?: AutomationTriggerKind;
     requireV2RunRepresentability?: boolean;
 }): Promise<AutomationRunItem | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
-        const now = new Date();
         const previousRun = await fetchRunForAccount({
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            expectedTriggerKind: params.expectedTriggerKind,
         });
-        if (
-            !previousRun
-            || (previousRun.state !== "queued" && previousRun.state !== "claimed" && previousRun.state !== "running")
-        ) {
-            return null;
-        }
-        if (
-            params.requireV2RunRepresentability
-            && (
-                !previousRun.executionInputEnvelope
-                || validateRetainedAutomationRunExecutionInputV2OuterForMode({
-                    raw: previousRun.executionInputEnvelope,
-                    mode: accountFence.account.currentness.encryptionMode,
-                    originKind: previousRun.originKind,
-                })?.kind !== "available"
-            )
-        ) return null;
-        // Dispatch permission is the boundary after which one external
-        // execution may already be running. Cancellation is still honoured,
-        // but it cannot report an outcome nothing established: the Run becomes
-        // explicitly uncertain, and only the execution-dispatch settlement
-        // owner may write dispatch truth over it.
-        const dispatchPermitted = previousRun.executionDispatchState === "dispatchPermitted";
-        const terminalState = dispatchPermitted ? "outcome_uncertain" : "cancelled";
-        const updated = await tx.automationRun.updateMany({
-            where: {
-                id: params.runId,
-                accountId: params.accountId,
-                state: previousRun.state,
-                executionDispatchState: previousRun.executionDispatchState,
-                ...(params.requireV2RunRepresentability
-                    ? {
-                        executionInputEnvelope: previousRun.executionInputEnvelope,
-                        originKind: previousRun.originKind,
-                    }
-                    : {}),
-                ...(params.expectedTriggerKind
-                    ? { automation: { triggerKind: params.expectedTriggerKind } }
-                    : {}),
-            },
-            data: {
-                state: terminalState,
-                ...(dispatchPermitted
-                    ? {
-                        executionDispatchState: "outcomeUnknown",
-                        executionDispatchDueAt: null,
-                        errorCode: "execution_run_cancelled_outcome_unknown",
-                    }
-                    : {}),
-                finishedAt: now,
-                revision: { increment: 1 },
-                updatedAt: now,
-            },
-        });
-        if (updated.count !== 1) {
-            return null;
-        }
-
-        await blockAwaitingReplyHandoffForTerminalRunTx({
+        if (!previousRun) return null;
+        const result = await cancelAutomationRunRowTx({
             tx,
             accountId: params.accountId,
-            runId: params.runId,
-            state: terminalState,
-            now,
+            previousRun: previousRun as AutomationRunItem,
+            accountEncryptionMode: accountFence.account.currentness.encryptionMode,
+            requireV2RunRepresentability: params.requireV2RunRepresentability,
         });
-
-        const run = await fetchRunForAccount({
+        if (!result) return null;
+        await publishCancelledAutomationRunsTx({
             tx,
             accountId: params.accountId,
-            runId: params.runId,
-            expectedTriggerKind: params.expectedTriggerKind,
+            results: [result],
         });
-        if (!run) return null;
-        await appendRunEventTx({
-            tx,
-            runId: run.id,
-            type: dispatchPermitted ? "run_outcome_uncertain" : "run_cancelled",
-            now,
-            ...(dispatchPermitted
-                ? { payload: { reason: "cancelled_after_dispatch_permitted" } }
-                : {}),
-        });
-
-        const nextRun = await maybeEnqueueFollowUpRun({ tx, run: run as AutomationRunItem, now });
-        const cursor = await markRunAutomationChanged({ tx, accountId: params.accountId, automationId: run.automationId });
-
-        afterTx(tx, () => {
-            emitAutomationRunTransition({
-                accountId: params.accountId,
-                run: run as AutomationRunItem,
-                previousState: previousRun.state,
-                cursor,
-                // A Run cancelled after dispatch permission can only be
-                // published as uncertain, so the machine observer would read a
-                // generic staleness abort and leave the external execution
-                // running. The cause makes the user's cancellation
-                // authoritative for the one machine that can still stop it.
-                ...(dispatchPermitted
-                    ? { cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 }
-                    : {}),
-            });
-            if (nextRun) {
-                emitAutomationRunTransition({
-                    accountId: params.accountId,
-                    run: nextRun as AutomationRunItem,
-                    previousState: null,
-                    cursor,
-                });
-            }
-        });
-
-        return run as AutomationRunItem;
+        return result.run;
     });
 }

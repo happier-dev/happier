@@ -70,7 +70,7 @@ const UpsertSchema = z.object({
     schedule: ScheduleSchema,
     targetType: z.enum(["new_session", "existing_session"]),
     templateCiphertext: z.string().trim().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS),
-    assignments: z.array(AssignmentSchema).max(50).optional(),
+    assignments: z.array(AssignmentSchema).optional(),
 }).strict();
 
 const PatchSchema = z.object({
@@ -80,7 +80,7 @@ const PatchSchema = z.object({
     schedule: ScheduleSchema.optional(),
     targetType: z.enum(["new_session", "existing_session"]).optional(),
     templateCiphertext: z.string().trim().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS).optional(),
-    assignments: z.array(AssignmentSchema).max(50).optional(),
+    assignments: z.array(AssignmentSchema).optional(),
 }).strict();
 
 function toMessage(error: z.ZodError): string {

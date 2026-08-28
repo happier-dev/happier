@@ -8,6 +8,7 @@ import type {
     AutomationRunState,
     AutomationRunWithAutomation,
 } from "./automationTypes";
+import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 
 export function emitAutomationUpsert(params: {
     accountId: string;
@@ -96,7 +97,7 @@ export function emitAutomationRunTransition(params: {
      * Why the transition happened, when the published state alone cannot say.
      * Only the lifecycle carrier takes it; the legacy update stays unchanged.
      */
-    cause?: AutomationRunStateChangedHostEventV1["cause"];
+    transitionCause?: AutomationRunStateChangedHostEventV1["transitionCause"];
 }): void {
     let legacyFailed = false;
     let legacyError: unknown;
@@ -129,12 +130,14 @@ export function emitAutomationRunTransition(params: {
                     t: "automation-run-state-changed",
                     runId: params.run.id,
                     automationId: params.run.automationId,
-                    originKind: params.run.originKind,
+                    runCause: decodeAutomationRunCause(params.run),
                     previousState: params.previousState,
                     currentState: params.run.state,
                     transitionedAt: params.run.updatedAt.getTime(),
                     claimedByMachineId: params.run.claimedByMachineId,
-                    ...(params.cause === undefined ? {} : { cause: params.cause }),
+                    ...(params.transitionCause === undefined
+                        ? {}
+                        : { transitionCause: params.transitionCause }),
                 },
                 createdAt: Date.now(),
             },

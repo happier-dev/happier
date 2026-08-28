@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import {
     deriveSessionCreationTagV1,
     serializeAutomationRunExecutionRecipeV1,
@@ -16,11 +17,10 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 import {
     cancelAutomationRun,
-    cancelQueuedAutomationRunsTx,
     failAutomationRun,
     startAutomationRun,
+    startAutomationRunFromV2,
     succeedAutomationRun,
-    terminalizeRetiredAutomationRunAfterLeaseExpiryTx,
 } from "./automationRunService";
 import * as automationRunServiceModule from "./automationRunService";
 import {
@@ -31,6 +31,7 @@ import {
     automationAccountCurrentnessSelect,
     deriveAutomationAccountCurrentnessWitness,
 } from "./automationAccountCurrentness";
+import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_encrypted_v1",
@@ -41,6 +42,7 @@ const TEST_STRICT_PLAIN_RECIPE = (() => {
     const serialized = serializeAutomationRunExecutionRecipeV1({
         v: 1,
         templateVersion: 1,
+        assignmentMachineIds: [],
         template: {
             t: "plain",
             v: { v: 1, prompt: "Run the scheduled automation." },
@@ -71,6 +73,7 @@ const TEST_STRICT_PLAIN_EXECUTION_RECIPE = (() => {
     const serialized = serializeAutomationRunExecutionRecipeV1({
         v: 1,
         templateVersion: 1,
+        assignmentMachineIds: [],
         template: { t: "plain", v: { v: 1, prompt: "Run the detached task." } },
         triggerEvidence: null,
         target: {
@@ -164,11 +167,16 @@ async function createAccountMachineAutomation(params: {
             accountId: account.id,
             name: params.automationName,
             enabled: true,
-            scheduleKind: "interval",
-            everyMs: 120_000,
             targetType: "new_session",
             templateCiphertext: TEST_STRICT_PLAIN_RECIPE,
             templateVersion: 1,
+            triggers: {
+                create: {
+                    kind: "schedule",
+                    scheduleKind: "interval",
+                    everyMs: 120_000,
+                },
+            },
             assignments: {
                 create: {
                     machineId: params.machineId,
@@ -177,12 +185,39 @@ async function createAccountMachineAutomation(params: {
                 },
             },
         },
-        select: { id: true },
+        select: { id: true, triggers: { select: { id: true } } },
     });
     return {
         accountId: account.id,
         machineId: params.machineId,
         automationId: automation.id,
+        triggerId: automation.triggers[0]!.id,
+    };
+}
+
+function scheduleRunCause(triggerId: string) {
+    const occurredAt = new Date();
+    return {
+        triggerId,
+        causeKind: "trigger" as const,
+        causeTriggerKind: "schedule" as const,
+        causeTriggerRevision: 0,
+        causeOccurredAt: occurredAt,
+        causeScheduledFor: occurredAt,
+        occurrenceKey: `test-schedule:${randomUUID()}`,
+    };
+}
+
+function conversationRunCause(occurrenceKey: string) {
+    return {
+        triggerId: null,
+        causeKind: "conversation" as const,
+        causeTriggerKind: null,
+        causeTriggerRevision: null,
+        causeOccurredAt: new Date(Date.now() - 60_000),
+        causeScheduledFor: null,
+        occurrenceKey,
+        legacyManualIdempotencyKey: null,
     };
 }
 
@@ -239,6 +274,114 @@ describe("automationRunService (integration)", () => {
         ]);
     });
 
+    it("starts a frozen released-V2 manual Run without requiring a schedule trigger cause", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-v2-manual-run",
+            machineId: "machine-v2-manual-run",
+            automationName: "V2 manual run",
+        });
+        const invokedAt = Date.now() - 30_000;
+        const legacyTemplate = JSON.stringify({
+            kind: "happier_automation_template_plain_v1",
+            payload: { prompt: "Run manually" },
+        });
+        const run = await db.automationRun.create({
+            data: {
+                automationId: seeded.automationId,
+                accountId: seeded.accountId,
+                triggerId: null,
+                causeKind: "manual",
+                causeTriggerKind: null,
+                causeTriggerRevision: null,
+                causeOccurredAt: new Date(invokedAt),
+                causeScheduledFor: null,
+                occurrenceKey: null,
+                state: "claimed",
+                scheduledAt: new Date(invokedAt),
+                dueAt: new Date(invokedAt),
+                claimedAt: new Date(invokedAt),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 60_000),
+                attempt: 1,
+                executionInputEnvelope: JSON.stringify({
+                    kind: "happier_automation_run_execution_input_v1",
+                    targetType: "new_session",
+                    templateVersion: 1,
+                    templateCiphertext: legacyTemplate,
+                    origin: { kind: "manual", invokedAt },
+                }),
+            },
+            select: { id: true },
+        });
+
+        const started = await startAutomationRunFromV2({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+        });
+
+        expect(started).toEqual(expect.objectContaining({
+            id: run.id,
+            causeKind: "manual",
+            state: "running",
+        }));
+    });
+
+    it.each([
+        ["revoked", { revokedAt: new Date("2026-08-27T00:00:00.000Z") }],
+        ["replaced", { replacedByMachineId: "machine-v2-current-replacement" }],
+    ] as const)("refuses released-V2 Run effects from a %s claimed machine", async (_state, machineUpdate) => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: `pk-v2-${_state}-machine`,
+            machineId: `machine-v2-${_state}`,
+            automationName: `V2 ${_state} machine`,
+        });
+        const invokedAt = Date.now() - 30_000;
+        const run = await db.automationRun.create({
+            data: {
+                automationId: seeded.automationId,
+                accountId: seeded.accountId,
+                triggerId: null,
+                causeKind: "manual",
+                causeOccurredAt: new Date(invokedAt),
+                state: "claimed",
+                scheduledAt: new Date(invokedAt),
+                dueAt: new Date(invokedAt),
+                claimedAt: new Date(invokedAt),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 60_000),
+                attempt: 1,
+                executionInputEnvelope: JSON.stringify({
+                    kind: "happier_automation_run_execution_input_v1",
+                    targetType: "new_session",
+                    templateVersion: 1,
+                    templateCiphertext: JSON.stringify({
+                        kind: "happier_automation_template_plain_v1",
+                        payload: { prompt: "Must not start" },
+                    }),
+                    origin: { kind: "manual", invokedAt },
+                }),
+            },
+            select: { id: true },
+        });
+        await db.machine.update({
+            where: { id: seeded.machineId },
+            data: machineUpdate,
+        });
+
+        await expect(startAutomationRunFromV2({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, revision: true },
+        })).resolves.toEqual({ state: "claimed", revision: 0 });
+    });
+
     async function seedExecutionDispatchRun(params: Readonly<{
         id: string;
         state?: "claimed" | "running";
@@ -263,11 +406,16 @@ describe("automationRunService (integration)", () => {
                 accountId: account.id,
                 name: `Detached execution ${params.id}`,
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 120_000,
                 targetType: "execution_run",
                 templateCiphertext: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
                 templateVersion: 1,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 120_000,
+                    },
+                },
                 assignments: {
                     create: {
                         machineId: machine.id,
@@ -276,13 +424,14 @@ describe("automationRunService (integration)", () => {
                     },
                 },
             },
-            select: { id: true },
+            select: { id: true, triggers: { select: { id: true } } },
         });
         const state = params.state ?? "claimed";
         const run = await db.automationRun.create({
             data: {
                 id: params.id,
                 automationId: automation.id,
+                ...scheduleRunCause(automation.triggers[0]!.id),
                 accountId: account.id,
                 state,
                 executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
@@ -332,17 +481,24 @@ describe("automationRunService (integration)", () => {
                 accountId: account.id,
                 name: "Inconsistent Account settlement",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 120_000,
                 targetType: "new_session",
                 templateCiphertext: TEST_TEMPLATE_ENVELOPE,
                 templateVersion: 1,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 120_000,
+                    },
+                },
             },
-            select: { id: true },
+            select: { id: true, triggers: { select: { id: true } } },
         });
+        const triggerId = automation.triggers[0]!.id;
         const run = await db.automationRun.create({
             data: {
                 automationId: automation.id,
+                ...scheduleRunCause(triggerId),
                 accountId: account.id,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -362,6 +518,7 @@ describe("automationRunService (integration)", () => {
         const startRun = await db.automationRun.create({
             data: {
                 automationId: automation.id,
+                ...scheduleRunCause(triggerId),
                 accountId: account.id,
                 state: "claimed",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -376,6 +533,7 @@ describe("automationRunService (integration)", () => {
         const failRun = await db.automationRun.create({
             data: {
                 automationId: automation.id,
+                ...scheduleRunCause(triggerId),
                 accountId: account.id,
                 state: "claimed",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -390,6 +548,7 @@ describe("automationRunService (integration)", () => {
         const cancelRun = await db.automationRun.create({
             data: {
                 automationId: automation.id,
+                ...scheduleRunCause(triggerId),
                 accountId: account.id,
                 state: "queued",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -467,10 +626,6 @@ describe("automationRunService (integration)", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
             },
             select: { id: true },
         });
@@ -480,9 +635,7 @@ describe("automationRunService (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
-                originKind: "conversation",
-                originOccurredAt: new Date(Date.now() - 60_000),
-                occurrenceKey: "conversation-occurrence-result-validation",
+                ...conversationRunCause("conversation-occurrence-result-validation"),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: JSON.stringify({
                     t: "plain",
@@ -524,6 +677,7 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "claimed",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -601,10 +755,16 @@ describe("automationRunService (integration)", () => {
 
         const automation = await db.automation.findUnique({
             where: { id: seeded.automationId },
-            select: { lastRunAt: true, nextRunAt: true },
+            select: {
+                lastRunAt: true,
+                triggers: { select: { id: true, nextRunAt: true } },
+            },
         });
         expect(automation?.lastRunAt).not.toBeNull();
-        expect(automation?.nextRunAt).not.toBeNull();
+        expect(automation?.triggers).toEqual([{
+            id: seeded.triggerId,
+            nextRunAt: expect.any(Date),
+        }]);
     });
 
     it("atomically persists execution dispatch permission and terminalizes an exhausted retry through the incumbent failed-run lifecycle", async () => {
@@ -650,7 +810,11 @@ describe("automationRunService (integration)", () => {
                         t: "automation-run-state-changed",
                         runId: exhausted.run.id,
                         automationId: exhausted.automation.id,
-                        originKind: "scheduled",
+                        runCause: expect.objectContaining({
+                            kind: "trigger",
+                            triggerId: exhausted.automation.triggers[0]!.id,
+                            triggerKind: "schedule",
+                        }),
                         previousState: "claimed",
                         currentState: "failed",
                         claimedByMachineId: null,
@@ -717,10 +881,13 @@ describe("automationRunService (integration)", () => {
         ]);
         await expect(db.automation.findUniqueOrThrow({
             where: { id: exhausted.automation.id },
-            select: { lastRunAt: true, nextRunAt: true },
+            select: {
+                lastRunAt: true,
+                triggers: { select: { nextRunAt: true } },
+            },
         })).resolves.toEqual({
             lastRunAt: null,
-            nextRunAt: expect.any(Date),
+            triggers: [{ nextRunAt: expect.any(Date) }],
         });
     });
 
@@ -1292,6 +1459,7 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "claimed",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -1326,7 +1494,11 @@ describe("automationRunService (integration)", () => {
                         t: "automation-run-state-changed",
                         runId: run.id,
                         automationId: seeded.automationId,
-                        originKind: "scheduled",
+                        runCause: expect.objectContaining({
+                            kind: "trigger",
+                            triggerId: seeded.triggerId,
+                            triggerKind: "schedule",
+                        }),
                         previousState: "claimed",
                         currentState: "running",
                         transitionedAt: expect.any(Number),
@@ -1428,10 +1600,6 @@ describe("automationRunService (integration)", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
             },
             select: { id: true },
         });
@@ -1441,9 +1609,7 @@ describe("automationRunService (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
-                originKind: "conversation",
-                originOccurredAt: new Date(Date.now() - 60_000),
-                occurrenceKey: "conversation-occurrence-ready",
+                ...conversationRunCause("conversation-occurrence-ready"),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: JSON.stringify({
                     t: "plain",
@@ -1536,10 +1702,6 @@ describe("automationRunService (integration)", () => {
                     payload: { prompt: "reply without delivery" },
                 }),
                 templateVersion: 1,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
             },
             select: { id: true },
         });
@@ -1549,9 +1711,7 @@ describe("automationRunService (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
-                originKind: "conversation",
-                originOccurredAt: new Date(Date.now() - 60_000),
-                occurrenceKey,
+                ...conversationRunCause(occurrenceKey),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: null,
                 replyHandoffActionPluginId: null,
@@ -1730,39 +1890,6 @@ describe("automationRunService (integration)", () => {
         },
     );
 
-    it("increments the revision once more when queued bulk cancellation blocks an awaiting Conversation handoff", async () => {
-        const seeded = await seedConversationRunForResultValidation();
-        await db.automationRun.update({
-            where: { id: seeded.run.id },
-            data: {
-                state: "queued",
-                startedAt: null,
-                claimedByMachineId: null,
-                leaseExpiresAt: null,
-            },
-        });
-        const before = await db.automationRun.findUniqueOrThrow({
-            where: { id: seeded.run.id },
-            select: { revision: true },
-        });
-
-        const terminalized = await inTx(async (tx) => await cancelQueuedAutomationRunsTx({
-            tx,
-            accountId: seeded.account.id,
-            automationId: seeded.automation.id,
-            originKind: "conversation",
-        }));
-
-        expect(terminalized).toEqual([
-            expect.objectContaining({
-                id: seeded.run.id,
-                state: "cancelled",
-                replyHandoffState: "blocked",
-                revision: before.revision + 2,
-            }),
-        ]);
-    });
-
     it.each(["failed", "cancelled"] as const)(
         "moves an awaiting Conversation handoff to blocked when the Run is terminally %s",
         async (terminalState) => {
@@ -1798,58 +1925,21 @@ describe("automationRunService (integration)", () => {
         },
     );
 
-    it("blocks an awaiting Conversation handoff when a retired Automation terminalizes its expired lease", async () => {
-        const seeded = await seedConversationRunForResultValidation();
-        // The retirement terminalizer only fires for an already-expired lease
-        // whose Definition or claimant assignment is gone.
-        await db.automationRun.update({
-            where: { id: seeded.run.id },
-            data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
-        });
-        await db.automation.update({
-            where: { id: seeded.automation.id },
-            data: { enabled: false },
-        });
-        const current = await db.automationRun.findUniqueOrThrow({
-            where: { id: seeded.run.id },
-            select: { revision: true, executionInputEnvelope: true, executionDispatchState: true },
-        });
-
-        const terminalized = await inTx(async (tx) => await terminalizeRetiredAutomationRunAfterLeaseExpiryTx({
-            tx,
-            accountId: seeded.account.id,
-            automationId: seeded.automation.id,
-            runId: seeded.run.id,
-            state: "running",
-            runRevision: current.revision,
-            claimedByMachineId: seeded.machine.id,
-            executionInputEnvelope: current.executionInputEnvelope,
-            originKind: "conversation",
-            executionDispatchState: current.executionDispatchState,
-            accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
-            now: new Date(),
-        }));
-
-        expect(terminalized).toEqual(expect.objectContaining({
-            state: "outcome_uncertain",
-            replyHandoffState: "blocked",
-            replyHandoffDueAt: null,
-            replyHandoffReceiptEnvelope: null,
-            revision: current.revision + 2,
-        }));
-        await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
-        await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
-    });
-
     it("records failed runs and still schedules the next interval run", async () => {
         const seeded = await createAccountMachineAutomation({
             publicKey: "pk-automation-run-fail",
             machineId: "machine-2",
             automationName: "Fail automation",
         });
+        const cause = scheduleRunCause(seeded.triggerId);
+        await db.automationTrigger.update({
+            where: { id: seeded.triggerId },
+            data: { nextRunAt: cause.causeScheduledFor },
+        });
         const run = await db.automationRun.create({
             data: {
                 automationId: seeded.automationId,
+                ...cause,
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -1891,14 +1981,29 @@ describe("automationRunService (integration)", () => {
             }),
         );
 
-        const queuedFollowUp = await db.automationRun.findMany({
+        const queuedBeforeDue = await db.automationRun.findMany({
             where: {
                 automationId: seeded.automationId,
                 state: "queued",
             },
             select: { id: true },
         });
-        expect(queuedFollowUp).toHaveLength(1);
+        expect(queuedBeforeDue).toHaveLength(0);
+        const advanced = await db.automationTrigger.findUniqueOrThrow({
+            where: { id: seeded.triggerId },
+            select: { nextRunAt: true },
+        });
+        expect(advanced.nextRunAt?.getTime()).toBeGreaterThan(failed!.finishedAt!.getTime());
+
+        const nextDueAt = new Date(failed!.finishedAt!.getTime() + 1);
+        await db.automationTrigger.update({
+            where: { id: seeded.triggerId },
+            data: { nextRunAt: nextDueAt },
+        });
+        await runAutomationScheduleWorkerPass({ now: nextDueAt });
+        await expect(db.automationRun.count({
+            where: { automationId: seeded.automationId, state: "queued" },
+        })).resolves.toBe(1);
         const events = await db.automationRunEvent.findMany({
             where: { runId: run.id },
             orderBy: [{ ts: "asc" }],
@@ -1916,6 +2021,7 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -1951,6 +2057,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-retained-success-session",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2028,6 +2135,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-known-produced-session",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2089,6 +2197,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-cancelled-known-produced-session",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2198,6 +2307,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-retain-before-cancel",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2318,6 +2428,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-cancel-before-retain",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2402,6 +2513,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-retention-refusals",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -2469,6 +2581,7 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: "run-retention-execution-target",
                 automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
                 state: "running",
                 scheduledAt: new Date(Date.now() - 60_000),

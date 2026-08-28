@@ -13,6 +13,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
@@ -23,6 +25,10 @@ import { t } from '@/text';
  */
 export function AutomationSettingsScreen(): React.ReactElement {
     const { theme } = useUnistyles();
+    // Subscribe through the incumbent storage owner so an Account switch
+    // remounts this route-local projection even when the route itself stays put.
+    useActiveServerAccountScope();
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [settings, setSettings] = React.useState<AutomationV3Settings | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [loadFailed, setLoadFailed] = React.useState(false);
@@ -34,53 +40,70 @@ export function AutomationSettingsScreen(): React.ReactElement {
     const hasLoadedSettingsRef = React.useRef(false);
 
     const refresh = React.useCallback(async () => {
+        const requestAccountLifetime = accountLifetime;
         const requestEpoch = requestEpochRef.current + 1;
         requestEpochRef.current = requestEpoch;
         setLoadFailed(false);
         if (!hasLoadedSettingsRef.current) setLoading(true);
         try {
             const next = await sync.getAutomationSettings();
-            if (requestEpoch !== requestEpochRef.current) return;
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
             hasLoadedSettingsRef.current = true;
             setSettings(next);
         } catch {
-            if (requestEpoch !== requestEpochRef.current) return;
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
             setLoadFailed(true);
         } finally {
-            if (requestEpoch === requestEpochRef.current) {
+            if (requestEpoch === requestEpochRef.current && requestAccountLifetime?.isCurrent() !== false) {
                 setLoading(false);
             }
         }
-    }, []);
+    }, [accountLifetime]);
 
     React.useEffect(() => {
+        requestEpochRef.current += 1;
+        hasLoadedSettingsRef.current = false;
+        setSettings(null);
+        setLoading(true);
+        setLoadFailed(false);
+        setSaving(false);
+        const retirement = accountLifetime?.onRetire(() => {
+            requestEpochRef.current += 1;
+            hasLoadedSettingsRef.current = false;
+            setSettings(null);
+            setLoading(true);
+            setLoadFailed(false);
+            setSaving(false);
+        });
         void refresh();
         return () => {
             requestEpochRef.current += 1;
+            retirement?.dispose();
         };
-    }, [refresh]);
+    }, [accountLifetime, refresh]);
 
     const applySettings = React.useCallback(async (next: AutomationV3Settings) => {
         if (saving) return;
+        const requestAccountLifetime = accountLifetime;
         const requestEpoch = requestEpochRef.current + 1;
         requestEpochRef.current = requestEpoch;
         setSaving(true);
         try {
             const updated = await sync.updateAutomationSettings(next);
-            if (requestEpoch !== requestEpochRef.current) return;
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
             setSettings(updated);
         } catch (error) {
-            if (requestEpoch !== requestEpochRef.current) return;
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.settings.updateFailed'),
             );
         } finally {
-            if (requestEpoch === requestEpochRef.current) {
+            if (requestEpoch === requestEpochRef.current && requestAccountLifetime?.isCurrent() !== false) {
                 setSaving(false);
             }
         }
-    }, [saving]);
+    }, [accountLifetime, saving]);
 
     const handleMaxActiveRuns = React.useCallback(async () => {
         if (settings === null || saving) return;

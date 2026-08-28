@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol';
+import {
+    arePluginMachineExecutionOriginsEqual,
+    arePluginMachineMaterializationRefsEqual,
+} from '@happier-dev/protocol';
 
 import {
     areFreshPluginMachineExecutionOriginsCurrent,
     arePluginContributionIdentitiesEqual,
-    arePluginMachineMaterializationRefsEqual,
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 describe('plugin Event Automation currentness', () => {

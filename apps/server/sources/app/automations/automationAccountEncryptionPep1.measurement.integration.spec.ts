@@ -10,6 +10,7 @@ import {
     sealAutomationReplyHandoffReceiptStoredEnvelopeV1,
     sealAutomationRunResultStoredEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    serializeAutomationRunExecutionRecipeV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
 import { writeFile } from "node:fs/promises";
@@ -34,19 +35,21 @@ const TOTAL_RUNS = BATCH_SIZE * BATCH_COUNT;
 const TARGET_ENVELOPE_CIPHERTEXT_BYTES = 4_096;
 const ACCOUNT_KEY = new Uint8Array(32).fill(23);
 const ACCOUNT_MATERIAL = { type: "legacy" as const, secret: ACCOUNT_KEY };
-const RUN_ORIGINS = [
-    "scheduled",
+const RUN_SCENARIOS = [
+    "scheduleTrigger",
     "manual",
-    "pluginEvent",
+    "pluginEventTrigger",
     "conversation",
 ] as const;
-const RUNS_PER_ORIGIN = TOTAL_RUNS / RUN_ORIGINS.length;
+const RUNS_PER_SCENARIO = TOTAL_RUNS / RUN_SCENARIOS.length;
 const SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
     "8a2e26d2-5b2b-4e9b-a57f-68ca5e575dc7",
 );
 const SCHEDULE_AUTOMATION_ID = "pep1-measurement-automation-schedule";
 const EVENT_AUTOMATION_ID = "pep1-measurement-automation-event";
 const CONVERSATION_AUTOMATION_ID = "pep1-measurement-automation-conversation";
+const SCHEDULE_TRIGGER_ID = "pep1-measurement-trigger-schedule";
+const EVENT_TRIGGER_ID = "pep1-measurement-trigger-event";
 const SOURCE_TEMPLATE = JSON.stringify({
     kind: "happier_automation_template_plain_v1",
     payload: { prompt: "PEP1 measurement" },
@@ -104,14 +107,21 @@ async function time<T>(operation: () => Promise<T>): Promise<Readonly<{
     };
 }
 
-type MeasurementRunOrigin = (typeof RUN_ORIGINS)[number];
+type MeasurementRunScenario = (typeof RUN_SCENARIOS)[number];
 
 type MeasurementRunContent = Readonly<{
-    originKind: MeasurementRunOrigin;
+    scenario: MeasurementRunScenario;
     automationId: string;
-    originOccurredAt: Date | null;
+    triggerId: string | null;
+    causeKind: "trigger" | "manual" | "conversation";
+    causeTriggerKind: "schedule" | "pluginEvent" | null;
+    causeTriggerRevision: number | null;
+    causeEventPluginId: string | null;
+    causeEventLocalId: string | null;
+    causeOccurredAt: Date;
+    causeScheduledFor: Date | null;
     occurrenceKey: string | null;
-    originSourceSelectorId: string | null;
+    causeSourceSelectorId: string | null;
     triggerEvidenceEnvelope: string | null;
     executionInputEnvelope: string;
     resultEnvelope: string;
@@ -133,14 +143,15 @@ function deterministicRandomBytes(length: number): Uint8Array {
 
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
-    templateVersion: number;
-    triggerKind: "pluginEvent";
+    triggerId: string;
+    triggerRevision: number;
     mode: "plain" | "e2ee";
 }>): string {
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        templateVersion: params.templateVersion,
+        triggerId: params.triggerId,
+        triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
             pluginId: "com.example.github",
@@ -179,24 +190,24 @@ function runIdForIndex(index: number): string {
     return `pep1-measurement-run-${index}`;
 }
 
-function originForIndex(index: number): MeasurementRunOrigin {
-    return RUN_ORIGINS[index % RUN_ORIGINS.length]!;
+function scenarioForIndex(index: number): MeasurementRunScenario {
+    return RUN_SCENARIOS[index % RUN_SCENARIOS.length]!;
 }
 
-function automationIdForOrigin(origin: MeasurementRunOrigin): string {
-    switch (origin) {
-        case "scheduled":
+function automationIdForScenario(scenario: MeasurementRunScenario): string {
+    switch (scenario) {
+        case "scheduleTrigger":
         case "manual":
             return SCHEDULE_AUTOMATION_ID;
-        case "pluginEvent":
+        case "pluginEventTrigger":
             return EVENT_AUTOMATION_ID;
         case "conversation":
             return CONVERSATION_AUTOMATION_ID;
     }
 }
 
-function buildEvidence(index: number, origin: MeasurementRunOrigin) {
-    if (origin === "pluginEvent") {
+function buildEvidence(index: number, scenario: MeasurementRunScenario) {
+    if (scenario === "pluginEventTrigger") {
         return {
             v: 1 as const,
             kind: "pluginEvent" as const,
@@ -213,7 +224,7 @@ function buildEvidence(index: number, origin: MeasurementRunOrigin) {
             },
         };
     }
-    if (origin === "conversation") {
+    if (scenario === "conversation") {
         return {
             v: 1 as const,
             kind: "conversation" as const,
@@ -233,16 +244,36 @@ function buildEvidence(index: number, origin: MeasurementRunOrigin) {
 }
 
 function buildExecutionInputEnvelope(mode: "plain" | "e2ee"): string {
-    return JSON.stringify({
-        kind: "happier_automation_run_execution_input_v1",
-        targetType: "new_session",
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        v: 1,
         templateVersion: 1,
-        templateCiphertext: mode === "plain" ? SOURCE_TEMPLATE : TARGET_TEMPLATE,
-        origin: {
-            kind: "manual",
-            invokedAt: 1_724_000_000_000,
+        template: mode === "plain"
+            ? { t: "plain", v: { v: 1, prompt: "PEP1 measurement" } }
+            : { t: "encrypted", c: "measurement-target-template" },
+        triggerEvidence: null,
+        target: {
+            kind: "newSession",
+            spawn: {
+                executionTarget: {
+                    serverId: "server-pep1-measurement",
+                    machineId: "machine-pep1-measurement",
+                },
+                directory: "/tmp/pep1-measurement",
+                agentTarget: {
+                    kind: "agent",
+                    identity: {
+                        pluginId: "happier.agent.codex",
+                        localId: "codex",
+                    },
+                },
+            },
         },
+        assignmentMachineIds: [],
     });
+    if (serialized.kind !== "available") {
+        throw new Error("PEP1 measurement fixture must use a strict Run recipe");
+    }
+    return serialized.serialized;
 }
 
 function sealResultEnvelope(mode: "plain" | "e2ee", textBytes: number): string {
@@ -346,19 +377,59 @@ const LEGACY_RESULT_ENVELOPE = JSON.stringify({
 });
 
 function buildSourceRunContent(index: number): MeasurementRunContent {
-    const originKind = originForIndex(index);
-    const automationId = automationIdForOrigin(originKind);
-    const evidence = buildEvidence(index, originKind);
-    const isLegacySummarySource = originKind === "manual" && index === 1;
-    const hasReplyHandoff = originKind === "conversation";
+    const scenario = scenarioForIndex(index);
+    const automationId = automationIdForScenario(scenario);
+    const evidence = buildEvidence(index, scenario);
+    const isLegacySummarySource = scenario === "manual" && index === 1;
+    const hasReplyHandoff = scenario === "conversation";
+    const causeOccurredAt = new Date(evidence?.occurredAt ?? 1_724_000_000_000 + index);
+    const triggerId = scenario === "scheduleTrigger"
+        ? SCHEDULE_TRIGGER_ID
+        : scenario === "pluginEventTrigger"
+            ? EVENT_TRIGGER_ID
+            : null;
     return {
-        originKind,
+        scenario,
         automationId,
-        originOccurredAt: evidence === null ? null : new Date(evidence.occurredAt),
+        triggerId,
+        causeKind: scenario === "manual"
+            ? "manual"
+            : scenario === "conversation"
+                ? "conversation"
+                : "trigger",
+        causeTriggerKind: scenario === "scheduleTrigger"
+            ? "schedule"
+            : scenario === "pluginEventTrigger"
+                ? "pluginEvent"
+                : null,
+        causeTriggerRevision: triggerId === null ? null : 0,
+        causeEventPluginId: scenario === "pluginEventTrigger"
+            ? "com.example.github"
+            : null,
+        causeEventLocalId: scenario === "pluginEventTrigger"
+            ? "repository-event"
+            : null,
+        causeOccurredAt,
+        causeScheduledFor: scenario === "scheduleTrigger"
+            ? causeOccurredAt
+            : null,
         occurrenceKey: evidence === null
-            ? null
-            : deriveAutomationOccurrenceKeyV1(evidence),
-        originSourceSelectorId: originKind === "pluginEvent"
+            ? scenario === "scheduleTrigger"
+                ? deriveAutomationOccurrenceKeyV1({
+                    triggerId: SCHEDULE_TRIGGER_ID,
+                    evidence: {
+                        v: 1,
+                        kind: "schedule",
+                        scheduledFor: causeOccurredAt.getTime(),
+                    },
+                })
+                : null
+            : deriveAutomationOccurrenceKeyV1(
+                scenario === "pluginEventTrigger"
+                    ? { triggerId: EVENT_TRIGGER_ID, evidence }
+                    : evidence,
+            ),
+        causeSourceSelectorId: scenario === "pluginEventTrigger"
             ? SOURCE_SELECTOR_ID
             : null,
         triggerEvidenceEnvelope: evidence === null
@@ -371,7 +442,7 @@ function buildSourceRunContent(index: number): MeasurementRunContent {
         resultEnvelope: isLegacySummarySource
             ? LEGACY_RESULT_ENVELOPE
             : SOURCE_RESULT_ENVELOPE,
-        replyContextEnvelope: originKind === "conversation"
+        replyContextEnvelope: scenario === "conversation"
             ? SOURCE_REPLY_CONTEXT_ENVELOPE
             : null,
         replyHandoffActionPluginId: hasReplyHandoff ? "happier.channels" : null,
@@ -406,10 +477,8 @@ function buildRunItem(params: Readonly<{
     expectedRunRevision: number;
 }>) {
     const source = buildSourceRunContent(params.index);
-    const evidence = buildEvidence(params.index, source.originKind);
-    const occurrenceKey = evidence === null
-        ? null
-        : deriveAutomationOccurrenceKeyV1(evidence);
+    const evidence = buildEvidence(params.index, source.scenario);
+    const occurrenceKey = source.occurrenceKey;
     const directive = AccountEncryptionMigrateAutomationsDirectiveSchema.parse({
         action: "migrate",
         templates: [],
@@ -425,13 +494,22 @@ function buildRunItem(params: Readonly<{
                 })),
             occurrenceEvidenceEqualityTag: evidence === null
                 ? null
-                : deriveAutomationOccurrenceEvidenceEqualityTagV1({
-                    purposeSeparatedAccountKey: ACCOUNT_KEY,
-                    accountId: "pep1-measurement-account",
-                    automationId: source.automationId,
-                    occurrenceKey: occurrenceKey!,
-                    evidence,
-                }),
+                : evidence.kind === "pluginEvent"
+                    ? deriveAutomationOccurrenceEvidenceEqualityTagV1({
+                        purposeSeparatedAccountKey: ACCOUNT_KEY,
+                        accountId: "pep1-measurement-account",
+                        automationId: source.automationId,
+                        triggerId: EVENT_TRIGGER_ID,
+                        occurrenceKey: occurrenceKey!,
+                        evidence,
+                    })
+                    : deriveAutomationOccurrenceEvidenceEqualityTagV1({
+                        purposeSeparatedAccountKey: ACCOUNT_KEY,
+                        accountId: "pep1-measurement-account",
+                        automationId: source.automationId,
+                        occurrenceKey: occurrenceKey!,
+                        evidence,
+                    }),
             executionInputEnvelope: TARGET_EXECUTION_INPUT_ENVELOPE,
             resultEnvelope: params.resultEnvelope,
             replyContextEnvelope: source.replyContextEnvelope === null
@@ -440,6 +518,7 @@ function buildRunItem(params: Readonly<{
             replyHandoffReceiptEnvelope: source.replyHandoffReceiptEnvelope === null
                 ? null
                 : TARGET_REPLY_RECEIPT_ENVELOPE,
+            failureDetailEnvelope: null,
         }],
     });
     if (directive.action !== "migrate" || !directive.runs?.[0]) {
@@ -475,56 +554,64 @@ async function seedOneAccount(params: Readonly<{
     await db.account.create({
         data: { id: accountId, encryptionMode: "plain" },
     });
-    await db.automation.createMany({
-        data: [
-            {
-                id: SCHEDULE_AUTOMATION_ID,
-                accountId,
-                name: "PEP1 schedule measurement",
-                enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                targetType: "new_session",
-                templateCiphertext: SOURCE_TEMPLATE,
-                templateVersion: 1,
+    await db.automation.create({
+        data: {
+            id: SCHEDULE_AUTOMATION_ID,
+            accountId,
+            name: "PEP1 schedule measurement",
+            enabled: false,
+            triggers: {
+                create: {
+                    id: SCHEDULE_TRIGGER_ID,
+                    kind: "schedule",
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                },
             },
-            {
-                id: EVENT_AUTOMATION_ID,
-                accountId,
-                name: "PEP1 event measurement",
-                enabled: false,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.example.github",
-                triggerEventLocalId: "repository-event",
-                triggerSourceSelectorId: SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: EVENT_AUTOMATION_ID,
-                    templateVersion: 1,
-                    triggerKind: "pluginEvent",
-                    mode: "plain",
-                }),
-                targetType: "new_session",
-                templateCiphertext: SOURCE_TEMPLATE,
-                templateVersion: 1,
+            targetType: "new_session",
+            templateCiphertext: SOURCE_TEMPLATE,
+            templateVersion: 1,
+        },
+    });
+    await db.automation.create({
+        data: {
+            id: EVENT_AUTOMATION_ID,
+            accountId,
+            name: "PEP1 event measurement",
+            enabled: false,
+            triggers: {
+                create: {
+                    id: EVENT_TRIGGER_ID,
+                    kind: "pluginEvent",
+                    eventPluginId: "com.example.github",
+                    eventLocalId: "repository-event",
+                    sourceSelectorId: SOURCE_SELECTOR_ID,
+                    sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull",
+                    definitionEnvelope: buildTriggerDefinitionEnvelope({
+                        automationId: EVENT_AUTOMATION_ID,
+                        triggerId: EVENT_TRIGGER_ID,
+                        triggerRevision: 0,
+                        mode: "plain",
+                    }),
+                },
             },
-            {
-                id: CONVERSATION_AUTOMATION_ID,
-                accountId,
-                name: "PEP1 conversation measurement",
-                enabled: false,
-                // Conversation is measured as a Run origin, backed by this schedule.
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
-                targetType: "new_session",
-                templateCiphertext: SOURCE_TEMPLATE,
-                templateVersion: 1,
-            },
-        ],
+            targetType: "new_session",
+            templateCiphertext: SOURCE_TEMPLATE,
+            templateVersion: 1,
+        },
+    });
+    await db.automation.create({
+        data: {
+            id: CONVERSATION_AUTOMATION_ID,
+            accountId,
+            name: "PEP1 conversation measurement",
+            enabled: false,
+            // Conversation is a direct Run cause and has no trigger row.
+            targetType: "new_session",
+            templateCiphertext: SOURCE_TEMPLATE,
+            templateVersion: 1,
+        },
     });
     await db.automationRun.createMany({
         data: runContents.map((content, index) => ({
@@ -532,11 +619,17 @@ async function seedOneAccount(params: Readonly<{
             accountId,
             automationId: content.automationId,
             state: "queued" as const,
-            originKind: content.originKind,
-            originOccurredAt: content.originOccurredAt,
+            triggerId: content.triggerId,
+            causeKind: content.causeKind,
+            causeTriggerKind: content.causeTriggerKind,
+            causeTriggerRevision: content.causeTriggerRevision,
+            causeEventPluginId: content.causeEventPluginId,
+            causeEventLocalId: content.causeEventLocalId,
+            causeOccurredAt: content.causeOccurredAt,
+            causeScheduledFor: content.causeScheduledFor,
             occurrenceKey: content.occurrenceKey,
             occurrenceEvidenceEqualityTag: null,
-            originSourceSelectorId: content.originSourceSelectorId,
+            causeSourceSelectorId: content.causeSourceSelectorId,
             triggerEvidenceEnvelope: content.triggerEvidenceEnvelope,
             executionInputEnvelope: content.executionInputEnvelope,
             resultEnvelope: content.resultEnvelope,
@@ -571,16 +664,18 @@ async function seedOneAccount(params: Readonly<{
             automationId,
             expectedTemplateVersion: 1,
             templateCiphertext: TARGET_TEMPLATE,
-            ...(automationId === EVENT_AUTOMATION_ID
-                ? {
-                    triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
+            triggerDefinitionEnvelopes: automationId === EVENT_AUTOMATION_ID
+                ? [{
+                    triggerId: EVENT_TRIGGER_ID,
+                    triggerRevision: 0,
+                    envelope: buildTriggerDefinitionEnvelope({
                         automationId,
-                        templateVersion: 2,
-                        triggerKind: "pluginEvent",
+                        triggerId: EVENT_TRIGGER_ID,
+                        triggerRevision: 0,
                         mode: "e2ee",
                     }),
-                }
-                : {}),
+                }]
+                : [],
         })),
         // The released direct migration request intentionally caps one
         // participant segment at 500 rows. This is the exact segment a
@@ -638,7 +733,7 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
         const sourceEnvelope = JSON.stringify(
             AutomationStoredContentEnvelopeV1Schema.parse({
                 t: "plain",
-                v: buildEvidence(2, "pluginEvent"),
+                v: buildEvidence(2, "pluginEventTrigger"),
             }),
         );
         const minimalEnvelope = sealCanonicalTargetEnvelope(0);
@@ -669,12 +764,38 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
         const seededRunRows = await db.automationRun.count({
             where: { accountId: seeded.result.accountId },
         });
-        const seededOriginCounts = await db.automationRun.groupBy({
-            by: ["originKind"],
+        const seededCauseCounts = await db.automationRun.groupBy({
+            by: ["causeKind", "causeTriggerKind"],
             where: { accountId: seeded.result.accountId },
             _count: { _all: true },
-            orderBy: { originKind: "asc" },
+            orderBy: [
+                { causeKind: "asc" },
+                { causeTriggerKind: "asc" },
+            ],
         });
+        const seededCauseRows = Object.fromEntries(seededCauseCounts.map((row) => [
+            row.causeKind === "trigger"
+                ? `trigger:${row.causeTriggerKind}`
+                : row.causeKind,
+            row._count._all,
+        ]));
+        const seededTriggerRows = (await db.automationTrigger.findMany({
+            where: { automation: { accountId: seeded.result.accountId } },
+            select: {
+                id: true,
+                automationId: true,
+                kind: true,
+                revision: true,
+                definitionEnvelope: true,
+            },
+            orderBy: { id: "asc" },
+        })).map((row) => ({
+            id: row.id,
+            automationId: row.automationId,
+            kind: row.kind,
+            revision: row.revision,
+            hasDefinitionEnvelope: row.definitionEnvelope !== null,
+        }));
         const [
             participatingRunRows,
             triggerEvidenceRows,
@@ -738,23 +859,47 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
             db.automationRun.count({
                 where: {
                     accountId: seeded.result.accountId,
-                    originKind: { in: ["scheduled", "manual"] },
                     OR: [
-                        { triggerEvidenceEnvelope: { not: null } },
-                        { occurrenceEvidenceEqualityTag: { not: null } },
+                        { causeKind: "manual" },
+                        {
+                            causeKind: "trigger",
+                            causeTriggerKind: "schedule",
+                        },
                     ],
+                    AND: {
+                        OR: [
+                            { triggerEvidenceEnvelope: { not: null } },
+                            { occurrenceEvidenceEqualityTag: { not: null } },
+                        ],
+                    },
                 },
             }),
         ]);
         expect(await db.account.count()).toBe(1);
         expect(await db.automation.count()).toBe(3);
-        expect(seededRunRows).toBe(TOTAL_RUNS);
-        expect(seededOriginCounts).toEqual([
-            { originKind: "conversation", _count: { _all: RUNS_PER_ORIGIN } },
-            { originKind: "manual", _count: { _all: RUNS_PER_ORIGIN } },
-            { originKind: "pluginEvent", _count: { _all: RUNS_PER_ORIGIN } },
-            { originKind: "scheduled", _count: { _all: RUNS_PER_ORIGIN } },
+        expect(seededTriggerRows).toEqual([
+            {
+                id: EVENT_TRIGGER_ID,
+                automationId: EVENT_AUTOMATION_ID,
+                kind: "pluginEvent",
+                revision: 0,
+                hasDefinitionEnvelope: true,
+            },
+            {
+                id: SCHEDULE_TRIGGER_ID,
+                automationId: SCHEDULE_AUTOMATION_ID,
+                kind: "schedule",
+                revision: 0,
+                hasDefinitionEnvelope: false,
+            },
         ]);
+        expect(seededRunRows).toBe(TOTAL_RUNS);
+        expect(seededCauseRows).toEqual({
+            conversation: RUNS_PER_SCENARIO,
+            manual: RUNS_PER_SCENARIO,
+            "trigger:pluginEvent": RUNS_PER_SCENARIO,
+            "trigger:schedule": RUNS_PER_SCENARIO,
+        });
         expect({
             participatingRunRows,
             triggerEvidenceRows,
@@ -766,11 +911,11 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
             scheduledOrManualEvidenceRows,
         }).toEqual({
             participatingRunRows: TOTAL_RUNS,
-            triggerEvidenceRows: RUNS_PER_ORIGIN * 2,
+            triggerEvidenceRows: RUNS_PER_SCENARIO * 2,
             executionInputRows: TOTAL_RUNS,
             resultRows: TOTAL_RUNS,
-            replyContextRows: RUNS_PER_ORIGIN,
-            replyReceiptRows: RUNS_PER_ORIGIN,
+            replyContextRows: RUNS_PER_SCENARIO,
+            replyReceiptRows: RUNS_PER_SCENARIO,
             legacySummaryRows: 1,
             scheduledOrManualEvidenceRows: 0,
         });
@@ -809,17 +954,14 @@ describe.skipIf(!ENABLED)("PEP1 Automation Run measurement (integration)", () =>
         }).toEqual({ ...ACCOUNT_ENCRYPTION_TRANSITION_PEP1_CAPACITY_MEASUREMENT });
 
         const metrics = {
-            scope: "one_account_10k_all_origin_participating_retained_runs",
+            scope: "one_account_10k_all_cause_participating_retained_runs",
             batchSize: BATCH_SIZE,
             batchCount: BATCH_COUNT,
             runRows: {
                 seeded: seededRunRows,
                 retainedAfterLegacyAttempt: retainedRunRowsAfterLegacyAttempt,
             },
-            originRows: Object.fromEntries(seededOriginCounts.map((row) => [
-                row.originKind,
-                row._count._all,
-            ])),
+            causeRows: seededCauseRows,
             sourceRetainedContentUtf8Bytes: seeded.result.sourceRetainedContentUtf8Bytes,
             censusParticipantRows,
             accountRows: await db.account.count(),

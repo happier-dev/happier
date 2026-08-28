@@ -81,13 +81,15 @@ vi.mock('@expo/vector-icons', () => ({
 
 const EVENT_ID = 'acme.github/events/repository';
 
-function createEvent() {
+function createEvent(index?: number) {
+    const localId = index === undefined ? 'events/repository' : `events/repository-${index}`;
+    const eventId = `acme.github/${localId}`;
     return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
         event: {
-            id: EVENT_ID,
-            identity: { pluginId: 'acme.github', localId: 'events/repository' },
-            immutableGenerationId: 'event-generation-a',
-            title: 'Repository changed',
+            id: eventId,
+            identity: { pluginId: 'acme.github', localId },
+            immutableGenerationId: `event-generation-${index ?? 'a'}`,
+            title: index === undefined ? 'Repository changed' : `Repository event ${index}`,
             description: 'A repository changed',
             payloadSchema: {
                 type: 'object',
@@ -108,7 +110,7 @@ function createEvent() {
         setupAction: {
             id: 'acme.github/setup-source',
             identity: { pluginId: 'acme.github', localId: 'setup-source' },
-            immutableGenerationId: 'event-generation-a',
+            immutableGenerationId: `event-generation-${index ?? 'a'}`,
             title: 'Set up source',
             description: null,
             inputSchema: { type: 'object', additionalProperties: false },
@@ -137,19 +139,6 @@ const watcherCandidates = [{
 
 function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomationComposerModel {
     return {
-        mode: 'event',
-        setMode: vi.fn(),
-        isEditingEvent: false,
-        editTarget: null,
-        targetKind: 'newSession',
-        setTargetKind: vi.fn(),
-        existingSessionOptions: [],
-        selectedExistingSessionId: null,
-        selectExistingSession: vi.fn(),
-        existingSessionAvailability: null,
-        executionPermissionMode: 'read_only',
-        setExecutionPermissionMode: vi.fn(),
-        resolveExecutionTarget: vi.fn(() => null),
         eligibleEvents: [event],
         eventCatalogStatus: 'ready',
         selectedEvent: event,
@@ -166,6 +155,7 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
             isCurrent: () => true,
         }),
         sourceStatus: 'idle',
+        sourceFailure: null,
         sourceDisplayLabel: null,
         sourceInstanceId: null,
         availableObservationTransports: ['checkpointedPull'],
@@ -200,8 +190,9 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         setMaximumObservationAgeMsText: vi.fn(),
         maximumObservationAgeMsValid: true,
         createDraft: null,
+        invalidateConfiguredSource: vi.fn(),
         revision: 0,
-    } as unknown as PluginEventAutomationComposerModel;
+    };
 }
 
 const EVENT_TRIGGER_TEST_ID = 'automation-event-picker';
@@ -227,43 +218,35 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
         standardCleanup();
     });
 
-    it('searches a large existing-session target list before selecting its canonical option', async () => {
-        const selectExistingSession = vi.fn();
-        const existingSessionOptions = Array.from({ length: 60 }, (_, index) => ({
-            sessionId: `session-${index}`,
-            serverId: 'srv-account-a',
-            label: `Work session ${index}`,
-        }));
+    it('searches and virtualizes a nontrivial semantic Event catalog before selection', async () => {
+        selectionListLegendMock.state.reset();
+        const selectEvent = vi.fn();
+        const eligibleEvents = Array.from({ length: 60 }, (_, index) => createEvent(index));
         const model = {
-            ...createModel(createEvent()),
-            targetKind: 'existingSession' as const,
-            existingSessionOptions,
-            selectExistingSession,
+            ...createModel(eligibleEvents[0]!),
+            eligibleEvents,
+            selectedEvent: eligibleEvents[0]!,
+            selectEvent,
         };
         const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
 
         await act(async () => {
-            screen.findByProps({ testID: 'automation-event-existing-session-picker' }).props.onPress();
+            screen.findByProps({ testID: EVENT_TRIGGER_TEST_ID }).props.onPress();
         });
 
-        const search = screen.findByTestId('automation-event-existing-session-search');
+        const search = screen.findByTestId('automation-event-search');
         expect(search).toBeTruthy();
-        expect(screen.findByTestId('automation-event-existing-session-list:section:existing-sessions:virtualized')).toBeTruthy();
-        expect(selectionListLegendMock.state.props?.data).toHaveLength(existingSessionOptions.length);
+        expect(screen.findByTestId('automation-event-selection-list:section:events:virtualized')).toBeTruthy();
+        expect(selectionListLegendMock.state.props?.data).toHaveLength(eligibleEvents.length);
 
         await act(async () => {
-            search?.props.onChangeText('Work session 59');
+            search?.props.onChangeText('Repository event 59');
         });
-
-        const option = screen.findByTestId('automation-event-existing-session-option-session-59');
+        const option = screen.findByTestId(`automation-event-option-${eligibleEvents[59]!.event.id}`);
         expect(option).toBeTruthy();
-        await act(async () => {
-            option?.props.onPress();
-        });
-
-        expect(selectExistingSession).toHaveBeenCalledWith(existingSessionOptions[59]);
-        expect(screen.findByTestId('automation-event-existing-session-picker-options')).toBeNull();
+        await act(async () => option?.props.onPress());
+        expect(selectEvent).toHaveBeenCalledWith(eligibleEvents[59]);
     });
 
     it('returns focus to the owning trigger when an expanded picker collapses on selection', async () => {

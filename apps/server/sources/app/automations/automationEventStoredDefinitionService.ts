@@ -64,7 +64,7 @@ type StoredDefinitionCursor = Readonly<{
     v: 1;
     scope: string;
     revision: string;
-    lastAutomationId: string;
+    lastTriggerId: string;
 }>;
 
 type CurrentDurablePushEndpoint = Readonly<{
@@ -116,14 +116,14 @@ function decodeCursor(cursor: string): StoredDefinitionCursor | null {
             || record.v !== 1
             || typeof record.scope !== "string"
             || !isCanonicalUnsignedRevision(record.revision)
-            || typeof record.lastAutomationId !== "string"
-            || record.lastAutomationId.length === 0
+            || typeof record.lastTriggerId !== "string"
+            || record.lastTriggerId.length === 0
         ) return null;
         const parsed: StoredDefinitionCursor = {
             v: 1,
             scope: record.scope,
             revision: record.revision,
-            lastAutomationId: record.lastAutomationId,
+            lastTriggerId: record.lastTriggerId,
         };
         return encodeCursor(parsed) === cursor ? parsed : null;
     } catch {
@@ -136,20 +136,20 @@ function eventDefinitionWhere(params: Readonly<{
     caller: AutomationEventStoredDefinitionsReadCallerV1;
     input: Pick<AutomationEventSourcesListInputV1, "transport">;
     durablePushEndpointIds?: string[];
-    lastAutomationId?: string;
+    lastTriggerId?: string;
 }>) {
     const base = {
-        accountId: params.accountId,
+        automation: { accountId: params.accountId, enabled: true, deletedAt: null },
         enabled: true,
         deletedAt: null,
-        triggerKind: "pluginEvent" as const,
-        triggerEventPluginId: params.caller.pluginId,
-        ...(params.lastAutomationId === undefined ? {} : { id: { gt: params.lastAutomationId } }),
+        kind: "pluginEvent" as const,
+        eventPluginId: params.caller.pluginId,
+        ...(params.lastTriggerId === undefined ? {} : { id: { gt: params.lastTriggerId } }),
     };
     if (params.input.transport.kind === "checkpointedPull") {
         return {
             ...base,
-            triggerObservationTransport: "checkpointedPull" as const,
+            observationTransport: "checkpointedPull" as const,
             watcherMachineId: params.caller.machineId,
             watcherMachineInstallationId: params.caller.machineInstallationId,
             watcherPluginId: params.caller.pluginId,
@@ -158,42 +158,50 @@ function eventDefinitionWhere(params: Readonly<{
     }
     return {
         ...base,
-        triggerObservationTransport: "durablePush" as const,
-        triggerWebhookEndpointId: { in: params.durablePushEndpointIds ?? [] },
+        observationTransport: "durablePush" as const,
+        webhookEndpointId: { in: params.durablePushEndpointIds ?? [] },
     };
 }
 
 /**
  * The Event catalog owns retirement truth; a provider may only present a
  * bounded persisted checkpoint identity and later apply its incumbent row CAS.
- * A disabled Automation retains continuity, while a deleted Automation retains
- * it exactly until no Run still references that Automation row.
+ * A disabled Automation/trigger retains continuity. A retired trigger remains
+ * retained exactly while one historical Run still names that trigger ID.
  */
 function shouldRetireCheckpoint(params: Readonly<{
     candidate: AutomationEventCheckpointRetirementCandidateV1;
     caller: AutomationEventStoredDefinitionsReadCallerV1;
-    automation: Readonly<{
+    trigger: Readonly<{
+        id: string;
+        automationId: string;
+        revision: number;
         enabled: boolean;
         deletedAt: Date | null;
-        triggerKind: string;
-        triggerEventPluginId: string | null;
-        triggerEventLocalId: string | null;
-        triggerSourceSelectorId: string | null;
-        triggerSourceContractVersion: number | null;
-        triggerObservationTransport: string | null;
-        runs: readonly Readonly<{ id: string }>[];
+        kind: string;
+        eventPluginId: string | null;
+        eventLocalId: string | null;
+        sourceSelectorId: string | null;
+        sourceContractVersion: number | null;
+        observationTransport: string | null;
+        automation: Readonly<{ enabled: boolean; deletedAt: Date | null }>;
     }> | undefined;
+    hasRetainedRun: boolean;
 }>): boolean {
-    const { automation, candidate } = params;
-    if (automation === undefined) return true;
-    if (automation.deletedAt !== null) return automation.runs.length === 0;
-    if (!automation.enabled) return false;
-    return automation.triggerKind !== "pluginEvent"
-        || automation.triggerEventPluginId !== params.caller.pluginId
-        || automation.triggerEventLocalId !== candidate.eventRef.localId
-        || automation.triggerSourceSelectorId !== candidate.sourceSelectorId
-        || automation.triggerSourceContractVersion !== candidate.sourceContractVersion
-        || automation.triggerObservationTransport !== "checkpointedPull";
+    const { trigger, candidate } = params;
+    if (trigger === undefined) return !params.hasRetainedRun;
+    if (trigger.deletedAt !== null || trigger.automation.deletedAt !== null) {
+        return !params.hasRetainedRun;
+    }
+    if (!trigger.automation.enabled || !trigger.enabled) return false;
+    return trigger.automationId !== candidate.automationId
+        || trigger.revision !== candidate.triggerRevision
+        || trigger.kind !== "pluginEvent"
+        || trigger.eventPluginId !== params.caller.pluginId
+        || trigger.eventLocalId !== candidate.eventRef.localId
+        || trigger.sourceSelectorId !== candidate.sourceSelectorId
+        || trigger.sourceContractVersion !== candidate.sourceContractVersion
+        || trigger.observationTransport !== "checkpointedPull";
 }
 
 async function classifyCheckpointRetirementsTx(params: Readonly<{
@@ -205,29 +213,39 @@ async function classifyCheckpointRetirementsTx(params: Readonly<{
     if (params.candidates.some((candidate) => candidate.eventRef.pluginId !== params.caller.pluginId)) {
         fail("event_contribution_not_current");
     }
-    const automations = await params.tx.automation.findMany({
+    const triggers = await params.tx.automationTrigger.findMany({
         where: {
-            accountId: params.accountId,
-            id: { in: params.candidates.map((candidate) => candidate.automationId) },
+            id: { in: params.candidates.map((candidate) => candidate.triggerId) },
+            automation: { accountId: params.accountId },
         },
         select: {
             id: true,
+            automationId: true,
+            revision: true,
             enabled: true,
             deletedAt: true,
-            triggerKind: true,
-            triggerEventPluginId: true,
-            triggerEventLocalId: true,
-            triggerSourceSelectorId: true,
-            triggerSourceContractVersion: true,
-            triggerObservationTransport: true,
-            runs: { take: 1, select: { id: true } },
+            kind: true,
+            eventPluginId: true,
+            eventLocalId: true,
+            sourceSelectorId: true,
+            sourceContractVersion: true,
+            observationTransport: true,
+            automation: { select: { enabled: true, deletedAt: true } },
         },
     });
-    const automationsById = new Map(automations.map((automation) => [automation.id, automation]));
+    const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));
+    const retainedRunTriggerIds = new Set((await params.tx.automationRun.findMany({
+        where: {
+            accountId: params.accountId,
+            triggerId: { in: params.candidates.map((candidate) => candidate.triggerId) },
+        },
+        select: { triggerId: true },
+    })).flatMap((run) => run.triggerId === null ? [] : [run.triggerId]));
     return params.candidates.filter((candidate) => shouldRetireCheckpoint({
         candidate,
         caller: params.caller,
-        automation: automationsById.get(candidate.automationId),
+        trigger: triggersById.get(candidate.triggerId),
+        hasRetainedRun: retainedRunTriggerIds.has(candidate.triggerId),
     }));
 }
 
@@ -387,7 +405,7 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
             });
         }
 
-        let lastAutomationId: string | undefined;
+        let lastTriggerId: string | undefined;
         if (input.cursor !== undefined) {
             const cursor = decodeCursor(input.cursor);
             if (
@@ -400,10 +418,10 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                     currentRevision: revision,
                 });
             }
-            lastAutomationId = cursor.lastAutomationId;
+            lastTriggerId = cursor.lastTriggerId;
         }
 
-        const rows = await tx.automation.findMany({
+        const rows = await tx.automationTrigger.findMany({
             where: eventDefinitionWhere({
                 accountId: params.accountId,
                 caller: params.caller,
@@ -411,30 +429,30 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 ...(input.transport.kind === "durablePush"
                     ? { durablePushEndpointIds: durablePushEndpoints.map((endpoint) => endpoint.webhookEndpointId) }
                     : {}),
-                ...(lastAutomationId === undefined ? {} : { lastAutomationId }),
+                ...(lastTriggerId === undefined ? {} : { lastTriggerId }),
             }),
             orderBy: [
                 { id: "asc" },
-                { triggerEventPluginId: "asc" },
-                { triggerEventLocalId: "asc" },
+                { eventPluginId: "asc" },
+                { eventLocalId: "asc" },
             ],
             take: input.pageSize + 1,
             select: {
                 id: true,
-                templateVersion: true,
-                triggerEventPluginId: true,
-                triggerEventLocalId: true,
-                triggerSourceSelectorId: true,
-                triggerSourceContractVersion: true,
-                triggerObservationTransport: true,
-                triggerWebhookEndpointId: true,
-                triggerObservationStartsAt: true,
+                automationId: true,
+                revision: true,
+                eventPluginId: true,
+                eventLocalId: true,
+                sourceSelectorId: true,
+                sourceContractVersion: true,
+                observationTransport: true,
+                webhookEndpointId: true,
+                observationStartsAt: true,
                 watcherMachineId: true,
                 watcherMachineInstallationId: true,
                 watcherPluginId: true,
                 watcherMaterializationId: true,
-                triggerDefinitionEnvelope: true,
-                templateCiphertext: true,
+                definitionEnvelope: true,
             },
         });
         const pageRows = rows.slice(0, input.pageSize);
@@ -444,30 +462,30 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
             pluginId: params.caller.pluginId,
             version: callerVersion,
             definitions: pageRows.map((row) => {
-                if (row.triggerEventLocalId === null || row.triggerSourceContractVersion === null) {
+                if (row.eventLocalId === null || row.sourceContractVersion === null) {
                     fail("event_contribution_not_current");
                 }
                 return {
-                    eventLocalId: row.triggerEventLocalId,
-                    sourceContractVersion: row.triggerSourceContractVersion,
+                    eventLocalId: row.eventLocalId,
+                    sourceContractVersion: row.sourceContractVersion,
                 };
             }),
         });
 
         const definitions = pageRows.map((row) => {
             if (
-                row.triggerEventPluginId !== params.caller.pluginId
-                || row.triggerEventLocalId === null
-                || row.triggerSourceSelectorId === null
-                || row.triggerSourceContractVersion === null
-                || row.triggerDefinitionEnvelope === null
+                row.eventPluginId !== params.caller.pluginId
+                || row.eventLocalId === null
+                || row.sourceSelectorId === null
+                || row.sourceContractVersion === null
+                || row.definitionEnvelope === null
             ) fail("event_contribution_not_current");
-            const contribution = contributions.get(row.triggerEventLocalId);
+            const contribution = contributions.get(row.eventLocalId);
             if (!contribution || !contribution.payloadSchema) fail("event_contribution_not_current");
             const observationTransport = input.transport.kind === "checkpointedPull"
                 ? (() => {
                     if (
-                        row.triggerObservationTransport !== "checkpointedPull"
+                        row.observationTransport !== "checkpointedPull"
                         || row.watcherMachineId === null
                         || row.watcherMaterializationId === null
                     ) fail("event_contribution_not_current");
@@ -481,20 +499,20 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                     };
                 })()
                 : (() => {
-                    const endpoint = row.triggerWebhookEndpointId === null
+                    const endpoint = row.webhookEndpointId === null
                         ? null
-                        : durablePushEndpointsById.get(row.triggerWebhookEndpointId) ?? null;
+                        : durablePushEndpointsById.get(row.webhookEndpointId) ?? null;
                     const webhookContribution =
                         readCurrentAutomationEventDurablePushWebhookContributionV1(contribution);
                     if (
-                        row.triggerObservationTransport !== "durablePush"
+                        row.observationTransport !== "durablePush"
                         || endpoint === null
                         || webhookContribution === null
                         || !sameAutomationEventDurablePushWebhookContributionV1(
                             endpoint.webhookContribution,
                             webhookContribution,
                         )
-                        || row.triggerObservationStartsAt === null
+                        || row.observationStartsAt === null
                         || row.watcherMachineId !== null
                         || row.watcherMachineInstallationId !== null
                         || row.watcherPluginId !== null
@@ -508,33 +526,34 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                             machineId: params.caller.machineId,
                             materializationId: params.caller.materializationId,
                         },
-                        observationStartsAt: row.triggerObservationStartsAt.getTime(),
+                        observationStartsAt: row.observationStartsAt.getTime(),
                     };
                 })();
             const binding = readAutomationTriggerDefinitionBinding({
-                automationId: row.id,
-                templateVersion: row.templateVersion,
+                automationId: row.automationId,
+                triggerId: row.id,
+                triggerRevision: row.revision,
                 triggerKind: "pluginEvent",
-                triggerEventPluginId: row.triggerEventPluginId,
-                triggerEventLocalId: row.triggerEventLocalId,
-                triggerSourceSelectorId: row.triggerSourceSelectorId,
+                triggerEventPluginId: row.eventPluginId,
+                triggerEventLocalId: row.eventLocalId,
+                triggerSourceSelectorId: row.sourceSelectorId,
             });
             if (binding === null) fail("definition_content_unavailable");
             const envelope = validateAutomationTriggerDefinitionEnvelopeOuterForMode({
-                raw: row.triggerDefinitionEnvelope,
+                raw: row.definitionEnvelope,
                 mode: accountFence.account.currentness.encryptionMode,
                 binding,
             });
             if (envelope.kind !== "available") fail("definition_content_unavailable");
             return AutomationEventStoredDefinitionProjectionV1Schema.parse({
-                automationId: row.id,
-                templateVersion: row.templateVersion,
-                eventRef: { pluginId: params.caller.pluginId, localId: row.triggerEventLocalId },
-                sourceSelectorId: row.triggerSourceSelectorId,
-                sourceContractVersion: row.triggerSourceContractVersion,
+                automationId: row.automationId,
+                triggerId: row.id,
+                triggerRevision: row.revision,
+                eventRef: { pluginId: params.caller.pluginId, localId: row.eventLocalId },
+                sourceSelectorId: row.sourceSelectorId,
+                sourceContractVersion: row.sourceContractVersion,
                 observationTransport,
                 storedDefinitionEnvelope: envelope.envelope,
-                executionRecipe: row.templateCiphertext,
                 payloadSchema: contribution.payloadSchema,
             });
         });
@@ -550,7 +569,7 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                     v: 1,
                     scope,
                     revision,
-                    lastAutomationId: finalRow.id,
+                    lastTriggerId: finalRow.id,
                 })
                 : null,
         });

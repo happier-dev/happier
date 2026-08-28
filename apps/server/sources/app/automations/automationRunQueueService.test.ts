@@ -1,445 +1,416 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-    AutomationRunExecutionInputV1Schema,
-    serializeAutomationRunExecutionRecipeV1,
+    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
+    parseAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
+vi.mock("@/storage/inTx", () => ({ afterTx: vi.fn() }));
+vi.mock("@/app/changes/markAccountChanged", () => ({
+    markAccountChanged: vi.fn(async () => 1),
+}));
+
 import {
-    enqueueImmediateRunTx,
-    enqueueNextScheduledRunIfMissingTx,
+    admitDueAutomationScheduleTriggerTx,
+    ensureAutomationScheduleCursorsTx,
     resolveScheduledRunDueAt,
 } from "./automationRunQueueService";
 
-describe("resolveScheduledRunDueAt", () => {
-    it("keeps schedule-based dueAt when nextRunAt is overdue", () => {
-        const now = new Date("2026-02-12T10:00:00.000Z");
-        const dueAt = resolveScheduledRunDueAt({
+function strictRecipe(params: Readonly<{
+    templateVersion: number;
+    prompt: string;
+}>): string {
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
+        v: 1,
+        templateVersion: params.templateVersion,
+        template: { t: "plain", v: { v: 1, prompt: params.prompt } },
+        triggerEvidence: null,
+        target: {
+            kind: "newSession",
+            spawn: {
+                executionTarget: { serverId: "server", machineId: "machine" },
+                directory: "/tmp/automation-run-queue",
+                agentTarget: {
+                    kind: "agent",
+                    identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                },
+            },
+        },
+    });
+    if (serialized.kind !== "available") throw new Error("Test recipe did not serialize");
+    return serialized.serialized;
+}
+
+function txFixture(params: Readonly<{
+    recipe?: string;
+    templateVersion?: number;
+    assignments?: readonly (string | Readonly<{ machineId: string; priority: number }>)[];
+    eventConversationRunCount?: number;
+    triggers?: readonly Readonly<{
+        id: string;
+        revision: number;
+        scheduleKind: "interval" | "cron";
+        scheduleExpr: string | null;
+        everyMs: number | null;
+        timezone: string | null;
+        nextRunAt: Date | null;
+    }>[];
+}> = {}) {
+    let recipe = params.recipe ?? strictRecipe({ templateVersion: 1, prompt: "current recipe" });
+    let templateVersion = params.templateVersion ?? 1;
+    let assignments = (params.assignments ?? ["machine"]).map((assignment) => typeof assignment === "string"
+        ? { machineId: assignment, priority: 0 }
+        : assignment);
+    const triggers = [...(params.triggers ?? [])];
+    const created: Array<Record<string, unknown>> = [];
+    const runAssignments: Array<Record<string, unknown>> = [];
+    const triggerUpdates: Array<Record<string, unknown>> = [];
+    const tx = {
+        automation: {
+            findUnique: vi.fn(async () => ({
+                id: "automation",
+                accountId: "account",
+                enabled: true,
+                deletedAt: null,
+                triggers,
+            })),
+            findMany: vi.fn(async () => [{
+                id: "automation",
+                enabled: true,
+                targetType: "new_session",
+                templateVersion,
+                templateCiphertext: recipe,
+                assignments,
+            }]),
+            findFirst: vi.fn(async () => ({
+                enabled: true,
+                targetType: "new_session",
+                templateVersion,
+                templateCiphertext: recipe,
+                assignments,
+            })),
+            update: vi.fn(async () => ({})),
+        },
+        automationTrigger: {
+            findMany: vi.fn(async () => triggers.map((trigger) => ({
+                ...trigger,
+                automationId: "automation",
+                enabled: true,
+                deletedAt: null,
+                kind: "schedule",
+                eventPluginId: null,
+                eventLocalId: null,
+                sourceSelectorId: null,
+                sessionLifecycleEvent: null,
+                sourceSessionId: null,
+                sourceTurnId: null,
+            }))),
+            findFirst: vi.fn(async ({ where }: { where: {
+                id: string;
+                revision?: number;
+                nextRunAt?: Date;
+            } }) => {
+                const trigger = triggers.find((candidate) => candidate.id === where.id);
+                if (
+                    !trigger
+                    || (where.revision !== undefined && trigger.revision !== where.revision)
+                    || (where.nextRunAt instanceof Date
+                        && trigger.nextRunAt?.getTime() !== where.nextRunAt.getTime())
+                ) return null;
+                return trigger
+                    ? {
+                        ...trigger,
+                        automationId: "automation",
+                        enabled: true,
+                        deletedAt: null,
+                        kind: "schedule",
+                        automation: { accountId: "account" },
+                    }
+                    : null;
+            }),
+            updateMany: vi.fn(async (query: Record<string, unknown>) => {
+                triggerUpdates.push(query);
+                return { count: 1 };
+            }),
+        },
+        automationRun: {
+            count: vi.fn(async () => params.eventConversationRunCount ?? 0),
+            findMany: vi.fn(async ({ where }: { where: Record<string, any> }) => created.filter((run) => (
+                (where.accountId === undefined || run.accountId === where.accountId)
+                && (!Array.isArray(where.OR) || where.OR.some((discriminator: Record<string, unknown>) => (
+                    Object.entries(discriminator).every(([key, value]) => run[key] === value)
+                )))
+            ))),
+            findFirst: vi.fn(async ({ where }: { where: Record<string, any> }) => created.find((run) => {
+                const state = run.state as string;
+                return (
+                    (where.triggerId === undefined || run.triggerId === where.triggerId)
+                    && (where.causeTriggerKind === undefined || run.causeTriggerKind === where.causeTriggerKind)
+                    && (where.occurrenceKey === undefined || run.occurrenceKey === where.occurrenceKey)
+                    && (where.automationId === undefined || run.automationId === where.automationId)
+                    && (where.legacyManualIdempotencyKey === undefined
+                        || run.legacyManualIdempotencyKey === where.legacyManualIdempotencyKey)
+                    && (!Array.isArray(where.state?.notIn) || !where.state.notIn.includes(state))
+                );
+            }) ?? null),
+            create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+                const run = {
+                    id: `run-${created.length + 1}`,
+                    ...data,
+                    createdAt: new Date("2026-08-27T12:00:00.000Z"),
+                    updatedAt: new Date("2026-08-27T12:00:00.000Z"),
+                };
+                created.push(run);
+                const nestedAssignments = (data.assignments as {
+                    create?: Array<{ machineId: string; priority: number }>;
+                } | undefined)?.create ?? [];
+                runAssignments.push(...nestedAssignments.map((assignment) => ({
+                    runId: run.id,
+                    ...assignment,
+                })));
+                return run;
+            }),
+        },
+    };
+    return {
+        tx: tx as any,
+        created,
+        runAssignments,
+        triggerUpdates,
+        editDefinition(next: Readonly<{
+            recipe: string;
+            templateVersion: number;
+            assignments: readonly Readonly<{ machineId: string; priority: number }>[];
+        }>) {
+            recipe = next.recipe;
+            templateVersion = next.templateVersion;
+            assignments = [...next.assignments];
+        },
+        editTrigger(triggerId: string, next: Readonly<{ revision: number; nextRunAt: Date }>) {
+            const index = triggers.findIndex((trigger) => trigger.id === triggerId);
+            if (index < 0) throw new Error(`Unknown trigger ${triggerId}`);
+            triggers[index] = { ...triggers[index]!, ...next };
+        },
+    };
+}
+
+describe("Automation Run queue admission", () => {
+    it("computes the next interval occurrence without treating an overdue hint as authority", () => {
+        const now = new Date("2026-08-27T12:00:00.000Z");
+        expect(resolveScheduledRunDueAt({
             now,
             scheduleKind: "interval",
             everyMs: 60_000,
             scheduleExpr: null,
             timezone: null,
-            nextRunAt: new Date("2026-02-12T09:59:00.000Z"),
-        });
-        expect(dueAt?.toISOString()).toBe("2026-02-12T10:01:00.000Z");
+            nextRunAt: new Date("2026-08-27T11:59:00.000Z"),
+        })?.toISOString()).toBe("2026-08-27T12:01:00.000Z");
     });
 
-    it("does not create a schedule run for a non-schedule trigger even when retained legacy schedule fields remain populated", async () => {
-        const findFirst = vi.fn();
-        const create = vi.fn();
-        const update = vi.fn();
-
-        await enqueueNextScheduledRunIfMissingTx({
-            tx: {
-                automation: {
-                    findUnique: vi.fn(async () => ({
-                        id: "automation-event",
-                        accountId: "account",
-                        enabled: true,
-                        deletedAt: null,
-                        triggerKind: "pluginEvent",
-                        scheduleKind: "interval",
-                        scheduleExpr: null,
-                        everyMs: 60_000,
-                        timezone: null,
-                        nextRunAt: null,
-                    })),
-                    update,
+    it("initializes every schedule cursor without admitting a future Run", async () => {
+        const fixture = txFixture({
+            triggers: [
+                {
+                    id: "schedule-one",
+                    revision: 3,
+                    scheduleKind: "interval",
+                    scheduleExpr: null,
+                    everyMs: 60_000,
+                    timezone: null,
+                    nextRunAt: null,
                 },
-                automationRun: {
-                    findFirst,
-                    create,
+                {
+                    id: "schedule-two",
+                    revision: 8,
+                    scheduleKind: "interval",
+                    scheduleExpr: null,
+                    everyMs: 120_000,
+                    timezone: null,
+                    nextRunAt: null,
                 },
-            } as any,
-            automationId: "automation-event",
-            now: new Date("2026-08-10T12:00:00.000Z"),
+            ],
         });
+        const now = new Date("2026-08-27T12:00:00.000Z");
 
-        expect(findFirst).not.toHaveBeenCalled();
-        expect(create).not.toHaveBeenCalled();
-        expect(update).not.toHaveBeenCalled();
-    });
-
-    it("does not create a scheduled follow-up when no enabled claimant assignment remains", async () => {
-        const now = new Date("2026-08-10T12:00:00.000Z");
-        const findFirst = vi.fn();
-        const create = vi.fn(async () => ({ scheduledAt: now }));
-        const update = vi.fn();
-
-        await enqueueNextScheduledRunIfMissingTx({
-            tx: {
-                automation: {
-                    findUnique: vi.fn(async () => ({
-                        id: "automation-unassigned",
-                        accountId: "account",
-                        enabled: true,
-                        deletedAt: null,
-                        triggerKind: "schedule",
-                        scheduleKind: "interval",
-                        scheduleExpr: null,
-                        everyMs: 60_000,
-                        timezone: null,
-                        nextRunAt: null,
-                        targetType: "new_session",
-                        templateVersion: 1,
-                        templateCiphertext: JSON.stringify({
-                            kind: "happier_automation_template_encrypted_v1",
-                            payloadCiphertext: "ciphertext-base64",
-                        }),
-                    })),
-                    update,
-                },
-                automationAssignment: { findFirst: vi.fn(async () => null) },
-                automationRun: { findFirst, create },
-            } as any,
-            automationId: "automation-unassigned",
-            now,
-        });
-
-        expect(findFirst).not.toHaveBeenCalled();
-        expect(create).not.toHaveBeenCalled();
-        expect(update).not.toHaveBeenCalled();
-    });
-
-    it("persists run-now as a manual origin while retaining the legacy invocation timestamp", async () => {
-        const now = new Date("2026-08-10T12:00:00.000Z");
-        const recipe = {
-            v: 1,
-            templateVersion: 3,
-            template: {
-                t: "plain" as const,
-                v: { v: 1, prompt: "run the frozen manual task" },
-            },
-            triggerEvidence: null,
-            target: {
-                kind: "executionRun" as const,
-                request: {
-                    intent: "task" as const,
-                    backendTarget: { kind: "builtInAgent" as const, agentId: "codex" },
-                    permissionMode: "read_only" as const,
-                    retentionPolicy: "ephemeral" as const,
-                    runClass: "bounded" as const,
-                    ioMode: "request_response" as const,
-                },
-            },
-        };
-        const serialized = serializeAutomationRunExecutionRecipeV1(recipe);
-        expect(serialized.kind).toBe("available");
-        if (serialized.kind !== "available") return;
-        const templateCiphertext = serialized.serialized;
-        const create = vi.fn(async (_params: {
-            data: { executionInputEnvelope: string };
-        }) => ({
-            id: "manual-run",
-            automationId: "automation",
-            accountId: "account",
-            state: "queued",
-            scheduledAt: now,
-            dueAt: now,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-            summaryCiphertext: null,
-            errorCode: null,
-            errorMessage: null,
-            producedSessionId: null,
-            createdAt: now,
-            updatedAt: now,
-        }));
-
-        const run = await enqueueImmediateRunTx({
-            tx: {
-                automation: {
-                    findFirst: vi.fn(async () => ({
-                        targetType: "execution_run",
-                        templateVersion: 3,
-                        templateCiphertext,
-                    })),
-                },
-                automationRun: { create },
-            } as any,
-            automationId: "automation",
-            accountId: "account",
-            now,
-            occurrenceKey: "manual-occurrence-key",
-        });
-
-        expect(create).toHaveBeenCalledWith(expect.objectContaining({
-            data: expect.objectContaining({
-                originKind: "manual",
-                originOccurredAt: null,
-                occurrenceKey: "manual-occurrence-key",
-                scheduledAt: now,
-                dueAt: now,
-                executionInputEnvelope: serialized.serialized,
-                executionDispatchState: "notStarted",
-            }),
-        }));
-        expect(run.scheduledAt).toBe(now);
-    });
-
-    it("creates and suppresses only scheduled-origin queue rows", async () => {
-        const now = new Date("2026-08-10T12:00:00.000Z");
-        const dueAt = new Date("2026-08-10T12:01:00.000Z");
-        const recipe = {
-            v: 1,
-            templateVersion: 4,
-            template: {
-                t: "plain" as const,
-                v: { v: 1, prompt: "run the frozen scheduled task" },
-            },
-            triggerEvidence: null,
-            target: {
-                kind: "newSession" as const,
-                spawn: {
-                    executionTarget: { serverId: "server", machineId: "machine" },
-                    directory: "/tmp/frozen-scheduled",
-                    agentTarget: {
-                        kind: "agent" as const,
-                        identity: { pluginId: "happier.agent.codex", localId: "codex" },
-                    },
-                },
-            },
-        };
-        const serialized = serializeAutomationRunExecutionRecipeV1(recipe);
-        expect(serialized.kind).toBe("available");
-        if (serialized.kind !== "available") return;
-        const templateCiphertext = serialized.serialized;
-        const findFirst = vi.fn(async () => null);
-        const create = vi.fn(async () => ({
-            id: "scheduled-run",
-            automationId: "automation",
-            accountId: "account",
-            state: "queued",
-            scheduledAt: now,
-            dueAt,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-            summaryCiphertext: null,
-            errorCode: null,
-            errorMessage: null,
-            producedSessionId: null,
-            createdAt: now,
-            updatedAt: now,
-        }));
-        const update = vi.fn();
-
-        await enqueueNextScheduledRunIfMissingTx({
-            tx: {
-                automation: {
-                    findUnique: vi.fn(async () => ({
-                        id: "automation",
-                        accountId: "account",
-                        enabled: true,
-                        deletedAt: null,
-                        triggerKind: "schedule",
-                        scheduleKind: "interval",
-                        scheduleExpr: null,
-                        everyMs: 60_000,
-                        timezone: null,
-                        nextRunAt: null,
-                        targetType: "new_session",
-                        templateVersion: 4,
-                        templateCiphertext,
-                        assignments: [{ id: "assignment-current" }],
-                    })),
-                    update,
-                },
-                automationAssignment: { findFirst: vi.fn(async () => ({ id: "assignment-current" })) },
-                automationRun: { findFirst, create },
-            } as any,
+        await ensureAutomationScheduleCursorsTx({
+            tx: fixture.tx,
             automationId: "automation",
             now,
         });
 
-        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({
-                originKind: "scheduled",
-            }),
-        }));
-        expect(create).toHaveBeenCalledWith(expect.objectContaining({
-            data: expect.objectContaining({
-                originKind: "scheduled",
-                originOccurredAt: null,
-                scheduledAt: now,
-                dueAt,
-                executionInputEnvelope: serialized.serialized,
-                executionDispatchState: null,
-            }),
-        }));
+        expect(fixture.created).toHaveLength(0);
+        expect(fixture.triggerUpdates).toHaveLength(2);
+        expect(fixture.triggerUpdates.map((update) => update.data)).toEqual([
+            { nextRunAt: new Date("2026-08-27T12:01:00.000Z") },
+            { nextRunAt: new Date("2026-08-27T12:02:00.000Z") },
+        ]);
     });
 
-    it("freezes the exact remote-dev V2 manual definition into the released Run input envelope", async () => {
-        const now = new Date("2026-08-10T12:00:00.000Z");
-        // This is the deployed remote-dev V2 Definition shape, not a current
-        // strict execution recipe.
-        const templateCiphertext = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext-base64",
+    it("does not apply Event and Conversation capacity to a due schedule", async () => {
+        const fixture = txFixture({
+            eventConversationRunCount: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
+            triggers: [{
+                id: "schedule-at-capacity",
+                revision: 4,
+                scheduleKind: "interval",
+                scheduleExpr: null,
+                everyMs: 60_000,
+                timezone: null,
+                nextRunAt: new Date("2026-08-27T12:00:00.000Z"),
+            }],
         });
-        const create = vi.fn(async (_params: {
-            data: { executionInputEnvelope: string };
-        }) => ({
-            id: "manual-v2-run",
-            automationId: "automation-v2",
-            accountId: "account",
-            state: "queued",
-            scheduledAt: now,
-            dueAt: now,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-            summaryCiphertext: null,
-            errorCode: null,
-            errorMessage: null,
-            producedSessionId: null,
-            createdAt: now,
-            updatedAt: now,
-        }));
+        const now = new Date("2026-08-27T12:00:00.000Z");
 
-        await enqueueImmediateRunTx({
-            tx: {
-                automation: {
-                    findFirst: vi.fn(async () => ({
-                        targetType: "new_session",
-                        templateVersion: 7,
-                        templateCiphertext,
-                    })),
-                },
-                automationRun: { create },
-            } as any,
-            automationId: "automation-v2",
-            accountId: "account",
+        const result = await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-at-capacity",
+            expectedRevision: 4,
+            expectedNextRunAt: now,
             now,
         });
 
-        const executionInputEnvelope = create.mock.calls[0]?.[0]
-            .data.executionInputEnvelope;
-        expect(executionInputEnvelope).toBeDefined();
-        const input = AutomationRunExecutionInputV1Schema.parse(JSON.parse(
-            executionInputEnvelope!,
-        ));
-        expect(input).toEqual({
-            kind: "happier_automation_run_execution_input_v1",
-            targetType: "new_session",
-            templateVersion: 7,
-            templateCiphertext,
-            origin: { kind: "manual", invokedAt: now.getTime() },
-        });
-    });
-
-    it("freezes the exact remote-dev V2 scheduled definition before later Definition edits", async () => {
-        const now = new Date("2026-08-10T12:00:00.000Z");
-        const dueAt = new Date("2026-08-10T12:01:00.000Z");
-        const templateCiphertext = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext-base64",
-        });
-        const create = vi.fn(async (_params: {
-            data: { executionInputEnvelope: string };
-        }) => ({
-            id: "scheduled-v2-run",
-            automationId: "automation-v2",
-            accountId: "account",
+        expect(result?.kind).toBe("admitted");
+        expect(fixture.created[0]).toMatchObject({
             state: "queued",
-            scheduledAt: now,
-            dueAt,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-            summaryCiphertext: null,
-            errorCode: null,
-            errorMessage: null,
-            producedSessionId: null,
-            createdAt: now,
-            updatedAt: now,
-        }));
-
-        await enqueueNextScheduledRunIfMissingTx({
-            tx: {
-                automation: {
-                    findUnique: vi.fn(async () => ({
-                        id: "automation-v2",
-                        accountId: "account",
-                        enabled: true,
-                        deletedAt: null,
-                        triggerKind: "schedule",
-                        scheduleKind: "interval",
-                        scheduleExpr: null,
-                        everyMs: 60_000,
-                        timezone: null,
-                        nextRunAt: null,
-                        targetType: "new_session",
-                        templateVersion: 8,
-                        templateCiphertext,
-                        assignments: [{ id: "assignment-current" }],
-                    })),
-                    update: vi.fn(),
-                },
-                automationAssignment: { findFirst: vi.fn(async () => ({ id: "assignment-current" })) },
-                automationRun: {
-                    findFirst: vi.fn(async () => null),
-                    create,
-                },
-            } as any,
-            automationId: "automation-v2",
-            now,
+            triggerId: "schedule-at-capacity",
+            causeKind: "trigger",
+            causeTriggerKind: "schedule",
+            causeTriggerRevision: 4,
+            executionDispatchState: null,
         });
-
-        const executionInputEnvelope = create.mock.calls[0]?.[0]
-            .data.executionInputEnvelope;
-        expect(executionInputEnvelope).toBeDefined();
-        const input = AutomationRunExecutionInputV1Schema.parse(JSON.parse(
-            executionInputEnvelope!,
-        ));
-        expect(input).toEqual(expect.objectContaining({
-            targetType: "new_session",
-            templateVersion: 8,
-            templateCiphertext,
-            origin: { kind: "scheduled", scheduledFor: dueAt.getTime() },
-        }));
+        expect(fixture.triggerUpdates).toEqual([]);
     });
 
-    it.each([
-        ["malformed legacy bytes", "not-json"],
-        ["strict-like but invalid bytes", JSON.stringify({
-            v: 1,
+    it("freezes the due-time recipe and assignments and rejoins those bytes after later edits", async () => {
+        const dueAt = new Date("2026-08-27T12:00:00.000Z");
+        const fixture = txFixture({
+            recipe: strictRecipe({ templateVersion: 1, prompt: "before due" }),
+            templateVersion: 1,
+            assignments: [{ machineId: "machine-before", priority: 1 }],
+            triggers: [{
+                id: "schedule-current",
+                revision: 6,
+                scheduleKind: "interval",
+                scheduleExpr: null,
+                everyMs: 60_000,
+                timezone: null,
+                nextRunAt: dueAt,
+            }],
+        });
+        fixture.editDefinition({
+            recipe: strictRecipe({ templateVersion: 2, prompt: "edited before admission" }),
             templateVersion: 2,
-            template: { t: "plain", v: { prompt: "not a valid recipe" } },
-            target: { kind: "newSession" },
-        })],
-    ])("rejects %s before writing a Run", async (_label, templateCiphertext) => {
-        const create = vi.fn();
+            assignments: [{ machineId: "machine-at-due", priority: 9 }],
+        });
 
-        await expect(enqueueImmediateRunTx({
-            tx: {
-                automation: {
-                    findFirst: vi.fn(async () => ({
-                        targetType: "new_session",
-                        templateVersion: 1,
-                        templateCiphertext,
-                    })),
-                },
-                automationRun: { create },
-            } as any,
-            automationId: "automation-invalid",
-            accountId: "account",
-            now: new Date("2026-08-10T12:00:00.000Z"),
-        })).rejects.toThrow(/strict execution recipe|legacy definition/i);
+        const admitted = await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-current",
+            expectedRevision: 6,
+            expectedNextRunAt: dueAt,
+            now: dueAt,
+        });
+        const frozenEnvelope = fixture.created[0]?.executionInputEnvelope as string;
+        expect(admitted?.kind).toBe("admitted");
+        expect(parseAutomationRunExecutionRecipeV1(frozenEnvelope)).toMatchObject({
+            kind: "available",
+            recipe: { templateVersion: 2, assignmentMachineIds: ["machine-at-due"] },
+        });
 
-        expect(create).not.toHaveBeenCalled();
+        fixture.editDefinition({
+            recipe: strictRecipe({ templateVersion: 3, prompt: "edited after admission" }),
+            templateVersion: 3,
+            assignments: [{ machineId: "machine-after", priority: 2 }],
+        });
+        const rejoined = await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-current",
+            expectedRevision: 6,
+            expectedNextRunAt: dueAt,
+            now: new Date("2026-08-27T12:00:30.000Z"),
+        });
+
+        expect(rejoined?.kind).toBe("rejoined");
+        expect(fixture.created).toHaveLength(1);
+        expect(fixture.created[0]?.executionInputEnvelope).toBe(frozenEnvelope);
+        expect(fixture.runAssignments).toEqual([{
+            runId: "run-1",
+            machineId: "machine-at-due",
+            priority: 9,
+        }]);
     });
+
+    it("admits independent due occurrences for every schedule trigger", async () => {
+        const dueAt = new Date("2026-08-27T12:00:00.000Z");
+        const fixture = txFixture({
+            triggers: [
+                {
+                    id: "schedule-one",
+                    revision: 2,
+                    scheduleKind: "interval",
+                    scheduleExpr: null,
+                    everyMs: 60_000,
+                    timezone: null,
+                    nextRunAt: dueAt,
+                },
+                {
+                    id: "schedule-two",
+                    revision: 5,
+                    scheduleKind: "interval",
+                    scheduleExpr: null,
+                    everyMs: 120_000,
+                    timezone: null,
+                    nextRunAt: dueAt,
+                },
+            ],
+        });
+
+        for (const trigger of [{ id: "schedule-one", revision: 2 }, { id: "schedule-two", revision: 5 }]) {
+            await admitDueAutomationScheduleTriggerTx({
+                tx: fixture.tx,
+                triggerId: trigger.id,
+                expectedRevision: trigger.revision,
+                expectedNextRunAt: dueAt,
+                now: dueAt,
+            });
+        }
+
+        expect(fixture.created.map((run) => run.triggerId)).toEqual(["schedule-one", "schedule-two"]);
+    });
+
+    it("suppresses an edited schedule cursor until the prior trigger Run is terminal", async () => {
+        const firstDueAt = new Date("2026-08-27T12:00:00.000Z");
+        const fixture = txFixture({
+            triggers: [{
+                id: "schedule-edited",
+                revision: 1,
+                scheduleKind: "interval",
+                scheduleExpr: null,
+                everyMs: 60_000,
+                timezone: null,
+                nextRunAt: firstDueAt,
+            }],
+        });
+        await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-edited",
+            expectedRevision: 1,
+            expectedNextRunAt: firstDueAt,
+            now: firstDueAt,
+        });
+
+        const editedDueAt = new Date("2026-08-27T12:05:00.000Z");
+        fixture.editTrigger("schedule-edited", { revision: 2, nextRunAt: editedDueAt });
+        const suppressed = await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-edited",
+            expectedRevision: 2,
+            expectedNextRunAt: editedDueAt,
+            now: editedDueAt,
+        });
+
+        expect(suppressed).toBeNull();
+        expect(fixture.created).toHaveLength(1);
+    });
+
 });

@@ -1,30 +1,16 @@
 import {
     AutomationEventFilterV1Schema,
-    AutomationRunExecutionRecipeV1Schema,
-    AutomationRunExecutionTargetV1Schema,
-    AutomationPluginEventDefinitionCreateRequestSchema,
-    AutomationPluginEventDefinitionPatchRequestSchema,
+    AutomationTriggerDefinitionInputSchema,
     arePluginMachineExecutionOriginsEqual,
-    ExecutionRunDetachedStartRequestV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginWebhookEndpointIdV1Schema,
-    type AcpConfigOptionOverridesV1,
     type AutomationEventFilterV1,
-    type AutomationRunExecutionRecipeV1,
-    type AutomationRunExecutionTargetV1,
-    type AutomationAssignmentInput,
-    type AutomationPluginEventDefinitionCreateRequest,
-    type AutomationPluginEventDefinitionPatchRequest,
+    type AutomationPluginEventDefinitionTriggerInput,
     type AutomationPluginEventObservationTransportInput,
-    type BackendTargetRefV2,
-    type ConnectedServiceBindingsV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type ExecutionRunDetachedStartRequestV1,
-    type MentionRefV1,
     type PluginEventAutomationSetupResultV1,
     type PluginMachineExecutionOriginV1,
     type PluginWebhookEndpointIdV1,
-    type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
@@ -84,10 +70,6 @@ export type PluginEventAutomationCreateDraft = Readonly<{
  * private trigger content: the incumbent Automation writer re-reads and
  * validates that detail immediately before it issues a strict patch.
  */
-export type PluginEventAutomationEditTarget = Readonly<{
-    automationId: string;
-    expectedTemplateVersion: number;
-}>;
 
 /**
  * The declared Event is the only authority on which transports it supports.
@@ -237,119 +219,28 @@ export function resolveCurrentPluginEventAutomationEligibleEvent(params: Readonl
     return matches.length === 1 ? matches[0]! : null;
 }
 
-/**
- * Creates the only plain-Account Event recipe shape. The canonical target is
- * supplied explicitly so an Event authoring surface cannot silently turn an
- * existing Session or detached execution Run into a new Session spawn. E2EE
- * callers fail closed before reaching this builder.
- */
-export function buildPlainPluginEventAutomationExecutionRecipe(params: Readonly<{
-    templateVersion: number;
-    prompt: string;
-    /**
-     * The composer references picked beside this prompt, in the same
-     * identity-only shape an interactive send persists. The Protocol template
-     * owner readmits them against the rendered program at dispatch, so this
-     * writer stores exactly what the composer produced.
-     */
-    mentions?: readonly MentionRefV1[];
-    target: AutomationRunExecutionTargetV1;
-}>): AutomationRunExecutionRecipeV1 | null {
-    const target = AutomationRunExecutionTargetV1Schema.safeParse(params.target);
-    if (!target.success) return null;
-    const mentions = params.mentions ?? [];
-    const recipe = AutomationRunExecutionRecipeV1Schema.safeParse({
-        v: 1,
-        templateVersion: params.templateVersion,
-        template: {
-            t: 'plain',
-            v: {
-                v: 1,
-                prompt: params.prompt,
-                ...(mentions.length > 0 ? { mentions: [...mentions] } : {}),
-            },
-        },
-        triggerEvidence: null,
-        target: target.data,
-    });
-    return recipe.success ? recipe.data : null;
-}
-
-/**
- * Projects the shared New Session backend/model/configuration controls into
- * the strict detached task request retained by an Event definition. Prompt,
- * resume, replay, and bootstrap fields are intentionally absent: the one
- * Automation Run materializer supplies the rendered prompt at dispatch.
- */
-export function buildPluginEventAutomationDetachedExecutionRunRequest(params: Readonly<{
-    backendTarget: BackendTargetRefV2 | null | undefined;
-    permissionMode: 'no_tools' | 'read_only';
-    modelSelection?: SessionModelSelectionV1 | null;
-    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
-    connectedServices?: ConnectedServiceBindingsV1 | null;
-    profileId?: string | null;
-    profileGenerationId?: string | null;
-}>): ExecutionRunDetachedStartRequestV1 | null {
-    if (!params.backendTarget) return null;
-    const profileId = typeof params.profileId === 'string' ? params.profileId.trim() : '';
-    const profileGenerationId = typeof params.profileGenerationId === 'string'
-        ? params.profileGenerationId.trim()
-        : '';
-    const request = ExecutionRunDetachedStartRequestV1Schema.safeParse({
-        intent: 'task',
-        backendTarget: params.backendTarget,
-        permissionMode: params.permissionMode,
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'request_response',
-        ...(params.modelSelection?.ref ? { modelSelection: params.modelSelection.ref } : {}),
-        ...(params.sessionConfigOptionOverrides ? {
-            sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
-        } : {}),
-        ...(params.connectedServices ? { connectedServices: params.connectedServices } : {}),
-        ...(profileId ? { profileId } : {}),
-        ...(profileGenerationId ? { profileGenerationId } : {}),
-    });
-    return request.success ? request.data : null;
-}
-
-/**
- * Builds exactly the incumbent strict create body. Caller-provided watcher
- * freshness must have been resolved by the existing Availability/
- * Administration owner immediately before this point.
- */
-export function buildPluginEventAutomationDefinitionCreateRequest(params: Readonly<{
-    name: string;
-    description: string | null;
-    enabled: boolean;
+/** One strict projection serves the plural editor and definition writers. */
+export function buildPluginEventAutomationTriggerInput(params: Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     draft: PluginEventAutomationAuthoringDraft;
     watcherOrigin: PluginMachineExecutionOriginV1;
-    executionRecipe: AutomationRunExecutionRecipeV1;
-    assignments: readonly AutomationAssignmentInput[];
-}>): AutomationPluginEventDefinitionCreateRequest | null {
+}>): AutomationPluginEventDefinitionTriggerInput | null {
     const eligibleEvent = resolveCurrentPluginEventAutomationEligibleEvent({
         eligibleEvents: params.eligibleEvents,
         draft: params.draft,
     });
     const watcherOrigin = PluginMachineExecutionOriginV1Schema.safeParse(params.watcherOrigin);
-    const executionRecipe = AutomationRunExecutionRecipeV1Schema.safeParse(params.executionRecipe);
     if (
         !eligibleEvent
         || !watcherOrigin.success
         || !arePluginMachineExecutionOriginsEqual(params.draft.watcherOrigin, watcherOrigin.data)
         || watcherOrigin.data.materializationRef.pluginId !== eligibleEvent.event.identity.pluginId
-        || !executionRecipe.success
     ) {
         return null;
     }
-
-    const request = AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
-        name: params.name,
-        description: params.description,
-        enabled: params.enabled,
-        trigger: {
+    const trigger = AutomationTriggerDefinitionInputSchema.safeParse({
             kind: 'pluginEvent',
+            enabled: true,
             eventRef: eligibleEvent.event.identity,
             sourceInstanceId: params.draft.source.sourceInstanceId,
             sourceContractVersion: params.draft.source.sourceContractVersion,
@@ -358,56 +249,6 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
             observationTransport: buildObservationTransportInput(params.draft, watcherOrigin.data),
             filter: params.draft.filter,
             maximumObservationAgeMs: params.draft.maximumObservationAgeMs,
-        },
-        executionRecipe: executionRecipe.data,
-        assignments: [...params.assignments],
     });
-    return request.success ? request.data : null;
-}
-
-/**
- * Full Event replacement requests are only valid at the exact next definition
- * revision. The caller supplies the direct-detail CAS version; the server
- * remains the final compare-and-swap authority.
- */
-export function buildPluginEventAutomationDefinitionPatchRequest(params: Readonly<{
-    expectedTemplateVersion: number;
-    name: string;
-    description: string | null;
-    enabled: boolean;
-    eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
-    draft: PluginEventAutomationAuthoringDraft;
-    watcherOrigin: PluginMachineExecutionOriginV1;
-    executionRecipe: AutomationRunExecutionRecipeV1;
-    assignments: readonly AutomationAssignmentInput[];
-}>): AutomationPluginEventDefinitionPatchRequest | null {
-    if (
-        !Number.isSafeInteger(params.expectedTemplateVersion)
-        || params.expectedTemplateVersion < 0
-    ) {
-        return null;
-    }
-    const nextTemplateVersion = params.expectedTemplateVersion + 1;
-    if (
-        !Number.isSafeInteger(nextTemplateVersion)
-        || params.executionRecipe.templateVersion !== nextTemplateVersion
-    ) {
-        return null;
-    }
-    const createRequest = buildPluginEventAutomationDefinitionCreateRequest({
-        name: params.name,
-        description: params.description,
-        enabled: params.enabled,
-        eligibleEvents: params.eligibleEvents,
-        draft: params.draft,
-        watcherOrigin: params.watcherOrigin,
-        executionRecipe: params.executionRecipe,
-        assignments: params.assignments,
-    });
-    if (!createRequest) return null;
-    const patch = AutomationPluginEventDefinitionPatchRequestSchema.safeParse({
-        ...createRequest,
-        expectedTemplateVersion: params.expectedTemplateVersion,
-    });
-    return patch.success ? patch.data : null;
+    return trigger.success && trigger.data.kind === 'pluginEvent' ? trigger.data : null;
 }

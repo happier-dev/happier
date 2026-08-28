@@ -1,16 +1,5 @@
-import {
-    isTerminalAutomationRunState,
-    type AutomationRunState,
-    type AutomationScheduleKind,
-} from "./automationTypes";
+import type { AutomationScheduleKind } from "./automationTypes";
 import { CronExpressionParser } from "cron-parser";
-
-/**
- * Retained scheduling-facing alias for the server-domain terminality owner.
- */
-export function isFinalAutomationRunStatus(state: AutomationRunState): boolean {
-    return isTerminalAutomationRunState(state);
-}
 
 export function computeNextDueAtForAutomation(params: {
     now: Date;

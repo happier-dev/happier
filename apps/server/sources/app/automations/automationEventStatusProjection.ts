@@ -3,23 +3,23 @@ import {
     AutomationEventSourceCatalogStatusSchema,
     type AutomationEventSourceStatusV1,
     type AutomationEventSourceCatalogStatus,
+    type PluginMachineMaterializationRefV1,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 
-import type { AutomationListItem } from "./automationTypes";
+import type { AutomationListItem, AutomationTriggerItem } from "./automationTypes";
 
 export type AutomationEventStatusProjection = Readonly<{
     sourceStatus: AutomationEventSourceStatusV1 | null;
     sourceCatalogStatus: AutomationEventSourceCatalogStatus | null;
+    durablePushEndpointMaterializationRef: PluginMachineMaterializationRefV1 | null;
 }>;
 
-type PluginEventAutomation = AutomationListItem & Readonly<{
-    triggerKind: "pluginEvent";
-}>;
+type PluginEventTrigger = AutomationTriggerItem & Readonly<{ kind: "pluginEvent" }>;
 
 type CatalogStatusLookup = Readonly<{
-    automationId: string;
+    triggerId: string;
     accountId: string;
     eventPluginId: string;
     reporterMachineId: string;
@@ -38,7 +38,7 @@ type CurrentSourceReporter = Pick<
     "reporterMachineId" | "reporterMachineInstallationId" | "reporterMaterializationId"
 >;
 
-function catalogStatusLookupKey(lookup: Omit<CatalogStatusLookup, "automationId">): string {
+function catalogStatusLookupKey(lookup: Omit<CatalogStatusLookup, "triggerId">): string {
     return JSON.stringify([
         lookup.accountId,
         lookup.eventPluginId,
@@ -50,14 +50,15 @@ function catalogStatusLookupKey(lookup: Omit<CatalogStatusLookup, "automationId"
 }
 
 function sourceStatusFromRow(row: Readonly<{
+    triggerId: string;
     automationId: string;
+    triggerRevision: number;
     eventPluginId: string;
     eventLocalId: string;
     sourceSelectorId: string;
-    templateVersion: number;
     reporterMachineId: string;
     reporterMaterializationId: string;
-    reporterImmutableGenerationId: string | null;
+    reporterImmutableGenerationId: string;
     state: "uninitialized" | "baselined" | "observing" | "backingOff" | "attention";
     code: string | null;
     lastObservedAt: Date | null;
@@ -70,17 +71,16 @@ function sourceStatusFromRow(row: Readonly<{
 }>): AutomationEventSourceStatusV1 {
     return AutomationEventSourceStatusV1Schema.parse({
         automationId: row.automationId,
+        triggerId: row.triggerId,
+        triggerRevision: row.triggerRevision,
         eventRef: { pluginId: row.eventPluginId, localId: row.eventLocalId },
         sourceSelectorId: row.sourceSelectorId,
-        templateVersion: row.templateVersion,
         reporterMaterializationRef: {
             machineId: row.reporterMachineId,
             materializationId: row.reporterMaterializationId,
             pluginId: row.eventPluginId,
         },
-        ...(row.reporterImmutableGenerationId === null
-            ? {}
-            : { reporterImmutableGenerationId: row.reporterImmutableGenerationId }),
+        reporterImmutableGenerationId: row.reporterImmutableGenerationId,
         state: row.state,
         code: row.code,
         lastObservedAt: row.lastObservedAt?.getTime() ?? null,
@@ -109,22 +109,22 @@ function catalogStatusFromRow(row: Readonly<{
     });
 }
 
-function checkpointedPullCatalogLookup(automation: PluginEventAutomation): CatalogStatusLookup | null {
+function checkpointedPullCatalogLookup(accountId: string, trigger: PluginEventTrigger): CatalogStatusLookup | null {
     if (
-        automation.triggerObservationTransport !== "checkpointedPull"
-        || automation.triggerEventPluginId === null
-        || automation.watcherMachineId === null
-        || automation.watcherMachineInstallationId === null
-        || automation.watcherPluginId !== automation.triggerEventPluginId
-        || automation.watcherMaterializationId === null
+        trigger.observationTransport !== "checkpointedPull"
+        || trigger.eventPluginId === null
+        || trigger.watcherMachineId === null
+        || trigger.watcherMachineInstallationId === null
+        || trigger.watcherPluginId !== trigger.eventPluginId
+        || trigger.watcherMaterializationId === null
     ) return null;
     return {
-        automationId: automation.id,
-        accountId: automation.accountId,
-        eventPluginId: automation.triggerEventPluginId,
-        reporterMachineId: automation.watcherMachineId,
-        reporterMachineInstallationId: automation.watcherMachineInstallationId,
-        reporterMaterializationId: automation.watcherMaterializationId,
+        triggerId: trigger.id,
+        accountId,
+        eventPluginId: trigger.eventPluginId,
+        reporterMachineId: trigger.watcherMachineId,
+        reporterMachineInstallationId: trigger.watcherMachineInstallationId,
+        reporterMaterializationId: trigger.watcherMaterializationId,
         scopeKey: "checkpointedPull",
     };
 }
@@ -139,47 +139,34 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
     automations: readonly AutomationListItem[];
 }>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
     const projections = new Map<string, AutomationEventStatusProjection>();
-    for (const automation of params.automations) {
-        projections.set(automation.id, { sourceStatus: null, sourceCatalogStatus: null });
-    }
-
-    const eventAutomations = params.automations.filter(
-        (automation): automation is PluginEventAutomation => automation.triggerKind === "pluginEvent",
-    );
-    if (eventAutomations.length === 0) return projections;
-    const eventAutomationById = new Map(eventAutomations.map((automation) => [automation.id, automation]));
-
-    const sourceStatusQueries = eventAutomations.flatMap((automation) => (
-        automation.triggerEventPluginId === null
-        || automation.triggerEventLocalId === null
-        || automation.triggerSourceSelectorId === null
-            ? []
-            : [{
-                automationId: automation.id,
-                eventPluginId: automation.triggerEventPluginId,
-                eventLocalId: automation.triggerEventLocalId,
-                sourceSelectorId: automation.triggerSourceSelectorId,
-            }]
-    ));
-    const durablePushAutomations = eventAutomations.flatMap((automation) => (
-        automation.triggerObservationTransport !== "durablePush"
-        || automation.triggerEventPluginId === null
-        || automation.triggerWebhookEndpointId === null
-            ? []
-            : [automation]
+    const eventEntries = params.automations.flatMap((automation) => automation.triggers.flatMap((trigger) => {
+        projections.set(trigger.id, {
+            sourceStatus: null,
+            sourceCatalogStatus: null,
+            durablePushEndpointMaterializationRef: null,
+        });
+        return trigger.kind === "pluginEvent"
+            ? [{ automation, trigger: trigger as PluginEventTrigger }]
+            : [];
+    }));
+    if (eventEntries.length === 0) return projections;
+    const eventEntryByTriggerId = new Map(eventEntries.map((entry) => [entry.trigger.id, entry]));
+    const durablePushEntries = eventEntries.filter(({ trigger }) => (
+        trigger.observationTransport === "durablePush"
+        && trigger.eventPluginId !== null
+        && trigger.webhookEndpointId !== null
     ));
 
     const [sourceStatusRows, durablePushEndpoints] = await Promise.all([
-        sourceStatusQueries.length === 0
-            ? Promise.resolve([])
-            : db.automationEventSourceStatus.findMany({
-                where: { OR: sourceStatusQueries },
+        db.automationEventSourceStatus.findMany({
+                where: { triggerId: { in: eventEntries.map(({ trigger }) => trigger.id) } },
                 select: {
-                    automationId: true,
+                    triggerId: true,
+                    triggerRevision: true,
+                    trigger: { select: { automationId: true } },
                     eventPluginId: true,
                     eventLocalId: true,
                     sourceSelectorId: true,
-                    templateVersion: true,
                     reporterMachineId: true,
                     reporterMachineInstallationId: true,
                     reporterMaterializationId: true,
@@ -195,14 +182,14 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
                     revision: true,
                 },
             }),
-        durablePushAutomations.length === 0
+        durablePushEntries.length === 0
             ? Promise.resolve([])
             : db.pluginWebhookEndpoint.findMany({
                 where: {
-                    OR: durablePushAutomations.map((automation) => ({
-                        id: automation.triggerWebhookEndpointId!,
+                    OR: durablePushEntries.map(({ automation, trigger }) => ({
+                        id: trigger.webhookEndpointId!,
                         accountId: automation.accountId,
-                        pluginId: automation.triggerEventPluginId!,
+                        pluginId: trigger.eventPluginId!,
                         enabled: true,
                         revokedAt: null,
                         releasedAt: null,
@@ -221,48 +208,57 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
     ]);
 
     const endpointById = new Map(durablePushEndpoints.map((endpoint) => [endpoint.id, endpoint]));
-    const catalogLookups = new Map<string, Omit<CatalogStatusLookup, "automationId">>();
-    const catalogLookupKeysByAutomationId = new Map<string, string>();
-    const currentReporterByAutomationId = new Map<string, CurrentSourceReporter>();
+    const catalogLookups = new Map<string, Omit<CatalogStatusLookup, "triggerId">>();
+    const catalogLookupKeysByTriggerId = new Map<string, string>();
+    const currentReporterByTriggerId = new Map<string, CurrentSourceReporter>();
+    const durablePushEndpointMaterializationRefByTriggerId = new Map<
+        string,
+        PluginMachineMaterializationRefV1
+    >();
     const registerCatalogLookup = (lookup: CatalogStatusLookup): void => {
         const key = catalogStatusLookupKey(lookup);
         catalogLookups.set(key, lookup);
-        catalogLookupKeysByAutomationId.set(lookup.automationId, key);
-        currentReporterByAutomationId.set(lookup.automationId, {
+        catalogLookupKeysByTriggerId.set(lookup.triggerId, key);
+        currentReporterByTriggerId.set(lookup.triggerId, {
             reporterMachineId: lookup.reporterMachineId,
             reporterMachineInstallationId: lookup.reporterMachineInstallationId,
             reporterMaterializationId: lookup.reporterMaterializationId,
         });
     };
-    for (const automation of eventAutomations) {
-        const checkpointedPull = checkpointedPullCatalogLookup(automation);
+    for (const { automation, trigger } of eventEntries) {
+        const checkpointedPull = checkpointedPullCatalogLookup(automation.accountId, trigger);
         if (checkpointedPull !== null) {
             registerCatalogLookup(checkpointedPull);
             continue;
         }
         if (
-            automation.triggerObservationTransport !== "durablePush"
-            || automation.triggerWebhookEndpointId === null
-            || automation.triggerEventPluginId === null
+            trigger.observationTransport !== "durablePush"
+            || trigger.webhookEndpointId === null
+            || trigger.eventPluginId === null
         ) continue;
-        const endpoint = endpointById.get(automation.triggerWebhookEndpointId);
+        const endpoint = endpointById.get(trigger.webhookEndpointId);
         if (
             endpoint === undefined
             || endpoint.accountId !== automation.accountId
-            || endpoint.pluginId !== automation.triggerEventPluginId
+            || endpoint.pluginId !== trigger.eventPluginId
             || endpoint.targetMachineId === null
             || endpoint.targetMachineInstallationId === null
             || endpoint.targetMaterializationId === null
         ) continue;
         const durablePush: CatalogStatusLookup = {
-            automationId: automation.id,
+            triggerId: trigger.id,
             accountId: automation.accountId,
-            eventPluginId: automation.triggerEventPluginId,
+            eventPluginId: trigger.eventPluginId,
             reporterMachineId: endpoint.targetMachineId,
             reporterMachineInstallationId: endpoint.targetMachineInstallationId,
             reporterMaterializationId: endpoint.targetMaterializationId,
             scopeKey: `durablePush:${endpoint.id}`,
         };
+        durablePushEndpointMaterializationRefByTriggerId.set(trigger.id, {
+            machineId: endpoint.targetMachineId,
+            materializationId: endpoint.targetMaterializationId,
+            pluginId: endpoint.pluginId,
+        });
         registerCatalogLookup(durablePush);
     }
 
@@ -272,22 +268,26 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
     // the resolved current one belongs to a reporter that can no longer
     // observe or report at all. Presenting its last `observing` state would
     // claim a settled observer is still healthy, so it is not projected.
-    const sourceStatusByAutomationId = new Map<string, AutomationEventSourceStatusV1>();
+    const sourceStatusByTriggerId = new Map<string, AutomationEventSourceStatusV1>();
     for (const row of sourceStatusRows) {
-        const automation = eventAutomationById.get(row.automationId);
-        const currentReporter = currentReporterByAutomationId.get(row.automationId);
+        const entry = eventEntryByTriggerId.get(row.triggerId);
+        const currentReporter = currentReporterByTriggerId.get(row.triggerId);
         if (
-            !automation
-            || automation.triggerEventPluginId !== row.eventPluginId
-            || automation.triggerEventLocalId !== row.eventLocalId
-            || automation.triggerSourceSelectorId !== row.sourceSelectorId
-            || automation.templateVersion !== row.templateVersion
+            !entry
+            || entry.trigger.eventPluginId !== row.eventPluginId
+            || entry.trigger.eventLocalId !== row.eventLocalId
+            || entry.trigger.sourceSelectorId !== row.sourceSelectorId
+            || entry.trigger.revision !== row.triggerRevision
             || currentReporter === undefined
             || currentReporter.reporterMachineId !== row.reporterMachineId
             || currentReporter.reporterMachineInstallationId !== row.reporterMachineInstallationId
             || currentReporter.reporterMaterializationId !== row.reporterMaterializationId
         ) continue;
-        sourceStatusByAutomationId.set(row.automationId, sourceStatusFromRow(row));
+        sourceStatusByTriggerId.set(row.triggerId, sourceStatusFromRow({
+            ...row,
+            automationId: row.trigger.automationId,
+            triggerRevision: row.triggerRevision,
+        }));
     }
 
     const catalogRows = catalogLookups.size === 0
@@ -329,15 +329,17 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         }), catalogStatusFromRow(row));
     }
 
-    for (const automation of eventAutomations) {
-        const current = projections.get(automation.id);
+    for (const { trigger } of eventEntries) {
+        const current = projections.get(trigger.id);
         if (current === undefined) continue;
-        const catalogLookupKey = catalogLookupKeysByAutomationId.get(automation.id);
-        projections.set(automation.id, {
-            sourceStatus: sourceStatusByAutomationId.get(automation.id) ?? null,
+        const catalogLookupKey = catalogLookupKeysByTriggerId.get(trigger.id);
+        projections.set(trigger.id, {
+            sourceStatus: sourceStatusByTriggerId.get(trigger.id) ?? null,
             sourceCatalogStatus: catalogLookupKey === undefined
                 ? null
                 : catalogStatusByLookupKey.get(catalogLookupKey) ?? null,
+            durablePushEndpointMaterializationRef:
+                durablePushEndpointMaterializationRefByTriggerId.get(trigger.id) ?? null,
         });
     }
     return projections;

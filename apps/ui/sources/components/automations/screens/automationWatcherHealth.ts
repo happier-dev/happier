@@ -1,3 +1,5 @@
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
+
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import type { MachineWithReplacement } from '@/sync/domains/machines/identity/machineIdentityTypes';
@@ -89,4 +91,67 @@ export function canPresentAutomationSourceSummary(
     health: AutomationWatcherHealthV1,
 ): boolean {
     return health.kind === 'observing';
+}
+
+export type AutomationEventObserverRuntimeHealthV1 =
+    | Readonly<{ kind: 'current' }>
+    | Readonly<{ kind: 'generationReplaced' }>
+    | Readonly<{ kind: 'observerStopped'; reason?: string }>
+    | Readonly<{ kind: 'runtimeUnavailable' }>;
+
+/**
+ * Joins retained provider status to the daemon's existing runtime lifecycle
+ * projection. Source reports prove what a runner last observed; only this
+ * host-owned projection can prove that the exact current generation still has
+ * a live background observer. A source with no same-plugin background runner
+ * remains governed by its own observation owner rather than being guessed
+ * unavailable here.
+ */
+export function resolveAutomationEventObserverRuntimeHealth(params: Readonly<{
+    projection: PluginProjectionV2 | null | undefined;
+    eventPluginId: string;
+    reporterImmutableGenerationId: string | null | undefined;
+}>): AutomationEventObserverRuntimeHealthV1 {
+    const projection = params.projection;
+    if (!projection) return Object.freeze({ kind: 'runtimeUnavailable' });
+    const installed = projection.installedPackagesById[params.eventPluginId];
+    if (!installed?.enabled || !installed.immutableGenerationId) {
+        return Object.freeze({ kind: 'runtimeUnavailable' });
+    }
+    if (
+        params.reporterImmutableGenerationId
+        && params.reporterImmutableGenerationId !== installed.immutableGenerationId
+    ) {
+        return Object.freeze({ kind: 'generationReplaced' });
+    }
+
+    const backgroundServices = (projection.contributionIntrospection?.contributions ?? []).filter((record) => (
+        record.contribution.kind === 'localId'
+        && record.contribution.pluginId === params.eventPluginId
+        && record.contribution.family === 'backgroundServices'
+    ));
+    if (backgroundServices.length === 0) return Object.freeze({ kind: 'current' });
+
+    const expectedGeneration = String(projection.generation);
+    const stopped = backgroundServices.find((record) => (
+        record.registration.state !== 'bound'
+        || record.activation.state !== 'active'
+        || record.registration.generation !== expectedGeneration
+        || record.activation.generation !== expectedGeneration
+    ));
+    if (!stopped) return Object.freeze({ kind: 'current' });
+    return Object.freeze({
+        kind: 'observerStopped',
+        ...(stopped.diagnostics[0]?.data.message
+            ? { reason: stopped.diagnostics[0].data.message }
+            : {}),
+    });
+}
+
+export function formatAutomationEventObserverRuntimeImpediment(
+    health: AutomationEventObserverRuntimeHealthV1,
+): string | undefined {
+    if (health.kind === 'current') return undefined;
+    if (health.kind === 'observerStopped' && health.reason) return health.reason;
+    return t('automations.detail.event.sourceStatusUnavailable');
 }

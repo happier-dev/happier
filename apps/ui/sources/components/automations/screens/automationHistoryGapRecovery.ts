@@ -1,6 +1,8 @@
 import {
+    arePluginMachineMaterializationRefsEqual,
     type AutomationEventSourceStatusV1,
     type AutomationDefinitionListItem,
+    type AutomationTriggerListItem,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 } from '@happier-dev/protocol';
 import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
@@ -15,7 +17,6 @@ import {
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { isPluginEventAutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import {
     createPluginUiProjectedActionResolver,
     normalizePluginUiProjection,
@@ -23,7 +24,6 @@ import {
 import {
     areFreshPluginMachineExecutionOriginsCurrent,
     arePluginContributionIdentitiesEqual,
-    arePluginMachineMaterializationRefsEqual,
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 type HistoryGapRecoveryOutcome =
@@ -36,7 +36,8 @@ function sameCurrentSourceStatus(
     right: AutomationEventSourceStatusV1,
 ): boolean {
     return left.automationId === right.automationId
-        && left.templateVersion === right.templateVersion
+        && left.triggerId === right.triggerId
+        && left.triggerRevision === right.triggerRevision
         && arePluginContributionIdentitiesEqual(left.eventRef, right.eventRef)
         && left.sourceSelectorId === right.sourceSelectorId
         && arePluginMachineMaterializationRefsEqual(
@@ -52,13 +53,30 @@ function sameCurrentSourceStatus(
 function sameAutomationEventSource(
     left: AutomationDefinitionListItem,
     right: AutomationDefinitionListItem,
+    triggerId: string,
 ): boolean {
-    if (!isPluginEventAutomationDefinition(left) || !isPluginEventAutomationDefinition(right)) return false;
+    const leftTrigger = readPluginEventTrigger(left, triggerId);
+    const rightTrigger = readPluginEventTrigger(right, triggerId);
+    if (!leftTrigger || !rightTrigger) return false;
     return left.id === right.id
-        && left.templateVersion === right.templateVersion
-        && arePluginContributionIdentitiesEqual(left.trigger.eventRef, right.trigger.eventRef)
-        && left.trigger.sourceSelectorId === right.trigger.sourceSelectorId
-        && left.trigger.observation.kind === right.trigger.observation.kind;
+        && leftTrigger.revision === rightTrigger.revision
+        && arePluginContributionIdentitiesEqual(leftTrigger.eventRef, rightTrigger.eventRef)
+        && leftTrigger.sourceSelectorId === rightTrigger.sourceSelectorId
+        && leftTrigger.observation.kind === rightTrigger.observation.kind;
+}
+
+type PluginEventTriggerListItem = Extract<
+    AutomationTriggerListItem,
+    Readonly<{ kind: 'pluginEvent' }>
+>;
+
+function readPluginEventTrigger(
+    automation: AutomationDefinitionListItem | null | undefined,
+    triggerId: string,
+): PluginEventTriggerListItem | null {
+    if (!automation) return null;
+    const trigger = automation.triggers.find((candidate) => candidate.id === triggerId);
+    return trigger?.kind === 'pluginEvent' ? trigger : null;
 }
 
 /**
@@ -67,19 +85,22 @@ function sameAutomationEventSource(
  */
 export function readAutomationHistoryGapRecoveryStatus(
     automation: AutomationDefinitionListItem | null | undefined,
+    triggerId: string,
 ): AutomationEventSourceStatusV1 | null {
-    if (!automation || !automation.enabled || !isPluginEventAutomationDefinition(automation)) return null;
-    if (automation.trigger.observation.kind !== 'checkpointedPull') return null;
-    const status = automation.sourceStatus;
+    const trigger = readPluginEventTrigger(automation, triggerId);
+    if (!automation || !automation.enabled || !trigger?.enabled) return null;
+    if (trigger.observation.kind !== 'checkpointedPull') return null;
+    const status = trigger.sourceStatus;
     if (
         !status
         || status.state !== 'attention'
         || status.code !== 'historyGap'
         || status.automationId !== automation.id
-        || status.templateVersion !== automation.templateVersion
-        || !arePluginContributionIdentitiesEqual(status.eventRef, automation.trigger.eventRef)
-        || status.sourceSelectorId !== automation.trigger.sourceSelectorId
-        || status.reporterMaterializationRef.pluginId !== automation.trigger.eventRef.pluginId
+        || status.triggerId !== trigger.id
+        || status.triggerRevision !== trigger.revision
+        || !arePluginContributionIdentitiesEqual(status.eventRef, trigger.eventRef)
+        || status.sourceSelectorId !== trigger.sourceSelectorId
+        || status.reporterMaterializationRef.pluginId !== trigger.eventRef.pluginId
     ) {
         return null;
     }
@@ -90,10 +111,12 @@ export function readAutomationHistoryGapRecoveryStatus(
 export function readAutomationHistoryGapRecoveryEligibleEvent(params: Readonly<{
     inputs: DaemonMergedProjectionInputs | null | undefined;
     automation: AutomationDefinitionListItem | null | undefined;
+    triggerId: string;
 }>): DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null {
-    const status = readAutomationHistoryGapRecoveryStatus(params.automation);
+    const status = readAutomationHistoryGapRecoveryStatus(params.automation, params.triggerId);
     const automation = params.automation;
-    if (!status || !automation || !isPluginEventAutomationDefinition(automation)) return null;
+    const trigger = readPluginEventTrigger(automation, params.triggerId);
+    if (!status || !automation || !trigger) return null;
     const matches = (params.inputs?.automationEligibleEvents ?? []).filter((candidate) => {
         const action = candidate.historyGapResetAction;
         const declaredAction = candidate.event.automation.source.historyGapResetActionRef;
@@ -102,7 +125,7 @@ export function readAutomationHistoryGapRecoveryEligibleEvent(params: Readonly<{
             && candidate.event.automation.source.supportedObservationTransports.includes('checkpointedPull')
             && status.reporterImmutableGenerationId !== undefined
             && status.reporterImmutableGenerationId === candidate.event.immutableGenerationId
-            && arePluginContributionIdentitiesEqual(candidate.event.identity, automation.trigger.eventRef)
+            && arePluginContributionIdentitiesEqual(candidate.event.identity, trigger.eventRef)
             && candidate.event.identity.pluginId === action.identity.pluginId
             && candidate.event.immutableGenerationId === action.immutableGenerationId
             && arePluginContributionIdentitiesEqual(action.identity, declaredAction)
@@ -137,6 +160,7 @@ type CurrentRecoverySnapshot = Readonly<{
 
 function resolveCurrentRecoverySnapshot(params: Readonly<{
     desiredEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    triggerId: string;
     inputs: DaemonMergedProjectionInputs | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
@@ -145,7 +169,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     actionSnapshotRef: MutableRefObject<PluginContributedActionCurrentSnapshot | null>;
 }>): CurrentRecoverySnapshot | HistoryGapRecoveryOutcome {
     const automation = params.resolveCurrentAutomation();
-    const status = readAutomationHistoryGapRecoveryStatus(automation);
+    const status = readAutomationHistoryGapRecoveryStatus(automation, params.triggerId);
     const origin = params.resolveExecutionOrigin();
     if (!automation || !status || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
@@ -153,7 +177,11 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     if (!arePluginMachineMaterializationRefsEqual(origin.origin.materializationRef, status.reporterMaterializationRef)) {
         return { kind: 'stale' };
     }
-    const event = readAutomationHistoryGapRecoveryEligibleEvent({ inputs: params.inputs, automation });
+    const event = readAutomationHistoryGapRecoveryEligibleEvent({
+        inputs: params.inputs,
+        automation,
+        triggerId: params.triggerId,
+    });
     if (!event || !sameRecoveryEligibleEvent(event, params.desiredEvent)) {
         return { kind: 'stale' };
     }
@@ -185,7 +213,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
             accountLifetime: params.accountLifetime,
             isCurrent: () => {
                 const currentAutomation = params.resolveCurrentAutomation();
-                const currentStatus = readAutomationHistoryGapRecoveryStatus(currentAutomation);
+                const currentStatus = readAutomationHistoryGapRecoveryStatus(currentAutomation, params.triggerId);
                 let currentOrigin: FreshPluginMachineExecutionOriginV1 | null = null;
                 try {
                     currentOrigin = params.resolveExecutionOrigin();
@@ -196,7 +224,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
                     && !params.signal.aborted
                     && params.accountLifetime.isCurrent()
                     && currentAutomation !== null
-                    && sameAutomationEventSource(currentAutomation, automation)
+                    && sameAutomationEventSource(currentAutomation, automation, params.triggerId)
                     && currentStatus !== null
                     && sameCurrentSourceStatus(currentStatus, status)
                     && currentOrigin !== null
@@ -226,6 +254,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
  */
 export async function recoverAutomationHistoryGap(params: Readonly<{
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    triggerId: string;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
     resolveCurrentAutomation: () => AutomationDefinitionListItem | null;
@@ -254,6 +283,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         }
         return resolveCurrentRecoverySnapshot({
             desiredEvent: params.eligibleEvent,
+            triggerId: params.triggerId,
             inputs,
             accountLifetime: params.accountLifetime,
             signal: operationScope.signal,
@@ -281,12 +311,18 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         if (
             !sameRecoveryEligibleEvent(currentBeforeSelection.event, initial.event)
             || !areFreshPluginMachineExecutionOriginsCurrent(currentBeforeSelection.origin, initial.origin)
-            || !sameAutomationEventSource(currentBeforeSelection.automation, initial.automation)
+            || !sameAutomationEventSource(
+                currentBeforeSelection.automation,
+                initial.automation,
+                params.triggerId,
+            )
             || !sameCurrentSourceStatus(currentBeforeSelection.status, initial.status)
         ) {
             return { kind: 'stale' };
         }
         actionSnapshotRef.current = currentBeforeSelection.actionSnapshot;
+        const initialTrigger = readPluginEventTrigger(initial.automation, params.triggerId);
+        if (!initialTrigger) return { kind: 'stale' };
         const selection = await createPluginContributedActionController({
             resolveCurrent: () => actionSnapshotRef.current,
         }).selectExactBoundActionInput({
@@ -294,10 +330,9 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
             expectedImmutableGenerationId: action.immutableGenerationId,
             draft: {
                 automationId: initial.automation.id,
-                templateVersion: initial.automation.templateVersion,
-                sourceSelectorId: initial.automation.trigger.kind === 'pluginEvent'
-                    ? initial.automation.trigger.sourceSelectorId
-                    : '',
+                triggerId: initialTrigger.id,
+                triggerRevision: initialTrigger.revision,
+                sourceSelectorId: initialTrigger.sourceSelectorId,
             },
         });
         if (selection.kind !== 'direct' || selection.result.kind !== 'submitted' || operationScope.signal.aborted) {
@@ -309,7 +344,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
         if (
             !sameRecoveryEligibleEvent(current.event, initial.event)
             || !areFreshPluginMachineExecutionOriginsCurrent(current.origin, initial.origin)
-            || !sameAutomationEventSource(current.automation, initial.automation)
+            || !sameAutomationEventSource(current.automation, initial.automation, params.triggerId)
             || !sameCurrentSourceStatus(current.status, initial.status)
         ) {
             return { kind: 'stale' };

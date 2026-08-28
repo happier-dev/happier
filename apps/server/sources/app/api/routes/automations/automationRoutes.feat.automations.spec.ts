@@ -31,21 +31,47 @@ const createAutomation = vi.fn(async () => ({
     name: "Daily sweep",
     description: null,
     enabled: true,
-    triggerKind: "schedule",
-    scheduleKind: "interval",
-    scheduleExpr: null,
-    everyMs: 60_000,
-    timezone: null,
     targetType: "new_session",
     templateCiphertext: TEST_TEMPLATE_ENVELOPE,
     templateVersion: 1,
-    nextRunAt: null,
     lastRunAt: null,
     createdAt: new Date("2026-02-12T10:00:00.000Z"),
     updatedAt: new Date("2026-02-12T10:00:00.000Z"),
     assignments: [{ machineId: "m1", enabled: true, priority: 0 }],
+    triggers: [{
+        id: "trigger-1",
+        automationId: "a1",
+        kind: "schedule",
+        enabled: true,
+        revision: 1,
+        deletedAt: null,
+        scheduleKind: "interval",
+        scheduleExpr: null,
+        everyMs: 60_000,
+        timezone: null,
+        nextRunAt: null,
+        eventPluginId: null,
+        eventLocalId: null,
+        sourceSelectorId: null,
+        sourceContractVersion: null,
+        observationTransport: null,
+        webhookEndpointId: null,
+        observationStartsAt: null,
+        watcherMachineId: null,
+        watcherMachineInstallationId: null,
+        watcherPluginId: null,
+        watcherMaterializationId: null,
+        definitionEnvelope: null,
+        sessionLifecycleEvent: null,
+        sourceSessionId: null,
+        sourceTurnId: null,
+        createdAt: new Date("2026-02-12T10:00:00.000Z"),
+        updatedAt: new Date("2026-02-12T10:00:00.000Z"),
+        eventSourceStatus: null,
+    }],
 }));
 const updateAutomation = vi.fn(async () => null);
+const listAutomationRuns = vi.fn(async () => ({ runs: [], nextCursor: null }));
 const verifyAutomationConversationTargetV1 = vi.fn(async () => ({
     kind: "notVerified" as const,
     reason: "notFound" as const,
@@ -62,10 +88,20 @@ const claimAutomationRun = vi.fn(async () => ({
         automationId: "a1",
         accountId: "u1",
         state: "claimed",
-        originKind: "scheduled",
-        occurrenceKey: null,
+        triggerId: "trigger-1",
+        causeKind: "trigger",
+        causeTriggerKind: "schedule",
+        causeTriggerRevision: 1,
+        causeOccurredAt: new Date("2026-02-12T10:00:00.000Z"),
+        causeScheduledFor: new Date("2026-02-12T10:00:00.000Z"),
+        causeEventPluginId: null,
+        causeEventLocalId: null,
+        causeSessionLifecycleEvent: null,
+        causeSourceSessionId: null,
+        causeSourceTurnId: null,
+        occurrenceKey: "schedule:trigger-1:2026-02-12T10:00:00.000Z",
         occurrenceEvidenceEqualityTag: null,
-        originSourceSelectorId: null,
+        causeSourceSelectorId: null,
         triggerEvidenceEnvelope: null,
         executionInputEnvelope: JSON.stringify({
             kind: "happier_automation_run_execution_input_v1",
@@ -111,7 +147,6 @@ const claimAutomationRun = vi.fn(async () => ({
             id: "a1",
             name: "Daily sweep",
             enabled: true,
-            triggerKind: "schedule",
             targetType: "new_session",
             templateCiphertext: TEST_TEMPLATE_ENVELOPE,
         },
@@ -129,6 +164,7 @@ vi.mock("@/app/automations/automationCrudService", () => ({
     getAutomation,
     createAutomation,
     updateAutomation,
+    listAutomationRuns,
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
@@ -406,10 +442,35 @@ describe("automationRoutes", () => {
 
         expect(listAutomations).toHaveBeenCalledWith({
             accountId: "u1",
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         expect(response).toEqual([]);
+    });
+
+    it("lists frozen V2 Runs without consulting the mutable definition shape", async () => {
+        const { automationRoutes } = await import("./automationRoutes");
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v2/automations/:id/runs",
+            registerRoutes(app) {
+                automationRoutes(app as any);
+            },
+        });
+
+        const { response } = await route.invoke({
+            userId: "u1",
+            params: { id: "automation-now-multi-trigger" },
+            query: { limit: 20 },
+        });
+
+        expect(listAutomationRuns).toHaveBeenCalledWith({
+            accountId: "u1",
+            automationId: "automation-now-multi-trigger",
+            limit: 20,
+            cursor: undefined,
+            requireV2RunRepresentability: true,
+        });
+        expect(response).toEqual({ runs: [], nextCursor: null });
     });
 
     it("returns the existing 404 before mutating an Event definition through V2", async () => {
@@ -445,7 +506,6 @@ describe("automationRoutes", () => {
         expect(getAutomation).toHaveBeenNthCalledWith(1, {
             accountId: "u1",
             automationId: "event-automation",
-            expectedTriggerKind: "schedule",
             requireV2DefinitionRepresentability: true,
         });
         expect(updateAutomation).not.toHaveBeenCalled();
@@ -721,7 +781,6 @@ describe("automationRoutes", () => {
                 accountId: "u1",
                 machineId: "m1",
                 leaseDurationMs: 30_000,
-                expectedTriggerKind: "schedule",
                 requireV2RunRepresentability: true,
             }),
         );

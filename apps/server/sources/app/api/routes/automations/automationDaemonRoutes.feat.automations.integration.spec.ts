@@ -1,6 +1,7 @@
 import {
     AutomationRunExecutionInputV1Schema,
     serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -41,8 +42,8 @@ function buildFrozenV2RunInput(params: Readonly<{
         : AutomationRunExecutionInputV1Schema.parse(input));
 }
 
-function buildStrictV3Recipe(templateVersion: number): string {
-    const recipe = serializeAutomationRunExecutionRecipeV1({
+function strictV3RecipeShape(templateVersion: number) {
+    return {
         v: 1,
         templateVersion,
         template: { t: "plain", v: { v: 1, prompt: "strict V3 definition" } },
@@ -58,22 +59,69 @@ function buildStrictV3Recipe(templateVersion: number): string {
                 },
             },
         },
-    });
+    } as const;
+}
+
+function buildStrictV3Recipe(templateVersion: number): string {
+    const recipe = serializeAutomationStoredDefinitionExecutionRecipeV1(
+        strictV3RecipeShape(templateVersion),
+    );
     if (recipe.kind !== "available") {
         throw new Error("Expected strict V3 test recipe to serialize");
     }
     return recipe.serialized;
 }
 
-type UnsupportedV2DefinitionTriggerKind = "pluginEvent";
-type UnsupportedV2RunOriginKind = "pluginEvent" | "conversation";
+function buildStrictV3RunRecipe(templateVersion: number, machineId: string): string {
+    const recipe = serializeAutomationRunExecutionRecipeV1({
+        ...strictV3RecipeShape(templateVersion),
+        assignmentMachineIds: [machineId],
+    });
+    if (recipe.kind !== "available") {
+        throw new Error("Expected frozen strict V3 Run recipe to serialize");
+    }
+    return recipe.serialized;
+}
+
+type UnsupportedV2RunCauseKind = "pluginEvent" | "conversation";
+
+function scheduleTriggerCreate(id: string, everyMs = 60_000) {
+    return {
+        id,
+        kind: "schedule" as const,
+        enabled: true,
+        revision: 1,
+        scheduleKind: "interval" as const,
+        everyMs,
+    };
+}
+
+function scheduleRunCause(params: Readonly<{
+    triggerId: string;
+    scheduledFor: Date;
+    occurrenceKey: string;
+}>) {
+    return {
+        triggerId: params.triggerId,
+        causeKind: "trigger" as const,
+        causeTriggerKind: "schedule" as const,
+        causeTriggerRevision: 1,
+        causeOccurredAt: params.scheduledFor,
+        causeScheduledFor: params.scheduledFor,
+        occurrenceKey: params.occurrenceKey,
+    };
+}
 
 async function snapshotAutomationPersistence(accountId: string) {
-    const [account, automations, assignments, runs, runEvents, accountChanges] =
+    const [account, automations, triggers, assignments, runs, runEvents, accountChanges] =
         await Promise.all([
             db.account.findUnique({ where: { id: accountId } }),
             db.automation.findMany({
                 where: { accountId },
+                orderBy: { id: "asc" },
+            }),
+            db.automationTrigger.findMany({
+                where: { automation: { is: { accountId } } },
                 orderBy: { id: "asc" },
             }),
             db.automationAssignment.findMany({
@@ -94,34 +142,41 @@ async function snapshotAutomationPersistence(accountId: string) {
             }),
         ]);
 
-    return { account, automations, assignments, runs, runEvents, accountChanges };
+    return { account, automations, triggers, assignments, runs, runEvents, accountChanges };
 }
 
 async function seedUnsupportedV2Automation(params: Readonly<{
     accountId: string;
     machineId: string;
-    triggerKind: UnsupportedV2DefinitionTriggerKind;
-    originKind: UnsupportedV2RunOriginKind;
+    causeKind: UnsupportedV2RunCauseKind;
 }>) {
     const now = Date.now();
-    const isConversationRun = params.originKind === "conversation";
+    const isConversationRun = params.causeKind === "conversation";
+    const triggerId = `trigger-plugin-event-${params.causeKind}`;
     const automation = await db.automation.create({
         data: {
             accountId: params.accountId,
-            name: `${params.triggerKind} V2 rejection fixture`,
+            name: `pluginEvent V2 rejection fixture`,
             enabled: true,
-            triggerKind: params.triggerKind,
             targetType: "new_session",
             templateCiphertext: buildPlainTemplateEnvelope(),
             templateVersion: 1,
-            triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
-            triggerEventPluginId: "test.plugin",
-            triggerEventLocalId: "event-1",
-            triggerSourceSelectorId: "selector-1",
-            triggerSourceContractVersion: 1,
-            triggerObservationTransport: "durablePush" as const,
-            triggerWebhookEndpointId: "endpoint-1",
-            triggerObservationStartsAt: new Date(now - 120_000),
+            triggers: {
+                create: {
+                    id: triggerId,
+                    kind: "pluginEvent",
+                    enabled: true,
+                    revision: 1,
+                    definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                    eventPluginId: "test.plugin",
+                    eventLocalId: "event-1",
+                    sourceSelectorId: "selector-1",
+                    sourceContractVersion: 1,
+                    observationTransport: "durablePush",
+                    webhookEndpointId: "endpoint-1",
+                    observationStartsAt: new Date(now - 120_000),
+                },
+            },
         },
         select: { id: true },
     });
@@ -137,10 +192,15 @@ async function seedUnsupportedV2Automation(params: Readonly<{
     const runInput = (suffix: string) => ({
         automationId: automation.id,
         accountId: params.accountId,
-        originKind: params.originKind,
-        originOccurredAt: new Date(now - 60_000),
-        occurrenceKey: `${params.originKind}-${suffix}`,
-        ...(isConversationRun ? {} : { originSourceSelectorId: "selector-1" }),
+        triggerId: isConversationRun ? null : triggerId,
+        causeKind: isConversationRun ? "conversation" as const : "trigger" as const,
+        causeTriggerKind: isConversationRun ? null : "pluginEvent" as const,
+        causeTriggerRevision: isConversationRun ? null : 1,
+        causeOccurredAt: new Date(now - 60_000),
+        causeEventPluginId: isConversationRun ? null : "test.plugin",
+        causeEventLocalId: isConversationRun ? null : "event-1",
+        occurrenceKey: `${params.causeKind}-${suffix}`,
+        causeSourceSelectorId: isConversationRun ? null : "selector-1",
         triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
         ...(isConversationRun
             ? {
@@ -151,12 +211,12 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                         correspondence: {
                             accountId: params.accountId,
                             automationId: automation.id,
-                            runId: `${params.originKind}-${suffix}`,
+                            runId: `${params.causeKind}-${suffix}`,
                             handoffId: `handoff-${suffix}`,
                         },
                         source: {
                             kind: "automationResult",
-                            automationRunId: `${params.originKind}-${suffix}`,
+                            automationRunId: `${params.causeKind}-${suffix}`,
                             resultId: `handoff-${suffix}`,
                             automationId: automation.id,
                             templateVersion: 1,
@@ -233,6 +293,7 @@ describe("automation daemon routes (integration)", () => {
             () => db.automationRunEvent.deleteMany(),
             () => db.automationRun.deleteMany(),
             () => db.automationAssignment.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
@@ -253,16 +314,16 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const templateCiphertext = buildPlainTemplateEnvelope();
+        const triggerId = "trigger-nightly-run";
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Nightly run",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(triggerId) },
             },
             select: { id: true },
         });
@@ -280,7 +341,11 @@ describe("automation daemon routes (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "queued",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId,
+                    scheduledFor: scheduledAt,
+                    occurrenceKey: "nightly-run:scheduled",
+                }),
                 scheduledAt,
                 dueAt: new Date(Date.now() - 5_000),
                 executionInputEnvelope: buildFrozenV2RunInput({
@@ -352,17 +417,16 @@ describe("automation daemon routes (integration)", () => {
         });
 
         const strictTemplateCiphertext = buildStrictV3Recipe(1);
+        const strictTriggerId = "trigger-strict-v3";
         const strictAutomation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Strict V3 schedule",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext: strictTemplateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(strictTriggerId) },
                 assignments: {
                     create: {
                         machineId: "machine-v2-frozen-snapshot",
@@ -375,17 +439,16 @@ describe("automation daemon routes (integration)", () => {
         });
 
         const frozenTemplateCiphertext = buildPlainTemplateEnvelope();
+        const predecessorTriggerId = "trigger-predecessor-v2";
         const predecessorAutomation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Predecessor V2 schedule",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext: frozenTemplateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(predecessorTriggerId) },
                 assignments: {
                     create: {
                         machineId: "machine-v2-frozen-snapshot",
@@ -396,17 +459,40 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
+        const executionRunTriggerId = "trigger-execution-run";
         const executionRunAutomation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Execution Run target",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "execution_run",
                 templateCiphertext: frozenTemplateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(executionRunTriggerId) },
+                assignments: {
+                    create: {
+                        machineId: "machine-v2-frozen-snapshot",
+                        enabled: true,
+                        priority: 0,
+                    },
+                },
+            },
+            select: { id: true },
+        });
+        const multiTriggerAutomation = await db.automation.create({
+            data: {
+                accountId: account.id,
+                name: "Unrepresentable multiple schedules",
+                enabled: true,
+                targetType: "new_session",
+                templateCiphertext: frozenTemplateCiphertext,
+                templateVersion: 1,
+                triggers: {
+                    create: [
+                        scheduleTriggerCreate("trigger-multi-a"),
+                        scheduleTriggerCreate("trigger-multi-b", 120_000),
+                    ],
+                },
                 assignments: {
                     create: {
                         machineId: "machine-v2-frozen-snapshot",
@@ -418,35 +504,51 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const now = Date.now();
+        const strictScheduledFor = new Date(now - 120_000);
         const strictRun = await db.automationRun.create({
             data: {
                 automationId: strictAutomation.id,
                 accountId: account.id,
                 state: "queued",
-                originKind: "scheduled",
-                scheduledAt: new Date(now - 120_000),
-                dueAt: new Date(now - 120_000),
+                ...scheduleRunCause({
+                    triggerId: strictTriggerId,
+                    scheduledFor: strictScheduledFor,
+                    occurrenceKey: "strict-v3:primary",
+                }),
+                scheduledAt: strictScheduledFor,
+                dueAt: strictScheduledFor,
                 executionInputEnvelope: strictTemplateCiphertext,
             },
             select: { id: true },
         });
         await db.automationRun.createMany({
-            data: Array.from({ length: 30 }, (_, index) => ({
-                automationId: strictAutomation.id,
-                accountId: account.id,
-                state: "queued" as const,
-                originKind: "scheduled" as const,
-                scheduledAt: new Date(now - 240_000 + index),
-                dueAt: new Date(now - 240_000 + index),
-                executionInputEnvelope: strictTemplateCiphertext,
-            })),
+            data: Array.from({ length: 30 }, (_, index) => {
+                const scheduledFor = new Date(now - 240_000 + index);
+                return {
+                    automationId: strictAutomation.id,
+                    accountId: account.id,
+                    state: "queued" as const,
+                    ...scheduleRunCause({
+                        triggerId: strictTriggerId,
+                        scheduledFor,
+                        occurrenceKey: `strict-v3:${index}`,
+                    }),
+                    scheduledAt: scheduledFor,
+                    dueAt: scheduledFor,
+                    executionInputEnvelope: strictTemplateCiphertext,
+                };
+            }),
         });
         const nullInputPredecessorRun = await db.automationRun.create({
             data: {
                 automationId: predecessorAutomation.id,
                 accountId: account.id,
                 state: "queued",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId: predecessorTriggerId,
+                    scheduledFor: new Date(now - 180_000),
+                    occurrenceKey: "predecessor:null-input",
+                }),
                 scheduledAt: new Date(now - 180_000),
                 dueAt: new Date(now - 180_000),
                 executionInputEnvelope: null,
@@ -458,7 +560,11 @@ describe("automation daemon routes (integration)", () => {
                 automationId: executionRunAutomation.id,
                 accountId: account.id,
                 state: "queued",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId: executionRunTriggerId,
+                    scheduledFor: new Date(now - 90_000),
+                    occurrenceKey: "execution-run:scheduled",
+                }),
                 scheduledAt: new Date(now - 90_000),
                 dueAt: new Date(now - 90_000),
                 executionInputEnvelope: buildFrozenV2RunInput({
@@ -473,12 +579,39 @@ describe("automation daemon routes (integration)", () => {
             templateCiphertext: frozenTemplateCiphertext,
             origin: { kind: "scheduled", scheduledFor: now - 60_000 },
         });
+        const multiTriggerScheduledFor = new Date(now - 70_000);
+        const multiTriggerRun = await db.automationRun.create({
+            data: {
+                automationId: multiTriggerAutomation.id,
+                accountId: account.id,
+                state: "queued",
+                ...scheduleRunCause({
+                    triggerId: "trigger-multi-a",
+                    scheduledFor: multiTriggerScheduledFor,
+                    occurrenceKey: "multi-trigger:scheduled",
+                }),
+                scheduledAt: multiTriggerScheduledFor,
+                dueAt: multiTriggerScheduledFor,
+                executionInputEnvelope: buildFrozenV2RunInput({
+                    templateCiphertext: frozenTemplateCiphertext,
+                    origin: {
+                        kind: "scheduled",
+                        scheduledFor: multiTriggerScheduledFor.getTime(),
+                    },
+                }),
+            },
+            select: { id: true },
+        });
         const predecessorRun = await db.automationRun.create({
             data: {
                 automationId: predecessorAutomation.id,
                 accountId: account.id,
                 state: "queued",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId: predecessorTriggerId,
+                    scheduledFor: new Date(now - 60_000),
+                    occurrenceKey: "predecessor:frozen-input",
+                }),
                 scheduledAt: new Date(now - 60_000),
                 dueAt: new Date(now - 60_000),
                 executionInputEnvelope: frozenInput,
@@ -508,6 +641,16 @@ describe("automation daemon routes (integration)", () => {
                 });
                 expect(assignments.statusCode).toBe(200);
                 expect(assignments.json()).toEqual({ assignments: [] });
+
+                const definitions = await app.inject({
+                    method: "GET",
+                    url: "/v2/automations",
+                    headers: { "x-test-user-id": account.id },
+                });
+                expect(definitions.statusCode).toBe(200);
+                expect(definitions.json()).toEqual(expect.not.arrayContaining([
+                    expect.objectContaining({ id: multiTriggerAutomation.id }),
+                ]));
 
                 const retainedRunList = await app.inject({
                     method: "GET",
@@ -546,6 +689,20 @@ describe("automation daemon routes (integration)", () => {
 
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: strictRun.id },
+            select: {
+                state: true,
+                claimedByMachineId: true,
+                leaseExpiresAt: true,
+                attempt: true,
+            },
+        })).resolves.toEqual({
+            state: "queued",
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            attempt: 0,
+        });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: multiTriggerRun.id },
             select: {
                 state: true,
                 claimedByMachineId: true,
@@ -602,17 +759,16 @@ describe("automation daemon routes (integration)", () => {
             },
         });
         const strictInput = buildStrictV3Recipe(1);
+        const triggerId = "trigger-strict-v3-lifecycle";
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Strict V3 lifecycle rejection",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext: strictInput,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(triggerId) },
                 assignments: {
                     create: { machineId, enabled: true, priority: 0 },
                 },
@@ -620,33 +776,35 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const now = Date.now();
+        const scheduledFor = new Date(now - 60_000);
         const runInput = {
             automationId: automation.id,
             accountId: account.id,
-            originKind: "scheduled" as const,
-            scheduledAt: new Date(now - 60_000),
+            ...scheduleRunCause({ triggerId, scheduledFor, occurrenceKey: "placeholder" }),
+            scheduledAt: scheduledFor,
             dueAt: new Date(now - 30_000),
             claimedAt: new Date(now - 20_000),
             claimedByMachineId: machineId,
             leaseExpiresAt: new Date(now + 60_000),
             attempt: 1,
-            executionInputEnvelope: strictInput,
+            executionInputEnvelope: buildStrictV3RunRecipe(1, machineId),
         };
         const [claimedForHeartbeat, claimedForStart, runningForSucceed, runningForFail, queuedForCancel] =
             await Promise.all([
-                db.automationRun.create({ data: { ...runInput, state: "claimed" }, select: { id: true } }),
-                db.automationRun.create({ data: { ...runInput, state: "claimed" }, select: { id: true } }),
+                db.automationRun.create({ data: { ...runInput, occurrenceKey: "strict:heartbeat", state: "claimed" }, select: { id: true } }),
+                db.automationRun.create({ data: { ...runInput, occurrenceKey: "strict:start", state: "claimed" }, select: { id: true } }),
                 db.automationRun.create({
-                    data: { ...runInput, state: "running", startedAt: new Date(now - 10_000) },
+                    data: { ...runInput, occurrenceKey: "strict:succeed", state: "running", startedAt: new Date(now - 10_000) },
                     select: { id: true },
                 }),
                 db.automationRun.create({
-                    data: { ...runInput, state: "running", startedAt: new Date(now - 10_000) },
+                    data: { ...runInput, occurrenceKey: "strict:fail", state: "running", startedAt: new Date(now - 10_000) },
                     select: { id: true },
                 }),
                 db.automationRun.create({
                     data: {
                         ...runInput,
+                        occurrenceKey: "strict:cancel",
                         state: "queued",
                         claimedAt: null,
                         claimedByMachineId: null,
@@ -716,17 +874,16 @@ describe("automation daemon routes (integration)", () => {
             },
         });
         const templateCiphertext = buildPlainTemplateEnvelope();
+        const triggerId = "trigger-v2-session-retention";
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Predecessor V2 known Session retention",
                 enabled: true,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(triggerId) },
             },
             select: { id: true },
         });
@@ -741,7 +898,11 @@ describe("automation daemon routes (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId,
+                    scheduledFor: new Date(now - 60_000),
+                    occurrenceKey: `session-retention:${id}`,
+                }),
                 scheduledAt: new Date(now - 60_000),
                 dueAt: new Date(now - 30_000),
                 claimedAt: new Date(now - 20_000),
@@ -901,16 +1062,16 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const templateCiphertext = buildPlainTemplateEnvelope();
+        const triggerId = "trigger-heartbeat";
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Heartbeat run",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext,
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(triggerId) },
             },
             select: { id: true },
         });
@@ -920,7 +1081,11 @@ describe("automation daemon routes (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "claimed",
-                originKind: "scheduled",
+                ...scheduleRunCause({
+                    triggerId,
+                    scheduledFor: scheduledAt,
+                    occurrenceKey: "heartbeat:scheduled",
+                }),
                 scheduledAt,
                 dueAt: new Date(Date.now() - 20_000),
                 claimedAt: new Date(Date.now() - 10_000),
@@ -1028,16 +1193,16 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
+        const triggerId = "trigger-assigned-run";
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Assigned run",
                 enabled: true,
-                scheduleKind: "interval",
-                everyMs: 120_000,
                 targetType: "new_session",
                 templateCiphertext: buildTemplateEnvelope(),
                 templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(triggerId, 120_000) },
             },
             select: { id: true },
         });
@@ -1086,7 +1251,7 @@ describe("automation daemon routes (integration)", () => {
         );
     });
 
-    it("keeps Plugin Event definitions and Plugin Event or Conversation Runs out of every V2 mutation before effects, while V3 reaches the schedule owner", async () => {
+    it("keeps non-schedule definitions and non-V2 Run causes out of V2 mutations while V3 Run Now accepts zero triggers", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -1108,12 +1273,11 @@ describe("automation daemon routes (integration)", () => {
         await withAuthenticatedTestApp(
             (app) => automationRoutes(app as any),
             async (app) => {
-                for (const originKind of ["pluginEvent", "conversation"] as const) {
+                for (const causeKind of ["pluginEvent", "conversation"] as const) {
                     const fixture = await seedUnsupportedV2Automation({
                         accountId: account.id,
                         machineId,
-                        triggerKind: "pluginEvent",
-                        originKind,
+                        causeKind,
                     });
 
                     const definitionMutations = [
@@ -1166,12 +1330,12 @@ describe("automation daemon routes (integration)", () => {
                                 },
                             ...(operation.payload ? { payload: operation.payload } : {}),
                         });
-                        expect(known.statusCode, `${originKind} ${operation.name}`).toBe(404);
+                        expect(known.statusCode, `${causeKind} ${operation.name}`).toBe(404);
                         expect(await snapshotAutomationPersistence(account.id)).toEqual(before);
 
                         const absent = await app.inject({
                             method: operation.method,
-                            url: operation.path(`missing-${originKind}-${operation.name}`),
+                            url: operation.path(`missing-${causeKind}-${operation.name}`),
                             headers: operation.payload
                                 ? headers
                                 : {
@@ -1228,12 +1392,12 @@ describe("automation daemon routes (integration)", () => {
                                 },
                             ...(operation.payload ? { payload: operation.payload } : {}),
                         });
-                        expect(known.statusCode, `${originKind} ${operation.name}`).toBe(404);
+                        expect(known.statusCode, `${causeKind} ${operation.name}`).toBe(404);
                         expect(await snapshotAutomationPersistence(account.id)).toEqual(before);
 
                         const absent = await app.inject({
                             method: "POST",
-                            url: operation.path(`missing-${originKind}-${operation.name}`),
+                            url: operation.path(`missing-${causeKind}-${operation.name}`),
                             headers: operation.payload
                                 ? headers
                                 : {
@@ -1258,14 +1422,11 @@ describe("automation daemon routes (integration)", () => {
                     expect(fixture.queued.id).toEqual(expect.any(String));
                 }
 
-                const scheduleAutomation = await db.automation.create({
+                const zeroTriggerAutomation = await db.automation.create({
                     data: {
                         accountId: account.id,
-                        name: "V3 schedule positive control",
+                        name: "V3 zero-trigger Run Now control",
                         enabled: true,
-                        triggerKind: "schedule",
-                        scheduleKind: "interval",
-                        everyMs: 60_000,
                         targetType: "new_session",
                         templateCiphertext: buildPlainTemplateEnvelope(),
                         templateVersion: 1,
@@ -1275,7 +1436,7 @@ describe("automation daemon routes (integration)", () => {
 
                 const v3RunNow = await app.inject({
                     method: "POST",
-                    url: `/v3/automations/${scheduleAutomation.id}/run-now`,
+                    url: `/v3/automations/${zeroTriggerAutomation.id}/run-now`,
                     headers: {
                         "x-test-user-id": account.id,
                         "x-happier-account-stored-content-protocol": "2",
@@ -1284,16 +1445,16 @@ describe("automation daemon routes (integration)", () => {
                 expect(v3RunNow.statusCode).toBe(200);
                 expect(v3RunNow.json()).toEqual(expect.objectContaining({
                     run: expect.objectContaining({
-                        automationId: scheduleAutomation.id,
+                        automationId: zeroTriggerAutomation.id,
                         state: "queued",
-                        origin: expect.objectContaining({ kind: "manual" }),
+                        cause: expect.objectContaining({ kind: "manual" }),
                     }),
                 }));
 
                 const v3Run = await db.automationRun.findFirst({
                     where: {
-                        automationId: scheduleAutomation.id,
-                        originKind: "manual",
+                        automationId: zeroTriggerAutomation.id,
+                        causeKind: "manual",
                     },
                     select: {
                         state: true,

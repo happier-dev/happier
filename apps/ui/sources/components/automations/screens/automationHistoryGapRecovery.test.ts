@@ -2,10 +2,13 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     AutomationDefinitionListItemSchema,
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     PluginMachineMaterializationV1Schema,
+    type AutomationDefinitionListItem,
+    type AutomationEventSourceStatusV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 } from '@happier-dev/protocol';
 
@@ -19,8 +22,8 @@ import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machine
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
     type AutomationDefinition,
-    isPluginEventAutomationDefinition,
-    type PluginEventAutomationDefinition,
+    isPluginEventAutomationTrigger,
+    type PluginEventAutomationTrigger,
 } from '@/sync/domains/automations/automationTypes';
 
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
@@ -31,9 +34,12 @@ import {
 } from './automationHistoryGapRecovery';
 
 const AUTOMATION_ID = 'automation-a';
+const TRIGGER_ID = AutomationTriggerIdSchema.parse('trigger-event-a');
+const TRIGGER_REVISION = 4;
+const OTHER_TRIGGER_ID = AutomationTriggerIdSchema.parse('trigger-event-b');
 const PLUGIN_ID = 'acme.github';
 const EVENT_LOCAL_ID = 'events/repository';
-const SOURCE_SELECTOR_ID = '11111111-1111-4111-8111-111111111111';
+const SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111');
 const ACTION_LOCAL_ID = 'automations/reset-history-gap';
 const MACHINE_ID = 'watcher-machine';
 const SERVER_ID = 'server-a';
@@ -95,7 +101,62 @@ vi.mock('@/components/plugins/surfaces/pluginSurfaceActionDispatch', () => ({
     dispatchPluginSurfaceAction: (...args: readonly unknown[]) => historyGapRecoveryUi.dispatch(...args),
 }));
 
-function automation(input: Partial<PluginEventAutomationDefinition> = {}): PluginEventAutomationDefinition {
+function eventSourceStatus(
+    input: Partial<AutomationEventSourceStatusV1> = {},
+): AutomationEventSourceStatusV1 {
+    return {
+        automationId: AUTOMATION_ID,
+        triggerId: TRIGGER_ID,
+        triggerRevision: TRIGGER_REVISION,
+        eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+        sourceSelectorId: SOURCE_SELECTOR_ID,
+        reporterMaterializationRef: {
+            machineId: MACHINE_ID,
+            materializationId: MATERIALIZATION_ID,
+            pluginId: PLUGIN_ID,
+        },
+        reporterImmutableGenerationId: 'github-generation-a',
+        state: 'attention',
+        code: 'historyGap',
+        lastObservedAt: 10,
+        lastDispositionAt: 10,
+        nextRetryAt: null,
+        observedCount: 0,
+        admittedCount: 0,
+        skippedCount: 0,
+        revision: 4,
+        ...input,
+    };
+}
+
+function eventTrigger(
+    input: Partial<PluginEventAutomationTrigger> = {},
+): PluginEventAutomationTrigger {
+    const id = input.id ?? TRIGGER_ID;
+    const revision = input.revision ?? TRIGGER_REVISION;
+    const sourceSelectorId = input.sourceSelectorId ?? SOURCE_SELECTOR_ID;
+    return {
+        id,
+        revision,
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 1,
+        kind: 'pluginEvent',
+        eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+        sourceSelectorId,
+        sourceContractVersion: 1,
+        observation: { kind: 'checkpointedPull', watcher: null },
+        sourceStatus: eventSourceStatus({
+            triggerId: id,
+            triggerRevision: revision,
+            sourceSelectorId,
+        }),
+        sourceCatalogStatus: null,
+        ...input,
+    };
+}
+
+function automation(input: Partial<AutomationDefinitionListItem> = {}): AutomationDefinitionListItem {
     const parsed = AutomationDefinitionListItemSchema.parse({
         id: AUTOMATION_ID,
         name: 'Repository triage',
@@ -104,54 +165,35 @@ function automation(input: Partial<PluginEventAutomationDefinition> = {}): Plugi
         targetType: 'newSession',
         existingSessionId: null,
         templateVersion: 3,
-        nextRunAt: null,
         lastRunAt: null,
         createdAt: 1,
         updatedAt: 1,
         assignments: [],
-        trigger: {
-            kind: 'pluginEvent',
-            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
-            sourceSelectorId: SOURCE_SELECTOR_ID,
-            sourceContractVersion: 1,
-            observation: { kind: 'checkpointedPull', watcher: null },
-        },
-        sourceStatus: {
-            automationId: AUTOMATION_ID,
-            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
-            sourceSelectorId: SOURCE_SELECTOR_ID,
-            templateVersion: 3,
-            reporterMaterializationRef: {
-                machineId: 'watcher-machine',
-                materializationId: 'github-materialization',
-                pluginId: PLUGIN_ID,
-            },
-            reporterImmutableGenerationId: 'github-generation-a',
-            state: 'attention',
-            code: 'historyGap',
-            lastObservedAt: 10,
-            lastDispositionAt: 10,
-            nextRetryAt: null,
-            observedCount: 0,
-            admittedCount: 0,
-            skippedCount: 0,
-            revision: 4,
-        },
+        retiredTriggers: [],
+        triggers: [eventTrigger()],
         ...input,
     });
-    if (!isPluginEventAutomationDefinition(parsed)) throw new Error('expected plugin Event Automation');
     return parsed;
 }
 
 function automationForScreen(
-    input: Partial<PluginEventAutomationDefinition> = {},
-): Extract<AutomationDefinition, Readonly<{ trigger: Readonly<{ kind: 'pluginEvent' }> }>> {
+    input: Partial<AutomationDefinitionListItem> = {},
+): AutomationDefinition {
     const summary = automation(input);
     return {
         ...summary,
         detail: { kind: 'unloaded', templateVersion: summary.templateVersion },
         linkedExistingSessionId: null,
     };
+}
+
+function readEventTrigger(
+    value: AutomationDefinitionListItem,
+    triggerId = TRIGGER_ID,
+): PluginEventAutomationTrigger {
+    const trigger = value.triggers.find((candidate) => candidate.id === triggerId);
+    if (!isPluginEventAutomationTrigger(trigger)) throw new Error(`expected plugin Event trigger ${triggerId}`);
+    return trigger;
 }
 
 function eligibleEvent(
@@ -330,61 +372,86 @@ const ACCOUNT_LIFETIME = Object.freeze({
 });
 
 describe('automation history-gap recovery status', () => {
-    it('recognizes only Plugin Event Automation summaries', () => {
+    it('recognizes the exact Plugin Event trigger without treating another trigger as the source', () => {
         const event = automation();
-        expect(isPluginEventAutomationDefinition(event)).toBe(true);
+        expect(isPluginEventAutomationTrigger(readEventTrigger(event, TRIGGER_ID))).toBe(true);
 
-        const { sourceStatus: _eventSourceStatus, ...base } = event;
         const scheduled = AutomationDefinitionListItemSchema.parse({
-            ...base,
-            trigger: {
+            ...event,
+            triggers: [{
+                id: 'schedule-trigger',
+                revision: 1,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 1,
                 kind: 'schedule',
-                schedule: {
-                    kind: 'interval',
-                    scheduleExpr: null,
-                    everyMs: 60_000,
-                    timezone: null,
-                },
-            },
+                schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null },
+                nextRunAt: 60_000,
+            }],
         });
-        expect(isPluginEventAutomationDefinition(scheduled)).toBe(false);
+        expect(isPluginEventAutomationTrigger(
+            scheduled.triggers.find((candidate) => candidate.id === 'schedule-trigger'),
+        )).toBe(false);
     });
 
-    it('admits only the current checkpointed Event source attention status', () => {
+    it('admits only the exact current trigger-scoped checkpointed Event source attention status', () => {
         const current = automation();
+        const currentTrigger = readEventTrigger(current);
 
-        expect(readAutomationHistoryGapRecoveryStatus(current)).toMatchObject({
+        expect(readAutomationHistoryGapRecoveryStatus(current, TRIGGER_ID)).toMatchObject({
+            triggerId: TRIGGER_ID,
+            triggerRevision: TRIGGER_REVISION,
             state: 'attention',
             code: 'historyGap',
             revision: 4,
         });
         expect(readAutomationHistoryGapRecoveryStatus(automation({
-            sourceStatus: {
-                ...current.sourceStatus!,
-                sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
-                    '22222222-2222-4222-8222-222222222222',
-                ),
-            },
-        }))).toBeNull();
+            triggers: [eventTrigger({
+                sourceStatus: eventSourceStatus({
+                    sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
+                        '22222222-2222-4222-8222-222222222222',
+                    ),
+                }),
+            })],
+        }), TRIGGER_ID)).toBeNull();
         expect(readAutomationHistoryGapRecoveryStatus(automation({
-            sourceStatus: { ...current.sourceStatus!, templateVersion: 4 },
-        }))).toBeNull();
+            triggers: [eventTrigger({
+                sourceStatus: eventSourceStatus({ triggerRevision: TRIGGER_REVISION + 1 }),
+            })],
+        }), TRIGGER_ID)).toBeNull();
         expect(readAutomationHistoryGapRecoveryStatus(automation({
-            sourceStatus: { ...current.sourceStatus!, state: 'observing', code: null },
-        }))).toBeNull();
+            triggers: [eventTrigger({
+                sourceStatus: eventSourceStatus({ state: 'observing', code: null }),
+            })],
+        }), TRIGGER_ID)).toBeNull();
         expect(readAutomationHistoryGapRecoveryStatus(automation({
             enabled: false,
-        }))).toBeNull();
+        }), TRIGGER_ID)).toBeNull();
         expect(readAutomationHistoryGapRecoveryStatus(automation({
-            trigger: {
-                ...current.trigger,
+            triggers: [eventTrigger({
                 observation: {
                     kind: 'durablePush',
                     webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+                    endpointMaterializationRef: null,
                     observationStartsAt: 1,
                 },
-            },
-        }))).toBeNull();
+            })],
+        }), TRIGGER_ID)).toBeNull();
+
+        const otherTrigger = eventTrigger({
+            id: OTHER_TRIGGER_ID,
+            revision: 9,
+            sourceStatus: eventSourceStatus({
+                triggerId: OTHER_TRIGGER_ID,
+                triggerRevision: 9,
+            }),
+        });
+        const plural = automation({ triggers: [currentTrigger, otherTrigger] });
+        expect(readAutomationHistoryGapRecoveryStatus(plural, TRIGGER_ID)).toEqual(currentTrigger.sourceStatus);
+        expect(readAutomationHistoryGapRecoveryStatus(plural, 'missing-trigger')).toBeNull();
+        expect(readAutomationHistoryGapRecoveryStatus(automation({
+            triggers: [eventTrigger({ sourceStatus: otherTrigger.sourceStatus })],
+        }), TRIGGER_ID)).toBeNull();
     });
 
     it('dispatches only the exact current recovery Action with host-filled source identity', async () => {
@@ -397,6 +464,7 @@ describe('automation history-gap recovery status', () => {
 
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,
+            triggerId: TRIGGER_ID,
             accountLifetime: ACCOUNT_LIFETIME,
             resolveCurrentAutomation: () => currentAutomation,
             resolveExecutionOrigin: executionOrigin,
@@ -408,7 +476,8 @@ describe('automation history-gap recovery status', () => {
             action: { pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID },
             input: {
                 automationId: AUTOMATION_ID,
-                templateVersion: 3,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
                 sourceSelectorId: SOURCE_SELECTOR_ID,
             },
             contributedAction: {
@@ -424,16 +493,14 @@ describe('automation history-gap recovery status', () => {
         })).toMatchObject({ execution: { target: 'daemon' } });
 
         currentAutomation = automation({
-            sourceStatus: {
-                ...currentAutomation.sourceStatus!,
-                state: 'baselined',
-                code: null,
-                revision: 5,
-            },
+            triggers: [eventTrigger({
+                sourceStatus: eventSourceStatus({ state: 'baselined', code: null, revision: 5 }),
+            })],
         });
         dispatch.mockClear();
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,
+            triggerId: TRIGGER_ID,
             accountLifetime: ACCOUNT_LIFETIME,
             resolveCurrentAutomation: () => currentAutomation,
             resolveExecutionOrigin: executionOrigin,
@@ -454,6 +521,7 @@ describe('automation history-gap recovery status', () => {
 
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,
+            triggerId: TRIGGER_ID,
             accountLifetime: ACCOUNT_LIFETIME,
             resolveCurrentAutomation: () => currentAutomation,
             resolveExecutionOrigin: executionOrigin,
@@ -477,6 +545,7 @@ describe('automation history-gap recovery status', () => {
 
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,
+            triggerId: TRIGGER_ID,
             accountLifetime: ACCOUNT_LIFETIME,
             resolveCurrentAutomation: () => currentAutomation,
             resolveExecutionOrigin: executionOrigin,
@@ -495,6 +564,7 @@ describe('automation history-gap recovery status', () => {
 
         await expect(recoverAutomationHistoryGap({
             eligibleEvent: event,
+            triggerId: TRIGGER_ID,
             accountLifetime: ACCOUNT_LIFETIME,
             resolveCurrentAutomation: () => currentAutomation,
             resolveExecutionOrigin: executionOrigin,
@@ -502,10 +572,68 @@ describe('automation history-gap recovery status', () => {
                 projectionLoads += 1;
                 if (projectionLoads === 2) {
                     currentAutomation = automation({
-                        sourceStatus: {
-                            ...currentAutomation.sourceStatus!,
-                            revision: currentAutomation.sourceStatus!.revision + 1,
-                        },
+                        triggers: [eventTrigger({
+                            sourceStatus: eventSourceStatus({
+                                revision: readEventTrigger(currentAutomation).sourceStatus!.revision + 1,
+                            }),
+                        })],
+                    });
+                }
+                return projectionInputs(event);
+            },
+            dispatch,
+        })).resolves.toEqual({ kind: 'stale' });
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('does not recover a different trigger and treats target trigger revision replacement as stale', async () => {
+        const event = eligibleEvent();
+        const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({
+            ok: true as const,
+            result: { kind: 'baselined' },
+        }));
+        let currentAutomation = automation({
+            triggers: [
+                eventTrigger(),
+                eventTrigger({
+                    id: OTHER_TRIGGER_ID,
+                    revision: 1,
+                    sourceStatus: eventSourceStatus({
+                        triggerId: OTHER_TRIGGER_ID,
+                        triggerRevision: 1,
+                        state: 'observing',
+                        code: null,
+                    }),
+                }),
+            ],
+        });
+
+        await expect(recoverAutomationHistoryGap({
+            eligibleEvent: event,
+            triggerId: OTHER_TRIGGER_ID,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveCurrentAutomation: () => currentAutomation,
+            resolveExecutionOrigin: executionOrigin,
+            loadCurrentProjection: async () => projectionInputs(event),
+            dispatch,
+        })).resolves.toEqual({ kind: 'unavailable' });
+        expect(dispatch).not.toHaveBeenCalled();
+
+        let projectionLoads = 0;
+        await expect(recoverAutomationHistoryGap({
+            eligibleEvent: event,
+            triggerId: TRIGGER_ID,
+            accountLifetime: ACCOUNT_LIFETIME,
+            resolveCurrentAutomation: () => currentAutomation,
+            resolveExecutionOrigin: executionOrigin,
+            loadCurrentProjection: async () => {
+                projectionLoads += 1;
+                if (projectionLoads === 2) {
+                    currentAutomation = automation({
+                        triggers: [
+                            eventTrigger({ revision: TRIGGER_REVISION + 1 }),
+                            readEventTrigger(currentAutomation, OTHER_TRIGGER_ID),
+                        ],
                     });
                 }
                 return projectionInputs(event);
@@ -531,6 +659,7 @@ describe('AutomationHistoryGapRecoveryAction', () => {
         const { AutomationHistoryGapRecoveryAction } = await import('./AutomationHistoryGapRecoveryAction');
         const screen = await renderScreen(React.createElement(AutomationHistoryGapRecoveryAction, {
             automation: currentAutomation,
+            triggerId: TRIGGER_ID,
             isCurrentRoute: () => true,
             rereadAutomationStatus: historyGapRecoveryUi.rereadAutomationStatus,
         }));
@@ -550,7 +679,9 @@ describe('AutomationHistoryGapRecoveryAction', () => {
         }));
         expect(screen.getTextContent()).toContain('Source recovery needs another try');
         expect(screen.getTextContent()).not.toContain('do-not-disclose');
-        expect(readAutomationHistoryGapRecoveryStatus(currentAutomation)).toEqual(currentAutomation.sourceStatus);
+        expect(readAutomationHistoryGapRecoveryStatus(currentAutomation, TRIGGER_ID)).toEqual(
+            readEventTrigger(currentAutomation).sourceStatus,
+        );
 
         await screen.pressByTestIdAsync('automation-history-gap-recovery-retry');
         await vi.waitFor(() => expect(historyGapRecoveryUi.dispatch).toHaveBeenCalledTimes(2));
@@ -567,6 +698,7 @@ describe('AutomationHistoryGapRecoveryAction', () => {
         const { AutomationHistoryGapRecoveryAction } = await import('./AutomationHistoryGapRecoveryAction');
         const screen = await renderScreen(React.createElement(AutomationHistoryGapRecoveryAction, {
             automation: currentAutomation,
+            triggerId: TRIGGER_ID,
             isCurrentRoute: () => true,
             rereadAutomationStatus: historyGapRecoveryUi.rereadAutomationStatus,
         }));
@@ -578,6 +710,8 @@ describe('AutomationHistoryGapRecoveryAction', () => {
         await vi.waitFor(() => expect(historyGapRecoveryUi.rereadAutomationStatus).toHaveBeenCalledTimes(1));
 
         expect(screen.findByTestId('automation-history-gap-recovery-failure')).toBeNull();
-        expect(readAutomationHistoryGapRecoveryStatus(currentAutomation)).toEqual(currentAutomation.sourceStatus);
+        expect(readAutomationHistoryGapRecoveryStatus(currentAutomation, TRIGGER_ID)).toEqual(
+            readEventTrigger(currentAutomation).sourceStatus,
+        );
     });
 });

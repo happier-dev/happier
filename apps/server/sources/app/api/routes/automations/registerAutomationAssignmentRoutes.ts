@@ -27,7 +27,6 @@ export function registerAutomationAssignmentRoutes(app: Fastify): void {
                 input: {
                     assignments: request.body.assignments,
                 },
-                expectedTriggerKind: "schedule",
                 requireV2DefinitionRepresentability: true,
             });
             if (!updated) {

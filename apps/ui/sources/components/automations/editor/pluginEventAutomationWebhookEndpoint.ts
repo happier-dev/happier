@@ -11,11 +11,13 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-    createPluginWebhookEndpointHttpActionExecutor,
     type PluginWebhookEndpointUiActionExecutor,
 } from '@/sync/api/plugins/webhooks/endpointActions';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+
+const executePluginWebhookEndpointAction = createFrontDoorUiActionExecutor();
 
 /**
  * The one setup arm an authoring client can complete on its own: the server
@@ -165,7 +167,7 @@ export async function ensurePluginEventAutomationWebhookEndpoint(params: Readonl
     });
     if (!input.success) return { kind: 'unavailable' };
 
-    const execute = params.executeAction ?? createPluginWebhookEndpointHttpActionExecutor();
+    const execute = params.executeAction ?? executePluginWebhookEndpointAction;
     let result: PluginWebhookEndpointEnsureResultV1;
     try {
         result = PluginWebhookEndpointEnsureResultV1Schema.parse(
@@ -213,7 +215,7 @@ export async function readPluginEventAutomationWebhookEndpoint(params: Readonly<
     });
     if (!input.success) return { kind: 'unavailable' };
 
-    const execute = params.executeAction ?? createPluginWebhookEndpointHttpActionExecutor();
+    const execute = params.executeAction ?? executePluginWebhookEndpointAction;
     let result: PluginWebhookEndpointReadResultV1;
     try {
         result = PluginWebhookEndpointReadResultV1Schema.parse(

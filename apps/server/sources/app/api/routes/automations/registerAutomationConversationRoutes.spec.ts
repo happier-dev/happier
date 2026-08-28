@@ -30,7 +30,6 @@ const BODY = {
     },
     input: {
         automationId: "automation-1",
-        expectedTemplateVersion: 3,
     },
 } as const;
 
@@ -65,7 +64,6 @@ const ADMIT_BODY = {
     input: {
         automationId: "automation-1",
         bindingId: "binding-1",
-        templateVersion: 3,
         occurrenceId: "conversation-occurrence-1",
         occurredAt: 1_723_247_200_000,
         sender: { id: "sender-1" },
@@ -102,7 +100,6 @@ const ENCRYPTED_ADMIT_BODY = {
             contentKeyFingerprint: "aemk1_content",
         },
         automationId: "automation-1",
-        templateVersion: 3,
         occurrenceKey: "A".repeat(43),
         occurredAt: 1_723_247_200_000,
         triggerEvidenceEnvelope: {
@@ -133,7 +130,6 @@ describe("Automation conversation target-verification route", () => {
         const listTargets = vi.fn(async () => ({
             items: [{
                 automationId: "automation-1",
-                templateVersion: 3,
                 label: "Conversation target",
                 execution: { targetType: "new_session" as const, enabled: true },
             }],
@@ -182,7 +178,6 @@ describe("Automation conversation target-verification route", () => {
         expect(reply.send).toHaveBeenCalledWith({
             items: [{
                 automationId: "automation-1",
-                templateVersion: 3,
                 label: "Conversation target",
                 execution: { targetType: "new_session" as const, enabled: true },
             }],
@@ -237,13 +232,12 @@ describe("Automation conversation target-verification route", () => {
         const listTargets = vi.fn(async () => ({
             items: [{
                 automationId: "automation-1",
-                templateVersion: 3,
                 label: "Conversation target",
                 execution: { targetType: "new_session" as const, enabled: true },
             }],
             nextCursor: null,
         }));
-        const verifyTarget = vi.fn(async () => ({ kind: "verified" as const, templateVersion: 3 }));
+        const verifyTarget = vi.fn(async () => ({ kind: "verified" as const }));
         const admit = vi.fn(async () => ({
             kind: "admitted" as const,
             runId: "run-1",
@@ -480,7 +474,6 @@ describe("Automation conversation target-verification route", () => {
         const app = createFakeRouteApp();
         const verifyTarget = vi.fn(async () => ({
             kind: "verified" as const,
-            templateVersion: 3,
         }));
         const verifyPublisher = vi.fn(async () => ({
             machineId: "machine-1",
@@ -522,12 +515,11 @@ describe("Automation conversation target-verification route", () => {
             input: BODY.input,
         });
         expect(reply.headers).toEqual({ "Cache-Control": "no-store" });
-        expect(reply.send).toHaveBeenCalledWith({ kind: "verified", templateVersion: 3 });
+        expect(reply.send).toHaveBeenCalledWith({ kind: "verified" });
     });
 
     it.each([
         "notFound",
-        "templateVersionMismatch",
         "resultDeliveryUnsupported",
     ] as const)("returns %s as a normal nondisclosing domain result", async (reason) => {
         const app = createFakeRouteApp();

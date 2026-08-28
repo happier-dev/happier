@@ -6,11 +6,8 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { ExistingSessionAutomationComposer } from '@/components/automations/shared/ExistingSessionAutomationComposer';
 import { ExistingSessionAutomationContextSection } from '@/components/automations/shared/ExistingSessionAutomationContextSection';
 import { ExistingSessionAutomationUnavailableNotice } from '@/components/automations/shared/ExistingSessionAutomationUnavailableNotice';
-import { createAutomationToggleActionChip } from '@/components/sessions/agentInput/definitions/createAutomationToggleActionChip';
 import { buildExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/buildExistingSessionAutomationAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
-import { updateSessionAuthoringDraftAutomation } from '@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields';
-import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
 import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
@@ -35,20 +32,10 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
     submitAccessibilityLabel: string;
     isSubmitDisabled: boolean;
     editable?: boolean;
+    /** The canonical plural editor supplied by create/edit hosts. */
+    automationEditor: React.ReactNode;
 }>): React.JSX.Element {
     const { theme } = useUnistyles();
-    const automationDraft = props.draft?.automation ?? null;
-    const automationActionChip = React.useMemo(() => {
-        if (!automationDraft) return null;
-        return createAutomationToggleActionChip({
-            enabled: automationDraft.enabled,
-            label: getAutomationChipLabel(automationDraft),
-            value: automationDraft,
-            onChange: (next) => {
-                props.onChangeDraft((current) => current ? updateSessionAuthoringDraftAutomation(current, next) : current);
-            },
-        });
-    }, [automationDraft, props.onChangeDraft]);
 
     if (props.isWaiting) {
         return (
@@ -78,6 +65,7 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
                     context={authoringContext}
                 />
             ) : null}
+            {authoringContext ? props.automationEditor : null}
             {authoringContext ? (
                 <ExistingSessionAutomationComposer
                     context={authoringContext}
@@ -86,7 +74,6 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
                     submitAccessibilityLabel={props.submitAccessibilityLabel}
                     isSubmitDisabled={props.isSubmitDisabled}
                     editable={props.editable}
-                    extraActionChips={automationActionChip ? [automationActionChip] : undefined}
                 />
             ) : null}
         </>

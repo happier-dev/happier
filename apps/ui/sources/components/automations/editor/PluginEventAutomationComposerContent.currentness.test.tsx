@@ -100,19 +100,6 @@ function createModel(options: Readonly<{
     }] satisfies readonly PluginMachineExecutionOriginCandidateV1[];
 
     return {
-        mode: 'event',
-        setMode: vi.fn(),
-        isEditingEvent: false,
-        editTarget: null,
-        targetKind: 'newSession',
-        setTargetKind: vi.fn(),
-        existingSessionOptions: [],
-        selectedExistingSessionId: null,
-        selectExistingSession: vi.fn(),
-        existingSessionAvailability: null,
-        executionPermissionMode: 'read_only',
-        setExecutionPermissionMode: vi.fn(),
-        resolveExecutionTarget: vi.fn(() => null),
         eligibleEvents: [event],
         eventCatalogStatus: 'ready',
         selectedEvent: event,
@@ -129,6 +116,7 @@ function createModel(options: Readonly<{
             isCurrent: () => false,
         }),
         sourceStatus: 'configured',
+        sourceFailure: null,
         sourceDisplayLabel: 'acme/widgets',
         sourceInstanceId: 'repository:42',
         availableObservationTransports: ['checkpointedPull'],
@@ -163,6 +151,7 @@ function createModel(options: Readonly<{
         setMaximumObservationAgeMsText: vi.fn(),
         maximumObservationAgeMsValid,
         createDraft: null,
+        invalidateConfiguredSource: vi.fn(),
         revision: 0,
     };
 }

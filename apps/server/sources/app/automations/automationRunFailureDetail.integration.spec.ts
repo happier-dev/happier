@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { serializeAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol';
+import {
+    deriveAutomationOccurrenceKeyV1,
+    serializeAutomationRunExecutionRecipeV1,
+} from '@happier-dev/protocol';
 
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -34,6 +37,7 @@ const EXECUTION_INPUT_ENVELOPE = (() => {
                 },
             },
         },
+        assignmentMachineIds: ['machine-1'],
     });
     if (serialized.kind !== 'available') {
         throw new Error('Expected strict Automation Run test recipe to serialize');
@@ -72,6 +76,7 @@ describe('Automation Run private failure-detail persistence', () => {
             () => db.accountChange.deleteMany(),
             () => db.automationRunEvent.deleteMany(),
             () => db.automationRun.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.machine.deleteMany(),
@@ -97,20 +102,43 @@ describe('Automation Run private failure-detail persistence', () => {
                 accountId: account.id,
                 name: 'Private failure detail',
                 enabled: true,
-                scheduleKind: 'interval',
-                everyMs: 120_000,
                 targetType: 'new_session',
                 templateCiphertext: EXECUTION_INPUT_ENVELOPE,
                 templateVersion: 1,
             },
             select: { id: true },
         });
+        const trigger = await db.automationTrigger.create({
+            data: {
+                automationId: automation.id,
+                kind: 'schedule',
+                enabled: true,
+                revision: 0,
+                scheduleKind: 'interval',
+                scheduleExpr: null,
+                everyMs: 120_000,
+                timezone: null,
+                nextRunAt: null,
+            },
+            select: { id: true, revision: true },
+        });
+        const scheduledAt = new Date(Date.now() - 60_000);
         const run = await db.automationRun.create({
             data: {
                 automationId: automation.id,
                 accountId: account.id,
                 state: 'running',
-                scheduledAt: new Date(Date.now() - 60_000),
+                triggerId: trigger.id,
+                causeKind: 'trigger',
+                causeTriggerKind: 'schedule',
+                causeTriggerRevision: trigger.revision,
+                causeOccurredAt: scheduledAt,
+                causeScheduledFor: scheduledAt,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: trigger.id,
+                    evidence: { v: 1, kind: 'schedule', scheduledFor: scheduledAt.getTime() },
+                }),
+                scheduledAt,
                 dueAt: new Date(Date.now() - 30_000),
                 startedAt: new Date(Date.now() - 20_000),
                 claimedByMachineId: machine.id,
@@ -157,10 +185,11 @@ describe('Automation Run private failure-detail persistence', () => {
         expect(stored.errorMessage).toBe(errorDetailEnvelope);
         expect(stored.errorMessage).not.toBe(privateDetail);
 
-        const listItem = toAutomationRunV3ListApiDto(failed!);
+        const projected = { ...failed!, triggerRetired: false };
+        const listItem = toAutomationRunV3ListApiDto(projected);
         expect(listItem).not.toHaveProperty('errorDetailEnvelope');
         expect(JSON.stringify(listItem)).not.toContain(privateDetail);
-        expect(toAutomationRunV3DetailApiDto(failed!, 'plain').errorDetailEnvelope)
+        expect(toAutomationRunV3DetailApiDto(projected, 'plain').errorDetailEnvelope)
             .toBe(errorDetailEnvelope);
 
         const event = await db.automationRunEvent.findFirstOrThrow({

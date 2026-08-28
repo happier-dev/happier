@@ -11,7 +11,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const syncSpies = vi.hoisted(() => ({
-    createAutomation: vi.fn(async (_input: any) => ({})),
+    saveAutomationEditorDraft: vi.fn(async (_input: any) => ({})),
     refreshAutomations: vi.fn(async () => {}),
     getSessionEncryptionKeyBase64ForResume: vi.fn((_sessionId: string) => 'dek-base64'),
     getCredentials: vi.fn(() => ({ token: 't' })),
@@ -98,6 +98,9 @@ installAutomationScreensCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSession: () => sessionState.session,
+            useActiveServerAccountScope: () => (
+                (storageState.value as { profileScope?: unknown }).profileScope ?? null
+            ),
             useSettings: () => ({}),
             storage: Object.assign(
                 ((selector?: (value: StorageState) => unknown) => (
@@ -160,17 +163,22 @@ function setStorageForSession(input: {
     projectMachineId?: string | null;
     includeProject?: boolean;
 }) {
-    const sessionId = String(input.session?.id ?? '');
-    const sessionMachineId = typeof input.session?.metadata?.machineId === 'string'
-        ? input.session.metadata.machineId
+    const session = input.session
+        ? { ...input.session, serverId: input.session.serverId ?? 'server-1' }
+        : input.session;
+    sessionState.session = session;
+    const sessionId = String(session?.id ?? '');
+    const sessionMachineId = typeof session?.metadata?.machineId === 'string'
+        ? session.metadata.machineId
         : null;
     const projectMachineId = input.projectMachineId ?? sessionMachineId;
-    const sessionPath = typeof input.session?.metadata?.path === 'string'
-        ? input.session.metadata.path
+    const sessionPath = typeof session?.metadata?.path === 'string'
+        ? session.metadata.path
         : null;
 
     storageState.value = {
-        sessions: sessionId ? { [sessionId]: input.session } : {},
+        profileScope: { serverId: session?.serverId ?? 'server-1', accountId: 'account-1' },
+        sessions: sessionId ? { [sessionId]: session } : {},
         machines: projectMachineId
             ? {
                 [projectMachineId]: {
@@ -200,13 +208,18 @@ function setStorageForSessionWithMachineReplacement(input: {
     staleMachineId: string;
     replacementMachineId: string;
 }) {
-    const sessionId = String(input.session?.id ?? '');
-    const sessionPath = typeof input.session?.metadata?.path === 'string'
-        ? input.session.metadata.path
+    const session = input.session
+        ? { ...input.session, serverId: input.session.serverId ?? 'server-1' }
+        : input.session;
+    sessionState.session = session;
+    const sessionId = String(session?.id ?? '');
+    const sessionPath = typeof session?.metadata?.path === 'string'
+        ? session.metadata.path
         : null;
 
     storageState.value = {
-        sessions: sessionId ? { [sessionId]: input.session } : {},
+        profileScope: { serverId: session?.serverId ?? 'server-1', accountId: 'account-1' },
+        sessions: sessionId ? { [sessionId]: session } : {},
         machines: {
             [input.staleMachineId]: {
                 id: input.staleMachineId,
@@ -265,6 +278,7 @@ describe('SessionAutomationCreateScreen', () => {
         hydrateReadyState.ready = true;
         sessionState.session = {
             id: 's1',
+            serverId: 'server-1',
             active: true,
             encryptionMode: 'e2ee',
             metadata: {
@@ -281,7 +295,7 @@ describe('SessionAutomationCreateScreen', () => {
             projectMachineId: 'm1',
             includeProject: true,
         });
-        syncSpies.createAutomation.mockClear();
+        syncSpies.saveAutomationEditorDraft.mockClear();
         syncSpies.refreshAutomations.mockClear();
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockClear();
         syncSpies.getCredentials.mockClear();
@@ -364,7 +378,6 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
         expect(screen.findAllByType('Switch')).toHaveLength(0);
 
         const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
@@ -389,8 +402,8 @@ describe('SessionAutomationCreateScreen', () => {
         await setComposerText('Do the thing');
         await submitComposer();
 
-        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
-        expect(syncSpies.createAutomation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        expect(syncSpies.saveAutomationEditorDraft.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             enabled: false,
         }));
     });
@@ -425,21 +438,18 @@ describe('SessionAutomationCreateScreen', () => {
         const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
         const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
         const popoverScreen = await renderScreen(popoverContent);
-        const name = popoverScreen.findByProps({ testID: 'automation-sentence-name-input' });
+        const name = popoverScreen.findByProps({ testID: 'automation-name' });
         await act(async () => {
             name.props.onChangeText('My automation');
         });
 
         await submitComposer();
 
-        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
-        const input = syncSpies.createAutomation.mock.calls[0][0];
-        expect(input.targetType).toBe('existing_session');
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        const input = syncSpies.saveAutomationEditorDraft.mock.calls[0][0];
+        expect(input.executionRecipe.target).toEqual({ kind: 'existingSession', sessionId: 's1' });
         expect(input.assignments).toEqual([{ machineId: 'm-target', enabled: true, priority: 100 }]);
-
-        const envelope = JSON.parse(String(input.templateCiphertext));
-        expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
-        expect(envelope).not.toHaveProperty('existingSessionId');
+        expect(input.executionRecipe.template).toEqual({ t: 'encrypted', c: 'ciphertext-base64' });
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledWith(expect.objectContaining({
             existingSessionId: 's1',
         }));
@@ -473,8 +483,8 @@ describe('SessionAutomationCreateScreen', () => {
         await setComposerText('Do the thing');
         await submitComposer();
 
-        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
-        expect(syncSpies.createAutomation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        expect(syncSpies.saveAutomationEditorDraft.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             assignments: [{ machineId: 'm-persisted', enabled: true, priority: 100 }],
         }));
     });
@@ -598,12 +608,16 @@ describe('SessionAutomationCreateScreen', () => {
 
         await submitComposer();
 
-        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
-        const input = syncSpies.createAutomation.mock.calls[0][0];
-        const envelope = JSON.parse(String(input.templateCiphertext));
-        expect(envelope.kind).toBe('happier_automation_template_plain_v1');
-        expect(envelope.payload.existingSessionId).toBe('s_plain');
-        expect(envelope.payload.sessionEncryptionMode).toBe('plain');
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        const input = syncSpies.saveAutomationEditorDraft.mock.calls[0][0];
+        expect(input.executionRecipe.target).toEqual({ kind: 'existingSession', sessionId: 's_plain' });
+        expect(input.executionRecipe.template).toEqual(expect.objectContaining({
+            t: 'plain',
+            v: expect.objectContaining({
+                existingSessionId: 's_plain',
+                sessionEncryptionMode: 'plain',
+            }),
+        }));
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).not.toHaveBeenCalled();
     });
 
@@ -641,10 +655,9 @@ describe('SessionAutomationCreateScreen', () => {
         expect(unavailableNotices[0]?.props).toEqual({
             reason: 'This session can’t be resumed',
         });
-        expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
         expect(screen.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(0);
         expect(screen.findAllByType('ExistingSessionAutomationComposer')).toHaveLength(0);
-        expect(syncSpies.createAutomation).not.toHaveBeenCalled();
+        expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
     });
 
     it('allows creating an automation for an inactive but resumable session', async () => {
@@ -682,7 +695,7 @@ describe('SessionAutomationCreateScreen', () => {
 
         await submitComposer();
 
-        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
     });
 
     it('uses the shared agent input controls to override permission and model for existing-session automations', async () => {
@@ -741,5 +754,43 @@ describe('SessionAutomationCreateScreen', () => {
                 }),
             }),
         );
+    });
+
+    it('retires the mounted editor draft when the active account scope changes', async () => {
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+
+        // Author content into the draft mounted for account-1.
+        const mountedNameInput = screen.findByProps({ testID: 'automation-name' });
+        await act(async () => {
+            mountedNameInput.props.onChangeText('Account-1 only draft');
+        });
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-trigger-add' }).props.onPress();
+        });
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-trigger-kind-schedule' }).props.onPress();
+        });
+        const triggerRows = () => screen.findAll((node) => (
+            typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('automation-trigger-row-')
+        ));
+        expect(triggerRows()).toHaveLength(1);
+
+        storageState.value = {
+            ...storageState.value,
+            profileScope: { serverId: 'server-1', accountId: 'account-2' },
+        };
+        await screen.update(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+
+        // The mounted draft belonged to the predecessor account identity: the
+        // successor account starts from a fresh draft and can never inherit or
+        // save the predecessor's name or triggers.
+        expect(screen.findByProps({ testID: 'automation-name' }).props.value).toBe('Scheduled message');
+        expect(triggerRows()).toHaveLength(0);
+        expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
     });
 });

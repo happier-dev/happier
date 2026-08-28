@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { deriveAutomationOccurrenceKeyV1 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -7,6 +8,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import {
     claimNextAutomationReplyHandoff,
     findNextAutomationReplyHandoffDueAt,
+    retryBlockedAutomationReplyHandoff,
     settleAutomationReplyHandoff,
 } from "./automationReplyHandoffService";
 
@@ -39,7 +41,6 @@ const REPLY_CONTEXT_ENVELOPE = JSON.stringify({
             automationId: AUTOMATION_ID,
             occurrenceKey: OCCURRENCE_KEY,
         },
-        templateVersion: 1,
         opaqueContext: {
             conversationId: "conversation-1",
             messageId: "message-1",
@@ -95,13 +96,13 @@ describe("Automation reply handoff service", () => {
     });
 
     async function seedReadyHandoff(params: Readonly<{
-        dueAt?: Date;
-        state?: "ready" | "handingOff";
+        dueAt?: Date | null;
+        state?: "ready" | "handingOff" | "blocked";
         attempt?: number;
         resultEnvelope?: string;
         receiptEnvelope?: string;
     }> = {}): Promise<void> {
-        const dueAt = params.dueAt ?? NOW;
+        const dueAt = params.dueAt === undefined ? NOW : params.dueAt;
         await db.account.create({
             data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" },
         });
@@ -117,10 +118,6 @@ describe("Automation reply handoff service", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
             },
         });
         await db.automationRun.create({
@@ -129,8 +126,8 @@ describe("Automation reply handoff service", () => {
                 automationId: AUTOMATION_ID,
                 accountId: ACCOUNT_ID,
                 state: "succeeded",
-                originKind: "conversation",
-                originOccurredAt: NOW,
+                causeKind: "conversation",
+                causeOccurredAt: NOW,
                 occurrenceKey: OCCURRENCE_KEY,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 resultEnvelope: params.resultEnvelope ?? RESULT_ENVELOPE,
@@ -184,6 +181,11 @@ describe("Automation reply handoff service", () => {
             runId: RUN_ID,
             handoffId: HANDOFF_ID,
             occurrenceKey: OCCURRENCE_KEY,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: OCCURRENCE_KEY,
+                occurredAt: NOW.getTime(),
+            },
             attempt: 1,
             accountCurrentness: claimedCurrentness,
             runRevision: 1,
@@ -351,7 +353,6 @@ describe("Automation reply handoff service", () => {
                     automationId: healthyAutomationId,
                     occurrenceKey,
                 },
-                templateVersion: 1,
                 opaqueContext: {
                     conversationId: "healthy-conversation",
                     messageId: "healthy-message",
@@ -359,13 +360,39 @@ describe("Automation reply handoff service", () => {
             },
         });
         const healthyResultEnvelope = createHealthyResultEnvelope(healthyRunId, healthyHandoffId);
-        const healthyOccurrenceKey = "B".repeat(43);
+        const healthyOccurrenceKey = deriveAutomationOccurrenceKeyV1({
+            v: 1,
+            kind: "conversation",
+            bindingId: "reply-handoff-discovery-healthy",
+            occurrenceId: "healthy-occurrence",
+            occurredAt: inconsistentDueAt.getTime(),
+            caller: {
+                pluginId: "happier.channels",
+                contributionLocalId: "observation/ingest-v1",
+                machineId: "machine-healthy",
+            },
+            input: { sender: { id: "healthy-sender" }, text: "Healthy result" },
+            replyContextIdentity: "healthy-reply-context",
+        });
         const healthyReplyContextEnvelope = createHealthyReplyContextEnvelope(healthyOccurrenceKey);
         const secondaryHealthyResultEnvelope = createHealthyResultEnvelope(
             secondaryHealthyRunId,
             secondaryHealthyHandoffId,
         );
-        const secondaryHealthyOccurrenceKey = "C".repeat(43);
+        const secondaryHealthyOccurrenceKey = deriveAutomationOccurrenceKeyV1({
+            v: 1,
+            kind: "conversation",
+            bindingId: "reply-handoff-discovery-healthy",
+            occurrenceId: "secondary-healthy-occurrence",
+            occurredAt: inconsistentDueAt.getTime(),
+            caller: {
+                pluginId: "happier.channels",
+                contributionLocalId: "observation/ingest-v1",
+                machineId: "machine-healthy",
+            },
+            input: { sender: { id: "healthy-sender" }, text: "Secondary healthy result" },
+            replyContextIdentity: "secondary-healthy-reply-context",
+        });
         const secondaryHealthyReplyContextEnvelope = createHealthyReplyContextEnvelope(
             secondaryHealthyOccurrenceKey,
         );
@@ -397,10 +424,6 @@ describe("Automation reply handoff service", () => {
                         payloadCiphertext: "private-inconsistent-template-sentinel",
                     }),
                     templateVersion: 1,
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
-                    triggerDefinitionEnvelope: null,
                 },
                 {
                     id: healthyAutomationId,
@@ -413,10 +436,6 @@ describe("Automation reply handoff service", () => {
                         payload: { prompt: "healthy reply" },
                     }),
                     templateVersion: 1,
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
-                    triggerDefinitionEnvelope: null,
                 },
             ],
         });
@@ -431,8 +450,8 @@ describe("Automation reply handoff service", () => {
                 automationId: inconsistentAutomationId,
                 accountId: inconsistentAccountId,
                 state: "succeeded" as const,
-                originKind: "conversation" as const,
-                originOccurredAt: inconsistentDueAt,
+                causeKind: "conversation" as const,
+                causeOccurredAt: inconsistentDueAt,
                 occurrenceKey: `inconsistent-earliest-occurrence-${index}`,
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 resultEnvelope: privateResultEnvelope,
@@ -460,8 +479,8 @@ describe("Automation reply handoff service", () => {
                     automationId: healthyAutomationId,
                     accountId: healthyAccountId,
                     state: "succeeded",
-                    originKind: "conversation",
-                    originOccurredAt: inconsistentDueAt,
+                    causeKind: "conversation",
+                    causeOccurredAt: inconsistentDueAt,
                     occurrenceKey: healthyOccurrenceKey,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     resultEnvelope: healthyResultEnvelope,
@@ -485,8 +504,8 @@ describe("Automation reply handoff service", () => {
                     automationId: healthyAutomationId,
                     accountId: healthyAccountId,
                     state: "succeeded",
-                    originKind: "conversation",
-                    originOccurredAt: inconsistentDueAt,
+                    causeKind: "conversation",
+                    causeOccurredAt: inconsistentDueAt,
                     occurrenceKey: secondaryHealthyOccurrenceKey,
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     resultEnvelope: secondaryHealthyResultEnvelope,
@@ -516,6 +535,11 @@ describe("Automation reply handoff service", () => {
             runId: healthyRunId,
             handoffId: healthyHandoffId,
             occurrenceKey: healthyOccurrenceKey,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: healthyOccurrenceKey,
+                occurredAt: inconsistentDueAt.getTime(),
+            },
             attempt: 1,
             resultEnvelope: healthyResultEnvelope,
             replyContextEnvelope: healthyReplyContextEnvelope,
@@ -528,6 +552,11 @@ describe("Automation reply handoff service", () => {
             runId: secondaryHealthyRunId,
             handoffId: secondaryHealthyHandoffId,
             occurrenceKey: secondaryHealthyOccurrenceKey,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: secondaryHealthyOccurrenceKey,
+                occurredAt: inconsistentDueAt.getTime(),
+            },
             attempt: 1,
             resultEnvelope: secondaryHealthyResultEnvelope,
             replyContextEnvelope: secondaryHealthyReplyContextEnvelope,
@@ -648,7 +677,16 @@ describe("Automation reply handoff service", () => {
         const reClaim = await claimNextAutomationReplyHandoff({
             now: new Date(NOW.getTime() + 5_000),
         });
-        expect(reClaim).toMatchObject({ handoffId: HANDOFF_ID, attempt: 2 });
+        expect(reClaim).toMatchObject({
+            handoffId: HANDOFF_ID,
+            occurrenceKey: OCCURRENCE_KEY,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: OCCURRENCE_KEY,
+                occurredAt: NOW.getTime(),
+            },
+            attempt: 2,
+        });
 
         await expect(settleAutomationReplyHandoff({
             claim: reClaim!,
@@ -682,6 +720,12 @@ describe("Automation reply handoff service", () => {
 
         expect(claim).toMatchObject({
             handoffId: HANDOFF_ID,
+            occurrenceKey: OCCURRENCE_KEY,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: OCCURRENCE_KEY,
+                occurredAt: NOW.getTime(),
+            },
             attempt: 5,
             resultEnvelope: RESULT_ENVELOPE,
             replyContextEnvelope: REPLY_CONTEXT_ENVELOPE,
@@ -715,13 +759,20 @@ describe("Automation reply handoff service", () => {
         });
     });
 
-    it("returns a claim to ready without persisting a terminal receipt after Account currentness has moved", async () => {
+    it("accepts a custody receipt across later unrelated Account sequence movement", async () => {
         await seedReadyHandoff();
         const claim = await claimNextAutomationReplyHandoff({ now: NOW });
         expect(claim).not.toBeNull();
         if (!claim) return;
 
-        const staleCurrentness = await readCurrentness();
+        // The custody Action advanced Account.seq, then another unrelated
+        // Account mutation won before the daemon's receipt reached the server.
+        // Neither write changed the content mode/key or the frozen handoff.
+        await db.account.update({
+            where: { id: ACCOUNT_ID },
+            data: { seq: { increment: 1 } },
+        });
+        const postCustodyCurrentness = await readCurrentness();
         await db.account.update({
             where: { id: ACCOUNT_ID },
             data: { seq: { increment: 1 } },
@@ -731,16 +782,97 @@ describe("Automation reply handoff service", () => {
             claim,
             now: NOW,
             outcome: { kind: "accepted" },
-            accountCurrentness: staleCurrentness,
+            accountCurrentness: postCustodyCurrentness,
             receiptEnvelope: ACCEPTED_RECEIPT_ENVELOPE,
         })).resolves.toEqual({ applied: true });
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: RUN_ID },
             select: { replyHandoffState: true, replyHandoffDueAt: true, replyHandoffReceiptEnvelope: true },
         })).resolves.toEqual({
+            replyHandoffState: "accepted",
+            replyHandoffDueAt: null,
+            replyHandoffReceiptEnvelope: JSON.stringify(ACCEPTED_RECEIPT_ENVELOPE),
+        });
+    });
+
+    it("accepts the exact post-custody witness when only Account sequence advanced during the effect", async () => {
+        await seedReadyHandoff();
+        const claim = await claimNextAutomationReplyHandoff({ now: NOW });
+        expect(claim).not.toBeNull();
+        if (!claim) return;
+
+        await db.account.update({
+            where: { id: ACCOUNT_ID },
+            data: { seq: { increment: 1 } },
+        });
+        const postCustodyCurrentness = await readCurrentness();
+
+        await expect(settleAutomationReplyHandoff({
+            claim,
+            now: NOW,
+            outcome: { kind: "accepted" },
+            accountCurrentness: postCustodyCurrentness,
+            receiptEnvelope: ACCEPTED_RECEIPT_ENVELOPE,
+        })).resolves.toEqual({ applied: true });
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({
+            replyHandoffState: "accepted",
+            replyHandoffDueAt: null,
+        });
+    });
+
+    it("retries blocked custody in place without rotating any frozen handoff fact", async () => {
+        await seedReadyHandoff({ state: "blocked", dueAt: null });
+        const before = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID } });
+
+        await expect(retryBlockedAutomationReplyHandoff({
+            accountId: "another-account",
+            runId: RUN_ID,
+            now: NOW,
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({
+            replyHandoffState: "blocked",
+            replyHandoffDueAt: null,
+        });
+
+        await expect(retryBlockedAutomationReplyHandoff({
+            accountId: ACCOUNT_ID,
+            runId: RUN_ID,
+            now: NOW,
+        })).resolves.toMatchObject({
+            id: RUN_ID,
             replyHandoffState: "ready",
             replyHandoffDueAt: NOW,
-            replyHandoffReceiptEnvelope: null,
+        });
+
+        const after = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID } });
+        expect(after).toMatchObject({
+            replyHandoffState: "ready",
+            replyHandoffDueAt: NOW,
+            replyHandoffAttempt: before.replyHandoffAttempt,
+            replyHandoffId: before.replyHandoffId,
+            replyHandoffActionPluginId: before.replyHandoffActionPluginId,
+            replyHandoffActionLocalId: before.replyHandoffActionLocalId,
+            replyHandoffTargetMachineId: before.replyHandoffTargetMachineId,
+            replyHandoffTargetMachineInstallationId: before.replyHandoffTargetMachineInstallationId,
+            replyHandoffTargetMaterializationId: before.replyHandoffTargetMaterializationId,
+            resultEnvelope: before.resultEnvelope,
+            replyContextEnvelope: before.replyContextEnvelope,
+        });
+
+        await expect(retryBlockedAutomationReplyHandoff({
+            accountId: ACCOUNT_ID,
+            runId: RUN_ID,
+            now: new Date(NOW.getTime() + 1),
+        })).resolves.toMatchObject({
+            id: RUN_ID,
+            replyHandoffState: "ready",
+            replyHandoffDueAt: NOW,
         });
     });
 
@@ -771,7 +903,6 @@ describe("Automation reply handoff service", () => {
                     automationId: AUTOMATION_ID,
                     occurrenceKey: OCCURRENCE_KEY,
                 },
-                templateVersion: 1,
                 opaqueContext: {
                     conversationId: "conversation-transformed",
                     messageId: "message-transformed",

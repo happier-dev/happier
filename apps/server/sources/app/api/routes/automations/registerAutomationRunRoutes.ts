@@ -8,11 +8,10 @@ import {
     succeedAutomationRunFromV2,
 } from "@/app/automations/automationRunService";
 import { toAutomationRunV2ApiDto } from "@/app/automations/automationApiProjection";
-import { resolveAutomationRunAttemptV2 } from "./automationRunAttemptV2Compatibility";
 import { requirePresentUser } from "../../utils/requirePresentUser";
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
-    hasExactAutomationWorkerPublisher,
+    resolveExactAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
@@ -30,19 +29,19 @@ export function registerAutomationRunRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/start`,
             machineId: request.body.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const run = await startAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
             machineId: request.body.machineId,
-            attempt: resolveAutomationRunAttemptV2(request.body.attempt),
-            expectedTriggerKind: "schedule",
+            ...(request.body.attempt === undefined ? {} : { attempt: request.body.attempt }),
         });
         if (!run) {
             return reply.code(404).send({ error: 'automation_run_not_found_or_not_claimed' });
@@ -62,21 +61,21 @@ export function registerAutomationRunRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/succeed`,
             machineId: request.body.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const run = await succeedAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
             machineId: request.body.machineId,
-            attempt: resolveAutomationRunAttemptV2(request.body.attempt),
+            ...(request.body.attempt === undefined ? {} : { attempt: request.body.attempt }),
             producedSessionId: request.body.producedSessionId,
             summaryCiphertext: request.body.summaryCiphertext,
-            expectedTriggerKind: "schedule",
         });
         if (!run) {
             return reply.code(404).send({ error: 'automation_run_not_found_or_not_claimed' });
@@ -97,22 +96,22 @@ export function registerAutomationRunRoutes(
             }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies,
             accountId: request.userId,
             request,
             path: `/v2/automations/runs/${encodeURIComponent(request.params.runId)}/fail`,
             machineId: request.body.machineId,
+            allowReleasedV2MissingProof: true,
         })) return reply.code(401).send(null);
         const run = await failAutomationRunFromV2({
             accountId: request.userId,
             runId: request.params.runId,
             machineId: request.body.machineId,
-            attempt: resolveAutomationRunAttemptV2(request.body.attempt),
+            ...(request.body.attempt === undefined ? {} : { attempt: request.body.attempt }),
             producedSessionId: request.body.producedSessionId,
             errorCode: request.body.errorCode,
             errorMessage: request.body.errorMessage,
-            expectedTriggerKind: "schedule",
         });
         if (!run) {
             return reply.code(404).send({ error: 'automation_run_not_found_or_not_claimed' });
@@ -129,7 +128,6 @@ export function registerAutomationRunRoutes(
         const run = await cancelAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,
-            expectedTriggerKind: "schedule",
             requireV2RunRepresentability: true,
         });
         if (!run) {

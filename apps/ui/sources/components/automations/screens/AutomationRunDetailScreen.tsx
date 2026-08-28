@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     createCanonicalJsonSigningInput,
+    type AutomationRunCause,
     type AutomationV3RunDetail,
 } from '@happier-dev/protocol';
 
@@ -26,7 +27,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
     formatAutomationRunStateLabel,
-    getAutomationRunOriginTranslationKey,
+    formatAutomationRunCauseLabel,
 } from '@/components/automations/list/automationListFormatting';
 import type {
     AutomationRunDetailPrivateContentInspection,
@@ -59,23 +60,27 @@ function formatDate(ms: number, unknownLabel: string): string {
     }
 }
 
-function formatRunOriginTime(
-    run: Pick<AutomationV3RunDetail, 'origin'>,
+function formatRunCauseTime(
+    cause: AutomationRunCause,
     unknownLabel: string,
 ): string {
-    switch (run.origin.kind) {
-        case 'scheduled':
-            return t('automations.detail.runMeta.scheduled', {
-                time: formatDate(run.origin.scheduledFor, unknownLabel),
+    switch (cause.kind) {
+        case 'trigger':
+            if (cause.triggerKind === 'schedule') {
+                return t('automations.detail.runMeta.scheduled', {
+                    time: formatDate(cause.evidence.scheduledFor, unknownLabel),
+                });
+            }
+            return t('automations.detail.runMeta.occurred', {
+                time: formatDate(cause.occurredAt, unknownLabel),
             });
         case 'manual':
             return t('automations.detail.runMeta.invoked', {
-                time: formatDate(run.origin.invokedAt, unknownLabel),
+                time: formatDate(cause.invokedAt, unknownLabel),
             });
-        case 'pluginEvent':
         case 'conversation':
             return t('automations.detail.runMeta.occurred', {
-                time: formatDate(run.origin.occurredAt, unknownLabel),
+                time: formatDate(cause.occurredAt, unknownLabel),
             });
     }
 }
@@ -134,7 +139,7 @@ function getRunTargetPrompt(target: AutomationRunDetailTarget): string {
         case 'existingSession':
             return target.prompt;
         case 'newSession':
-            return target.spawn.initialMessage ?? t('common.unavailable');
+            return target.spawn.initialInput?.text ?? t('common.unavailable');
         case 'executionRun':
             return target.request.instructions ?? t('common.unavailable');
     }
@@ -496,6 +501,10 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         generation: routeGeneration,
         value: false,
     });
+    const [retryingReplyHandoffState, setRetryingReplyHandoffState] = React.useState<RouteScopedState<boolean>>({
+        generation: routeGeneration,
+        value: false,
+    });
     const directDetail = directDetailState.generation === routeGeneration
         && directDetailState.accountLifetime === accountLifetime
         && accountLifetime?.isCurrent() === true
@@ -506,15 +515,14 @@ export function AutomationRunDetailScreen(): React.ReactElement {
     const run = directDetailIsCurrent
         ? directDetail.detail
         : cachedRun;
-    // Compaction is a server-authored retention fact. Even if an older direct
-    // response is still held route-locally, never let it disclose private
-    // envelopes once the current Run projection says that content is gone.
-    const privateContent = directDetailIsCurrent && directDetail.detail.contentRemovedAt === null
+    const privateContent = directDetailIsCurrent
         ? directDetail.privateContent
         : null;
     const loading = loadingState.generation !== routeGeneration || loadingState.value;
     const loadFailed = loadFailureState.generation === routeGeneration && loadFailureState.value;
     const cancelling = cancellingState.generation === routeGeneration && cancellingState.value;
+    const retryingReplyHandoff = retryingReplyHandoffState.generation === routeGeneration
+        && retryingReplyHandoffState.value;
 
     React.useEffect(() => {
         const retirement = accountLifetime?.onRetire(() => {
@@ -557,21 +565,6 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         if (!cachedRun) {
             setLoadingState({ generation: request.generation, value: true });
         }
-        const cachedRunContentRemoved = cachedRun !== null && cachedRun.contentRemovedAt !== null;
-        if (cachedRunContentRemoved) {
-            // The bounded Run projection is the canonical retention fact. Do
-            // not issue an envelope/detail read or run decryption merely to
-            // rediscover a record the server has already compacted.
-            directReadEpochRef.current += 1;
-            setDirectDetailState({
-                generation: request.generation,
-                accountLifetime: request.accountLifetime,
-                value: null,
-            });
-            setLoadingState({ generation: request.generation, value: false });
-            return;
-        }
-
         const directRead = sync.getAutomationRunDetailInspection(automationId, runId)
             .then((detail) => {
                 if (
@@ -642,15 +635,46 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         }
     }, [accountLifetime, automationId, isCurrentRoute, routeGeneration, runId]);
 
+    const handleRetryReplyHandoff = React.useCallback(async () => {
+        if (!runId) return;
+        const request = { automationId, runId, generation: routeGeneration };
+        try {
+            setRetryingReplyHandoffState({ generation: request.generation, value: true });
+            await sync.retryAutomationReplyHandoff(request.runId);
+            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
+            directReadEpochRef.current += 1;
+            setDirectDetailState({
+                generation: request.generation,
+                accountLifetime,
+                value: null,
+            });
+        } catch (error) {
+            if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.runFailed'),
+            );
+        } finally {
+            if (isCurrentRoute(request.automationId, request.runId, request.generation)) {
+                setRetryingReplyHandoffState({ generation: request.generation, value: false });
+            }
+        }
+    }, [accountLifetime, automationId, isCurrentRoute, routeGeneration, runId]);
+
     const unknownDate = t('automations.detail.unknownDate');
     const title = runId ? t('runs.runLabel', { runId }) : t('runs.title');
     const canCancel = run?.state === 'queued' || run?.state === 'claimed' || run?.state === 'running';
-    const occurrenceKey = run?.origin.kind === 'pluginEvent' || run?.origin.kind === 'conversation'
-        ? run.origin.occurrenceKey
+    const occurrenceKey = run?.cause.kind === 'trigger' || run?.cause.kind === 'conversation'
+        ? run.cause.occurrenceKey
         : null;
-    const sourceSelectorId = run?.origin.kind === 'pluginEvent'
-        ? run.origin.sourceSelectorId
+    const sourceSelectorId = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
+        ? run.cause.evidence.sourceSelectorId
         : null;
+    const eventRef = run?.cause.kind === 'trigger' && run.cause.triggerKind === 'pluginEvent'
+        ? run.cause.evidence.eventRef
+        : null;
+    const triggerCause = run?.cause.kind === 'trigger' ? run.cause : null;
+    const triggerRetired = run?.triggerRetired === true;
     // A Run that produced a Session is the user's only pointer back to the
     // work it started, so the detail keeps that reachable rather than leaving
     // the identifier in the transport projection.
@@ -667,7 +691,6 @@ export function AutomationRunDetailScreen(): React.ReactElement {
         ? directDetail.detail.executionNativeSidechainId
         : null;
     const runHistory = directDetailIsCurrent ? directDetail.detail.events : [];
-    const contentRemovedAt = run?.contentRemovedAt ?? null;
     const claimedByMachine = run?.claimedByMachineId
         ? machines.find((candidate) => candidate.id === run.claimedByMachineId)
         : undefined;
@@ -738,16 +761,39 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                         <ItemGroup title={t('automations.detail.recentRunsTitle')}>
                             <Item title={formatAutomationRunStateLabel(run.state)} showChevron={false} mode="info" />
                             <Item
-                                title={t('automations.detail.runMeta.originTitle')}
-                                detail={t(getAutomationRunOriginTranslationKey(run.origin))}
+                                title={t('automations.detail.runMeta.causeTitle')}
+                                detail={formatAutomationRunCauseLabel(run.cause)}
                                 showChevron={false}
                                 mode="info"
                             />
                             <Item
-                                title={formatRunOriginTime(run, unknownDate)}
+                                title={formatRunCauseTime(run.cause, unknownDate)}
                                 showChevron={false}
                                 mode="info"
                             />
+                            {triggerCause ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.triggerIdentityTitle')}
+                                    subtitle={t('automations.detail.runMeta.triggerIdentity', {
+                                        id: triggerCause.triggerId,
+                                        revision: triggerCause.triggerRevision,
+                                    })}
+                                    subtitleLines={0}
+                                    copy={`${triggerCause.triggerId}@${triggerCause.triggerRevision}`}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {triggerRetired ? (
+                                <Item
+                                    testID="automation-run-trigger-retired"
+                                    title={t('automations.detail.runMeta.triggerRetired')}
+                                    subtitle={t('automations.detail.runMeta.triggerRetiredSubtitle')}
+                                    subtitleLines={0}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
                             {occurrenceKey ? (
                                 <Item
                                     title={t('automations.detail.runMeta.occurrenceTitle')}
@@ -765,6 +811,34 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                     showChevron={false}
                                     mode="info"
                                 />
+                            ) : null}
+                            {eventRef ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.eventReferenceTitle')}
+                                    subtitle={`${eventRef.pluginId}/${eventRef.localId}`}
+                                    subtitleLines={0}
+                                    copy={`${eventRef.pluginId}/${eventRef.localId}`}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {triggerCause?.triggerKind === 'sessionLifecycle' ? (
+                                <>
+                                    <Item
+                                        title={t('automations.detail.trigger.sourceSession')}
+                                        subtitle={triggerCause.evidence.sourceSessionId}
+                                        copy={triggerCause.evidence.sourceSessionId}
+                                        showChevron={false}
+                                        mode="info"
+                                    />
+                                    <Item
+                                        title={t('automations.detail.trigger.sourceTurn')}
+                                        subtitle={triggerCause.evidence.sourceTurnId}
+                                        copy={triggerCause.evidence.sourceTurnId}
+                                        showChevron={false}
+                                        mode="info"
+                                    />
+                                </>
                             ) : null}
                             <Item
                                 title={t('automations.detail.runMeta.admitted', {
@@ -796,15 +870,6 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 showChevron={false}
                                 mode="info"
                             />
-                            {contentRemovedAt !== null ? (
-                                <Item
-                                    testID="automation-run-detail-content-removed"
-                                    title={t('automations.detail.runMeta.contentRemoved')}
-                                    detail={formatDate(contentRemovedAt, unknownDate)}
-                                    showChevron={false}
-                                    mode="info"
-                                />
-                            ) : null}
                             {run.attempt > 1 ? (
                                 <Item
                                     title={t('automations.detail.runMeta.attemptTitle')}
@@ -931,6 +996,16 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                     destructive
                                     onPress={() => void handleCancel()}
                                     loading={cancelling}
+                                    showChevron={false}
+                                />
+                            ) : null}
+                            {run.replyHandoffState === 'blocked' ? (
+                                <Item
+                                    testID="automation-run-retry-reply-handoff"
+                                    title={t('common.retry')}
+                                    subtitle={t('automations.detail.runMeta.replyHandoffTitle')}
+                                    onPress={() => void handleRetryReplyHandoff()}
+                                    loading={retryingReplyHandoff}
                                     showChevron={false}
                                 />
                             ) : null}

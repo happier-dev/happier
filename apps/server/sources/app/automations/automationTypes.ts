@@ -1,10 +1,14 @@
 import {
     parseAutomationRunExecutionRecipeV1,
     type AutomationRunExecutionRecipeV1,
+    type AutomationStoredDefinitionExecutionRecipeV1,
     type AutomationReplyHandoffStateV1,
     type AutomationExecutionDispatchStateV3,
     type AutomationRunStateV3,
     type AutomationPluginEventDefinitionTriggerInput,
+    type AutomationTriggerCreateRequest,
+    type AutomationTriggerDefinitionInput,
+    type AutomationRunCause,
 } from '@happier-dev/protocol';
 
 export type AutomationScheduleKind = 'cron' | 'interval';
@@ -37,9 +41,9 @@ export function isTerminalAutomationRunState(
     return AUTOMATION_RUN_TERMINAL_STATES.some((terminalState) => terminalState === state);
 }
 
-export type AutomationTriggerKind = 'schedule' | 'manual' | 'pluginEvent';
+export type AutomationTriggerKind = 'schedule' | 'pluginEvent' | 'sessionLifecycle';
 export type AutomationObservationTransport = 'checkpointedPull' | 'durablePush';
-export type AutomationRunOriginKind = 'scheduled' | 'manual' | 'pluginEvent' | 'conversation';
+export type AutomationRunCauseKind = AutomationRunCause['kind'];
 /** The canonical execution-dispatch vocabulary; the Protocol schema is its one owner. */
 export type AutomationExecutionDispatchState = AutomationExecutionDispatchStateV3;
 
@@ -115,25 +119,9 @@ type AutomationDefinitionInputCommon = Readonly<{
     assignments?: ReadonlyArray<AutomationAssignmentInput>;
 }>;
 
-type AutomationDefinitionTriggerInput =
-    | Readonly<{
-        schedule: AutomationScheduleInput;
-        pluginEvent?: never;
-        manual?: never;
-    }>
-    | Readonly<{
-        schedule?: never;
-        pluginEvent: AutomationPluginEventDefinitionTriggerInput;
-        manual?: never;
-    }>
-    | Readonly<{
-        schedule?: never;
-        pluginEvent?: never;
-        manual: true;
-    }>;
-
 /** Retained release-compatible definition bytes. Current V3 routes never construct this arm. */
-export type AutomationLegacyDefinitionInput = Readonly<{
+export type AutomationLegacyDefinitionInput = AutomationDefinitionInputCommon & Readonly<{
+    schedule: AutomationScheduleInput;
     targetType: AutomationLegacyTargetType;
     templateCiphertext: string;
     legacyTemplateEnvelopeAdmission?: AutomationLegacyTemplateEnvelopeAdmission;
@@ -141,46 +129,36 @@ export type AutomationLegacyDefinitionInput = Readonly<{
 }>;
 
 /** One current definition writer: a strict Protocol recipe persisted in templateCiphertext. */
-export type AutomationCurrentDefinitionInput = Readonly<{
-    executionRecipe: AutomationRunExecutionRecipeV1;
+export type AutomationCurrentDefinitionInput = AutomationDefinitionInputCommon & Readonly<{
+    automationId: string;
+    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1;
+    triggers: ReadonlyArray<AutomationTriggerCreateRequest>;
     targetType?: never;
     templateCiphertext?: never;
     legacyTemplateEnvelopeAdmission?: never;
 }>;
 
-export type AutomationUpsertInput = AutomationDefinitionInputCommon
-    & AutomationDefinitionTriggerInput & (
-    | AutomationLegacyDefinitionInput
-    | AutomationCurrentDefinitionInput
-);
+export type AutomationUpsertInput = AutomationLegacyDefinitionInput | AutomationCurrentDefinitionInput;
 
-export type AutomationLegacyUpsertInput =
-    AutomationDefinitionInputCommon
-    & Extract<AutomationDefinitionTriggerInput, { schedule: AutomationScheduleInput }>
-    & AutomationLegacyDefinitionInput;
-export type AutomationCurrentUpsertInput =
-    AutomationDefinitionInputCommon
-    & AutomationDefinitionTriggerInput
-    & AutomationCurrentDefinitionInput;
+export type AutomationLegacyUpsertInput = AutomationLegacyDefinitionInput;
+export type AutomationCurrentUpsertInput = AutomationCurrentDefinitionInput;
 
 type AutomationPatchCommon = Readonly<{
     name?: string;
     description?: string | null;
     enabled?: boolean;
-    schedule?: AutomationScheduleInput;
-    pluginEvent?: AutomationPluginEventDefinitionTriggerInput;
-    manual?: true;
     assignments?: ReadonlyArray<AutomationAssignmentInput>;
 }>;
 
 export type AutomationCurrentPatchInput = AutomationPatchCommon & Readonly<{
-    executionRecipe: AutomationRunExecutionRecipeV1;
+    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1;
     targetType?: never;
     templateCiphertext?: never;
     legacyTemplateEnvelopeAdmission?: never;
 }>;
 
 export type AutomationLegacyPatchInput = AutomationPatchCommon & Readonly<{
+    schedule?: AutomationScheduleInput;
     executionRecipe?: never;
     targetType?: AutomationLegacyTargetType;
     templateCiphertext?: string;
@@ -217,27 +195,9 @@ export type AutomationListItem = Readonly<{
     name: string;
     description: string | null;
     enabled: boolean;
-    triggerKind: AutomationTriggerKind;
-    scheduleKind: AutomationScheduleKind | null;
-    scheduleExpr: string | null;
-    everyMs: number | null;
-    timezone: string | null;
     targetType: AutomationTargetType;
     templateCiphertext: string;
     templateVersion: number;
-    triggerEventPluginId: string | null;
-    triggerEventLocalId: string | null;
-    triggerSourceSelectorId: string | null;
-    triggerSourceContractVersion: number | null;
-    triggerObservationTransport: AutomationObservationTransport | null;
-    triggerWebhookEndpointId: string | null;
-    triggerObservationStartsAt: Date | null;
-    watcherMachineId: string | null;
-    watcherMachineInstallationId: string | null;
-    watcherPluginId: string | null;
-    watcherMaterializationId: string | null;
-    triggerDefinitionEnvelope: string | null;
-    nextRunAt: Date | null;
     lastRunAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -247,6 +207,39 @@ export type AutomationListItem = Readonly<{
         priority: number;
         updatedAt?: Date;
     }>;
+    triggers: ReadonlyArray<AutomationTriggerItem>;
+}>;
+
+export type AutomationTriggerItem = Readonly<{
+    id: string;
+    automationId: string;
+    kind: AutomationTriggerKind;
+    enabled: boolean;
+    revision: number;
+    deletedAt: Date | null;
+    scheduleKind: AutomationScheduleKind | null;
+    scheduleExpr: string | null;
+    everyMs: number | null;
+    timezone: string | null;
+    nextRunAt: Date | null;
+    eventPluginId: string | null;
+    eventLocalId: string | null;
+    sourceSelectorId: string | null;
+    sourceContractVersion: number | null;
+    observationTransport: AutomationObservationTransport | null;
+    webhookEndpointId: string | null;
+    observationStartsAt: Date | null;
+    watcherMachineId: string | null;
+    watcherMachineInstallationId: string | null;
+    watcherPluginId: string | null;
+    watcherMaterializationId: string | null;
+    definitionEnvelope: string | null;
+    sessionLifecycleEvent: 'parentTurnCompleted' | null;
+    sourceSessionId: string | null;
+    sourceTurnId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    eventSourceStatus: unknown | null;
 }>;
 
 export type AutomationRunItem = Readonly<{
@@ -254,11 +247,23 @@ export type AutomationRunItem = Readonly<{
     automationId: string;
     accountId: string;
     state: AutomationRunState;
-    originKind: AutomationRunOriginKind;
-    originOccurredAt: Date | null;
+    triggerId: string | null;
+    /** Exact current trigger absence, batch-derived by the Run read owner. */
+    triggerRetired?: boolean;
+    causeKind: AutomationRunCauseKind;
+    causeTriggerKind: AutomationTriggerKind | null;
+    causeTriggerRevision: number | null;
+    causeOccurredAt: Date | null;
+    causeEventPluginId: string | null;
+    causeEventLocalId: string | null;
+    causeScheduledFor: Date | null;
+    causeSessionLifecycleEvent: 'parentTurnCompleted' | null;
+    causeSourceSessionId: string | null;
+    causeSourceTurnId: string | null;
     occurrenceKey: string | null;
+    legacyManualIdempotencyKey: string | null;
     occurrenceEvidenceEqualityTag: string | null;
-    originSourceSelectorId: string | null;
+    causeSourceSelectorId: string | null;
     triggerEvidenceEnvelope: string | null;
     executionInputEnvelope: string | null;
     executionDispatchState: AutomationExecutionDispatchState | null;
@@ -292,7 +297,6 @@ export type AutomationRunItem = Readonly<{
     summaryCiphertext: string | null;
     errorCode: string | null;
     errorMessage: string | null;
-    contentRemovedAt: Date | null;
     producedSessionId: string | null;
     createdAt: Date;
     updatedAt: Date;
@@ -315,11 +319,11 @@ export type AutomationRunDetailItem = AutomationRunItem & Readonly<{
 }>;
 
 export type AutomationRunWithAutomation = AutomationRunItem & Readonly<{
+    assignments: ReadonlyArray<{ machineId: string; priority: number }>;
     automation: {
         id: string;
         name: string;
         enabled: boolean;
-        triggerKind: AutomationTriggerKind;
         targetType: AutomationTargetType;
         templateCiphertext: string;
     };

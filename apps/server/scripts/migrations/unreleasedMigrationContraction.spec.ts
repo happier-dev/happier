@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -15,13 +15,13 @@ const retainedMigrationIds = [
     "20260624123000_add_pending_delivery_state",
     "20260630162000_add_provider_account_usage_records",
     "20260630170000_add_session_organization_models",
-    "20260630223000_drop_service_account_quota_snapshots",
     "20260701123000_add_session_runtime_activity_projection",
     "20260723210000_drop_public_share_blocked_users",
     "20260723220000_add_connected_service_auth_group_runtime_state_revision",
 ] as const;
 
 const supersededMigrationIds = [
+    "20260630223000_drop_service_account_quota_snapshots",
     "20260624143000_add_session_pending_blocked_count",
     "20260709090000_drop_connected_service_usage_source_profile_unique",
     "20260711194500_add_session_runtime_activity_v2",
@@ -86,6 +86,13 @@ const supersededAuthMigrationIds = [
     "20260822170000_add_account_api_tokens",
 ] as const;
 
+const consolidatedAutomationMigrationId = "20260816231000_add_event_automations_v1";
+const automationAccountSettingsMigrationId = "20260825130000_add_automation_account_settings";
+const supersededAutomationMigrationIds = [
+    "20260816233000_backfill_automation_execution_dispatch_state",
+    "20260825130000_add_automation_account_settings_and_run_compaction",
+] as const;
+
 async function exists(path: string): Promise<boolean> {
     return await access(path).then(() => true, () => false);
 }
@@ -108,6 +115,22 @@ describe("unreleased migration contraction", () => {
                 `superseded migration remains ${providerRoot}/${migrationId}`,
             ).toBe(false);
         }
+    });
+
+    it.each(providerRoots)("preserves released quota snapshots for bounded V2 reads in %s", async (providerRoot) => {
+        const migrationRoot = join(serverRoot, providerRoot);
+        const migrationIds = await readdir(migrationRoot);
+        const sqlPaths = migrationIds.map((migrationId) =>
+            join(migrationRoot, migrationId, "migration.sql")
+        );
+        const sql = (await Promise.all(
+            sqlPaths.map(async (path) =>
+                await exists(path) ? await readFile(path, "utf8") : null
+            ),
+        )).filter((value): value is string => value !== null);
+        expect(sql.some((value) => /DROP TABLE\s+(?:IF EXISTS\s+)?["`]?ServiceAccountQuotaSnapshot["`]?/i.test(value))).toBe(false);
+        expect(await migrationSql(providerRoot, "20260216143000_connected_services_quota_snapshots"))
+            .toContain("ServiceAccountQuotaSnapshot");
     });
 
     it.each(providerRoots)("contracts Dev-only draft chains into their final transition owners for %s", async (providerRoot) => {
@@ -145,6 +168,29 @@ describe("unreleased migration contraction", () => {
         expect(sql).toContain("secretDigest");
         expect(sql).toContain("AccountApiToken_accountId_fkey");
     });
+
+    it.each(providerRoots)(
+        "keeps final Automation transitions in their folded unreleased owners for %s",
+        async (providerRoot) => {
+            const sql = await migrationSql(providerRoot, consolidatedAutomationMigrationId);
+            expect(sql).toContain("executionDispatchState");
+            expect(sql).toContain("executionAttempt");
+            expect(sql).toContain("executionDispatchCommittedAt");
+            expect(sql).toContain("executionDispatchDueAt");
+
+            const accountSettingsSql = await migrationSql(providerRoot, automationAccountSettingsMigrationId);
+            expect(accountSettingsSql).toContain("automationMaxActiveRunsPerMachine");
+            expect(accountSettingsSql).toContain("automationRunRetention");
+            expect(accountSettingsSql).not.toContain("contentRemovedAt");
+
+            for (const migrationId of supersededAutomationMigrationIds) {
+                expect(
+                    await exists(join(serverRoot, providerRoot, migrationId)),
+                    `superseded Automation migration remains ${providerRoot}/${migrationId}`,
+                ).toBe(false);
+            }
+        },
+    );
 
     it.each(providerRoots)("creates the final Dev models directly for %s", async (providerRoot) => {
         const usageSql = await migrationSql(providerRoot, "20260410103000_add_usage_event");

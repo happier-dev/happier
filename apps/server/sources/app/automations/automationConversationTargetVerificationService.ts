@@ -11,6 +11,7 @@ import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { inTx, type Tx } from "@/storage/inTx";
 
 import { loadAutomationTx } from "./automationCrudService";
+import type { AutomationTargetType } from "./automationTypes";
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
     AutomationEventCurrentnessError,
@@ -52,10 +53,26 @@ function readAutomationConversationTargetLabel(row: Readonly<{ id: string; name:
 }
 
 /**
+ * Canonical capability decision shared by target verification and the final
+ * admission writer. `executionRun` currently has no truthful text-result
+ * producer, while both Session targets settle through the exact-turn result
+ * owner.
+ */
+export function classifyAutomationConversationTargetEligibilityV1(params: Readonly<{
+    targetType: AutomationTargetType;
+    resultDelivery: "none" | "finalResult";
+}>): "eligible" | "resultDeliveryUnsupported" {
+    return params.resultDelivery === "finalResult" && params.targetType === "execution_run"
+        ? "resultDeliveryUnsupported"
+        : "eligible";
+}
+
+/**
  * Side-effect-free target verification for conversation-binding persistence.
  * A conversation binding is an additional invocation source for an Automation
- * the Account already owns, so every current Automation is a valid target
- * whatever its primary trigger, and several bindings may name the same one.
+ * the Account already owns, so trigger kind does not restrict the target and
+ * several bindings may name the same one. The selected result-delivery policy
+ * must still be supported by that Automation's execution target.
  * Automation storage and plugin-materialization currentness remain at their
  * incumbent owners; this projection returns no definition bytes or replacement
  * version.
@@ -86,21 +103,18 @@ export async function verifyAutomationConversationTargetV1(params: Readonly<{
                 reason: "notFound",
             });
         }
-        if (automation.templateVersion !== input.expectedTemplateVersion) {
+        const eligibility = classifyAutomationConversationTargetEligibilityV1({
+            targetType: automation.targetType,
+            resultDelivery: input.resultDelivery ?? "none",
+        });
+        if (eligibility !== "eligible") {
             return AutomationConversationTargetVerifyResultV1Schema.parse({
                 kind: "notVerified",
-                reason: "templateVersionMismatch",
-            });
-        }
-        if (input.resultDelivery === "finalResult" && automation.targetType === "execution_run") {
-            return AutomationConversationTargetVerifyResultV1Schema.parse({
-                kind: "notVerified",
-                reason: "resultDeliveryUnsupported",
+                reason: eligibility,
             });
         }
         return AutomationConversationTargetVerifyResultV1Schema.parse({
             kind: "verified",
-            templateVersion: automation.templateVersion,
         });
     });
 }
@@ -109,7 +123,7 @@ export async function verifyAutomationConversationTargetV1(params: Readonly<{
  * Current-materialization-scoped selector for conversation-binding
  * composition. Any Automation the Account owns can take a conversation as an
  * additional invocation source, so this projects every current Automation
- * whatever its primary trigger. Verification remains the final authority at
+ * independently of its zero-or-more automatic triggers. Verification remains the final authority at
  * binding create; this projection neither carries nor grants target execution
  * authority.
  */
@@ -146,7 +160,6 @@ export async function listAutomationConversationTargetsV1(params: Readonly<{
             select: {
                 id: true,
                 name: true,
-                templateVersion: true,
                 targetType: true,
                 enabled: true,
             },
@@ -156,7 +169,6 @@ export async function listAutomationConversationTargetsV1(params: Readonly<{
         return AutomationConversationTargetsListResultV1Schema.parse({
             items: page.map((row) => ({
                 automationId: row.id,
-                templateVersion: row.templateVersion,
                 label: readAutomationConversationTargetLabel(row),
                 execution: {
                     targetType: row.targetType,

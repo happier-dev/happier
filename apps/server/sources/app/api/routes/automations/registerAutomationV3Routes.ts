@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+    AUTOMATION_V3_RUN_LIST_MAX_ITEMS,
     AutomationAssignmentUpdateRequestSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
@@ -16,18 +17,17 @@ import {
     AutomationV3WorkerSucceedRequestSchema,
     AutomationV3ClearRunHistoryResponseSchema,
     AutomationDeleteResponseSchema,
+    AutomationDefinitionCreateRequestSchema,
+    AutomationDefinitionReconcileRequestSchema,
+    AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionListResponseSchema,
+    AutomationTriggerCreateRequestSchema,
+    AutomationTriggerDeleteRequestSchema,
+    AutomationTriggerPatchRequestSchema,
     AutomationV3RunMutationResponseSchema,
     AutomationV3RunListResponseSchema,
-    AutomationPluginEventDefinitionCreateRequestSchema,
-    AutomationPluginEventDefinitionPatchRequestSchema,
-    AutomationManualDefinitionCreateRequestSchema,
-    AutomationManualDefinitionPatchRequestSchema,
-    AutomationScheduleDefinitionCreateRequestSchema,
-    AutomationScheduleDefinitionPatchRequestSchema,
     AutomationManualIdempotencyKeyV1Schema,
     type AutomationAccountCurrentnessWitnessV1,
-    type AutomationScheduleTrigger,
 } from "@happier-dev/protocol";
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
@@ -38,16 +38,23 @@ import {
 import {
     clearAutomationRunHistory,
     createAutomation,
+    createAutomationTrigger,
     deleteAutomation,
+    deleteAutomationTrigger,
     getAutomation,
     getAutomationRun,
     listAutomationRuns,
     listAutomations,
+    reconcileAutomationDefinition,
     runAutomationNow,
     setAutomationEnabled,
     updateAutomation,
+    updateAutomationTrigger,
+    AutomationDefinitionCreateConflictError,
     AutomationDisabledError,
     AutomationTemplateMutationConflictError,
+    AutomationTriggerCreateConflictError,
+    AutomationTriggerMutationConflictError,
 } from "@/app/automations/automationCrudService";
 import {
     claimAutomationRun,
@@ -61,16 +68,16 @@ import {
 import {
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
-    toAutomationRunV3OriginApiDto,
+    toAutomationRunCauseApiDto,
     toAutomationDefinitionDetailApiDto,
     toAutomationDefinitionListItemApiDto,
 } from "@/app/automations/automationApiProjection";
 import { loadAutomationEventStatusProjections } from "@/app/automations/automationEventStatusProjection";
+import { loadAutomationSessionLifecycleStatusProjections } from "@/app/automations/automationSessionLifecycleStatusProjection";
+import { loadAutomationRetiredTriggerProjections } from "@/app/automations/automationRetiredTriggerProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
-import {
-    AutomationValidationError,
-    parseAutomationScheduleInput,
-} from "@/app/automations/automationValidation";
+import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
 import {
     cancelAutomationRun,
     failAutomationRun,
@@ -78,12 +85,12 @@ import {
     startAutomationRun,
     succeedAutomationRun,
 } from "@/app/automations/automationRunService";
-import type { AutomationScheduleInput } from "@/app/automations/automationTypes";
-import type { AutomationListItem } from "@/app/automations/automationTypes";
+import { retryBlockedAutomationReplyHandoff } from "@/app/automations/automationReplyHandoffService";
+import type { AutomationListItem, AutomationRunItem } from "@/app/automations/automationTypes";
 import { requirePresentUser } from "../../utils/requirePresentUser";
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
-    hasExactAutomationWorkerPublisher,
+    resolveExactAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
@@ -95,24 +102,22 @@ async function getCurrentAutomationAccountCurrentness(accountId: string) {
     return account ? deriveAutomationAccountCurrentnessWitness(account) : null;
 }
 
-function sendStoredContentFailure(reply: { code(code: number): { send(body: unknown): unknown } }) {
-    return reply.code(409).send({ error: "automation_stored_content_unavailable" });
+async function toCurrentAutomationRunListDto(
+    accountId: string,
+    run: AutomationRunItem,
+) {
+    if (run.triggerId === null) return toAutomationRunV3ListApiDto(run);
+    const current = await getAutomationRun({
+        accountId,
+        automationId: run.automationId,
+        runId: run.id,
+    });
+    if (!current) throw new Error("Automation Run disappeared during response projection");
+    return toAutomationRunV3ListApiDto(current);
 }
 
-function toAutomationServiceSchedule(
-    schedule: AutomationScheduleTrigger["schedule"],
-): AutomationScheduleInput {
-    return parseAutomationScheduleInput(schedule.kind === "interval"
-        ? {
-            kind: "interval" as const,
-            everyMs: schedule.everyMs,
-            timezone: schedule.timezone,
-        }
-        : {
-            kind: "cron" as const,
-            scheduleExpr: schedule.scheduleExpr,
-            timezone: schedule.timezone,
-        });
+function sendStoredContentFailure(reply: { code(code: number): { send(body: unknown): unknown } }) {
+    return reply.code(409).send({ error: "automation_stored_content_unavailable" });
 }
 
 function isAutomationDefinitionValidationError(error: unknown): error is AutomationValidationError | z.ZodError {
@@ -123,34 +128,27 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const projections = await loadAutomationEventStatusProjections({
-        automations: [automation],
-    });
+    const [eventProjections, lifecycleProjections, retiredProjections] = await Promise.all([
+        loadAutomationEventStatusProjections({ automations: [automation] }),
+        loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
+        loadAutomationRetiredTriggerProjections({ automationIds: [automation.id] }),
+    ]);
     return toAutomationDefinitionDetailApiDto(
         automation,
         accountCurrentness,
-        projections.get(automation.id),
+        eventProjections,
+        lifecycleProjections.get(automation.id),
+        retiredProjections.get(automation.id),
     );
 }
 
 function automationDefinitionValidationMessage(error: AutomationValidationError | z.ZodError): string {
+    if (error instanceof AutomationSessionLifecycleRegistrationValidationError) return error.code;
     if (error instanceof AutomationValidationError) return error.message;
     const issue = error.issues[0];
     const path = issue?.path.join(".") || "payload";
     return `${path}: ${issue?.message ?? "Invalid automation payload"}`;
 }
-
-const AutomationDefinitionCreateRequestSchema = z.union([
-    AutomationScheduleDefinitionCreateRequestSchema,
-    AutomationManualDefinitionCreateRequestSchema,
-    AutomationPluginEventDefinitionCreateRequestSchema,
-]);
-
-const AutomationDefinitionPatchRequestSchema = z.union([
-    AutomationScheduleDefinitionPatchRequestSchema,
-    AutomationManualDefinitionPatchRequestSchema,
-    AutomationPluginEventDefinitionPatchRequestSchema,
-]);
 
 const AutomationRunNowHeadersSchema = z.object({
     "idempotency-key": AutomationManualIdempotencyKeyV1Schema.optional(),
@@ -164,11 +162,17 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
     }, async (request) => {
         const rows = await listAutomations({ accountId: request.userId });
-        const projections = await loadAutomationEventStatusProjections({ automations: rows });
+        const [eventProjections, lifecycleProjections, retiredProjections] = await Promise.all([
+            loadAutomationEventStatusProjections({ automations: rows }),
+            loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
+            loadAutomationRetiredTriggerProjections({ automationIds: rows.map((row) => row.id) }),
+        ]);
         return AutomationDefinitionListResponseSchema.parse({
             automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
                 row,
-                projections.get(row.id),
+                eventProjections,
+                lifecycleProjections.get(row.id),
+                retiredProjections.get(row.id),
             )),
         });
     });
@@ -219,19 +223,21 @@ export function registerAutomationV3Routes(
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
             const body = AutomationDefinitionCreateRequestSchema.parse(request.body);
-            if (accountCurrentness.mode !== "plain") return sendStoredContentFailure(reply);
+            if (accountCurrentness.mode !== "plain" && body.triggers.some(({ trigger }) =>
+                trigger.kind === "pluginEvent"
+                && !("triggerDefinitionEnvelope" in trigger)
+            )) {
+                return sendStoredContentFailure(reply);
+            }
             const automation = await createAutomation({
                 accountId: request.userId,
                 input: {
+                    automationId: body.automationId,
                     name: body.name,
                     ...(body.description !== undefined ? { description: body.description } : {}),
                     enabled: body.enabled,
-                    ...(body.trigger.kind === "schedule"
-                        ? { schedule: toAutomationServiceSchedule(body.trigger.schedule) }
-                        : body.trigger.kind === "manual"
-                            ? { manual: true as const }
-                            : { pluginEvent: body.trigger }),
                     executionRecipe: body.executionRecipe,
+                    triggers: body.triggers,
                     ...(body.assignments !== undefined ? { assignments: body.assignments } : {}),
                 },
             });
@@ -242,6 +248,9 @@ export function registerAutomationV3Routes(
         } catch (error) {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
+            }
+            if (error instanceof AutomationDefinitionCreateConflictError) {
+                return reply.code(409).send({ error: "automation_create_conflict" });
             }
             if (!isAutomationDefinitionValidationError(error)) throw error;
             return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
@@ -259,22 +268,10 @@ export function registerAutomationV3Routes(
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
             const body = AutomationDefinitionPatchRequestSchema.parse(request.body);
-            if (body.executionRecipe !== undefined && accountCurrentness.mode !== "plain") {
-                return sendStoredContentFailure(reply);
-            }
             const input = {
                 ...(body.name !== undefined ? { name: body.name } : {}),
                 ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
-                ...(body.trigger !== undefined && body.trigger.kind === "schedule"
-                    ? { schedule: toAutomationServiceSchedule(body.trigger.schedule) }
-                    : {}),
-                ...(body.trigger !== undefined && body.trigger.kind === "pluginEvent"
-                    ? { pluginEvent: body.trigger }
-                    : {}),
-                ...(body.trigger !== undefined && body.trigger.kind === "manual"
-                    ? { manual: true as const }
-                    : {}),
                 ...(body.executionRecipe !== undefined
                     ? { executionRecipe: body.executionRecipe }
                     : {}),
@@ -284,14 +281,7 @@ export function registerAutomationV3Routes(
                 accountId: request.userId,
                 automationId: request.params.id,
                 input,
-                expectedTriggerKind: body.trigger?.kind === "manual"
-                    ? "manual"
-                    : "expectedTemplateVersion" in body
-                        ? "pluginEvent"
-                        : "schedule",
-                ...("expectedTemplateVersion" in body
-                    ? { expectedTemplateVersion: body.expectedTemplateVersion }
-                    : {}),
+                expectedTemplateVersion: body.expectedTemplateVersion,
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
             return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
@@ -304,6 +294,166 @@ export function registerAutomationV3Routes(
             }
             if (error instanceof AutomationTemplateMutationConflictError) {
                 return reply.code(409).send({ error: "automation_template_version_conflict" });
+            }
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
+    });
+
+    app.put("/v3/automations/:id", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: {
+            params: z.object({ id: z.string() }),
+            body: AutomationDefinitionReconcileRequestSchema,
+        },
+    }, async (request, reply) => {
+        const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
+        if (!accountCurrentness) return sendStoredContentFailure(reply);
+        try {
+            const body = AutomationDefinitionReconcileRequestSchema.parse(request.body);
+            if (accountCurrentness.mode !== "plain" && body.triggers.some((item) => {
+                const trigger = item.kind === "new" ? item.trigger : item.trigger;
+                return trigger?.kind === "pluginEvent"
+                    && !("triggerDefinitionEnvelope" in trigger);
+            })) {
+                return sendStoredContentFailure(reply);
+            }
+            const automation = await reconcileAutomationDefinition({
+                accountId: request.userId,
+                automationId: request.params.id,
+                input: body,
+            });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
+                automation,
+                accountCurrentness,
+            ));
+        } catch (error) {
+            if (error instanceof AutomationStoredContentReadError) {
+                return sendStoredContentFailure(reply);
+            }
+            if (error instanceof AutomationTemplateMutationConflictError) {
+                return reply.code(409).send({ error: "automation_template_version_conflict" });
+            }
+            if (error instanceof AutomationTriggerMutationConflictError) {
+                return reply.code(409).send({ error: "automation_trigger_revision_conflict" });
+            }
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
+    });
+
+    app.post("/v3/automations/:id/triggers", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: {
+            params: z.object({ id: z.string() }),
+            body: AutomationTriggerCreateRequestSchema,
+        },
+    }, async (request, reply) => {
+        const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
+        if (!accountCurrentness) return sendStoredContentFailure(reply);
+        try {
+            const body = AutomationTriggerCreateRequestSchema.parse(request.body);
+            if (body.trigger.kind === "pluginEvent"
+                && !("triggerDefinitionEnvelope" in body.trigger)
+                && accountCurrentness.mode !== "plain") {
+                return sendStoredContentFailure(reply);
+            }
+            const automation = await createAutomationTrigger({
+                accountId: request.userId,
+                automationId: request.params.id,
+                triggerId: body.triggerId,
+                trigger: body.trigger,
+            });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
+                automation,
+                accountCurrentness,
+            ));
+        } catch (error) {
+            if (error instanceof AutomationStoredContentReadError) {
+                return sendStoredContentFailure(reply);
+            }
+            if (error instanceof AutomationTriggerCreateConflictError) {
+                return reply.code(409).send({ error: "automation_trigger_create_conflict" });
+            }
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
+    });
+
+    app.patch("/v3/automations/:id/triggers", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: {
+            params: z.object({ id: z.string() }),
+            body: AutomationTriggerPatchRequestSchema,
+        },
+    }, async (request, reply) => {
+        const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
+        if (!accountCurrentness) return sendStoredContentFailure(reply);
+        try {
+            const body = AutomationTriggerPatchRequestSchema.parse(request.body);
+            if (body.trigger?.kind === "pluginEvent"
+                && !("triggerDefinitionEnvelope" in body.trigger)
+                && accountCurrentness.mode !== "plain") {
+                return sendStoredContentFailure(reply);
+            }
+            const automation = await updateAutomationTrigger({
+                accountId: request.userId,
+                automationId: request.params.id,
+                triggerId: body.triggerId,
+                expectedRevision: body.expectedRevision,
+                ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+                ...(body.trigger !== undefined ? { trigger: body.trigger } : {}),
+                ...(body.triggerDefinitionEnvelope !== undefined
+                    ? { triggerDefinitionEnvelope: body.triggerDefinitionEnvelope }
+                    : {}),
+            });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
+                automation,
+                accountCurrentness,
+            ));
+        } catch (error) {
+            if (error instanceof AutomationStoredContentReadError) {
+                return sendStoredContentFailure(reply);
+            }
+            if (error instanceof AutomationTriggerMutationConflictError) {
+                return reply.code(409).send({ error: "automation_trigger_revision_conflict" });
+            }
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
+    });
+
+    app.delete("/v3/automations/:id/triggers", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: {
+            params: z.object({ id: z.string() }),
+            body: AutomationTriggerDeleteRequestSchema,
+        },
+    }, async (request, reply) => {
+        const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
+        if (!accountCurrentness) return sendStoredContentFailure(reply);
+        try {
+            const body = AutomationTriggerDeleteRequestSchema.parse(request.body);
+            const automation = await deleteAutomationTrigger({
+                accountId: request.userId,
+                automationId: request.params.id,
+                triggerId: body.triggerId,
+                expectedRevision: body.expectedRevision,
+            });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
+                automation,
+                accountCurrentness,
+            ));
+        } catch (error) {
+            if (error instanceof AutomationStoredContentReadError) {
+                return sendStoredContentFailure(reply);
+            }
+            if (error instanceof AutomationTriggerMutationConflictError) {
+                return reply.code(409).send({ error: "automation_trigger_revision_conflict" });
             }
             if (!isAutomationDefinitionValidationError(error)) throw error;
             return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
@@ -420,7 +570,7 @@ export function registerAutomationV3Routes(
             querystring: z.object({ machineId: z.string().trim().min(1) }),
         },
     }, async (request, reply) => {
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -450,17 +600,25 @@ export function registerAutomationV3Routes(
         schema: { body: AutomationV3WorkerClaimRequestSchema },
     }, async (request, reply) => {
         const body = AutomationV3WorkerClaimRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        const publisher = await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: "/v3/automations/runs/claim",
             machineId: body.machineId,
-        })) return reply.code(401).send(null);
+        });
+        if (!publisher || publisher.kind !== "publisherProof") {
+            return reply.code(401).send(null);
+        }
         const result = await claimAutomationRun({
             accountId: request.userId,
             machineId: body.machineId,
             leaseDurationMs: body.leaseDurationMs ?? 30_000,
+            claimRequest: {
+                machineInstallationId: publisher.machineInstallationId,
+                nonce: publisher.requestNonce,
+                expiresAt: publisher.proofExpiresAt,
+            },
         });
         if (!result.run || !result.accountCurrentness) {
             return AutomationV3WorkerClaimResponseSchema.parse({
@@ -469,16 +627,19 @@ export function registerAutomationV3Routes(
                 accountCurrentness: null,
             });
         }
+        const cause = toAutomationRunCauseApiDto(result.run);
         return AutomationV3WorkerClaimResponseSchema.parse({
             run: {
                 id: result.run.id,
                 automationId: result.run.automationId,
+                triggerId: result.run.triggerId,
+                triggerRetired: result.run.triggerRetired ?? false,
                 attempt: result.run.attempt,
                 executionInputEnvelope: result.run.executionInputEnvelope,
-                // Reuse the incumbent immutable Run-origin projector rather
-                // than deriving origin from the mutable Automation definition.
-                origin: toAutomationRunV3OriginApiDto(result.run),
-                ...(result.run.originKind === "conversation"
+                // Reuse the sole immutable Run-cause projector rather than
+                // deriving cause from the mutable Automation definition.
+                cause,
+                ...(cause.kind === "conversation"
                     && result.run.replyHandoffState === "awaitingResult"
                     && typeof result.run.replyHandoffId === "string"
                     && result.run.replyHandoffId.trim().length > 0
@@ -508,7 +669,7 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerHeartbeatRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -539,7 +700,7 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerStartRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -555,7 +716,7 @@ export function registerAutomationV3Routes(
         });
         if (!started) return reply.code(404).send({ error: "automation_run_not_found_or_not_claimed" });
         return reply.send(AutomationV3WorkerStartResponseSchema.parse({
-            run: toAutomationRunV3ListApiDto(started.run),
+            run: await toCurrentAutomationRunListDto(request.userId, started.run),
             accountCurrentness: started.accountCurrentness,
         }));
     });
@@ -568,7 +729,7 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerExecutionDispatchSettlementRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -585,7 +746,7 @@ export function registerAutomationV3Routes(
         });
         if (!run) return reply.code(404).send({ error: "automation_run_not_found_or_not_dispatching" });
         return reply.send(AutomationV3RunMutationResponseSchema.parse({
-            run: toAutomationRunV3ListApiDto(run),
+            run: await toCurrentAutomationRunListDto(request.userId, run),
         }));
     });
 
@@ -597,7 +758,7 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerSucceedRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -615,7 +776,7 @@ export function registerAutomationV3Routes(
         });
         if (!run) return reply.code(404).send({ error: "automation_run_not_found_or_not_claimed" });
         return reply.send(AutomationV3RunMutationResponseSchema.parse({
-            run: toAutomationRunV3ListApiDto(run),
+            run: await toCurrentAutomationRunListDto(request.userId, run),
         }));
     });
 
@@ -627,7 +788,7 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerFailRequestSchema.parse(request.body);
-        if (!await hasExactAutomationWorkerPublisher({
+        if (!await resolveExactAutomationWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
@@ -646,7 +807,7 @@ export function registerAutomationV3Routes(
         });
         if (!run) return reply.code(404).send({ error: "automation_run_not_found_or_not_claimed" });
         return reply.send(AutomationV3RunMutationResponseSchema.parse({
-            run: toAutomationRunV3ListApiDto(run),
+            run: await toCurrentAutomationRunListDto(request.userId, run),
         }));
     });
 
@@ -660,7 +821,21 @@ export function registerAutomationV3Routes(
         });
         if (!run) return reply.code(404).send({ error: "automation_run_not_found" });
         return reply.send(AutomationV3RunMutationResponseSchema.parse({
-            run: toAutomationRunV3ListApiDto(run),
+            run: await toCurrentAutomationRunListDto(request.userId, run),
+        }));
+    });
+
+    app.post("/v3/automations/runs/:runId/retry-reply-handoff", {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: { params: z.object({ runId: z.string() }) },
+    }, async (request, reply) => {
+        const run = await retryBlockedAutomationReplyHandoff({
+            accountId: request.userId,
+            runId: request.params.runId,
+        });
+        if (!run) return reply.code(404).send({ error: "automation_reply_handoff_not_retryable" });
+        return reply.send(AutomationV3RunMutationResponseSchema.parse({
+            run: await toCurrentAutomationRunListDto(request.userId, run),
         }));
     });
 
@@ -697,7 +872,7 @@ export function registerAutomationV3Routes(
         schema: {
             params: z.object({ id: z.string() }),
             querystring: z.object({
-                limit: z.coerce.number().int().min(1).max(100).optional(),
+                limit: z.coerce.number().int().min(1).max(AUTOMATION_V3_RUN_LIST_MAX_ITEMS).optional(),
                 cursor: z.string().optional(),
             }).optional(),
         },

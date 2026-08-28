@@ -11,7 +11,11 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { t } from '@/text';
-import { formatAutomationNextRun, formatAutomationTriggerLabel } from './automationListFormatting';
+import {
+    formatAutomationNextRun,
+    formatAutomationTriggerLabel,
+    formatAutomationTriggerStatusLabel,
+} from './automationListFormatting';
 import type { AutomationRunNowController } from './useAutomationRunNowController';
 import type { ItemGroupVirtualizedSegment } from '@/components/ui/lists/ItemGroup.dividers';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -22,7 +26,7 @@ const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platfor
 
 type Props = Readonly<{
     title?: string;
-    automations: ReadonlyArray<Pick<AutomationDefinition, 'id' | 'name' | 'enabled' | 'trigger' | 'nextRunAt'>>;
+    automations: ReadonlyArray<Pick<AutomationDefinition, 'id' | 'name' | 'enabled' | 'triggers'>>;
     onOpenAutomation?: (automationId: string) => void;
     /** Parent read currentness gates only mutations; list navigation remains available. */
     mutationsEnabled?: boolean;
@@ -31,6 +35,8 @@ type Props = Readonly<{
      * row recycling; this group only presents it.
      */
     runNow: AutomationRunNowController;
+    /** Route/account lifetime witness captured by the owning screen. */
+    isInvocationCurrent: () => boolean;
     /** Joins independently virtualized chunks into one logical group surface. */
     virtualizedSegment?: ItemGroupVirtualizedSegment;
 }>;
@@ -60,8 +66,10 @@ export const AutomationListGroup = React.memo((props: Props) => {
 
     const handleRunNow = React.useCallback(async (automationId: string) => {
         if (!mutationsEnabled) return;
-        await runNowController.runNow(automationId);
-    }, [mutationsEnabled, runNowController]);
+        await runNowController.runNow(automationId, {
+            isInvocationCurrent: props.isInvocationCurrent,
+        });
+    }, [mutationsEnabled, props.isInvocationCurrent, runNowController]);
 
     const handleSetEnabled = React.useCallback(async (automationId: string, nextEnabled: boolean) => {
         if (!mutationsEnabled) return;
@@ -96,15 +104,22 @@ export const AutomationListGroup = React.memo((props: Props) => {
         >
             {props.automations.map((automation) => {
                 const runState = runNowController.stateFor(automation.id);
-                const runNowPending = runState === 'running';
+                const runNowPending = runState === 'submitting';
                 const runNowDisabled = !mutationsEnabled || runNowPending;
-                const subtitle = [
-                    formatAutomationTriggerLabel(automation.trigger),
-                    ...(automation.trigger.kind === 'schedule'
-                        ? [formatAutomationNextRun(automation.nextRunAt ?? null)]
-                        : []),
-                    ...(runState === 'queued' ? [t('automations.detail.runNowQueuedLine')] : []),
-                ].join('\n');
+                const triggerLines = automation.triggers.length === 0
+                    ? [t('automations.list.noAutomaticTriggers')]
+                    : automation.triggers.map((trigger) => [
+                        formatAutomationTriggerLabel(trigger),
+                        formatAutomationTriggerStatusLabel(trigger, automation.enabled),
+                        ...(automation.enabled
+                            && trigger.kind === 'pluginEvent'
+                            && trigger.sourceCatalogStatus !== null
+                            && trigger.sourceCatalogStatus.state !== 'current'
+                            ? [t(`settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.${trigger.sourceCatalogStatus.state}`)]
+                            : []),
+                        ...(trigger.kind === 'schedule' ? [formatAutomationNextRun(trigger.nextRunAt)] : []),
+                    ].join(' · '));
+                const subtitle = triggerLines.join('\n');
 
                 return (
                     <Item
@@ -124,12 +139,12 @@ export const AutomationListGroup = React.memo((props: Props) => {
                                     ])}
                                     disabled={runNowDisabled}
                                     accessibilityRole="button"
-                                    accessibilityLabel={t('automations.detail.runNowTitle')}
+                                    accessibilityLabel={`${t('automations.detail.runNowTitle')}: ${automation.name}`}
                                     accessibilityState={{ disabled: runNowDisabled, busy: runNowPending }}
                                 >
-                                    {runState === 'running' ? (
+                                    {runState === 'submitting' ? (
                                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                                    ) : runState === 'queued' ? (
+                                    ) : runState === 'acknowledged' ? (
                                         <Icon name="check" size={16} color={theme.colors.text.secondary} />
                                     ) : (
                                         <Icon name="play" size={16} color={theme.colors.text.secondary} />

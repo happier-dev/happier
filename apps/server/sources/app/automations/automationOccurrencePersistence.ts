@@ -18,7 +18,7 @@ export type PlainAutomationOccurrenceEvidenceDisposition =
 
 /**
  * Canonical plain persistence encoding for immutable Event/Conversation
- * occurrence evidence. Origin-specific construction stays with admission.
+ * occurrence evidence. Cause-kind-specific construction stays with admission.
  */
 export function encodePlainAutomationOccurrenceEvidence(
     evidence: AutomationOccurrenceEvidenceV1,
@@ -31,7 +31,7 @@ export function encodePlainAutomationOccurrenceEvidence(
 
 /**
  * Decodes one retained plain occurrence envelope and compares its immutable
- * evidence. Callers retain their origin-specific row and handoff checks.
+ * evidence. Callers retain their cause-specific row and handoff checks.
  */
 export function classifyPlainAutomationOccurrenceEvidence(params: Readonly<{
     triggerEvidenceEnvelope: string | null;
@@ -55,9 +55,10 @@ export function classifyPlainAutomationOccurrenceEvidence(params: Readonly<{
 }
 
 /**
- * The composite unique key is the admission concurrency owner. A P2002
- * therefore restarts the caller's complete transaction so it can re-read the
- * winner and apply its own origin-specific correspondence decision.
+ * The database occurrence uniqueness constraint is the admission concurrency
+ * owner. A P2002 therefore restarts the caller's complete transaction so it
+ * can re-read the winner and apply its own cause-specific correspondence
+ * decision.
  */
 export async function rejoinAutomationOccurrenceInsertRace<T>(
     operation: () => Promise<T>,
@@ -71,25 +72,48 @@ export async function rejoinAutomationOccurrenceInsertRace<T>(
 }
 
 /**
- * Reads the one row governed by AutomationRun's nullable composite occurrence
- * key. Event admission scopes its query to an Account; Conversation admission
- * deliberately reads the row first so it can retain its existing account and
- * result-handoff correspondence rules.
+ * Reads the one immutable plugin-Event occurrence for an exact Trigger.
+ *
+ * The persisted occurrence key is derived from Trigger identity, but querying
+ * by Trigger explicitly keeps the runtime authority aligned with the
+ * AutomationTrigger row rather than recreating the retired
+ * Automation+occurrence semantic identity.
  */
-export async function findAutomationOccurrenceTx<TSelect extends Prisma.AutomationRunSelect>(
+export async function findAutomationTriggerOccurrenceTx<TSelect extends Prisma.AutomationRunSelect>(
     params: Readonly<{
         tx: Tx;
-        accountId?: string;
-        automationId: string;
+        accountId: string;
+        triggerId: string;
         occurrenceKey: string;
         select: TSelect;
     }>,
 ): Promise<Prisma.AutomationRunGetPayload<{ select: TSelect }> | null> {
-    return await params.tx.automationRun.findFirst({
+    const [row] = await findAutomationTriggerOccurrencesTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        occurrences: [{ triggerId: params.triggerId, occurrenceKey: params.occurrenceKey }],
+        select: params.select,
+    });
+    return row ?? null;
+}
+
+/** Bounded batch form consumed by one Event admission request. */
+export async function findAutomationTriggerOccurrencesTx<TSelect extends Prisma.AutomationRunSelect>(
+    params: Readonly<{
+        tx: Tx;
+        accountId: string;
+        occurrences: readonly Readonly<{ triggerId: string; occurrenceKey: string }>[];
+        select: TSelect;
+    }>,
+): Promise<Array<Prisma.AutomationRunGetPayload<{ select: TSelect }>>> {
+    if (params.occurrences.length === 0) return [];
+    return await params.tx.automationRun.findMany({
         where: {
-            automationId: params.automationId,
-            occurrenceKey: params.occurrenceKey,
-            ...(params.accountId === undefined ? {} : { accountId: params.accountId }),
+            accountId: params.accountId,
+            OR: params.occurrences.map((occurrence) => ({
+                triggerId: occurrence.triggerId,
+                occurrenceKey: occurrence.occurrenceKey,
+            })),
         },
         select: params.select,
     });

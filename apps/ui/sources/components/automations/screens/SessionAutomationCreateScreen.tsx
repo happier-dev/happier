@@ -1,55 +1,100 @@
 import React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
-import { buildAutomationScheduleInputFromForm } from '@/components/automations/editor/buildAutomationScheduleInputFromForm';
+import { AutomationPluralEditorScreen } from '@/components/automations/editor/AutomationPluralEditorScreen';
+import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
+import { readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { ExistingSessionAutomationAuthoringSurface } from '@/components/automations/shared/ExistingSessionAutomationAuthoringSurface';
 import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
-import {
-    buildAutomationTemplateFromSessionAuthoringDraft,
-    refreshExistingSessionAuthoringDraftFromSessionSnapshot,
-} from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
-import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { layout } from '@/components/ui/layout/layout';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { refreshExistingSessionAuthoringDraftFromSessionSnapshot } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { useSessionAuthoringDraftState } from '@/components/sessions/authoring/draft/useSessionAuthoringDraftState';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
-import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/sessionRouteHydrationState';
-import { useSession, useSettings } from '@/sync/domains/state/storage';
+import { materializeNewSessionAutomationEditorDraft } from '@/sync/domains/automations/automationDraft';
+import {
+    createAutomationEditorLifetimeIdentity,
+    isAutomationEditorLifetimeIdentityCurrent,
+    type AutomationEditorDraft,
+} from '@/sync/domains/automations/automationEditorDraft';
+import { buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
+import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
 import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
-import { normalizeAutomationDescription, normalizeAutomationName, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
-import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
-import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/sessionRouteHydrationState';
+import {
+    storage,
+    useActiveServerAccountScope,
+    useSession,
+    useSessions,
+    useSettings,
+} from '@/sync/domains/state/storage';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { sync } from '@/sync/sync';
+import { isAutomationApiErrorCode } from '@/sync/api/automations/apiAutomations';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        flex: 1,
-        backgroundColor: theme.colors.background.canvas,
-    },
+    container: { flex: 1, backgroundColor: theme.colors.background.canvas },
 }));
 
-function isExistingSessionAutomationCreateDraftValid(
-    draft: SessionAuthoringDraft | null,
-    availabilityKind: ReturnType<typeof resolveExistingSessionAutomationAvailability>['kind'],
-): boolean {
-    const automationDraft = draft?.automation;
-    const messageOk = (draft?.prompt ?? '').trim().length > 0;
-    return isAutomationSettingsDraftValid(automationDraft) && messageOk && availabilityKind === 'ready';
+function initialEditorDraft(sessionId: string): AutomationEditorDraft {
+    return materializeNewSessionAutomationEditorDraft({
+        draft: { enabled: true, name: t('automations.create.defaultName'), description: '', triggers: [] },
+        executionRecipe: {
+            v: 1,
+            templateVersion: 1,
+            template: { t: 'plain', v: { v: 1, prompt: '' } },
+            triggerEvidence: null,
+            target: { kind: 'existingSession', sessionId },
+        },
+        assignments: [],
+    });
 }
 
-export function SessionAutomationCreateScreen(props: {
+function replaceWithCurrentExactTurns(
+    draft: AutomationEditorDraft,
+    targetSessionId: string,
+): AutomationEditorDraft | null {
+    let changed = false;
+    let available = true;
+    const triggers = draft.triggers.map((trigger) => {
+        const definition = trigger.definition;
+        if (definition?.kind !== 'sessionLifecycle' || definition.scope.kind !== 'exactTurn') return trigger;
+        if (definition.scope.sourceSessionId === targetSessionId) {
+            available = false;
+            return trigger;
+        }
+        const exact = readExactActiveParentTurn(storage.getState().sessions[definition.scope.sourceSessionId]);
+        if (!exact) {
+            available = false;
+            return trigger;
+        }
+        if (exact.sourceTurnId === definition.scope.sourceTurnId) return trigger;
+        changed = true;
+        return {
+            ...trigger,
+            definition: {
+                ...definition,
+                scope: { ...definition.scope, sourceTurnId: exact.sourceTurnId },
+            },
+        };
+    });
+    return available && changed ? { ...draft, triggers } : null;
+}
+
+export function SessionAutomationCreateScreen(props: Readonly<{
     sessionId: string;
     hydrationOptions?: Readonly<{ serverId?: string; forceRefresh?: boolean }>;
-}) {
+}>) {
     useUnistyles();
-    const styles = stylesheet;
     const router = useRouter();
     const routeHydrationState = useHydrateSessionForRoute(
         props.sessionId,
@@ -58,9 +103,31 @@ export function SessionAutomationCreateScreen(props: {
     );
     const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const session = useSession(props.sessionId);
+    const sessions = useSessions() ?? [];
     const settings = useSettings();
-
+    const activeAccountScope = useActiveServerAccountScope();
+    const editorLifetimeIdentity = activeAccountScope
+        && session?.serverId === activeAccountScope.serverId
+        ? createAutomationEditorLifetimeIdentity(activeAccountScope, `${props.sessionId}:new`)
+        : null;
+    const support = useAutomationsSupport({ scopeKind: 'spawn', serverId: session?.serverId ?? null });
+    const supportRef = React.useRef(support.enabled);
+    supportRef.current = support.enabled;
     const { draft, setDraft, latestDraftRef } = useSessionAuthoringDraftState();
+    const [editorDraft, setEditorDraft] = React.useState<AutomationEditorDraft>(() => initialEditorDraft(props.sessionId));
+    const [editorDraftLifetimeIdentity, setEditorDraftLifetimeIdentity] = React.useState<string | null>(
+        () => editorLifetimeIdentity,
+    );
+    const latestEditorRef = React.useRef(editorDraft);
+    latestEditorRef.current = editorDraft;
+    const [submitting, setSubmitting] = React.useState(false);
+    const submittingRef = React.useRef(false);
+
+    React.useEffect(() => {
+        if (editorDraftLifetimeIdentity === editorLifetimeIdentity) return;
+        setEditorDraft(initialEditorDraft(props.sessionId));
+        setEditorDraftLifetimeIdentity(editorLifetimeIdentity);
+    }, [editorDraftLifetimeIdentity, editorLifetimeIdentity, props.sessionId]);
 
     const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
     const machineIdOverride = readMachineControlTargetForSession(props.sessionId)?.machineId ?? null;
@@ -75,76 +142,171 @@ export function SessionAutomationCreateScreen(props: {
 
     React.useEffect(() => {
         if (!session) return;
-        setDraft((current) => {
-            const defaultAutomationDraft = sanitizeNewSessionAutomationDraft({
-                enabled: true,
-                name: t('automations.create.defaultName'),
-                description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 60,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            });
-            return refreshExistingSessionAuthoringDraftFromSessionSnapshot({
-                session,
-                currentDraft: current,
-                sessionDekBase64,
-                fallbackAutomationDraft: defaultAutomationDraft,
-            });
-        });
-    }, [session, sessionDekBase64]);
+        setDraft((current) => refreshExistingSessionAuthoringDraftFromSessionSnapshot({
+            session,
+            currentDraft: current,
+            sessionDekBase64,
+            fallbackAutomationDraft: {
+                enabled: latestEditorRef.current.enabled,
+                name: latestEditorRef.current.name,
+                description: latestEditorRef.current.description ?? '',
+                triggers: latestEditorRef.current.triggers.flatMap((trigger) => (
+                    trigger.definition ? [{ ...trigger }] : []
+                )),
+            },
+        }));
+    }, [session, sessionDekBase64, setDraft]);
 
-    const isValid = React.useMemo(
-        () => isExistingSessionAutomationCreateDraftValid(draft, availability.kind),
-        [availability.kind, draft],
-    );
+    const sessionOptions = React.useMemo(() => sessions
+        .filter((candidate) => candidate.serverId === session?.serverId && candidate.id !== props.sessionId)
+        .map((candidate) => ({
+            sessionId: candidate.id,
+            label: getSessionName(candidate),
+            currentParentTurnId: readExactActiveParentTurn(candidate)?.sourceTurnId ?? null,
+        })), [props.sessionId, session?.serverId, sessions]);
+    const isValid = support.enabled
+        && availability.kind === 'ready'
+        && editorDraftLifetimeIdentity === editorLifetimeIdentity
+        && editorLifetimeIdentity !== null
+        && Boolean(session && machineId && draft?.prompt.trim() && editorDraft.name.trim());
 
     const handleCreate = React.useCallback(async () => {
+        if (submittingRef.current) return;
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        const capturedEditorLifetimeIdentity = editorDraftLifetimeIdentity;
+        const authority = captureSessionAutomationAuthority({
+            session: storage.getState().sessions[props.sessionId] ?? null,
+            routeSessionId: props.sessionId,
+            routeServerId: props.hydrationOptions?.serverId ?? null,
+            activeServerId: getActiveServerSnapshot().serverId,
+            automationsEnabled: supportRef.current,
+            accountLifetime,
+            readCurrent: () => ({
+                session: storage.getState().sessions[props.sessionId] ?? null,
+                routeSessionId: props.sessionId,
+                routeServerId: props.hydrationOptions?.serverId ?? null,
+                activeServerId: getActiveServerSnapshot().serverId,
+                automationsEnabled: supportRef.current,
+            }),
+        });
         const currentDraft = latestDraftRef.current;
-        if (!session || !machineId || !currentDraft) return;
-        if (!isExistingSessionAutomationCreateDraftValid(currentDraft, availability.kind)) return;
-        const currentAutomationDraft = currentDraft.automation;
-        if (!currentAutomationDraft) return;
-        try {
-            const credentials = sync.getCredentials();
-            const template = buildAutomationTemplateFromSessionAuthoringDraft(currentDraft);
-            validateAutomationTemplateTarget({
-                targetType: 'existing_session',
-                template,
+        const currentEditor = latestEditorRef.current;
+        if (
+            !authority
+            || !currentDraft
+            || !machineId
+            || !currentDraft.prompt.trim()
+            || !currentEditor.name.trim()
+            || !capturedEditorLifetimeIdentity
+            || capturedEditorLifetimeIdentity !== editorLifetimeIdentity
+            || !isAutomationEditorLifetimeIdentityCurrent(
+                capturedEditorLifetimeIdentity,
+                accountLifetime?.scope ?? null,
+                `${props.sessionId}:new`,
+            )
+        ) return;
+        submittingRef.current = true;
+        setSubmitting(true);
+        const sourceDefinitions = currentEditor.triggers.flatMap((trigger) => (
+            trigger.definition?.kind === 'sessionLifecycle' && trigger.definition.scope.kind === 'exactTurn'
+                ? [trigger.definition]
+                : []
+        ));
+        const sourceAuthorities = sourceDefinitions.flatMap((definition) => {
+            if (definition.scope.sourceSessionId === props.sessionId) return [];
+            const sourceSessionId = definition.scope.sourceSessionId;
+            const sourceAuthority = captureSessionAutomationAuthority({
+                session: storage.getState().sessions[sourceSessionId] ?? null,
+                routeSessionId: sourceSessionId,
+                routeServerId: session?.serverId ?? null,
+                activeServerId: getActiveServerSnapshot().serverId,
+                automationsEnabled: supportRef.current,
+                accountLifetime,
+                readCurrent: () => ({
+                    session: storage.getState().sessions[sourceSessionId] ?? null,
+                    routeSessionId: sourceSessionId,
+                    routeServerId: session?.serverId ?? null,
+                    activeServerId: getActiveServerSnapshot().serverId,
+                    automationsEnabled: supportRef.current,
+                }),
             });
-            const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
-                credentials,
-                template,
-                ...(sync.encryption
-                    ? {
-                        encryptRaw: (value) => sync.encryption!.encryptAutomationTemplateRaw(value),
-                    }
-                    : {}),
-            });
-
-            await sync.createAutomation({
-                name: normalizeAutomationName(currentAutomationDraft.name),
-                description: normalizeAutomationDescription(currentAutomationDraft.description),
-                enabled: currentAutomationDraft.enabled,
-                schedule: buildAutomationScheduleInputFromForm(currentAutomationDraft),
-                targetType: 'existing_session',
-                templateCiphertext,
-                assignments: [{ machineId, enabled: true, priority: 100 }],
-            });
-            navigateWithBlurOnWeb(() => router.replace(`/session/${props.sessionId}/automations` as any));
-        } catch (error) {
-            await Modal.alert(
-                t('common.error'),
-                error instanceof Error ? error.message : t('automations.create.createFailed')
-            );
+            return sourceAuthority ? [{
+                authority: sourceAuthority,
+                sourceSessionId,
+                sourceTurnId: definition.scope.sourceTurnId,
+            }] : [];
+        });
+        if (sourceAuthorities.length !== sourceDefinitions.length) {
+            const replacement = replaceWithCurrentExactTurns(currentEditor, props.sessionId);
+            if (replacement && await Modal.confirm(
+                t('automations.exactTurn.staleTitle'),
+                t('automations.exactTurn.staleBody'),
+                { cancelText: t('common.cancel'), confirmText: t('automations.exactTurn.useCurrentTurn') },
+            )) setEditorDraft(replacement);
+            else if (!replacement) await Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
+            submittingRef.current = false;
+            setSubmitting(false);
+            return;
         }
-    }, [availability.kind, machineId, props.sessionId, router, session]);
+        const isCurrent = () => authority.isCurrent()
+            && capturedEditorLifetimeIdentity === editorLifetimeIdentity
+            && latestDraftRef.current === currentDraft
+            && latestEditorRef.current === currentEditor
+            && sourceAuthorities.every((entry) => (
+                entry.authority.isCurrent()
+                && readExactActiveParentTurn(storage.getState().sessions[entry.sourceSessionId])?.sourceTurnId
+                    === entry.sourceTurnId
+            ));
+        try {
+            const recipe = await buildAutomationRecipeFromSessionAuthoring({
+                credentials: sync.getCredentials(),
+                templateVersion: 1,
+                prompt: currentDraft.prompt.trim(),
+                target: { kind: 'existingSession', sessionId: props.sessionId },
+                ...(sync.encryption ? { encryptRaw: (value: unknown) => sync.encryption!.encryptAutomationTemplateRaw(value) } : {}),
+                isCurrent,
+            });
+            const saved = await sync.saveAutomationEditorDraft({
+                ...currentEditor,
+                executionRecipe: recipe,
+                assignments: [{ machineId, enabled: true, priority: 100 }],
+            }, { isCurrent });
+            if (isCurrent()) navigateWithBlurOnWeb(() => router.replace(`/automations/${saved.id}` as any));
+        } catch (error) {
+            const exactTurnStale = isAutomationApiErrorCode(error, 'sourceTurnNotCurrent')
+                || isAutomationApiErrorCode(error, 'sourceTurnNotInProgress')
+                || isAutomationApiErrorCode(error, 'sourceTurnUnavailable')
+                || isAutomationApiErrorCode(error, 'sourceSessionUnavailable')
+                || (error instanceof Error && error.message === 'Automation authoring authority changed');
+            if (authority.isCurrent() && exactTurnStale && latestEditorRef.current === currentEditor) {
+                const replacement = replaceWithCurrentExactTurns(currentEditor, props.sessionId);
+                if (replacement && await Modal.confirm(
+                    t('automations.exactTurn.staleTitle'),
+                    t('automations.exactTurn.staleBody'),
+                    { cancelText: t('common.cancel'), confirmText: t('automations.exactTurn.useCurrentTurn') },
+                )) setEditorDraft(replacement);
+                else if (!replacement) await Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
+            } else if (authority.isCurrent()) {
+                await Modal.alert(t('common.error'), error instanceof Error ? error.message : t('automations.create.createFailed'));
+            }
+        } finally {
+            submittingRef.current = false;
+            setSubmitting(false);
+        }
+    }, [
+        editorDraftLifetimeIdentity,
+        editorLifetimeIdentity,
+        latestDraftRef,
+        machineId,
+        props.hydrationOptions?.serverId,
+        props.sessionId,
+        router,
+        session?.serverId,
+    ]);
 
     const missingReason = React.useMemo(() => getExistingSessionAutomationUnavailableReason(availability), [availability]);
-    const isWaitingForSessionHydration = availability.kind === 'hydrating';
-
     return (
-        <View style={styles.container}>
+        <View style={stylesheet.container}>
             <ItemList style={{ paddingTop: 0 }}>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     <ExistingSessionAutomationAuthoringSurface
@@ -153,11 +315,39 @@ export function SessionAutomationCreateScreen(props: {
                         draft={draft}
                         onChangeDraft={setDraft}
                         availability={availability}
-                        isWaiting={isWaitingForSessionHydration}
+                        isWaiting={availability.kind === 'hydrating'}
                         unavailableReason={missingReason}
                         onSubmit={() => { void handleCreate(); }}
                         submitAccessibilityLabel={t('automations.create.createButtonTitle')}
-                        isSubmitDisabled={!isValid}
+                        isSubmitDisabled={!isValid || submitting}
+                        editable={!submitting}
+                        automationEditor={editorDraftLifetimeIdentity === editorLifetimeIdentity && editorLifetimeIdentity !== null ? (
+                            <AutomationPluralEditorScreen
+                                variant="embedded"
+                                value={editorDraft}
+                                onChange={setEditorDraft}
+                                sessionOptions={sessionOptions}
+                                resolveCurrentSessionTurn={(sessionId) => {
+                                    const exact = readExactActiveParentTurn(storage.getState().sessions[sessionId]);
+                                    return exact ? { sourceSessionId: exact.sourceSessionId, sourceTurnId: exact.sourceTurnId } : null;
+                                }}
+                                onSessionSelectionStale={() => { void sync.refreshSessions(); }}
+                                renderPluginEventEditor={(editorProps) => (
+                                    <PluginEventAutomationEditor
+                                        key={editorProps.clientId}
+                                        automationId={editorDraft.pendingAutomationId!}
+                                        clientId={editorProps.clientId}
+                                        value={editorProps.value}
+                                        seed={null}
+                                        authoringMachineId={machineId}
+                                        serverId={session?.serverId ?? null}
+                                        onComplete={editorProps.onComplete}
+                                        onCancel={editorProps.onCancel}
+                                    />
+                                )}
+                                submitting={submitting}
+                            />
+                        ) : null}
                     />
                 </View>
             </ItemList>

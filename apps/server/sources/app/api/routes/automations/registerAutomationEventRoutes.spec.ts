@@ -66,6 +66,7 @@ const STORED_DEFINITION_READ_BODY = {
     v: 1,
     caller: {
         pluginId: "com.acme.github",
+        immutableGenerationId: "github-immutable-generation-a",
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
@@ -88,6 +89,7 @@ const ADMIT_BODY = {
     caller: {
         pluginId: "com.acme.github",
         contributionLocalId: "repository-event",
+        immutableGenerationId: "github-immutable-generation-a",
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
@@ -102,7 +104,8 @@ const ADMIT_BODY = {
         payload: { action: "opened" },
         definitions: [{
             automationId: "automation-1",
-            templateVersion: 3,
+            triggerId: "trigger-automation-1",
+            triggerRevision: 3,
             sourceSelectorId: "9d5af559-2c82-4c22-b6a0-ecabce38a631",
         }],
     },
@@ -334,6 +337,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                immutableGenerationId: "github-immutable-generation-a",
             },
             request: ADMIT_BODY,
         });
@@ -409,6 +413,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                immutableGenerationId: "github-immutable-generation-a",
             },
             input: STORED_DEFINITION_READ_BODY.input,
         });

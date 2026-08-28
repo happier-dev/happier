@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-    AutomationRunExecutionInputV1Schema,
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
 import {
@@ -22,6 +22,9 @@ const EVENT_OCCURRED_AT = new Date("2026-08-09T12:00:00.000Z");
 const CONVERSATION_OCCURRED_AT = new Date("2026-08-08T12:00:00.000Z");
 const MANUAL_CREATED_AT = new Date("2026-08-07T12:00:00.000Z");
 const SCHEDULE_DUE_AT = new Date("2026-08-06T12:00:00.000Z");
+const EVENT_OCCURRENCE_KEY = "uOH4C9cK4HhMeFWkUXMbdF_dtndJ0j9je-kIK3XpV1s";
+const SCHEDULE_OCCURRENCE_KEY = "X3IAXoHE7L1ao1iOgOPa8N8GjODPVjiURQigFl_qYJo";
+const CONVERSATION_OCCURRENCE_KEY = "izTbwsBetNfiXUjv6s6CRWsWzudgvK6AwVf1KjwueHs";
 const ACCOUNT_CURRENTNESS = {
     mode: "plain" as const,
     version: 7,
@@ -40,13 +43,15 @@ function frozenV2ExecutionInput(origin: Readonly<
     | { kind: "scheduled"; scheduledFor: number }
     | { kind: "manual"; invokedAt: number }
 >): string {
-    return JSON.stringify(AutomationRunExecutionInputV1Schema.parse({
+    // This is the exact released V2 carrier. It intentionally does not pass
+    // through the current cause-only V3 schema.
+    return JSON.stringify({
         kind: "happier_automation_run_execution_input_v1",
         targetType: "new_session",
         templateVersion: 2,
         templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
         origin,
-    }));
+    });
 }
 
 function strictEventExecutionRecipe(): string {
@@ -81,6 +86,7 @@ function strictEventExecutionRecipe(): string {
                 },
             },
         },
+        assignmentMachineIds: ["machine-1"],
     });
     if (serialized.kind !== "available") {
         throw new Error("Strict Event Run fixture must serialize");
@@ -95,31 +101,44 @@ function scheduleAutomation() {
         name: "Daily summary",
         description: null,
         enabled: true,
-        triggerKind: "schedule" as const,
-        scheduleKind: "interval" as const,
-        scheduleExpr: null,
-        everyMs: 60_000,
-        timezone: null,
         targetType: "new_session" as const,
         templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
         templateVersion: 2,
-        triggerEventPluginId: null,
-        triggerEventLocalId: null,
-        triggerSourceSelectorId: null,
-        triggerSourceContractVersion: null,
-        triggerObservationTransport: null,
-        triggerWebhookEndpointId: null,
-        triggerObservationStartsAt: null,
-        watcherMachineId: null,
-        watcherMachineInstallationId: null,
-        watcherPluginId: null,
-        watcherMaterializationId: null,
-        triggerDefinitionEnvelope: null,
-        nextRunAt: DATE,
         lastRunAt: null,
         createdAt: DATE,
         updatedAt: DATE,
         assignments: [{ machineId: "machine-1", enabled: true, priority: 0, updatedAt: DATE }],
+        triggers: [{
+            id: "trigger-schedule",
+            automationId: "automation-schedule",
+            kind: "schedule" as const,
+            enabled: true,
+            revision: 1,
+            deletedAt: null,
+            scheduleKind: "interval" as const,
+            scheduleExpr: null,
+            everyMs: 60_000,
+            timezone: null,
+            nextRunAt: DATE,
+            eventPluginId: null,
+            eventLocalId: null,
+            sourceSelectorId: null,
+            sourceContractVersion: null,
+            observationTransport: null,
+            webhookEndpointId: null,
+            observationStartsAt: null,
+            watcherMachineId: null,
+            watcherMachineInstallationId: null,
+            watcherPluginId: null,
+            watcherMaterializationId: null,
+            definitionEnvelope: null,
+            sessionLifecycleEvent: null,
+            sourceSessionId: null,
+            sourceTurnId: null,
+            createdAt: DATE,
+            updatedAt: DATE,
+            eventSourceStatus: null,
+        }],
     };
 }
 
@@ -127,25 +146,28 @@ function eventAutomation() {
     return {
         ...scheduleAutomation(),
         id: "automation-event",
-        triggerKind: "pluginEvent" as const,
-        scheduleKind: null,
-        scheduleExpr: null,
-        everyMs: null,
-        timezone: null,
-        triggerEventPluginId: "com.example.github",
-        triggerEventLocalId: "issue-opened",
-        triggerSourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
-        triggerSourceContractVersion: 2,
-        triggerObservationTransport: "durablePush" as const,
-        triggerWebhookEndpointId: "endpoint-1",
-        triggerObservationStartsAt: DATE,
-        triggerDefinitionEnvelope: JSON.stringify(
-            sealAutomationTriggerDefinitionStoredEnvelopeV1({
+        triggers: [{
+            ...scheduleAutomation().triggers[0],
+            id: "trigger-event",
+            automationId: "automation-event",
+            kind: "pluginEvent" as const,
+            scheduleKind: null,
+            everyMs: null,
+            nextRunAt: null,
+            eventPluginId: "com.example.github",
+            eventLocalId: "issue-opened",
+            sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+            sourceContractVersion: 2,
+            observationTransport: "durablePush" as const,
+            webhookEndpointId: "endpoint-1",
+            observationStartsAt: DATE,
+            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
                 mode: "plain",
                 binding: {
                     v: 1,
                     automationId: "automation-event",
-                    templateVersion: 2,
+                    triggerId: "trigger-event",
+                    triggerRevision: 1,
                     triggerKind: "pluginEvent",
                     eventRef: {
                         pluginId: "com.example.github",
@@ -161,19 +183,24 @@ function eventAutomation() {
                     filter: null,
                     maximumObservationAgeMs: null,
                 },
-            }),
-        ),
-        nextRunAt: null,
+            })),
+        }],
     };
 }
 
 function eventStatusProjection() {
     return {
+        durablePushEndpointMaterializationRef: {
+            machineId: "observation-machine-1",
+            materializationId: "observation-materialization-1",
+            pluginId: "com.example.github",
+        },
         sourceStatus: {
             automationId: "automation-event",
+            triggerId: "trigger-event",
+            triggerRevision: 1,
             eventRef: { pluginId: "com.example.github", localId: "issue-opened" },
             sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
-            templateVersion: 2,
             reporterMaterializationRef: {
                 machineId: "machine-1",
                 materializationId: "materialization-1",
@@ -206,11 +233,22 @@ function eventRun() {
         automationId: "automation-event",
         accountId: "account-1",
         state: "queued" as const,
-        originKind: "pluginEvent" as const,
-        originOccurredAt: EVENT_OCCURRED_AT,
-        occurrenceKey: "occurrence-1",
+        triggerId: "trigger-event",
+        triggerRetired: false,
+        causeKind: "trigger" as const,
+        causeTriggerKind: "pluginEvent" as const,
+        causeTriggerRevision: 1,
+        causeOccurredAt: EVENT_OCCURRED_AT,
+        causeEventPluginId: "com.example.github",
+        causeEventLocalId: "issue-opened",
+        causeScheduledFor: null,
+        causeSessionLifecycleEvent: null,
+        causeSourceSessionId: null,
+        causeSourceTurnId: null,
+        occurrenceKey: EVENT_OCCURRENCE_KEY,
+        legacyManualIdempotencyKey: null,
         occurrenceEvidenceEqualityTag: null,
-        originSourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+        causeSourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
         triggerEvidenceEnvelope: "{\"t\":\"plain\",\"v\":{\"payload\":\"private\"}}",
         executionInputEnvelope: "{\"t\":\"plain\",\"v\":{\"input\":\"private\"}}",
         executionDispatchState: null,
@@ -256,7 +294,6 @@ function eventRun() {
         summaryCiphertext: null,
         errorCode: "source_waiting",
         errorMessage: "private provider detail",
-        contentRemovedAt: null,
         producedSessionId: null,
         createdAt: DATE,
         updatedAt: DATE,
@@ -267,10 +304,16 @@ function manualRun() {
     return {
         ...eventRun(),
         id: "run-manual",
-        originKind: "manual" as const,
-        originOccurredAt: null,
+        triggerId: null,
+        causeKind: "manual" as const,
+        causeTriggerKind: null,
+        causeTriggerRevision: null,
+        causeOccurredAt: MANUAL_CREATED_AT,
+        causeEventPluginId: null,
+        causeEventLocalId: null,
         occurrenceKey: null,
-        originSourceSelectorId: null,
+        legacyManualIdempotencyKey: null,
+        causeSourceSelectorId: null,
         triggerEvidenceEnvelope: null,
         executionInputEnvelope: frozenV2ExecutionInput({
             kind: "manual",
@@ -285,7 +328,13 @@ function scheduledRun() {
     return {
         ...manualRun(),
         id: "run-scheduled",
-        originKind: "scheduled" as const,
+        triggerId: "trigger-schedule",
+        causeKind: "trigger" as const,
+        causeTriggerKind: "schedule" as const,
+        causeTriggerRevision: 1,
+        causeOccurredAt: SCHEDULE_DUE_AT,
+        causeScheduledFor: SCHEDULE_DUE_AT,
+        occurrenceKey: SCHEDULE_OCCURRENCE_KEY,
         dueAt: SCHEDULE_DUE_AT,
         executionInputEnvelope: frozenV2ExecutionInput({
             kind: "scheduled",
@@ -298,9 +347,15 @@ function conversationRun() {
     return {
         ...eventRun(),
         id: "run-conversation",
-        originKind: "conversation" as const,
-        originOccurredAt: CONVERSATION_OCCURRED_AT,
-        originSourceSelectorId: null,
+        triggerId: null,
+        causeKind: "conversation" as const,
+        causeTriggerKind: null,
+        causeTriggerRevision: null,
+        causeOccurredAt: CONVERSATION_OCCURRED_AT,
+        causeEventPluginId: null,
+        causeEventLocalId: null,
+        occurrenceKey: CONVERSATION_OCCURRENCE_KEY,
+        causeSourceSelectorId: null,
     };
 }
 
@@ -349,6 +404,14 @@ describe("Automation API projections", () => {
         expect(isAutomationDefinitionRepresentableInV2(event)).toBe(false);
         expect(isAutomationDefinitionRepresentableInV2({
             ...schedule,
+            triggers: [],
+        })).toBe(false);
+        expect(isAutomationDefinitionRepresentableInV2({
+            ...schedule,
+            triggers: [schedule.triggers[0], { ...schedule.triggers[0], id: "trigger-schedule-2" }],
+        })).toBe(false);
+        expect(isAutomationDefinitionRepresentableInV2({
+            ...schedule,
             templateCiphertext: "not a retained V2 template envelope",
         })).toBe(false);
         const v2 = toAutomationV2ApiDto(schedule);
@@ -366,50 +429,70 @@ describe("Automation API projections", () => {
         expect(toAutomationDefinitionDetailApiDto(
             event,
             ACCOUNT_CURRENTNESS,
-            eventStatusProjection(),
+            new Map([["trigger-event", eventStatusProjection()]]),
+            new Map(),
+            [{
+                id: "trigger-retired",
+                kind: "sessionLifecycle",
+                revision: 7,
+                retiredAt: DATE,
+            }],
         )).toEqual(expect.objectContaining({
             id: "automation-event",
-            trigger: {
+            retiredTriggers: [{
+                id: "trigger-retired",
+                kind: "sessionLifecycle",
+                revision: 7,
+                retiredAt: DATE.getTime(),
+            }],
+            triggers: [expect.objectContaining({
+                id: "trigger-event",
                 kind: "pluginEvent",
-                eventRef: {
-                    pluginId: "com.example.github",
-                    localId: "issue-opened",
-                },
+                eventRef: { pluginId: "com.example.github", localId: "issue-opened" },
                 sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
-                sourceContractVersion: 2,
+                triggerDefinitionEnvelope: event.triggers[0].definitionEnvelope,
                 observation: {
                     kind: "durablePush",
                     webhookEndpointId: "endpoint-1",
+                    endpointMaterializationRef: {
+                        machineId: "observation-machine-1",
+                        materializationId: "observation-materialization-1",
+                        pluginId: "com.example.github",
+                    },
                     observationStartsAt: DATE.getTime(),
                 },
-            },
-            triggerDefinitionEnvelope: event.triggerDefinitionEnvelope,
-            sourceStatus: expect.objectContaining({
-                state: "attention",
-                code: "historyGap",
-                revision: 7,
-                reporterMaterializationRef: {
-                    machineId: "machine-1",
-                    materializationId: "materialization-1",
-                    pluginId: "com.example.github",
+                sourceStatus: expect.objectContaining({
+                    state: "attention",
+                    code: "historyGap",
+                    revision: 7,
+                    reporterMaterializationRef: {
+                        machineId: "machine-1",
+                        materializationId: "materialization-1",
+                        pluginId: "com.example.github",
+                    },
+                    reporterImmutableGenerationId: "github-immutable-generation-a",
+                }),
+                sourceCatalogStatus: {
+                    observedRevision: "9",
+                    adoptedRevision: "7",
+                    state: "reconciliationLate",
+                    scanStartedAt: DATE.getTime(),
+                    nextRetryAt: DATE.getTime() + 60_000,
                 },
-                reporterImmutableGenerationId: "github-immutable-generation-a",
-            }),
-            sourceCatalogStatus: {
-                observedRevision: "9",
-                adoptedRevision: "7",
-                state: "reconciliationLate",
-                scanStartedAt: DATE.getTime(),
-                nextRetryAt: DATE.getTime() + 60_000,
-            },
+            })],
         }));
         expect(toAutomationDefinitionDetailApiDto(event, ACCOUNT_CURRENTNESS)).not.toHaveProperty("schedule");
-        const listItem = toAutomationDefinitionListItemApiDto(event, eventStatusProjection());
+        const listItem = toAutomationDefinitionListItemApiDto(
+            event,
+            new Map([["trigger-event", eventStatusProjection()]]),
+        );
         expect(listItem).toMatchObject({
-            sourceStatus: { state: "attention", code: "historyGap", revision: 7 },
-            sourceCatalogStatus: { observedRevision: "9", adoptedRevision: "7" },
+            triggers: [{
+                sourceStatus: { state: "attention", code: "historyGap", revision: 7 },
+                sourceCatalogStatus: { observedRevision: "9", adoptedRevision: "7" },
+            }],
         });
-        expect(listItem).not.toHaveProperty("triggerDefinitionEnvelope");
+        expect(listItem.triggers[0]).not.toHaveProperty("triggerDefinitionEnvelope");
         expect(listItem).not.toHaveProperty("templateCiphertext");
     });
 
@@ -460,11 +543,21 @@ describe("Automation API projections", () => {
         expect(v2Legacy.summaryCiphertext).toBe(" exact predecessor bytes ");
         expect(toAutomationRunV3ListApiDto(run)).toEqual(expect.objectContaining({
             id: "run-event",
-            origin: {
-                kind: "pluginEvent",
-                occurrenceKey: "occurrence-1",
-                sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+            revision: 0,
+            cause: {
+                kind: "trigger",
+                triggerId: "trigger-event",
+                triggerRevision: 1,
+                triggerKind: "pluginEvent",
+                occurrenceKey: EVENT_OCCURRENCE_KEY,
                 occurredAt: EVENT_OCCURRED_AT.getTime(),
+                evidence: {
+                    eventRef: {
+                        pluginId: "com.example.github",
+                        localId: "issue-opened",
+                    },
+                    sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+                },
             },
             errorCode: "source_waiting",
         }));
@@ -483,7 +576,7 @@ describe("Automation API projections", () => {
     });
 
     it("publishes the existing-Session association on the bounded list and withholds it for a retained template", () => {
-        const serialized = serializeAutomationRunExecutionRecipeV1({
+        const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
             v: 1,
             templateVersion: 2,
             template: { t: "plain", v: { v: 1, prompt: "Summarize this session." } },
@@ -525,9 +618,71 @@ describe("Automation API projections", () => {
         const event = eventAutomation();
 
         expect(toAutomationDefinitionListItemApiDto(event)).toMatchObject({
-            sourceStatus: null,
-            sourceCatalogStatus: null,
+            triggers: [{ sourceStatus: null, sourceCatalogStatus: null }],
         });
+    });
+
+    it("projects Event source status only onto the trigger identity that owns it", () => {
+        const event = eventAutomation();
+        const secondTrigger = {
+            ...event.triggers[0],
+            id: "trigger-event-2",
+            eventLocalId: "pull-request-opened",
+        };
+        const list = toAutomationDefinitionListItemApiDto(
+            { ...event, triggers: [event.triggers[0], secondTrigger] },
+            new Map([["trigger-event", eventStatusProjection()]]),
+        );
+
+        expect(list.triggers).toEqual([
+            expect.objectContaining({
+                id: "trigger-event",
+                sourceStatus: expect.objectContaining({
+                    triggerId: "trigger-event",
+                    triggerRevision: 1,
+                }),
+            }),
+            expect.objectContaining({
+                id: "trigger-event-2",
+                sourceStatus: null,
+                sourceCatalogStatus: null,
+            }),
+        ]);
+    });
+
+    it("projects Session lifecycle status by trigger identity", () => {
+        const schedule = scheduleAutomation();
+        const lifecycleTrigger = {
+            ...schedule.triggers[0],
+            id: "trigger-lifecycle",
+            automationId: "automation-lifecycle",
+            kind: "sessionLifecycle" as const,
+            scheduleKind: null,
+            everyMs: null,
+            nextRunAt: null,
+            sessionLifecycleEvent: "parentTurnCompleted" as const,
+            sourceSessionId: "session-source",
+            sourceTurnId: "turn-source",
+        };
+        const automation = {
+            ...schedule,
+            id: "automation-lifecycle",
+            triggers: [lifecycleTrigger],
+        };
+
+        expect(toAutomationDefinitionListItemApiDto(
+            automation,
+            new Map(),
+            new Map([["trigger-lifecycle", { state: "waiting" as const, runId: null }]]),
+        ).triggers).toEqual([
+            expect.objectContaining({
+                id: "trigger-lifecycle",
+                kind: "sessionLifecycle",
+                status: { state: "waiting", runId: null },
+            }),
+        ]);
+        expect(() => toAutomationDefinitionListItemApiDto(automation))
+            .toThrow("Automation row has no sessionLifecycle status for its declared arm");
     });
 
     it("keeps a strict Event Run invisible to V2 while exposing its frozen recipe to V3 detail", () => {
@@ -543,26 +698,6 @@ describe("Automation API projections", () => {
         }));
         expect(() => toAutomationRunV3DetailApiDto(run, "e2ee"))
             .toThrow("Automation stored content mode does not match the Account");
-    });
-
-    it("redacts compacted private Run content without re-parsing retained internal evidence", () => {
-        const contentRemovedAt = new Date("2026-08-11T12:00:00.000Z");
-        const run = {
-            ...eventRun(),
-            state: "failed" as const,
-            finishedAt: DATE,
-            contentRemovedAt,
-        };
-
-        expect(toAutomationRunV3ListApiDto(run).contentRemovedAt)
-            .toBe(contentRemovedAt.getTime());
-        expect(toAutomationRunV3DetailApiDto(run, "plain")).toEqual(expect.objectContaining({
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-            errorDetailEnvelope: null,
-        }));
     });
 
     it("exposes the native execution identity and ordered transition history an uncertain Run needs", () => {
@@ -664,35 +799,79 @@ describe("Automation API projections", () => {
         });
     });
 
-    it("projects every Run origin from its immutable timestamp without changing V2 scheduledAt", () => {
+    it("projects every Run cause from immutable bytes without changing V2 scheduledAt", () => {
         const manual = {
             ...manualRun(),
             createdAt: MANUAL_CREATED_AT,
         };
 
-        expect(toAutomationRunV3ListApiDto(scheduledRun()).origin).toEqual({
-            kind: "scheduled",
-            scheduledFor: SCHEDULE_DUE_AT.getTime(),
+        expect(toAutomationRunV3ListApiDto(scheduledRun()).cause).toEqual({
+            kind: "trigger",
+            triggerId: "trigger-schedule",
+            triggerRevision: 1,
+            triggerKind: "schedule",
+            occurrenceKey: SCHEDULE_OCCURRENCE_KEY,
+            occurredAt: SCHEDULE_DUE_AT.getTime(),
+            evidence: { scheduledFor: SCHEDULE_DUE_AT.getTime() },
         });
-        expect(toAutomationRunV3ListApiDto(manual).origin).toEqual({
+        expect(toAutomationRunV3ListApiDto(manual).cause).toEqual({
             kind: "manual",
             invokedAt: MANUAL_CREATED_AT.getTime(),
         });
-        expect(toAutomationRunV3ListApiDto(eventRun()).origin).toEqual(expect.objectContaining({
-            kind: "pluginEvent",
+        expect(toAutomationRunV3ListApiDto(eventRun()).cause).toEqual({
+            kind: "trigger",
+            triggerId: "trigger-event",
+            triggerRevision: 1,
+            triggerKind: "pluginEvent",
+            occurrenceKey: EVENT_OCCURRENCE_KEY,
             occurredAt: EVENT_OCCURRED_AT.getTime(),
-        }));
-        expect(toAutomationRunV3ListApiDto(conversationRun()).origin).toEqual(expect.objectContaining({
+            evidence: {
+                eventRef: {
+                    pluginId: "com.example.github",
+                    localId: "issue-opened",
+                },
+                sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+            },
+        });
+        expect(toAutomationRunV3ListApiDto(conversationRun()).cause).toEqual({
             kind: "conversation",
+            occurrenceKey: CONVERSATION_OCCURRENCE_KEY,
             occurredAt: CONVERSATION_OCCURRED_AT.getTime(),
-        }));
+        });
         expect(toAutomationRunV2ApiDto(manual).scheduledAt).toBe(DATE.getTime());
+    });
+
+    it("keeps an immutable trigger cause renderable after the trigger is retired", () => {
+        const historical = toAutomationRunV3ListApiDto({
+            ...eventRun(),
+            triggerRetired: true,
+        });
+
+        expect(historical).toMatchObject({
+            triggerId: "trigger-event",
+            triggerRetired: true,
+            cause: {
+                kind: "trigger",
+                triggerId: "trigger-event",
+                triggerRevision: 1,
+                triggerKind: "pluginEvent",
+                occurrenceKey: EVENT_OCCURRENCE_KEY,
+                occurredAt: EVENT_OCCURRED_AT.getTime(),
+                evidence: {
+                    eventRef: {
+                        pluginId: "com.example.github",
+                        localId: "issue-opened",
+                    },
+                    sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
+                },
+            },
+        });
     });
 
     it("fails closed rather than returning a private V3 envelope under the wrong Account mode", () => {
         expect(() => toAutomationRunV3DetailApiDto({
             ...manualRun(),
-            executionInputEnvelope: JSON.stringify(AutomationRunExecutionInputV1Schema.parse({
+            executionInputEnvelope: JSON.stringify({
                 kind: "happier_automation_run_execution_input_v1",
                 targetType: "new_session",
                 templateVersion: 2,
@@ -701,7 +880,7 @@ describe("Automation API projections", () => {
                     payloadCiphertext: "ciphertext",
                 }),
                 origin: { kind: "manual", invokedAt: MANUAL_CREATED_AT.getTime() },
-            })),
+            }),
         }, "plain")).toThrow("Automation stored content mode does not match the Account");
     });
 

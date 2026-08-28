@@ -178,7 +178,7 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
 }
 
 function sourceTargetMatchesCaller(
-    automation: Readonly<{
+    trigger: Readonly<{
         watcherMachineId: string | null;
         watcherMachineInstallationId: string | null;
         watcherPluginId: string | null;
@@ -186,10 +186,10 @@ function sourceTargetMatchesCaller(
     }>,
     caller: AutomationEventSourceStatusCallerV1,
 ): boolean {
-    return automation.watcherMachineId === caller.machineId
-        && automation.watcherMachineInstallationId === caller.machineInstallationId
-        && automation.watcherPluginId === caller.pluginId
-        && automation.watcherMaterializationId === caller.materializationId;
+    return trigger.watcherMachineId === caller.machineId
+        && trigger.watcherMachineInstallationId === caller.machineInstallationId
+        && trigger.watcherPluginId === caller.pluginId
+        && trigger.watcherMaterializationId === caller.materializationId;
 }
 
 async function reportSourceStatus(params: Readonly<{
@@ -199,19 +199,24 @@ async function reportSourceStatus(params: Readonly<{
     callerVersion: string;
     input: Extract<AutomationEventSourceStatusReportV1, { kind: "source" }>;
 }>): Promise<void> {
-    const automation = await params.tx.automation.findFirst({
-        where: { id: params.input.automationId, accountId: params.accountId },
+    const trigger = await params.tx.automationTrigger.findFirst({
+        where: {
+            id: params.input.triggerId,
+            automationId: params.input.automationId,
+            automation: { accountId: params.accountId },
+        },
         select: {
+            automation: { select: { enabled: true, deletedAt: true } },
             enabled: true,
             deletedAt: true,
-            templateVersion: true,
-            triggerKind: true,
-            triggerEventPluginId: true,
-            triggerEventLocalId: true,
-            triggerSourceSelectorId: true,
-            triggerSourceContractVersion: true,
-            triggerObservationTransport: true,
-            triggerWebhookEndpointId: true,
+            revision: true,
+            kind: true,
+            eventPluginId: true,
+            eventLocalId: true,
+            sourceSelectorId: true,
+            sourceContractVersion: true,
+            observationTransport: true,
+            webhookEndpointId: true,
             watcherMachineId: true,
             watcherMachineInstallationId: true,
             watcherPluginId: true,
@@ -219,15 +224,17 @@ async function reportSourceStatus(params: Readonly<{
         },
     });
     if (
-        !automation
-        || !automation.enabled
-        || automation.deletedAt
-        || automation.triggerKind !== "pluginEvent"
-        || automation.templateVersion !== params.input.templateVersion
-        || automation.triggerEventPluginId !== params.input.eventRef.pluginId
-        || automation.triggerEventLocalId !== params.input.eventRef.localId
-        || automation.triggerSourceSelectorId !== params.input.sourceSelectorId
-        || automation.triggerSourceContractVersion === null
+        !trigger
+        || !trigger.automation.enabled
+        || trigger.automation.deletedAt
+        || !trigger.enabled
+        || trigger.deletedAt
+        || trigger.kind !== "pluginEvent"
+        || trigger.revision !== params.input.triggerRevision
+        || trigger.eventPluginId !== params.input.eventRef.pluginId
+        || trigger.eventLocalId !== params.input.eventRef.localId
+        || trigger.sourceSelectorId !== params.input.sourceSelectorId
+        || trigger.sourceContractVersion === null
         || params.input.eventRef.pluginId !== params.caller.pluginId
     ) fail("definition_not_current");
 
@@ -237,18 +244,18 @@ async function reportSourceStatus(params: Readonly<{
         pluginId: params.caller.pluginId,
         version: params.callerVersion,
         eventLocalId: params.input.eventRef.localId,
-        sourceContractVersion: automation.triggerSourceContractVersion,
+        sourceContractVersion: trigger.sourceContractVersion,
     });
 
-    if (automation.triggerObservationTransport === "durablePush") {
-        if (automation.triggerWebhookEndpointId === null) fail("definition_not_current");
+    if (trigger.observationTransport === "durablePush") {
+        if (trigger.webhookEndpointId === null) fail("definition_not_current");
         if (!eventContribution.durablePushWebhookContribution) {
             fail("event_contribution_not_current");
         }
         const endpoint = await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
             tx: params.tx,
             accountId: params.accountId,
-            webhookEndpointId: automation.triggerWebhookEndpointId,
+            webhookEndpointId: trigger.webhookEndpointId,
             caller: params.caller,
             callerVersion: params.callerVersion,
         });
@@ -264,46 +271,57 @@ async function reportSourceStatus(params: Readonly<{
             fail("event_contribution_not_current");
         }
         if (
-            automation.triggerObservationTransport !== "checkpointedPull"
-            || !sourceTargetMatchesCaller(automation, params.caller)
+            trigger.observationTransport !== "checkpointedPull"
+            || !sourceTargetMatchesCaller(trigger, params.caller)
         ) fail("observation_target_changed");
     }
 
-    const key = {
-        automationId: params.input.automationId,
-        eventPluginId: params.input.eventRef.pluginId,
-        eventLocalId: params.input.eventRef.localId,
-        sourceSelectorId: params.input.sourceSelectorId,
-    };
+    const key = { triggerId: params.input.triggerId };
     const existing = await params.tx.automationEventSourceStatus.findUnique({
-        where: { automationId_eventPluginId_eventLocalId_sourceSelectorId: key },
+        where: key,
         select: {
+            triggerRevision: true,
             observedCount: true,
             admittedCount: true,
             skippedCount: true,
             revision: true,
         },
     });
+    const currentRevisionStatus = existing?.triggerRevision === params.input.triggerRevision
+        ? existing
+        : null;
     const values = {
-        templateVersion: params.input.templateVersion,
+        eventPluginId: params.input.eventRef.pluginId,
+        eventLocalId: params.input.eventRef.localId,
+        sourceSelectorId: params.input.sourceSelectorId,
+        triggerRevision: params.input.triggerRevision,
         reporterMachineId: params.caller.machineId,
         reporterMachineInstallationId: params.caller.machineInstallationId,
         reporterMaterializationId: params.caller.materializationId,
         // The materialization release still owns manifest currentness. Recovery
         // provenance instead records the exact host-stamped contributor bytes.
-        reporterImmutableGenerationId: params.caller.immutableGenerationId ?? null,
+        reporterImmutableGenerationId: params.caller.immutableGenerationId,
         state: params.input.state,
         code: params.input.code === "none" ? null : params.input.code,
         lastObservedAt: toNullableDate(params.input.lastObservedAt),
         lastDispositionAt: toNullableDate(params.input.lastDispositionAt),
         nextRetryAt: toNullableDate(params.input.nextRetryAt),
-        observedCount: addBoundedCounter(existing?.observedCount ?? 0, params.input.observedDelta),
-        admittedCount: addBoundedCounter(existing?.admittedCount ?? 0, params.input.admittedDelta),
-        skippedCount: addBoundedCounter(existing?.skippedCount ?? 0, params.input.skippedDelta),
+        observedCount: addBoundedCounter(
+            currentRevisionStatus?.observedCount ?? 0,
+            params.input.observedDelta,
+        ),
+        admittedCount: addBoundedCounter(
+            currentRevisionStatus?.admittedCount ?? 0,
+            params.input.admittedDelta,
+        ),
+        skippedCount: addBoundedCounter(
+            currentRevisionStatus?.skippedCount ?? 0,
+            params.input.skippedDelta,
+        ),
         revision: addBoundedCounter(existing?.revision ?? 0, 1),
     };
     await params.tx.automationEventSourceStatus.upsert({
-        where: { automationId_eventPluginId_eventLocalId_sourceSelectorId: key },
+        where: key,
         create: { ...key, ...values },
         update: values,
     });
@@ -372,6 +390,10 @@ async function reportCatalogStatus(params: Readonly<{
     const values = {
         reporterMachineId: params.caller.machineId,
         reporterMachineInstallationId: params.caller.machineInstallationId,
+        // Runtime currentness stays with the exact-generation CLI owner. The
+        // server persists the generation that authored this report as bounded
+        // immutable provenance beside the materialization facts it can verify.
+        reporterImmutableGenerationId: params.caller.immutableGenerationId,
         observedRevision,
         adoptedRevision,
         state: params.input.state,
