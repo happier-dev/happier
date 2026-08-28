@@ -14,6 +14,8 @@ const correspondence = {
     runId: "run-1",
     handoffId: "handoff-1",
 } as const;
+const occurrenceKey = "A".repeat(43);
+const occurredAt = 1_786_294_800_000;
 
 /** A synthetic out-of-tree bridge, so no first-party id is load-bearing here. */
 const thirdPartyDeliveryActionRef = {
@@ -35,6 +37,12 @@ const request = {
         handoffId: correspondence.handoffId,
         runId: correspondence.runId,
         automationId: correspondence.automationId,
+        occurrenceKey,
+        cause: {
+            kind: "conversation",
+            occurrenceKey,
+            occurredAt,
+        },
         accountCurrentness: { mode: "plain", version: 7, contentKeyFingerprint: null },
         resultEnvelope: {
             t: "plain",
@@ -48,14 +56,9 @@ const request = {
             t: "plain",
             v: {
                 v: 1,
-                correspondence,
-                source: {
-                    kind: "automationResult",
-                    automationRunId: correspondence.runId,
-                    resultId: correspondence.handoffId,
+                correspondence: {
                     automationId: correspondence.automationId,
-                    templateVersion: 1,
-                    resultDelivery: "finalResult",
+                    occurrenceKey,
                 },
                 opaqueContext: { conversationId: "conversation-1", messageId: "message-1" },
             },

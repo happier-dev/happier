@@ -394,16 +394,28 @@ function annotateMySqlEventAutomationFields(schemaBody: string): string {
                 ),
         )
         .replace(
-            /^model\s+AutomationEventSourceCatalogStatus\s+\{[\s\S]*?^\}\s*$/gm,
+            /^model\s+AutomationWorkerClaimReceipt\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model.replace(
-                /^(\s*reporterMaterializationId\s+String)(?![^\n]*@db\.)/m,
-                "$1 @db.VarChar(256)",
+                /^(\s*id\s+String\s+@id)(?![^\n]*@db\.)/m,
+                "$1 @db.VarChar(64)",
             ),
+        )
+        .replace(
+            /^model\s+AutomationEventSourceCatalogStatus\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(
+                    /^(\s*reporterMaterializationId\s+String)(?![^\n]*@db\.)/m,
+                    "$1 @db.VarChar(256)",
+                )
+                .replace(
+                    /^(\s*reporterImmutableGenerationId\s+String)(?![^\n]*@db\.)/m,
+                    "$1 @db.VarChar(256)",
+                ),
         )
         .replace(
             /^model\s+AutomationEventSourceStatus\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model.replace(
-                /^(\s*reporterImmutableGenerationId\s+String\?)(?![^\n]*@db\.)/m,
+                /^(\s*reporterImmutableGenerationId\s+String)(?![^\n]*@db\.)/m,
                 "$1 @db.VarChar(256)",
             ),
         );

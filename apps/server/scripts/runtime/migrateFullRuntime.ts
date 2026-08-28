@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { openPgliteMigrationSession } from '../pgliteMigrationSession';
 
 import {
     hasSessionSystemRecordContractMigration,
@@ -22,12 +23,21 @@ interface FullRuntimeMigrationOptions {
     executablePath: string;
     env: NodeJS.ProcessEnv;
     processBoundary?: FullRuntimeMigrationProcessBoundary;
+    pgliteBoundary?: FullRuntimePgliteBoundary;
 }
 
-function normalizeProvider(env: NodeJS.ProcessEnv): 'postgres' | 'mysql' {
+export interface FullRuntimePgliteBoundary {
+    open(env: NodeJS.ProcessEnv): Promise<Readonly<{
+        databaseUrl: string;
+        close(): Promise<void>;
+    }>>;
+}
+
+function normalizeProvider(env: NodeJS.ProcessEnv): 'postgres' | 'mysql' | 'pglite' {
     const rawProvider = String(env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').trim().toLowerCase();
     if (rawProvider === 'postgres' || rawProvider === 'postgresql') return 'postgres';
     if (rawProvider === 'mysql') return 'mysql';
+    if (rawProvider === 'pglite') return 'pglite';
     throw new Error(`[happier-server-migrate] unsupported database provider: ${rawProvider || '<empty>'}`);
 }
 
@@ -55,6 +65,10 @@ const defaultProcessBoundary: FullRuntimeMigrationProcessBoundary = {
     },
 };
 
+const defaultPgliteBoundary: FullRuntimePgliteBoundary = {
+    open: async (env) => await openPgliteMigrationSession(env, { purpose: 'runtime:migrate' }),
+};
+
 class PackagedPrismaMigrationFailure extends Error {
     readonly exitCode: number;
 
@@ -68,10 +82,13 @@ export async function runFullRuntimeMigration({
     executablePath,
     env,
     processBoundary = defaultProcessBoundary,
+    pgliteBoundary = defaultPgliteBoundary,
 }: FullRuntimeMigrationOptions): Promise<number> {
     const provider = normalizeProvider(env);
-    const databaseUrl = String(env.DATABASE_URL ?? '').trim();
-    if (!databaseUrl) throw new Error('[happier-server-migrate] DATABASE_URL is required');
+    const configuredDatabaseUrl = String(env.DATABASE_URL ?? '').trim();
+    if (provider !== 'pglite' && !configuredDatabaseUrl) {
+        throw new Error('[happier-server-migrate] DATABASE_URL is required');
+    }
 
     const artifactRoot = dirname(resolve(executablePath));
     const isWindowsArtifact = executablePath.toLowerCase().endsWith('.exe');
@@ -102,6 +119,8 @@ export async function runFullRuntimeMigration({
         requirePath(queryEnginePath, 'file'),
     ]);
 
+    const pgliteSession = provider === 'pglite' ? await pgliteBoundary.open(env) : null;
+    const databaseUrl = pgliteSession?.databaseUrl ?? configuredDatabaseUrl;
     const deploy = async (stageSchemaPath: string): Promise<void> => {
         const completion = processBoundary.spawn(runnerPath, ['migrate', 'deploy', '--schema', stageSchemaPath], {
             cwd: artifactRoot,
@@ -141,6 +160,8 @@ export async function runFullRuntimeMigration({
     } catch (error) {
         if (error instanceof PackagedPrismaMigrationFailure) return error.exitCode;
         throw error;
+    } finally {
+        await pgliteSession?.close();
     }
 }
 

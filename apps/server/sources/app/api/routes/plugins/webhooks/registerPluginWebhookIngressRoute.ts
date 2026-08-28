@@ -27,7 +27,6 @@ import {
 } from "@/app/plugins/webhooks/rawBody";
 import {
     findActivePluginWebhookRouteV1,
-    resolveActivePluginWebhookEndpointV1,
     type ActivePluginWebhookEndpointV1,
     type ActivePluginWebhookRouteV1,
 } from "@/app/plugins/webhooks/routeStore";
@@ -164,16 +163,7 @@ function endpointScopesV1(
 
 async function defaultPrepareRouteV1(opaqueRouteId: string): Promise<PreparedRouteV1 | null> {
     const route = await findActivePluginWebhookRouteV1(opaqueRouteId);
-    if (!route) return null;
-    if (route.routingKind === "providerInstallation") return { route };
-    // A revoked or detached Account binding is the same non-enumerating 404 as
-    // an unknown route, decided before any body byte is read. Resolution stays
-    // with the one route/endpoint owner the verified path also consults.
-    const endpoint = await resolveActivePluginWebhookEndpointV1({
-        routeId: route.routeId,
-        routingKind: route.routingKind,
-    });
-    return endpoint ? { route } : null;
+    return route ? { route } : null;
 }
 
 function resolveDistributedAdmissionV1(

@@ -1,5 +1,6 @@
 import {
     createAccountScopedCryptoMaterialSnapshotV1,
+    AutomationRunCauseSchema,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
     sealAccountScopedBlobCiphertext,
     serializeAutomationRunExecutionRecipeV1,
@@ -25,6 +26,15 @@ const CURRENT = { target: true, runClaim: true } as const;
 const TARGET_LOST = { target: false, runClaim: true } as const;
 /** The Run was cancelled, reclaimed, retried, or lost its lease. */
 const RUN_CLAIM_LOST = { target: true, runClaim: false } as const;
+const RUN_CAUSE = AutomationRunCauseSchema.parse({
+    kind: "trigger",
+    triggerId: "trigger-1",
+    triggerRevision: 2,
+    triggerKind: "pluginEvent",
+    occurrenceKey: "A".repeat(43),
+    occurredAt: 1_767_225_600_000,
+    evidence: { sourceSelectorId: "source-selector-1" },
+});
 
 const request: SessionServerStartDispatchRequestV1 = {
     v: 1,
@@ -39,7 +49,7 @@ const request: SessionServerStartDispatchRequestV1 = {
         runId: "run-1",
         attempt: 3,
         claimedByMachineId: "machine-source",
-        origin: "event",
+        cause: RUN_CAUSE,
         accountCurrentness: {
             mode: "plain",
             version: 7,
@@ -123,6 +133,7 @@ function ingressRecipe(machineId = "machine-2"): string {
                 },
             },
         },
+        assignmentMachineIds: [machineId],
     });
     if (serialized.kind !== "available") throw new Error("expected strict ingress recipe");
     return serialized.serialized;
@@ -153,6 +164,7 @@ function e2eeIngressRecipe(machineId = 'machine-2'): string {
                 },
             },
         },
+        assignmentMachineIds: [machineId],
     });
     if (serialized.kind !== 'available') throw new Error('expected strict E2EE ingress recipe');
     return serialized.serialized;
@@ -171,7 +183,20 @@ function validIngressDerivation(overrides?: Readonly<{
         claimedByMachineId: "machine-1",
         attempt: 3,
         leaseExpiresAt: new Date("2026-01-01T00:05:00.000Z"),
-        originKind: "pluginEvent",
+        triggerId: RUN_CAUSE.triggerId,
+        causeKind: "trigger" as const,
+        causeTriggerKind: RUN_CAUSE.triggerKind,
+        causeTriggerRevision: RUN_CAUSE.triggerRevision,
+        causeOccurredAt: new Date(RUN_CAUSE.occurredAt),
+        causeEventPluginId: RUN_CAUSE.evidence.eventRef.pluginId,
+        causeEventLocalId: RUN_CAUSE.evidence.eventRef.localId,
+        causeScheduledFor: null,
+        causeSessionLifecycleEvent: null,
+        causeSourceSessionId: null,
+        causeSourceTurnId: null,
+        occurrenceKey: RUN_CAUSE.occurrenceKey,
+        causeSourceSelectorId: RUN_CAUSE.evidence.sourceSelectorId,
+        createdAt: new Date(RUN_CAUSE.occurredAt),
         executionInputEnvelope: ingressRecipe(),
         ...(overrides?.run ?? {}),
     };
@@ -671,7 +696,7 @@ describe("Session server-start Automation ingress", () => {
                 // pre-submit guard revalidates against the canonical Run.
                 attempt: 3,
                 claimedByMachineId: "machine-1",
-                origin: "event",
+                cause: RUN_CAUSE,
                 accountCurrentness: ingressCurrentness,
                 requestEnvelope: ingressRequest.requestEnvelope,
             }),

@@ -47,6 +47,7 @@ import { emitPluginWebhookDeliveryCommittedWakeV1 } from "@/app/plugins/webhooks
 import { registerLocalServiceRoutes } from "./routes/local/services/registerRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { startAutomationReplyHandoffWorker } from "@/app/automations/automationReplyHandoffWorker";
+import { startAutomationScheduleWorker } from "@/app/automations/automationScheduleWorker";
 import { registerExternalActionRoutes } from "./routes/actions/registerExternalActionRoutes";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
@@ -179,6 +180,10 @@ export async function startApi() {
     });
     onShutdown('automation-reply-handoff-worker', async () => {
         await automationReplyHandoffWorker.stop();
+    });
+    const automationScheduleWorker = startAutomationScheduleWorker();
+    onShutdown('automation-schedule-worker', async () => {
+        await automationScheduleWorker.stop();
     });
     onShutdown('api:http', async () => {
         await app.close();

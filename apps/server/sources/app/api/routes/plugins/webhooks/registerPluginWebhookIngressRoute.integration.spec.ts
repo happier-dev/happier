@@ -252,6 +252,74 @@ describe("public plugin webhook ingress route", () => {
         expect(distributedAcquire).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({ ttlMs: 8_000 }));
     });
 
+    it("shares the Account admission scope across distinct endpoints without collapsing endpoint pressure", async () => {
+        const acquiredScopes: PluginWebhookDistributedScopeV1[][] = [];
+        const releases: Array<ReturnType<typeof vi.fn>> = [];
+        const distributedAcquire = vi.fn(async (scopes: readonly PluginWebhookDistributedScopeV1[]) => {
+            acquiredScopes.push([...scopes]);
+            const release = vi.fn(async () => {});
+            releases.push(release);
+            return { ok: true as const, release };
+        });
+        const endpointFor = (opaqueRouteId: string) => ({
+            endpointId: opaqueRouteId.endsWith("one")
+                ? "wh_ep_AAECAwQFBgcICQoLDA0ODw"
+                : "wh_ep_EBESExQVFhcYGRobHB0eHw",
+            revision: 1,
+            accountId: "account-shared-budget",
+            pluginId: "acme.github",
+            webhookContributionId: "github-events",
+            handlerActionId: "handle-webhook",
+            sourceInstanceId: opaqueRouteId,
+            routingKind: "accountEndpoint" as const,
+            providerInstallationId: null,
+            targetMaterialization: { machineId: "machine-1", materializationId: "materialization-1", pluginId: "acme.github" },
+            targetMachineInstallationId: "installation-1",
+            targetPluginVersion: "1.0.0",
+        });
+        const ingest = vi.fn(async (params: {
+            opaqueRouteId: string;
+            reserveResolvedEndpoint?: (value: ReturnType<typeof endpointFor>) => Promise<Readonly<{ release(): void | Promise<void> }> | null>;
+        }) => {
+            const lease = await params.reserveResolvedEndpoint?.(endpointFor(params.opaqueRouteId));
+            await lease?.release();
+            return { kind: "accepted" as const, deliveryId: params.opaqueRouteId, duplicate: false };
+        });
+        const app = await createApp({
+            env: ENABLED_ENV,
+            ingest: ingest as never,
+            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
+            prepareRoute: vi.fn(async (opaqueRouteId) => ({
+                route: {
+                    routeId: `route-${opaqueRouteId}`,
+                    verifierKind: "github_hmac_sha256_v1" as const,
+                    routingKind: "accountEndpoint" as const,
+                    policyVersion: 1 as const,
+                },
+            })),
+            distributedAdmission: { acquire: distributedAcquire },
+        });
+
+        for (const suffix of ["one", "two"]) {
+            await expect(app.inject({
+                method: "POST",
+                url: `/v1/plugins/webhooks/opaque-${suffix}`,
+                headers: { "content-type": "application/octet-stream" },
+                payload: Buffer.from("{}"),
+            })).resolves.toMatchObject({ statusCode: 202 });
+        }
+
+        const routeScopes = acquiredScopes.filter((scopes) => scopes.length === 1);
+        const tenantScopes = acquiredScopes.filter((scopes) => scopes.length === 2);
+        expect(routeScopes).toHaveLength(2);
+        expect(routeScopes[0]?.[0]?.key).not.toBe(routeScopes[1]?.[0]?.key);
+        expect(tenantScopes).toHaveLength(2);
+        expect(tenantScopes[0]?.[0]?.key).not.toBe(tenantScopes[1]?.[0]?.key);
+        expect(tenantScopes[0]?.[1]?.key).toBe(tenantScopes[1]?.[1]?.key);
+        expect(releases).toHaveLength(4);
+        expect(releases.every((release) => release.mock.calls.length === 1)).toBe(true);
+    });
+
     it("rejects an unverifiable request without ever charging the tenant it names", async () => {
         const distributedAcquire = vi.fn(async (
             _scopes: readonly PluginWebhookDistributedScopeV1[],
@@ -290,7 +358,7 @@ describe("public plugin webhook ingress route", () => {
         expect(distributedAcquire.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ key: expect.stringMatching(/^route:/u) })]);
     });
 
-    it("answers at the ingress deadline but keeps admission until the abandoned ingestion settles", async () => {
+    it("applies aggregate process pressure across routes and keeps admission until abandoned ingestion settles", async () => {
         vi.useFakeTimers();
         const localRelease = vi.fn();
         const distributedRelease = vi.fn(async () => {});
@@ -314,9 +382,9 @@ describe("public plugin webhook ingress route", () => {
                     return lease ? { release: () => { localRelease(); lease.release(); } } : null;
                 },
             },
-            prepareRoute: vi.fn(async () => ({
+            prepareRoute: vi.fn(async (opaqueRouteId) => ({
                 route: {
-                    routeId: "route-deadline",
+                    routeId: `route-${opaqueRouteId}`,
                     verifierKind: "github_hmac_sha256_v1" as const,
                     routingKind: "providerInstallation" as const,
                     policyVersion: 1 as const,

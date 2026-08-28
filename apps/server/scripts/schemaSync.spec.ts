@@ -152,7 +152,7 @@ model AutomationRun {
         expect(mysql).toContain("occurrenceKey String? @db.Char(43)");
     });
 
-    it("pins Automation catalog reporter materialization identity to its canonical MySQL width", () => {
+    it("pins Automation reporter materialization and generation identities to their canonical MySQL width", () => {
         const master = `
 generator client { provider = "prisma-client-js" }
 
@@ -165,14 +165,21 @@ model AutomationEventSourceCatalogStatus {
     accountId                 String
     eventPluginId             String
     reporterMaterializationId String
+    reporterImmutableGenerationId String
     scopeKey                  String
 
     @@id([accountId, eventPluginId, reporterMaterializationId, scopeKey])
+}
+
+model AutomationEventSourceStatus {
+    triggerId                         String @id
+    reporterImmutableGenerationId     String
 }
 `;
 
         const mysql = generateMySqlSchemaFromPostgres(master);
         expect(mysql).toContain("reporterMaterializationId String @db.VarChar(256)");
+        expect(mysql.match(/reporterImmutableGenerationId\s+String @db\.VarChar\(256\)/g)).toHaveLength(2);
     });
 
     it("matches every Account-transition Automation staging column to the width its migration already created", () => {

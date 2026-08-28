@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import {
+    AutomationRunCauseSchema,
+    deriveAutomationOccurrenceKeyV1,
     deriveSessionCreationTagV1,
     serializeAutomationRunExecutionRecipeV1,
     type SessionServerStartDispatchRequestV1,
@@ -9,6 +11,7 @@ import type { Server } from "socket.io";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { fetchAutomationAccountCurrentnessWitnessTx } from "@/app/automations/automationAccountCurrentness";
+import { encodeAutomationRunCause } from "@/app/automations/automationRunCauseCodec";
 import { cancelAutomationRun } from "@/app/automations/automationRunService";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -37,6 +40,7 @@ function sessionStartRecipe(targetMachineId: string): string {
                 },
             },
         },
+        assignmentMachineIds: [targetMachineId],
     });
     if (serialized.kind !== "available") {
         throw new Error("Expected strict Session-start recipe fixture");
@@ -83,20 +87,44 @@ async function seedCrossMachineRun() {
             accountId: account.id,
             name: `Session ingress retention ${suffix}`,
             enabled: true,
-            scheduleKind: "interval",
-            everyMs: 120_000,
             targetType: "new_session",
             templateCiphertext: recipe,
             templateVersion: 1,
+            triggers: {
+                create: {
+                    kind: "schedule",
+                    scheduleKind: "interval",
+                    everyMs: 120_000,
+                },
+            },
         },
-        select: { id: true },
+        select: { id: true, triggers: { select: { id: true, revision: true } } },
+    });
+    const trigger = automation.triggers[0]!;
+    const scheduledFor = new Date(Date.now() - 60_000);
+    const cause = AutomationRunCauseSchema.parse({
+        kind: "trigger",
+        triggerId: trigger.id,
+        triggerRevision: trigger.revision,
+        triggerKind: "schedule",
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+            triggerId: trigger.id,
+            evidence: {
+                v: 1,
+                kind: "schedule",
+                scheduledFor: scheduledFor.getTime(),
+            },
+        }),
+        occurredAt: scheduledFor.getTime(),
+        evidence: { scheduledFor: scheduledFor.getTime() },
     });
     const run = await db.automationRun.create({
         data: {
             automationId: automation.id,
             accountId: account.id,
             state: "running",
-            scheduledAt: new Date(Date.now() - 60_000),
+            ...encodeAutomationRunCause(cause),
+            scheduledAt: scheduledFor,
             dueAt: new Date(Date.now() - 30_000),
             startedAt: new Date(Date.now() - 20_000),
             claimedByMachineId: sourceMachineId,
@@ -110,6 +138,7 @@ async function seedCrossMachineRun() {
     return {
         account,
         automation,
+        cause,
         run,
         sourceMachineId,
         targetMachineId,
@@ -163,7 +192,7 @@ async function dispatchRequestFor(
             runId: seeded.run.id,
             attempt: 1,
             claimedByMachineId: seeded.sourceMachineId,
-            origin: "event",
+            cause: seeded.cause,
             accountCurrentness,
             requestEnvelope: { t: "plain", v: { opaqueToServer: true } },
         },

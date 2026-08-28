@@ -19,7 +19,9 @@ import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { Server } from "socket.io";
 
 import { fetchAutomationAccountCurrentnessWitnessTx } from "@/app/automations/automationAccountCurrentness";
+import { decodeAutomationRunCause } from "@/app/automations/automationRunCauseCodec";
 import { retainAutomationRunProducedSession } from "@/app/automations/automationRunService";
+import type { AutomationRunItem } from "@/app/automations/automationTypes";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { inTx } from "@/storage/inTx";
 
@@ -293,7 +295,20 @@ type SessionServerStartIngressRun = Readonly<{
     claimedByMachineId: string | null;
     attempt: number;
     leaseExpiresAt: Date | null;
-    originKind: string;
+    triggerId: string | null;
+    causeKind: AutomationRunItem["causeKind"];
+    causeTriggerKind: AutomationRunItem["causeTriggerKind"];
+    causeTriggerRevision: number | null;
+    causeOccurredAt: Date | null;
+    causeEventPluginId: string | null;
+    causeEventLocalId: string | null;
+    causeScheduledFor: Date | null;
+    causeSessionLifecycleEvent: AutomationRunItem["causeSessionLifecycleEvent"];
+    causeSourceSessionId: string | null;
+    causeSourceTurnId: string | null;
+    occurrenceKey: string | null;
+    causeSourceSelectorId: string | null;
+    createdAt: Date;
     executionInputEnvelope: string | null;
 }>;
 
@@ -322,16 +337,6 @@ type RetainSessionServerStartProducedSession = (params: {
 
 function requiresProducedSessionRetention(result: SessionServerStartDispatchResultV1): boolean {
     return result.type === "success";
-}
-
-function originForAutomationRun(originKind: string): "schedule" | "manual" | "event" | "conversation" | null {
-    switch (originKind) {
-        case "scheduled": return "schedule";
-        case "manual": return "manual";
-        case "pluginEvent": return "event";
-        case "conversation": return "conversation";
-        default: return null;
-    }
 }
 
 /**
@@ -374,12 +379,11 @@ export function deriveSessionServerStartDispatchFromIngress(params: Readonly<{
     });
     if (outer.kind !== "available" || outer.recipe.target.kind !== "newSession") return null;
 
-    const origin = originForAutomationRun(run.originKind);
+    const cause = decodeAutomationRunCause(run);
     const targetMachine = params.targetMachine;
     const installationId = targetMachine?.installationId?.trim() ?? "";
     if (
-        origin === null
-        || targetMachine === null
+        targetMachine === null
         || targetMachine.accountId !== params.accountId
         || targetMachine.id !== outer.recipe.target.spawn.executionTarget.machineId
         || !installationId
@@ -405,7 +409,7 @@ export function deriveSessionServerStartDispatchFromIngress(params: Readonly<{
             runId: request.data.runId,
             attempt: run.attempt,
             claimedByMachineId: params.sourceMachineId,
-            origin,
+            cause,
             accountCurrentness: params.accountCurrentness,
             requestEnvelope: requestEnvelope.envelope,
         },
@@ -460,7 +464,20 @@ async function resolveSessionServerStartDispatchFromServer(params: Readonly<{
                     claimedByMachineId: true,
                     attempt: true,
                     leaseExpiresAt: true,
-                    originKind: true,
+                    triggerId: true,
+                    causeKind: true,
+                    causeTriggerKind: true,
+                    causeTriggerRevision: true,
+                    causeOccurredAt: true,
+                    causeEventPluginId: true,
+                    causeEventLocalId: true,
+                    causeScheduledFor: true,
+                    causeSessionLifecycleEvent: true,
+                    causeSourceSessionId: true,
+                    causeSourceTurnId: true,
+                    occurrenceKey: true,
+                    causeSourceSelectorId: true,
+                    createdAt: true,
                     executionInputEnvelope: true,
                 },
             }),
