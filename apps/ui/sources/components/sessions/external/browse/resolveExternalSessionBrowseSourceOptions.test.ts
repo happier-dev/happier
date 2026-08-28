@@ -1,4 +1,3 @@
-import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import {
     PluginProjectionV2Schema,
@@ -475,37 +474,18 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
             source: { kind: 'codexHome', home: 'user' },
             candidate: {
                 details: {
-                    codexBackendMode: 'appServer',
-                    agentRuntimeDescriptorV1: {
-                        v: 1,
-                        agentId: 'codex',
-                        provider: {
-                            backendMode: 'appServer',
-                            providerSessionId: 'thread-1',
-                        },
-                    },
                     source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                 },
             },
         });
-        expect(extras.codexBackendMode).toBe('appServer');
+        expect(extras).not.toHaveProperty('codexBackendMode');
         expect(extras.source).toEqual({ kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' });
-        expect(readSessionMetadataRuntimeDescriptor({
-            runtimeDescriptorV1: extras.runtimeDescriptorV1,
-        }, 'codex')).toMatchObject({
-            agentId: 'codex',
-            backendMode: 'appServer',
-            providerSessionId: 'thread-1',
-            home: 'user',
-            connectedServiceId: null,
-            connectedServiceProfileId: null,
-            homePath: '/tmp/custom-home',
-        });
+        expect(extras).not.toHaveProperty('runtimeDescriptorV1');
 
         expect(resolveExternalSessionBrowseLinkEnsureRequestExtras({
             providerId: 'opencode',
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
-            candidate: { details: { codexBackendMode: 'appServer' } },
+            candidate: { details: {} },
         })).toEqual({});
     });
 

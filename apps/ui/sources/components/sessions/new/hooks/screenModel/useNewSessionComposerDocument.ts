@@ -45,7 +45,6 @@ import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
-import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -102,8 +101,6 @@ export function useNewSessionComposerDocument(params: Readonly<{
     draftScope?: ServerAccountScope | null;
     promptStore: NewSessionPromptStore;
     persistedAttachments: readonly ComposerAttachmentDraftV1[];
-    /** One-shot host input, accepted only by this mounted composer transaction. */
-    seededAttachmentRequests?: readonly NewSessionPluginAttachmentSeedV1[];
     /** Exact current daemon projection for this new-session machine/account scope. */
     composerAttachmentEntriesById: ComposerAttachmentAvailabilityCatalog['entriesById'];
     /** Raw daemon projection remains the one controls/regions/catalog owner. */
@@ -419,7 +416,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
     // where the request becomes a record — through the same applier a live
     // plugin composer control uses.
     useNewSessionSeededComposerAttachments({
-        seeds: params.seededAttachmentRequests ?? [],
+        scope: params.draftScope,
+        draftId,
         ref,
         entriesById: params.composerAttachmentEntriesById,
         localize: composerPluginPresentation.localizePluginText,

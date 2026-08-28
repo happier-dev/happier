@@ -11,16 +11,21 @@ describe('automationFeatureGate', () => {
             enabled: true,
             name: 'Nightly',
             description: '',
-            scheduleKind: 'interval' as const,
-            everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [{
+                clientId: 'schedule-half-hourly',
+                definition: {
+                    kind: 'schedule' as const,
+                    enabled: true,
+                    schedule: { kind: 'interval' as const, everyMs: 30 * 60_000 },
+                },
+            }],
         };
 
         expect(resolveEffectiveAutomationDraft({ draft, automationsEnabled: false })).toEqual({
             ...draft,
             enabled: false,
         });
+        expect(resolveEffectiveAutomationDraft({ draft, automationsEnabled: false }).triggers).toEqual(draft.triggers);
     });
 
     it('keeps automation draft unchanged when support is available', () => {
@@ -28,10 +33,14 @@ describe('automationFeatureGate', () => {
             enabled: true,
             name: 'Nightly',
             description: '',
-            scheduleKind: 'interval' as const,
-            everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [{
+                clientId: 'schedule-half-hourly',
+                definition: {
+                    kind: 'schedule' as const,
+                    enabled: true,
+                    schedule: { kind: 'interval' as const, everyMs: 30 * 60_000 },
+                },
+            }],
         };
         expect(resolveEffectiveAutomationDraft({ draft, automationsEnabled: true })).toEqual(draft);
         expect(shouldShowAutomationActionChips({ automationsEnabled: true })).toBe(true);

@@ -14,7 +14,7 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import type { BackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1, BackendTargetRefV2, SessionExecutionTargetV1, SessionModelSelectionV1, SessionOrganizationPlacementV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionPromptStore } from './newSessionPromptStore';
@@ -35,11 +35,14 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedMachine: Machine | null;
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
+    executionTarget: SessionExecutionTargetV1 | null;
+    organizationPlacement: SessionOrganizationPlacementV1;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     promptStore: NewSessionPromptStore;
     /** Compatibility-only bundled identity for persisted legacy draft fields. */
     staticAgentId: AgentId | null;
     backendTarget: BackendTargetRefV2 | null;
+    agentTarget: AgentExecutionTargetV1 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
     useProfiles: boolean;
     selectedProfileId: string | null;
@@ -52,7 +55,6 @@ export function useNewSessionAuthoringState(params: Readonly<{
     effectiveWindowsRemoteSessionLaunchMode: BuildResolvedInputs['windowsRemoteSessionLaunchMode'];
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: BuildResolvedInputs['sessionConfigOptionOverrides'];
-    automationEditId: string | null;
     automationRequestedByRoute: boolean;
     selectedSecretId: string | null;
     selectedSecretIdByProfileIdByEnvVarName: BuildPersistedInputs['selectedSecretIdByProfileIdByEnvVarName'];
@@ -89,12 +91,13 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => {
         const sessionPrompt = promptStore.getPrompt();
         return buildNewSessionAuthoringDraftFromResolvedInputs({
+        executionTarget: params.executionTarget,
         directory: params.selectedPath,
         checkoutCreationDraft: params.checkoutCreationDraft,
+        organizationPlacement: params.organizationPlacement,
         prompt: sessionPrompt,
         displayText: sessionPrompt,
-        agentId: draftAgentId,
-        backendTarget: params.backendTarget,
+        agentTarget: params.agentTarget,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.useProfiles ? (params.selectedProfileId ?? null) : null,
         environmentVariables: null,
@@ -113,17 +116,20 @@ export function useNewSessionAuthoringState(params: Readonly<{
         windowsTerminalWindowName: typeof params.settings.sessionWindowsTerminalWindowName === 'string'
             ? params.settings.sessionWindowsTerminalWindowName.trim() || null
             : null,
-        experimentalCodexAcp: null,
-        codexBackendMode: null,
+        runtimeDescriptorV1: null,
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
-        automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
+        automation: params.automationRequestedByRoute || effectiveAutomationDraft.enabled
+            ? effectiveAutomationDraft
+            : null,
         });
     }, [
         params.acpSessionModeId,
+        params.automationRequestedByRoute,
         params.staticAgentId,
         params.agentNewSessionOptions,
         params.backendTarget,
+        params.agentTarget,
         params.checkoutCreationDraft,
         draftAgentId,
         params.effectiveWindowsRemoteSessionLaunchMode,
@@ -133,6 +139,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.resumeSessionId,
         params.selectedMachineId,
         params.selectedPath,
+        params.executionTarget,
+        params.organizationPlacement,
         params.selectedProfileId,
         params.sessionConfigOptionOverrides,
         promptStore,
@@ -148,12 +156,12 @@ export function useNewSessionAuthoringState(params: Readonly<{
         selectedMachine: params.selectedMachine,
         selectedMachineSpawnReadiness: params.selectedMachineSpawnReadiness ?? null,
         selectedPath: params.selectedPath,
-        automationEditId: params.automationEditId,
+        automationRequestedByRoute: params.automationRequestedByRoute,
         buildDraft: buildCurrentAuthoringDraft,
     }), [
         buildCurrentAuthoringDraft,
         params.automationDraft,
-        params.automationEditId,
+        params.automationRequestedByRoute,
         params.automationFeatureEnabled,
         params.selectedMachine,
         params.selectedMachineSpawnReadiness,

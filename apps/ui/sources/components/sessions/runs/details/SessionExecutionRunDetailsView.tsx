@@ -169,7 +169,10 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         const daemonFallback = await resolveDaemonExecutionRunFallback({
             sessionId: props.sessionId,
             runId: props.runId,
-            transcriptFallback,
+            transcriptFallback: transcriptFallback ?? {
+                run,
+                latestToolResult: result.latestToolResult,
+            },
         }).catch(() => null);
         if (daemonFallback?.daemonProcessLine) {
             setDaemonProcessLine(daemonFallback.daemonProcessLine);

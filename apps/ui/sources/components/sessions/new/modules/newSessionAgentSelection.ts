@@ -9,7 +9,7 @@ type SelectableWithoutCliByAgentId = Readonly<Partial<Record<AgentId, boolean>>>
 
 export type NewSessionSelectableBackendEntry = Pick<
     ResolvedBackendCatalogEntry,
-    'backendTarget' | 'backendTargetKey' | 'builtInAgentId' | 'kind'
+    'backendTarget' | 'backendTargetKey' | 'builtInAgentId' | 'agentId' | 'kind'
     | 'capabilities'
 >;
 
@@ -59,14 +59,17 @@ export function resolveBackendEntryUnavailabilityReasonForNewSession(params: Rea
     if (params.entry.capabilities?.session?.supported === false) {
         return 'no-supported-cli';
     }
-    if (params.entry.kind !== 'builtInAgent') {
+    if (params.entry.kind === 'configuredBackend') {
         return null;
     }
-    if (!params.entry.builtInAgentId) {
+    const agentId = params.entry.kind === 'pluginBackend'
+        ? params.entry.agentId
+        : params.entry.builtInAgentId;
+    if (!agentId) {
         return null;
     }
     return resolveAgentUnavailabilityReasonForNewSession({
-        agentId: params.entry.builtInAgentId,
+        agentId,
         detectionTimestamp: params.detectionTimestamp,
         availabilityById: params.availabilityById,
         authStatusById: params.authStatusById,

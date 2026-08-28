@@ -38,7 +38,6 @@ import {
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { resolveDirectoryFavoriteComparisonKey } from '@/utils/sessions/favoriteDirectoriesToggle';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { listMachineFileBrowserDirectoryEntries } from '@/sync/domains/input/machineFileBrowser';
@@ -413,6 +412,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         if (onBeforeBrowseMachinePath) {
             await onBeforeBrowseMachinePath();
         }
+        const { openMachinePathBrowserModal } = await import('@/components/ui/pathBrowser/openMachinePathBrowserModal');
         const browseStart = inputValue.trim().length > 0
             ? inputValue
             : resolvePathSelectionEmptyInputPath({

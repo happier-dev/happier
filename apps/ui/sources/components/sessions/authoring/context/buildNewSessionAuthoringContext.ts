@@ -16,20 +16,17 @@ import type {
 
 function resolveSubmissionMode(params: Readonly<{
     effectiveAutomationDraft: NewSessionAutomationDraft;
-    automationEditId: string | null;
+    automationRequestedByRoute?: boolean;
 }>): NewSessionAuthoringSubmissionMode {
-    if (!params.effectiveAutomationDraft.enabled) {
+    if (!params.automationRequestedByRoute && !params.effectiveAutomationDraft.enabled) {
         return 'launch';
     }
-    return params.automationEditId ? 'editAutomation' : 'createAutomation';
+    return 'createAutomation';
 }
 
 function resolveSubmitAccessibilityLabelKey(
     submissionMode: NewSessionAuthoringSubmissionMode,
 ): NewSessionSubmitAccessibilityLabelKey | undefined {
-    if (submissionMode === 'editAutomation') {
-        return 'automations.edit.saveAutomationLabel';
-    }
     if (submissionMode === 'createAutomation') {
         return 'automations.create.createButtonTitle';
     }
@@ -39,11 +36,11 @@ function resolveSubmitAccessibilityLabelKey(
 export function buildNewSessionAuthoringContext(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     automationFeatureEnabled: boolean;
+    automationRequestedByRoute: boolean;
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
-    automationEditId: string | null;
     buildDraft: (effectiveAutomationDraft: NewSessionAutomationDraft) => SessionAuthoringDraft;
 }>): NewSessionAuthoringContext {
     const effectiveAutomationDraft = resolveEffectiveAutomationDraft({
@@ -52,7 +49,7 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
     });
     const submissionMode = resolveSubmissionMode({
         effectiveAutomationDraft,
-        automationEditId: params.automationEditId,
+        automationRequestedByRoute: params.automationRequestedByRoute === true,
     });
 
     return {
@@ -66,7 +63,7 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
             selectedMachineId: params.selectedMachineId,
             selectedMachine: params.selectedMachine,
             selectedPath: params.selectedPath,
-            allowOfflineMachine: effectiveAutomationDraft.enabled,
+            allowOfflineMachine: submissionMode === 'createAutomation',
             spawnReadiness: params.selectedMachineSpawnReadiness,
         }),
         submissionMode,

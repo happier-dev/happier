@@ -13,7 +13,6 @@ import {
     hydratePendingMessageComposerAttachmentDrafts,
     isEmptyPendingMessageComposerSemanticDraftSnapshot,
     readPendingMessageComposerSemanticDraftFieldsToRestore,
-    type PendingMessageComposerSemanticDraftMutationRevisions,
     type PendingMessageComposerSemanticDraftSnapshot,
 } from './pendingMessageComposerEditSnapshot';
 
@@ -218,28 +217,21 @@ describe('pending message composer semantic draft snapshot', () => {
         )).toEqual(['routing.recipient']);
     });
 
-    it('does not restore a prior field after an explicit clear during the queued edit', () => {
+    it('restores untouched siblings while another semantic field remains changed', () => {
         const fieldIds = Object.keys(SESSION_DRAFT_VALUE_FIELD_CATALOG) as Array<
             keyof typeof SESSION_DRAFT_VALUE_FIELD_CATALOG
         >;
         const previous = {
             ...createSnapshotWithValue('routing.recipient'),
             'routing.recipient': { kind: 'execution_run', runId: 'run-a' },
+            'routing.executionRunDelivery': 'interrupt',
         } as PendingMessageComposerSemanticDraftSnapshot;
         const current = createSnapshotWithValue('structuredInput.mentions');
-        const revisionsAtEditClear = Object.fromEntries(fieldIds.map((fieldId) => [fieldId, 1])) as PendingMessageComposerSemanticDraftMutationRevisions;
-        const revisionsAfterExplicitClear = {
-            ...revisionsAtEditClear,
-            'routing.recipient': 2,
-        } satisfies PendingMessageComposerSemanticDraftMutationRevisions;
-
         expect(readPendingMessageComposerSemanticDraftFieldsToRestore(
             previous,
             current,
             fieldIds,
-            revisionsAtEditClear,
-            revisionsAfterExplicitClear,
-        )).toEqual([]);
+        )).toEqual(['routing.recipient', 'routing.executionRunDelivery']);
     });
 
     it('restores the prior generic attachments when an unchanged contentless pending edit is abandoned', () => {
@@ -274,14 +266,10 @@ describe('pending message composer semantic draft snapshot', () => {
             ...createSnapshotWithValue(''),
             'structuredInput.composerAttachments': loadedPendingAttachments,
         } as PendingMessageComposerSemanticDraftSnapshot;
-        const revisions = Object.fromEntries(fieldIds.map((fieldId) => [fieldId, 1])) as PendingMessageComposerSemanticDraftMutationRevisions;
-
         expect(readPendingMessageComposerSemanticDraftFieldsToRestore(
             previous,
             current,
             fieldIds,
-            revisions,
-            revisions,
             loaded,
         )).toEqual(['structuredInput.composerAttachments']);
     });

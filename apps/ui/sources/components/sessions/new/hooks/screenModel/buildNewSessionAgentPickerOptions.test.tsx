@@ -10,6 +10,7 @@ vi.mock('@/text', async () => {
 import { buildNewSessionAgentPickerOptions } from './buildNewSessionAgentPickerOptions';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit';
 
 function createEntry(params: Readonly<{
     backendId: string;
@@ -24,6 +25,9 @@ function createEntry(params: Readonly<{
         ? { kind: 'backend' as const, backendId: params.backendId, configuredBackendId: params.backendId }
         : { kind: 'backend' as const, backendId: params.backendId };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({
+            agentId: params.providerId ?? params.backendId,
+        }),
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: params.kind,
@@ -35,6 +39,7 @@ function createEntry(params: Readonly<{
         capabilities: params.capabilities ?? null,
         title: params.title,
         subtitle: null,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 

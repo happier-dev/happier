@@ -580,13 +580,17 @@ export function useTranscriptViewportAnchorCaptureHost(deps: ViewportAnchorCaptu
             };
         };
         deps.cancelScheduledViewportAnchorCapture();
-        if (
-            Platform.OS === 'web'
-            && deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true
-        ) {
-            // The renderer's held-end transaction is authoritative while web route teardown
-            // can transiently expose a partially dismantled virtual window as detached DOM.
-            return selectPinnedExit();
+        if (Platform.OS === 'web') {
+            if (deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true) {
+                // The renderer's held-end transaction is authoritative while web route teardown
+                // can transiently expose a partially dismantled virtual window as detached DOM.
+                return selectPinnedExit();
+            }
+            if (deps.listRef.current?.hasLiveWebHold?.({ kind: 'item' }) === true) {
+                // A keyed hold already names the durable detached viewport. Route teardown is
+                // not a reader decision, so its partially dismantled DOM cannot replace it.
+                return null;
+            }
         }
         const metrics = Platform.OS === 'web' ? deps.resolveWebScrollMetrics() : null;
         const nativePhysicalAttempt = Platform.OS !== 'web'

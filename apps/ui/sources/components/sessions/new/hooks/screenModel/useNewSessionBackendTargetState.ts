@@ -1,11 +1,12 @@
 import * as React from 'react';
 
 import {
-    readBackendTargetRefV2,
-    type BackendTargetRefV2,
+    PersistedBackendTargetRefV2Schema,
+    buildQualifiedPluginContributionKey,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { resolveCatalogAgentIdForBackendTarget, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useApplySettings } from '@/sync/store/settingsWriters';
@@ -14,23 +15,23 @@ import { buildLastUsedBackendTargetSettings } from '@/agents/backendCatalog/buil
 
 function findEntryByTarget(
     entries: ReadonlyArray<ResolvedBackendCatalogEntry>,
-    target: BackendTargetRefV2,
+    target: PersistedBackendTargetRefV2,
 ): ResolvedBackendCatalogEntry | null {
     const targetKey = resolveBackendTargetKeyV2(target);
     return entries.find((entry) => entry.backendTargetKey === targetKey) ?? null;
 }
 
-function isPluginLikeBackendTarget(target: BackendTargetRefV2 | null | undefined): boolean {
-    return !!(target && target.kind === 'backend' && !target.configuredBackendId && !isBundledAgentId(target.backendId));
+function isPluginLikeBackendTarget(target: PersistedBackendTargetRefV2 | null | undefined): boolean {
+    if (!target) return false;
+    if (target.kind === 'agent') {
+        return resolveBundledAgentIdFromContributionIdentity(target.identity) === null;
+    }
+    return !target.configuredBackendId && !isBundledAgentId(target.backendId);
 }
 
-function parsePreservedPluginTarget(value: unknown): BackendTargetRefV2 | null {
-    try {
-        const parsed = readBackendTargetRefV2(value as any);
-        return isPluginLikeBackendTarget(parsed) ? parsed : null;
-    } catch {
-        return null;
-    }
+function parsePreservedPluginTarget(value: unknown): PersistedBackendTargetRefV2 | null {
+    const parsed = PersistedBackendTargetRefV2Schema.safeParse(value);
+    return parsed.success && isPluginLikeBackendTarget(parsed.data) ? parsed.data : null;
 }
 
 function shouldPreserveUnresolvedPluginTarget(phase: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error' | undefined): boolean {
@@ -47,10 +48,10 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     tempAgentType?: unknown;
     projectionPhase?: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error';
 }>): Readonly<{
-    backendTarget: BackendTargetRefV2;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
+    backendTarget: PersistedBackendTargetRefV2;
+    setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     selectedCatalogAgentId: AgentId | null;
-    selectedRuntimeCarrierAgentId: AgentId | null;
+    selectedRuntimeCarrierAgentId: string | null;
     selectedUiAgentType: string;
 }> {
     const applySettings = useApplySettings();
@@ -97,8 +98,8 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         params.tempAgentType,
         preservedPluginTarget,
     ]);
-    const [backendTarget, setBackendTargetState] = React.useState<BackendTargetRefV2>(() => initialBackendTarget);
-    const setBackendTarget = React.useCallback<React.Dispatch<React.SetStateAction<BackendTargetRefV2>>>((next) => {
+    const [backendTarget, setBackendTargetState] = React.useState<PersistedBackendTargetRefV2>(() => initialBackendTarget);
+    const setBackendTarget = React.useCallback<React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>>((next) => {
         setHasExplicitUserSelection(true);
         setBackendTargetState(next);
     }, []);
@@ -124,14 +125,18 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         if (matched?.kind === 'pluginBackend' || isPluginLikeBackendTarget(backendTarget)) {
             return null;
         }
-        return resolveCatalogAgentIdForBackendTarget(backendTarget);
+        return backendTarget.kind === 'agent'
+            ? resolveBundledAgentIdFromContributionIdentity(backendTarget.identity)
+            : resolveCatalogAgentIdForBackendTarget(backendTarget);
     }, [backendTarget, matched?.catalogAgentId, matched?.kind]);
     const selectedUiAgentType = React.useMemo(() => {
         if (matched?.agentId.trim()) {
             return matched.agentId;
         }
-        return backendTarget.backendId;
-    }, [backendTarget.backendId, matched?.agentId]);
+        return backendTarget.kind === 'agent'
+            ? buildQualifiedPluginContributionKey(backendTarget.identity)
+            : backendTarget.backendId;
+    }, [backendTarget, matched?.agentId]);
     const selectedRuntimeCarrierAgentId = React.useMemo(() => {
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
             && backendTargetsMatch(explicitRoutePluginTarget, backendTarget);
@@ -160,7 +165,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     React.useEffect(() => {
         const currentLastUsedBackendTargetKey = (() => {
             try {
-                return resolveBackendTargetKeyV2(readBackendTargetRefV2(params.lastUsedBackendTarget as any));
+                return resolveBackendTargetKeyV2(params.lastUsedBackendTarget as any);
             } catch {
                 return null;
             }

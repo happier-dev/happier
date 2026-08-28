@@ -7,14 +7,10 @@ installNewSessionScreenModelCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
-            translate: (key, params) => {
+            translate: (key) => {
                 switch (key) {
                     case 'newSession.automationChip.default':
                         return 'Automate';
-                    case 'automations.form.sentence.intervalCadence':
-                        return `every ${String(params?.minutes ?? '')} minutes`;
-                    case 'automations.form.sentence.cronCadenceExpression':
-                        return `on cron schedule ${String(params?.expression ?? '')}`;
                     default:
                         return key;
                 }
@@ -26,37 +22,55 @@ installNewSessionScreenModelCommonModuleMocks({
 describe('automation chip label', () => {
     it('shows a neutral label when automation is disabled', () => {
         expect(getAutomationChipLabel({
+            pendingAutomationId: null,
             enabled: false,
             name: '',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [],
         })).toBe('Automate');
     });
 
-    it('summarizes an enabled interval automation', () => {
+    it('shows the name of an enabled automation with plural trigger rows', () => {
         expect(getAutomationChipLabel({
+            pendingAutomationId: 'automation-nightly',
             enabled: true,
             name: 'Nightly',
             description: 'Run nightly work',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        })).toBe('Nightly every 15 minutes');
+            triggers: [
+                {
+                    clientId: 'nightly-interval',
+                    definition: {
+                        kind: 'schedule',
+                        enabled: true,
+                        schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                    },
+                },
+                {
+                    clientId: 'morning-cron',
+                    definition: {
+                        kind: 'schedule',
+                        enabled: true,
+                        schedule: { kind: 'cron', everyMs: null, scheduleExpr: '0 9 * * *', timezone: 'UTC' },
+                    },
+                },
+            ],
+        })).toBe('Nightly');
     });
 
-    it('summarizes an enabled cron automation', () => {
+    it('uses the neutral label when an enabled automation has no name', () => {
         expect(getAutomationChipLabel({
+            pendingAutomationId: 'automation-unnamed',
             enabled: true,
-            name: 'Morning summary',
+            name: '   ',
             description: '',
-            scheduleKind: 'cron',
-            everyMinutes: 60,
-            cronExpr: '0 9 * * *',
-            timezone: 'UTC',
-        })).toBe('Morning summary on cron schedule 0 9 * * *');
+            triggers: [{
+                clientId: 'stable-schedule-row',
+                definition: {
+                    kind: 'schedule',
+                    enabled: true,
+                    schedule: { kind: 'cron', everyMs: null, scheduleExpr: '0 9 * * *', timezone: 'UTC' },
+                },
+            }],
+        })).toBe('Automate');
     });
 });

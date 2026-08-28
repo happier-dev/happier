@@ -307,19 +307,21 @@ export function useNewSessionWizardProps(params: Readonly<{
             groupTitle: `${tNoParams(entry.groupTitleKey)}${entry.experimental ? ' (experimental)' : ''}`,
             depId: entry.capabilityId,
             depTitle: entry.title,
+            depSubtitle: entry.subtitle,
             depIconName: entry.iconName as any,
+            setupUrl: entry.setupUrl,
             depStatus,
             capabilitiesStatus: params.selectedMachineCapabilities.status,
             installLabels: {
-                install: tNoParams(entry.installLabels.installKey),
-                update: tNoParams(entry.installLabels.updateKey),
-                reinstall: tNoParams(entry.installLabels.reinstallKey),
+                install: entry.installLabels.install,
+                update: entry.installLabels.update,
+                reinstall: entry.installLabels.reinstall,
             },
             installModal: {
-                installTitle: tNoParams(entry.installModal.installTitleKey),
-                updateTitle: tNoParams(entry.installModal.updateTitleKey),
-                reinstallTitle: tNoParams(entry.installModal.reinstallTitleKey),
-                description: tNoParams(entry.installModal.descriptionKey),
+                installTitle: entry.installModal.installTitle,
+                updateTitle: entry.installModal.updateTitle,
+                reinstallTitle: entry.installModal.reinstallTitle,
+                description: entry.installModal.description,
             },
             refreshStatus: () => {
                 void prefetchMachineCapabilities({

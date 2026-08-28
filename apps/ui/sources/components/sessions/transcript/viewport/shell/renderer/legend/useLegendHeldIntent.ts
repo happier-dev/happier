@@ -1269,7 +1269,7 @@ export function useLegendHeldIntent<TItem>(params: Readonly<{
         // make the jump defer to its own bootstrap and never write the landing.
         if (held?.kind !== 'anchor') return false;
         if (Date.now() > held.identityExpiresAtMs) return false;
-        return held.anchor.itemId === target.itemId;
+        return target.itemId === undefined || held.anchor.itemId === target.itemId;
     }, []);
 
     const holdWebEntryAnchor = React.useCallback((anchor: TranscriptRendererEntryAnchorHold) => {

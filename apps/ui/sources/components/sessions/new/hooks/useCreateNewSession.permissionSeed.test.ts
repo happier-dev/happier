@@ -11,16 +11,9 @@ import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessi
 import {
     buildBackendTargetKey,
     buildMentionRefForKindV1,
-    DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     MENTION_KIND_V1,
-    PluginMachineMaterializationV1Schema,
     SessionModelSelectionV1Schema,
-    type AutomationDefinitionDetail,
-    type AutomationPluginEventDefinitionCreateRequest,
-    type AutomationPluginEventDefinitionPatchRequest,
-    type PluginMachineExecutionOriginV1,
     type SessionMcpSelectionV1,
-    type SessionServerStartSpawnDraftV1,
     type SessionSpawnNewInputV2,
     type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
@@ -28,12 +21,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
-import { createPluginEventAutomationAuthoringDraft } from '@/components/automations/editor/pluginEventAutomationDraft';
-import type { PluginEventAutomationAuthoringDraft } from '@/components/automations/editor/pluginEventAutomationDraft';
-import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
-import type { PluginEventAutomationResolvedTarget } from '@/components/automations/editor/pluginEventAutomationTarget';
+import type { AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type {
     HandleCreateSessionOptions,
@@ -76,249 +64,31 @@ type SpawnPayloadCapture = SessionSpawnNewInputV2 | null;
 type SessionSpawnNewRpcRequest = ServerScopedMachineRpcParams<SessionSpawnNewInputV2>;
 type SessionSpawnNewSuccessResult = Extract<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>;
 
-type AutomationCreateCapture = {
+type AutomationEditorSaveCapture = AutomationEditorDraft | null;
+
+function createScheduleAutomationDraft(params: Readonly<{
     name: string;
-    enabled: boolean;
-    schedule: { kind: string; everyMs?: number };
-    targetType: 'new_session' | 'existing_session';
-    templateCiphertext: string;
-    assignments?: Array<{ machineId: string; enabled?: boolean; priority?: number }>;
-} | null;
-
-type PluginEventAutomationCreateCapture = AutomationPluginEventDefinitionCreateRequest | null;
-type PluginEventAutomationPatchCapture = Readonly<{
-    automationId: string;
-    input: AutomationPluginEventDefinitionPatchRequest;
-}> | null;
-
-function resolveNewSessionEventTarget(input: Readonly<{
-    newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
-}>): PluginEventAutomationResolvedTarget | null {
-    const spawn = input.newSessionSpawn;
-    return spawn
-        ? {
-            target: { kind: 'newSession', spawn },
-            assignmentMachineId: spawn.executionTarget.machineId,
-        }
-        : null;
-}
-
-function resolveExistingSessionEventTarget(): PluginEventAutomationResolvedTarget | null {
+    description?: string;
+    everyMinutes?: number;
+}>): NewSessionAutomationDraft {
     return {
-        target: { kind: 'existingSession', sessionId: 'sess_existing_target' },
-        assignmentMachineId: 'm1',
-    };
-}
-
-function createRetainedScheduleAutomationDefinition(id: string) {
-    return createAutomationDefinitionFromDetail({
-        id,
-        name: 'Retained schedule automation',
-        description: null,
+        pendingAutomationId: 'automation-11111111-1111-4111-8111-111111111111',
         enabled: true,
-        trigger: {
-            kind: 'schedule',
-            schedule: {
-                kind: 'interval',
-                everyMs: 60_000,
-                scheduleExpr: null,
-                timezone: null,
-            },
-        },
-        targetType: 'newSession',
-        existingSessionId: null,
-        templateVersion: 1,
-        nextRunAt: null,
-        lastRunAt: null,
-        createdAt: 1,
-        updatedAt: 1,
-        assignments: [],
-        triggerDefinitionEnvelope: null,
-        templateCiphertext: '{"kind":"happier_automation_template_plain_v1","payload":{"directory":"/tmp"}}',
-    } satisfies AutomationDefinitionDetail);
-}
-
-function createStrictPluginEventAutomationDefinition(
-    id: string,
-    templateVersion = 1,
-    enabled = true,
-    assignments: AutomationDefinitionDetail['assignments'] = [],
-) {
-    return createAutomationDefinitionFromDetail({
-        id,
-        name: 'Current event automation',
-        description: null,
-        enabled,
-        trigger: {
-            kind: 'pluginEvent',
-            eventRef: {
-                pluginId: 'plugin-test',
-                localId: 'repository-event',
-            },
-            sourceSelectorId: 'source-selector',
-            sourceContractVersion: 1,
-            observation: {
-                kind: 'checkpointedPull',
-                watcher: null,
-            },
-        },
-        targetType: 'existingSession',
-        // The frozen recipe targets a new Session, so the owner projects no association.
-        existingSessionId: null,
-        templateVersion,
-        nextRunAt: null,
-        lastRunAt: null,
-        createdAt: 1,
-        updatedAt: templateVersion,
-        assignments,
-        triggerDefinitionEnvelope: 'opaque-event-definition',
-        executionRecipe: {
-            v: 1,
-            templateVersion,
-            template: { t: 'plain', v: { v: 1, prompt: 'Seeded Event prompt' } },
-            triggerEvidence: null,
-            target: {
-                kind: 'newSession',
-                spawn: {
-                    executionTarget: { serverId: 'seeded-server', machineId: 'seeded-machine' },
-                    directory: '/seeded/project',
-                    organizationPlacement: { folderId: 'seeded-folder', tagIds: ['seeded-tag'] },
-                    agentTarget: {
-                        kind: 'agent',
-                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                    },
-                    permissionMode: 'safe-yolo',
-                    configuration: {
-                        mode: { value: null, updatedAtMs: 1 },
-                        model: { value: null, updatedAtMs: 1 },
-                        permissionIntent: { value: 'safe-yolo', updatedAtMs: 1 },
-                        options: {},
-                    },
-                    connectedServices: {
-                        v: 1,
-                        bindingsByServiceId: {
-                            github: { source: 'connected', selection: 'profile', profileId: 'seeded-github' },
-                        },
-                    },
-                    terminal: { mode: 'integrated' },
+        name: params.name,
+        description: params.description ?? '',
+        triggers: [{
+            clientId: '22222222-2222-4222-8222-222222222222',
+            definition: {
+                kind: 'schedule',
+                enabled: true,
+                schedule: {
+                    kind: 'interval',
+                    everyMs: (params.everyMinutes ?? 15) * 60_000,
+                    scheduleExpr: null,
+                    timezone: null,
                 },
             },
-        },
-    } satisfies AutomationDefinitionDetail);
-}
-
-function createPluginEventEligibleEvent(immutableGenerationId = 'github-generation-a') {
-    return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
-        event: {
-            id: 'acme.github/events/repository',
-            identity: { pluginId: 'acme.github', localId: 'events/repository' },
-            immutableGenerationId,
-            title: 'Repository updates',
-            description: null,
-            payloadSchema: {
-                type: 'object',
-                properties: { action: { type: 'string' } },
-                required: ['action'],
-                additionalProperties: false,
-            },
-            automation: {
-                v: 1,
-                eligible: true,
-                source: {
-                    sourceContractVersion: 3,
-                    supportedObservationTransports: ['checkpointedPull'],
-                    sourceConfigSchema: {
-                        type: 'object',
-                        properties: { repositoryId: { type: 'string', minLength: 1 } },
-                        required: ['repositoryId'],
-                        additionalProperties: false,
-                    },
-                    setupActionRef: {
-                        pluginId: 'acme.github',
-                        localId: 'setup/repository-source',
-                    },
-                },
-            },
-        },
-        setupAction: {
-            id: 'acme.github/actions/setup/repository-source',
-            identity: { pluginId: 'acme.github', localId: 'setup/repository-source' },
-            immutableGenerationId,
-            title: 'Configure repository source',
-            description: null,
-            inputSchema: {
-                type: 'object',
-                properties: { repository: { type: 'string', minLength: 1 } },
-                required: ['repository'],
-                additionalProperties: false,
-            },
-            inputHints: null,
-        },
-    });
-}
-
-function projectionInputsForPluginEvent(
-    event: ReturnType<typeof createPluginEventEligibleEvent>,
-): DaemonMergedProjectionInputs {
-    return {
-        mergedProviderProjectionById: {},
-        mergedBackendProjectionById: {},
-        discoveredBackendIds: [],
-        pluginProjectionById: {},
-        pluginProjectionV2: null,
-        automationEligibleEvents: [event],
-        registryDiagnostics: [],
-    };
-}
-
-function freshPluginEventExecutionOrigin(
-    origin: PluginMachineExecutionOriginV1,
-): FreshPluginMachineExecutionOriginV1 {
-    const materialization = PluginMachineMaterializationV1Schema.parse({
-        serverIdentityId: origin.serverIdentityId,
-        machineId: origin.materializationRef.machineId,
-        materializationId: origin.materializationRef.materializationId,
-        pluginId: origin.materializationRef.pluginId,
-        version: '1.0.0',
-        sourceClass: 'registryPackage',
-        portableRelease: true,
-        uiArtifacts: [],
-        enabled: true,
-        trustState: 'trusted',
-        observedAt: 1_700_000_000_000,
-    });
-    return {
-        origin,
-        materialization,
-        machineTarget: {
-            kind: 'resolved',
-            target: {
-                serverIdentityId: origin.serverIdentityId,
-                machineId: origin.materializationRef.machineId,
-            },
-            serverId: 'server-a',
-            profile: {
-                id: 'server-a',
-                name: 'Server A',
-                serverUrl: 'https://server-a.invalid',
-                serverIdentityId: origin.serverIdentityId,
-                createdAt: 1,
-                updatedAt: 1,
-                lastUsedAt: 1,
-            },
-            machine: {
-                id: origin.materializationRef.machineId,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                active: true,
-                activeAt: 1,
-                metadata: null,
-                metadataVersion: 1,
-                daemonState: null,
-                daemonStateVersion: 1,
-            },
-        },
+        }],
     };
 }
 
@@ -359,7 +129,6 @@ function buildAutomationAuthoringDraft(params: Readonly<{
         terminal: null,
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,
-        codexBackendMode: null,
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: null,
         automation: params.automation,
@@ -370,13 +139,11 @@ async function setupUseCreateNewSessionHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const sessionSpawnNewRpcRequest: { value: SessionSpawnNewRpcRequest | null } = { value: null };
     const buildSpawnEnvironmentVariablesCapture: { value: Record<string, unknown> | null } = { value: null };
-    const automationCaptured: { value: AutomationCreateCapture } = { value: null };
-    const pluginEventAutomationCaptured: { value: PluginEventAutomationCreateCapture } = { value: null };
-    const pluginEventAutomationCreateError: { value: unknown | null } = { value: null };
-    const pluginEventAutomationPatchCaptured: { value: PluginEventAutomationPatchCapture } = { value: null };
-    const pluginEventAutomationPatchError: { value: unknown | null } = { value: null };
-    const currentPluginEventProjection: { value: DaemonMergedProjectionInputs | null } = { value: null };
-    const loadDaemonMergedProjectionInputsSpy = vi.fn(async () => currentPluginEventProjection.value);
+    const automationCaptured: { value: AutomationEditorSaveCapture } = { value: null };
+    const saveAutomationEditorDraftSpy = vi.fn(async (draft: AutomationEditorDraft) => {
+        automationCaptured.value = draft;
+        return { automationId: draft.automationId ?? draft.pendingAutomationId ?? 'automation-created' };
+    });
     const accountEncryptionMode = accountEncryptionModeMock;
     accountEncryptionMode.value = 'e2ee';
     accountEncryptionMode.fetchAccountEncryptionMode.mockReset();
@@ -400,11 +167,7 @@ async function setupUseCreateNewSessionHarness() {
         return { kind: 'available' };
     });
     const refreshAutomationsSpy = vi.fn(async () => {});
-    const refreshAutomationDefinitionDetailSpy = vi.fn(async (automationId: string) => (
-        createRetainedScheduleAutomationDefinition(automationId)
-    ));
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
-    const updateAutomationSpy = vi.fn(async () => {});
     const upsertPendingMessageSpy = vi.fn();
     const markSessionOptimisticThinkingSpy = vi.fn();
     const saveSessionDraftsSpy = vi.fn();
@@ -426,6 +189,15 @@ async function setupUseCreateNewSessionHarness() {
         captureSessionSpawnNewRequest(request);
         return { type: 'error', code: 'spawn_failed', retryable: false };
     });
+    const executeSessionSpawnNewActionSpy = vi.fn(async (input: SessionSpawnNewInputV2) => ({
+        ok: true as const,
+        result: await sessionSpawnNewRpcSpy({
+            serverId: input.executionTarget.serverId,
+            machineId: input.executionTarget.machineId,
+            method: RPC_METHODS.SESSION_SPAWN_NEW,
+            payload: input,
+        }),
+    }));
     const mockSessionSpawnSuccess = (sessionId: string): void => {
         sessionSpawnNewRpcSpy.mockImplementationOnce(async (
             request: SessionSpawnNewRpcRequest,
@@ -437,7 +209,7 @@ async function setupUseCreateNewSessionHarness() {
                 sessionId,
                 executionTarget: request.payload.executionTarget,
                 organizationPlacement: request.payload.organizationPlacement ?? { folderId: null, tagIds: [] },
-                initialInput: request.payload.initialMessage
+                initialInput: request.payload.initialInput
                     ? { status: 'accepted', localId: `input-${sessionId}` }
                     : { status: 'notRequested' },
             };
@@ -494,29 +266,7 @@ async function setupUseCreateNewSessionHarness() {
     vi.doMock('@/sync/sync', () => ({
         sync: {
             applySettings: vi.fn(),
-            createAutomation: vi.fn(async (input: AutomationCreateCapture) => {
-                automationCaptured.value = input;
-                return { id: 'auto_1', ...input };
-            }),
-            createPluginEventAutomationDefinition: vi.fn(async (input: AutomationPluginEventDefinitionCreateRequest) => {
-                pluginEventAutomationCaptured.value = input;
-                if (pluginEventAutomationCreateError.value !== null) {
-                    throw pluginEventAutomationCreateError.value;
-                }
-                return { id: 'event_auto_1', ...input };
-            }),
-            updatePluginEventAutomationDefinition: vi.fn(async (
-                automationId: string,
-                input: AutomationPluginEventDefinitionPatchRequest,
-            ) => {
-                pluginEventAutomationPatchCaptured.value = { automationId, input };
-                if (pluginEventAutomationPatchError.value !== null) {
-                    throw pluginEventAutomationPatchError.value;
-                }
-                return { id: 'event_auto_1', ...input };
-            }),
-            updateAutomation: updateAutomationSpy,
-            refreshAutomationDefinitionDetail: refreshAutomationDefinitionDetailSpy,
+            saveAutomationEditorDraft: saveAutomationEditorDraftSpy,
             getCredentials: vi.fn(() => ({ token: 't' })),
             encryption: {
                 encryptRaw: encryptRawSpy,
@@ -528,6 +278,7 @@ async function setupUseCreateNewSessionHarness() {
             ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteSpy,
             refreshMachines: refreshMachinesSpy,
             sendMessage: syncSendMessageSpy,
+            acquireUserRequestLease: vi.fn(() => vi.fn()),
         },
     }));
     vi.doMock('@/sync/store/settingsWriters', () => ({
@@ -593,7 +344,7 @@ async function setupUseCreateNewSessionHarness() {
         setActiveServer: setActiveServerSpy,
     }));
     const { storage: scopeStorage } = await import('@/sync/domains/state/storageStore');
-    // Event authoring captures the same canonical Account lifetime that owns
+    // Automation authoring captures the same canonical Account lifetime that owns
     // stored-content availability. The test server and credential fixtures
     // above are both for server-a/account-a, so mount that scope through the
     // incumbent store owner instead of registering a test-only reader.
@@ -661,13 +412,37 @@ async function setupUseCreateNewSessionHarness() {
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
         machineRpcWithServerScope: (request: SessionSpawnNewRpcRequest) => sessionSpawnNewRpcSpy(request),
     }));
+    vi.doMock('@/sync/ops/actions/sessionSpawnNewAction', () => ({
+        buildManualSessionCreationKey: (userAttemptId: string) => `manual:${userAttemptId}`,
+        executeManualSessionSpawnNewAction: async (input: any, _context: unknown, params: any) => ({
+            status: 'executed',
+            action: await executeSessionSpawnNewActionSpy(input),
+            custody: {
+                v: 3,
+                scope: params.scope,
+                machineId: input.executionTarget.machineId,
+                targetFingerprint: 'test-fingerprint',
+                userAttemptId: params.userAttemptId,
+                nonce: params.seedNonce,
+                submissionState: 'submitted',
+                createdSessionId: null,
+                firstTurnLocalId: `spawn-first-turn:${params.seedNonce}`,
+                attachmentMessageLocalId: `spawn-attachment:${params.seedNonce}`,
+            },
+        }),
+        completeManualSessionSpawnNewActionCustody: async () => true,
+        executeSessionSpawnNewAction: (input: SessionSpawnNewInputV2) => executeSessionSpawnNewActionSpy(input),
+        resolveSessionSpawnNewActionFailureMessageKey: () => 'newSession.actionMethodUnavailable',
+        resolveSessionSpawnNewResultFailureMessageKey: () => 'newSession.failedToStart',
+    }));
     vi.doMock('@/components/sessions/new/modules/materializeNewSessionCheckout', () => ({
         materializeNewSessionCheckout: materializeNewSessionCheckoutSpy,
     }));
-    vi.doMock('@/agents/backendCatalog/loadDaemonMergedProjectionInputs', () => ({
-        loadDaemonMergedProjectionInputs: loadDaemonMergedProjectionInputsSpy,
-    }));
-    const { useCreateNewSession } = await import('./useCreateNewSession');
+    const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
+    const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
+        ...params,
+        draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
+    });
     return {
         useCreateNewSession,
         setLocalSearchParams(nextParams: Record<string, string | string[] | undefined>) {
@@ -676,26 +451,10 @@ async function setupUseCreateNewSessionHarness() {
         captured,
         buildSpawnEnvironmentVariablesCapture,
         automationCaptured,
-        pluginEventAutomationCaptured,
-        pluginEventAutomationCreateError,
-        pluginEventAutomationPatchCaptured,
-        pluginEventAutomationPatchError,
-        currentPluginEventProjection,
-        loadDaemonMergedProjectionInputsSpy,
-        accountEncryptionMode,
-        sessions,
-        encryptRawSpy,
+        saveAutomationEditorDraftSpy,
         modalAlertSpy,
-        modalConfirmSpy,
         clearNewSessionDraftSpy,
-        setActiveServerSpy,
-        switchConnectionToActiveServerSpy,
-        refreshMachinesSpy,
-        refreshSessionsSpy,
-        ensureSessionVisibleForMessageRouteSpy,
         refreshAutomationsSpy,
-        refreshAutomationDefinitionDetailSpy,
-        updateAutomationSpy,
         upsertPendingMessageSpy,
         markSessionOptimisticThinkingSpy,
         saveSessionDraftsSpy,
@@ -964,7 +723,7 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(captured.value).toEqual(expect.objectContaining({
-            initialMessage: 'hello',
+            initialInput: { text: 'hello' },
             configuration: expect.objectContaining({
                 model: expect.objectContaining({ value: 'gpt' }),
             }),
@@ -1018,7 +777,6 @@ describe('useCreateNewSession permission seeding', () => {
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
-            codexBackendMode: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -1065,7 +823,7 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(captured.value).toEqual(expect.objectContaining({
-            initialMessage: 'hello',
+            initialInput: { text: 'hello' },
             modelSelection: authoringDraft.modelSelection,
         }));
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
@@ -1131,7 +889,7 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(captured.value?.initialMessage).toBeUndefined();
+        expect(captured.value?.initialInput).toBeUndefined();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
@@ -1538,7 +1296,7 @@ describe('useCreateNewSession permission seeding', () => {
                 displayName: 'feature/scope-fix',
                 baseRef: 'main',
             },
-            initialMessage: 'Ship the scoped follow-up fix',
+            initialInput: { text: 'Ship the scoped follow-up fix' },
         }));
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
@@ -1565,19 +1323,17 @@ describe('useCreateNewSession permission seeding', () => {
             refreshedAt: null,
             refresh: () => {},
         };
-	        const automationDraft: NewSessionAutomationDraft = {
-	            enabled: true,
-	            name: 'Nightly',
-	            description: 'desc',
-	            scheduleKind: 'interval',
-	            everyMinutes: 15,
-	            cronExpr: '0 * * * *',
-	            timezone: null,
-	        };
+        const automationDraft = createScheduleAutomationDraft({
+            name: 'Nightly',
+            description: 'desc',
+        });
         const connectedServices = {
-            github: {
-                installationId: 'inst_123',
-                accountLogin: 'leeroy',
+            v: 1 as const,
+            bindingsByServiceId: {
+                github: {
+                    source: 'connected' as const,
+                    profileId: 'work',
+                },
             },
         };
 
@@ -1666,36 +1422,59 @@ describe('useCreateNewSession permission seeding', () => {
         // submitted snapshot.
         expect(settlements).toEqual([{ status: 'accepted', sessionId: null }]);
         expect(automationCaptured.value?.name).toBe('Nightly');
-        expect(automationCaptured.value?.schedule.kind).toBe('interval');
-        expect(automationCaptured.value?.schedule.everyMs).toBe(900000);
-        expect(automationCaptured.value?.assignments?.[0]?.machineId).toBe('m1');
+        expect(automationCaptured.value?.pendingAutomationId).toBe(
+            'automation-11111111-1111-4111-8111-111111111111',
+        );
+        expect(automationCaptured.value?.triggers).toEqual([
+            expect.objectContaining({
+                clientId: '22222222-2222-4222-8222-222222222222',
+                persisted: null,
+                definition: expect.objectContaining({
+                    kind: 'schedule',
+                    schedule: expect.objectContaining({ kind: 'interval', everyMs: 900_000 }),
+                }),
+            }),
+        ]);
+        expect(automationCaptured.value?.assignments[0]?.machineId).toBe('m1');
         expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(routerReplace).toHaveBeenCalledWith('/automations');
-        const templateEnvelope = JSON.parse(String(automationCaptured.value?.templateCiphertext));
-        expect(templateEnvelope.kind).toBe('happier_automation_template_encrypted_v1');
-        expect(typeof templateEnvelope.payloadCiphertext).toBe('string');
-        expect(templateEnvelope.payloadCiphertext.length).toBeGreaterThan(0);
+        const templateEnvelope = automationCaptured.value?.executionRecipe.template;
+        expect(templateEnvelope?.t).toBe('encrypted');
+        const templateCiphertext = templateEnvelope?.t === 'encrypted' ? templateEnvelope.c : '';
+        expect(templateCiphertext.length).toBeGreaterThan(0);
         const templatePayload = JSON.parse(
-            Buffer.from(String(templateEnvelope.payloadCiphertext).replace(/^cipher:/, ''), 'base64').toString('utf8'),
+            Buffer.from(templateCiphertext.replace(/^cipher:/, ''), 'base64').toString('utf8'),
         );
-        expect(templatePayload.mcpSelection).toEqual({
+        expect(templatePayload).toEqual({
+            v: 1,
+            prompt: 'Run the nightly maintenance checklist',
+        });
+        const executionTarget = automationCaptured.value?.executionRecipe.target;
+        expect(executionTarget?.kind).toBe('newSession');
+        const spawn = executionTarget?.kind === 'newSession' ? executionTarget.spawn : null;
+        expect(spawn?.mcpSelection).toEqual({
             v: 1,
             managedServersEnabled: false,
             forceIncludeServerIds: ['server-portable'],
             forceExcludeServerIds: ['server-disabled'],
         });
-        expect(templatePayload.connectedServices).toEqual(connectedServices);
-        expect(templatePayload.transcriptStorage).toBe('direct');
-        expect(templatePayload.agentModeId).toBe('plan');
-        expect(templatePayload.workspaceId).toBeUndefined();
-        expect(templatePayload.workspaceLocationId).toBeUndefined();
-        expect(templatePayload.workspaceCheckoutId).toBeUndefined();
-        expect(templatePayload.checkoutCreationDraft).toEqual({
+        expect(spawn?.connectedServices).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                github: {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                },
+            },
+        });
+        expect(spawn?.transcriptStorage).toBe('direct');
+        expect(spawn?.agentModeId).toBe('plan');
+        expect(spawn?.checkoutCreationDraft).toEqual({
             kind: 'git_worktree',
             displayName: 'feature/auth',
             baseRef: 'main',
-            branchMode: 'new',
         });
     });
 
@@ -1714,15 +1493,10 @@ describe('useCreateNewSession permission seeding', () => {
         const disableDraftPersistence = vi.fn();
         const setIsCreating = vi.fn();
         const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
+        const automationDraft = createScheduleAutomationDraft({
             name: 'Nightly',
             description: 'desc',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
+        });
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
             isLoading: false,
@@ -1807,15 +1581,10 @@ describe('useCreateNewSession permission seeding', () => {
         const disableDraftPersistence = vi.fn();
         const setIsCreating = vi.fn();
         const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
+        const automationDraft = createScheduleAutomationDraft({
             name: 'Nightly',
             description: 'desc',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
+        });
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
             isLoading: false,
@@ -1912,15 +1681,10 @@ describe('useCreateNewSession permission seeding', () => {
         const disableDraftPersistence = vi.fn();
         const setIsCreating = vi.fn();
         const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
+        const automationDraft = createScheduleAutomationDraft({
             name: 'Nightly',
             description: 'desc',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
+        });
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
             isLoading: false,
@@ -1994,1575 +1758,18 @@ describe('useCreateNewSession permission seeding', () => {
         expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(routerReplace).toHaveBeenCalledWith('/automations');
-        const templateEnvelope = JSON.parse(String(automationCaptured.value?.templateCiphertext));
+        const templateEnvelope = automationCaptured.value?.executionRecipe.template;
+        const templateCiphertext = templateEnvelope?.t === 'encrypted' ? templateEnvelope.c : '';
         const templatePayload = JSON.parse(
-            Buffer.from(String(templateEnvelope.payloadCiphertext).replace(/^cipher:/, ''), 'base64').toString('utf8'),
+            Buffer.from(templateCiphertext.replace(/^cipher:/, ''), 'base64').toString('utf8'),
         );
         expect(templatePayload.prompt).toBe('Review @docs/README.md');
-    });
-
-    it.each([
-        {
-            title: 'creates an exact current Plugin Event Automation through V3 instead of the retained V2 writer',
-            writerErrorCode: null,
-            expectedAlert: null,
-        },
-        {
-            title: 'renders stored-content unavailable when the V3 Event writer rejects unavailable stored content',
-            writerErrorCode: 'automation_stored_content_unavailable',
-            expectedAlert: [
-                'settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle',
-                'settingsPlugins.eventAutomationComposer.storedContentUnavailableBody',
-            ],
-        },
-    ] as const)('$title', async ({ writerErrorCode, expectedAlert }) => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            pluginEventAutomationCreateError,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-            loadDaemonMergedProjectionInputsSpy,
-            refreshAutomationsSpy,
-            modalAlertSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-        if (writerErrorCode) {
-            const { AutomationApiError } = await import('@/sync/api/automations/apiAutomations');
-            pluginEventAutomationCreateError.value = new AutomationApiError({
-                code: writerErrorCode,
-                status: 409,
-            });
-        }
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: {
-                v: 1,
-                all: [{ op: 'eq', field: '/action', value: 'opened' }],
-            },
-            maximumObservationAgeMs: 30_000,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
-        const routerReplace = vi.fn();
-        const disableDraftPersistence = vi.fn();
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage',
-            description: 'Run on repository updates',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-create',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage {{input}}'),
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                disableDraftPersistence,
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await invokeHandleCreateSession(handleCreateSession);
-        });
-
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toEqual(expect.objectContaining({
-            name: 'Repository triage',
-            description: 'Run on repository updates',
-            enabled: true,
-            trigger: expect.objectContaining({
-                kind: 'pluginEvent',
-                eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
-                sourceInstanceId: 'repository:42',
-                maximumObservationAgeMs: 30_000,
-            }),
-            executionRecipe: expect.objectContaining({
-                templateVersion: 1,
-                template: { t: 'plain', v: { v: 1, prompt: 'Triage {{input}}' } },
-                target: expect.objectContaining({ kind: 'newSession' }),
-            }),
-        }));
-        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
-            machineId: 'watcher-machine',
-            serverId: 'server-a',
-            staleMs: 0,
-        });
-        if (expectedAlert) {
-            expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-            expect(routerReplace).not.toHaveBeenCalled();
-            expect(modalAlertSpy).toHaveBeenCalledWith(...expectedAlert);
-        } else {
-            expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
-            expect(routerReplace).toHaveBeenCalledWith('/automations');
-        }
-    });
-
-    it('rejects Composer attachments before Event Automation creation and retains the New Session draft', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-            loadDaemonMergedProjectionInputsSpy,
-            refreshAutomationsSpy,
-            modalAlertSpy,
-            clearNewSessionDraftSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: {
-                v: 1,
-                all: [{ op: 'eq', field: '/action', value: 'opened' }],
-            },
-            maximumObservationAgeMs: 30_000,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
-        const routerReplace = vi.fn();
-        const disableDraftPersistence = vi.fn();
-        const setIsCreating = vi.fn();
-        const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage',
-            description: 'Run on repository updates',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-composer-attachment',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating,
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage {{input}}'),
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                disableDraftPersistence,
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await invokeHandleCreateSession(handleCreateSession, {
-                hasComposerAttachments: true,
-                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
-            });
-        });
-
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(loadDaemonMergedProjectionInputsSpy).not.toHaveBeenCalled();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(disableDraftPersistence).not.toHaveBeenCalled();
-        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
-        expect(settlements).toEqual([{ status: 'rejected' }]);
-        expect(setIsCreating).toHaveBeenLastCalledWith(false);
-    });
-
-    it('persists a picked Session reference into the existing-Session Event recipe', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-            refreshAutomationsSpy,
-            modalAlertSpy,
-            modalConfirmSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-        modalConfirmSpy.mockResolvedValue(true);
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: {
-                v: 1,
-                all: [{ op: 'eq', field: '/action', value: 'opened' }],
-            },
-            maximumObservationAgeMs: 30_000,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        const sessionMention = {
-            kind: MENTION_KIND_V1.session,
-            ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'sess_01HZX'),
-            token: '@session:nightly-audit-1HZX',
-            label: 'Nightly audit',
-        } as const;
-        const prompt = 'Continue @session:nightly-audit-1HZX with {{input}}';
-
-        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
-        const routerReplace = vi.fn();
-        const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-existing-session-composer-reference',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore(prompt),
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                disableDraftPersistence: vi.fn(),
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'existingSession',
-                resolveEventAutomationTarget: resolveExistingSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt,
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: {
-                        enabled: true,
-                        name: 'Nightly follow-up',
-                        description: 'Continue the audit thread',
-                        scheduleKind: 'interval',
-                        everyMinutes: 60,
-                        cronExpr: '0 * * * *',
-                        timezone: null,
-                    },
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await invokeHandleCreateSession(handleCreateSession, {
-                composerReferences: [sessionMention],
-                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
-            });
-        });
-
-        // The Session mention the user picked reaches the durable template in
-        // the SAME identity-only shape an interactive send persists, because
-        // this target's dispatch hands it to the canonical Session sender.
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(accountEncryptionMode.fetchAccountEncryptionMode).toHaveBeenCalledTimes(1);
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-        expect(pluginEventAutomationCaptured.value).toEqual(expect.objectContaining({
-            executionRecipe: expect.objectContaining({
-                template: {
-                    t: 'plain',
-                    v: { v: 1, prompt, mentions: [sessionMention] },
-                },
-                target: { kind: 'existingSession', sessionId: 'sess_existing_target' },
-            }),
-        }));
-        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
-        expect(settlements).toEqual([{ status: 'accepted', sessionId: null }]);
-    });
-
-    it('rejects an unpersistable reference on the execution-run Event target through the same guard', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-            refreshAutomationsSpy,
-            modalAlertSpy,
-            clearNewSessionDraftSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: {
-                v: 1,
-                all: [{ op: 'eq', field: '/action', value: 'opened' }],
-            },
-            maximumObservationAgeMs: 30_000,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
-        const routerReplace = vi.fn();
-        const disableDraftPersistence = vi.fn();
-        const setIsCreating = vi.fn();
-        const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-execution-run-composer-reference',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating,
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage @session:nightly-audit-1HZX'),
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                disableDraftPersistence,
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'executionRun',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage @session:nightly-audit-1HZX',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: {
-                        enabled: true,
-                        name: 'Repository triage',
-                        description: 'Run on repository updates',
-                        scheduleKind: 'interval',
-                        everyMinutes: 60,
-                        cronExpr: '0 * * * *',
-                        timezone: null,
-                    },
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await invokeHandleCreateSession(handleCreateSession, {
-                composerReferences: [{
-                    kind: MENTION_KIND_V1.session,
-                    ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'sess_01HZX'),
-                    token: '@session:nightly-audit-1HZX',
-                    label: 'Nightly audit',
-                }],
-                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
-            });
-        });
-
-        // The execution-run Event target persists the same rendered prompt, so
-        // it fails closed through the ONE refusal owner rather than through a
-        // second, reference-blind condition of its own.
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(disableDraftPersistence).not.toHaveBeenCalled();
-        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith(
-            'common.error',
-            'automations.unsupportedReference(reference=@session:nightly-audit-1HZX)',
-        );
-        expect(settlements).toEqual([{ status: 'rejected' }]);
-        expect(setIsCreating).toHaveBeenLastCalledWith(false);
-    });
-
-    it('fails closed when the same Event setup Action is replaced after setup but before V3 creation', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            currentPluginEventProjection,
-            loadDaemonMergedProjectionInputsSpy,
-            modalAlertSpy,
-            refreshAutomationsSpy,
-            accountEncryptionMode,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-
-        const setupEvent = createPluginEventEligibleEvent('github-generation-a');
-        const replacement = createPluginEventEligibleEvent('github-generation-b');
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(replacement);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: setupEvent,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: null,
-            maximumObservationAgeMs: null,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerReplace = vi.fn();
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage',
-            description: 'Run on repository updates',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-replaced-before-create',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage {{input}}'),
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
-            machineId: 'watcher-machine',
-            serverId: 'server-a',
-            staleMs: 0,
-        });
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
-    });
-
-    it('patches an exact current disabled Plugin Event Automation through V3 with the direct-detail version fence', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            pluginEventAutomationPatchCaptured,
-            refreshAutomationDefinitionDetailSpy,
-            refreshAutomationsSpy,
-            updateAutomationSpy,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-            loadDaemonMergedProjectionInputsSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
-            createStrictPluginEventAutomationDefinition('event_current', 3, false, [
-                { machineId: 'assignment-primary', enabled: true, priority: 100, updatedAt: 30 },
-                { machineId: 'assignment-disabled', enabled: false, priority: -20, updatedAt: 31 },
-                { machineId: 'assignment-secondary', enabled: true, priority: 7, updatedAt: null },
-            ]),
-        );
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: null,
-            maximumObservationAgeMs: 60_000,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | ((options?: HandleCreateSessionOptions) => void) = null;
-        const routerReplace = vi.fn();
-        const settlements: NewSessionAfterCreatedSettlement[] = [];
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: false,
-            name: 'Repository triage update',
-            description: 'Updated repository automation',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-patch',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
-                automationEditId: 'event_current',
-                eventAutomationEdit: {
-                    automationId: 'event_current',
-                    expectedTemplateVersion: 3,
-                },
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildNewSessionAuthoringDraft({
-                    directory: '/hydrated/project',
-                    checkoutCreationDraft: {
-                        kind: 'git_worktree',
-                        displayName: 'Hydrated Event checkout',
-                        baseRef: 'main',
-                    },
-                    prompt: 'Triage changed {{input}}',
-                    displayText: 'Triage changed {{input}}',
-                    agentId: 'codex',
-                    backendTarget: { kind: 'backend', backendId: 'codex' },
-                    transcriptStorage: 'direct',
-                    profileId: 'profile-hydrated',
-                    environmentVariables: null,
-                    resumeSessionId: 'provider-session-hydrated',
-                    permissionMode: 'plan',
-                    permissionModeUpdatedAt: 99,
-                    modelSelection: SessionModelSelectionV1Schema.parse({
-                        v: 1,
-                        updatedAt: 100,
-                        ref: {
-                            agentTargetKey: 'backend:codex',
-                            providerConnectionId: null,
-                            modelId: 'gpt-5',
-                        },
-                    }),
-                    mcpSelection: {
-                        v: 1,
-                        managedServersEnabled: false,
-                        forceIncludeServerIds: ['hydrated-mcp'],
-                        forceExcludeServerIds: ['legacy-mcp'],
-                    },
-                    connectedServices: {
-                        v: 1,
-                        bindingsByServiceId: {
-                            github: { source: 'connected', selection: 'profile', profileId: 'hydrated-github' },
-                        },
-                    },
-                    terminal: {
-                        mode: 'tmux',
-                        tmux: { sessionName: 'hydrated-event' },
-                        windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'hydrated' },
-                    },
-                    windowsRemoteSessionLaunchMode: 'windows_terminal',
-                    windowsRemoteSessionConsole: 'visible',
-                    windowsTerminalWindowName: 'hydrated',
-                    experimentalCodexAcp: null,
-                    codexBackendMode: null,
-                    acpSessionModeId: 'plan',
-                    sessionConfigOptionOverrides: {
-                        v: 1,
-                        updatedAt: 102,
-                        overrides: {
-                            reasoning: { value: 'high', updatedAt: 102 },
-                        },
-                    },
-                    automation: automationDraft,
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await invokeHandleCreateSession(handleCreateSession, {
-                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
-            });
-        });
-
-        // The V3 Event writer persisted the patch; the Composer document owner
-        // must be told the submission was accepted even though no Session id
-        // exists to name.
-        expect(settlements).toEqual([{ status: 'accepted', sessionId: null }]);
-        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(updateAutomationSpy).not.toHaveBeenCalled();
-        expect(pluginEventAutomationPatchCaptured.value).toEqual(expect.objectContaining({
-            automationId: 'event_current',
-            input: expect.objectContaining({
-                expectedTemplateVersion: 3,
-                name: 'Current event automation',
-                description: null,
-                enabled: false,
-                trigger: expect.objectContaining({
-                    kind: 'pluginEvent',
-                    eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
-                    sourceInstanceId: 'repository:42',
-                }),
-                executionRecipe: expect.objectContaining({
-                    templateVersion: 4,
-                    template: { t: 'plain', v: { v: 1, prompt: 'Triage changed {{input}}' } },
-                    target: {
-                        kind: 'newSession',
-                        spawn: expect.objectContaining({
-                            executionTarget: { serverId: 'seeded-server', machineId: 'seeded-machine' },
-                            organizationPlacement: { folderId: 'seeded-folder', tagIds: ['seeded-tag'] },
-                            directory: '/hydrated/project',
-                            profileId: 'profile-hydrated',
-                            permissionMode: 'plan',
-                            configuration: expect.objectContaining({
-                                mode: { value: 'plan', updatedAtMs: 99 },
-                                permissionIntent: { value: 'plan', updatedAtMs: 99 },
-                            }),
-                            connectedServices: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    github: { source: 'connected', selection: 'profile', profileId: 'hydrated-github' },
-                                },
-                            },
-                            terminal: {
-                                mode: 'tmux',
-                                tmux: { sessionName: 'hydrated-event' },
-                                windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'hydrated' },
-                            },
-                        }),
-                    },
-                }),
-                assignments: [
-                    { machineId: 'assignment-primary', enabled: true, priority: 100 },
-                    { machineId: 'assignment-disabled', enabled: false, priority: -20 },
-                    { machineId: 'assignment-secondary', enabled: true, priority: 7 },
-                ],
-            }),
-        }));
-        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
-            machineId: 'watcher-machine',
-            serverId: 'server-a',
-            staleMs: 0,
-        });
-        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/automations/event_current');
-    });
-
-    it('handles a typed stale V3 Event patch conflict without falling through to either V2 writer', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            pluginEventAutomationPatchCaptured,
-            pluginEventAutomationPatchError,
-            modalAlertSpy,
-            refreshAutomationDefinitionDetailSpy,
-            refreshAutomationsSpy,
-            updateAutomationSpy,
-            accountEncryptionMode,
-            currentPluginEventProjection,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
-            createStrictPluginEventAutomationDefinition('event_current', 3),
-        );
-        const { AutomationApiError } = await import('@/sync/api/automations/apiAutomations');
-        pluginEventAutomationPatchError.value = new AutomationApiError({
-            code: 'automation_template_version_conflict',
-            status: 409,
-        });
-
-        const event = createPluginEventEligibleEvent();
-        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
-        const eventDraft = createPluginEventAutomationAuthoringDraft({
-            eligibleEvent: event,
-            observation: { kind: 'checkpointedPull' },
-            setupResult: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: null,
-            maximumObservationAgeMs: null,
-        });
-        expect(eventDraft).not.toBeNull();
-        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
-        const verifiedEventDraft = eventDraft;
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerReplace = vi.fn();
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage update',
-            description: 'Updated repository automation',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-patch-conflict',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
-                automationEditId: 'event_current',
-                eventAutomationEdit: {
-                    automationId: 'event_current',
-                    expectedTemplateVersion: 3,
-                },
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                eventAutomationDraft: {
-                    draft: verifiedEventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage changed {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    permissionModeUpdatedAt: 1,
-                    backendTarget: { kind: 'backend', backendId: 'codex' },
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(pluginEventAutomationPatchCaptured.value).toEqual(expect.objectContaining({
-            automationId: 'event_current',
-            input: expect.objectContaining({ expectedTemplateVersion: 3 }),
-        }));
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(updateAutomationSpy).not.toHaveBeenCalled();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
-    });
-
-    it('fails closed when the direct Event detail version advanced since the edit was opened', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            pluginEventAutomationPatchCaptured,
-            modalAlertSpy,
-            refreshAutomationDefinitionDetailSpy,
-            refreshAutomationsSpy,
-            updateAutomationSpy,
-            accountEncryptionMode,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'plain';
-        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
-            createStrictPluginEventAutomationDefinition('event_current', 4),
-        );
-
-        const eventDraft: PluginEventAutomationAuthoringDraft = {
-            eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
-            observation: { kind: 'checkpointedPull' },
-            expectedEventImmutableGenerationId: 'github-generation-a',
-            setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
-            expectedSetupActionImmutableGenerationId: 'github-generation-a',
-            source: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: null,
-            maximumObservationAgeMs: null,
-        };
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage update',
-            description: 'Updated repository automation',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerReplace = vi.fn();
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-stale-detail',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
-                automationEditId: 'event_current',
-                eventAutomationEdit: {
-                    automationId: 'event_current',
-                    expectedTemplateVersion: 3,
-                },
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                eventAutomationDraft: {
-                    draft: eventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(eventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage changed {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(pluginEventAutomationPatchCaptured.value).toBeNull();
-        expect(updateAutomationSpy).not.toHaveBeenCalled();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
-    });
-
-    it('fails closed for an E2EE Account before either Automation writer can persist an Event draft', async () => {
-        const {
-            useCreateNewSession,
-            automationCaptured,
-            pluginEventAutomationCaptured,
-            pluginEventAutomationPatchCaptured,
-            accountEncryptionMode,
-            modalAlertSpy,
-            refreshAutomationDefinitionDetailSpy,
-            updateAutomationSpy,
-        } = await setupUseCreateNewSessionHarness();
-        accountEncryptionMode.value = 'e2ee';
-
-        const eventDraft: PluginEventAutomationAuthoringDraft = {
-            eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
-            observation: { kind: 'checkpointedPull' },
-            expectedEventImmutableGenerationId: 'github-generation-a',
-            setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
-            expectedSetupActionImmutableGenerationId: 'github-generation-a',
-            source: {
-                v: 1,
-                sourceInstanceId: 'repository:42',
-                sourceContractVersion: 3,
-                sourceConfig: { repositoryId: '42' },
-                displayLabel: 'acme/widgets',
-            },
-            watcherOrigin: {
-                serverIdentityId: 'srv_account_a',
-                materializationRef: {
-                    machineId: 'watcher-machine',
-                    materializationId: 'github-materialization-a',
-                    pluginId: 'acme.github',
-                },
-            },
-            filter: null,
-            maximumObservationAgeMs: null,
-        };
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Repository triage',
-            description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-        let handleCreateSession: null | (() => Promise<void>) = null;
-
-        function Test() {
-            const hook = useCreateNewSession({
-                launchIntentSignature: 'event-automation-e2ee',
-                router: { push: vi.fn(), replace: vi.fn() },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings: { experiments: false } as unknown as Settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                promptStore: createNewSessionPromptStore('Triage {{input}}'),
-                automationEditId: 'event_current',
-                eventAutomationEdit: {
-                    automationId: 'event_current',
-                    expectedTemplateVersion: 3,
-                },
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-a',
-                allowedTargetServerIds: ['server-a'],
-                eventAutomationDraft: {
-                    draft: eventDraft,
-                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(eventDraft.watcherOrigin),
-                },
-                eventAutomationTargetKind: 'newSession',
-                resolveEventAutomationTarget: resolveNewSessionEventTarget,
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Triage {{input}}',
-                    modelMode: 'default' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(automationCaptured.value).toBeNull();
-        expect(pluginEventAutomationCaptured.value).toBeNull();
-        expect(pluginEventAutomationPatchCaptured.value).toBeNull();
-        expect(updateAutomationSpy).not.toHaveBeenCalled();
-        expect(refreshAutomationDefinitionDetailSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith(
-            'settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle',
-            'settingsPlugins.eventAutomationComposer.storedContentUnavailableBody',
-        );
-    });
-
-    it('updates an existing automation instead of creating a new one when automationEditId is provided', async () => {
-        const {
-            useCreateNewSession,
-            captured,
-            automationCaptured,
-            refreshAutomationsSpy,
-            updateAutomationSpy,
-            materializeNewSessionCheckoutSpy,
-        } = await setupUseCreateNewSessionHarness();
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerPush = vi.fn();
-        const routerReplace = vi.fn();
-        const settings = { experiments: false } as unknown as Settings;
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Nightly edit',
-            description: 'desc',
-            scheduleKind: 'interval',
-            everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-        launchIntentSignature: 'test-launch-intent',
-                router: { push: routerPush, replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'gpt-5' as ModelMode,
-                promptStore: createNewSessionPromptStore('Update the scheduled work'),
-                automationEditId: 'auto_existing',
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                mcpSelection: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: null,
-                allowedTargetServerIds: ['server-a'],
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Update the scheduled work',
-                    modelMode: 'gpt-5' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(captured.value).toBeNull();
-        expect(automationCaptured.value).toBeNull();
-        expect(materializeNewSessionCheckoutSpy).not.toHaveBeenCalled();
-        expect(updateAutomationSpy).toHaveBeenCalledWith('auto_existing', expect.objectContaining({
-            enabled: true,
-            name: 'Nightly edit',
-            description: 'desc',
-            schedule: {
-                kind: 'interval',
-                everyMs: 1_800_000,
-                timezone: null,
-            },
-            templateCiphertext: expect.any(String),
-        }));
-        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/automations/auto_existing');
-    });
-
-    it('rejects a current Event definition from automationEditId before the retained V2 update', async () => {
-        const {
-            useCreateNewSession,
-            automationCaptured,
-            modalAlertSpy,
-            refreshAutomationDefinitionDetailSpy,
-            refreshAutomationsSpy,
-            updateAutomationSpy,
-        } = await setupUseCreateNewSessionHarness();
-        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
-            createStrictPluginEventAutomationDefinition('event_current'),
-        );
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerPush = vi.fn();
-        const routerReplace = vi.fn();
-        const settings = { experiments: false } as unknown as Settings;
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-        const automationDraft: NewSessionAutomationDraft = {
-            enabled: true,
-            name: 'Attempted legacy write',
-            description: 'must not reach V2',
-            scheduleKind: 'interval',
-            everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-        launchIntentSignature: 'test-launch-intent',
-                router: { push: routerPush, replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'gpt-5' as ModelMode,
-                promptStore: createNewSessionPromptStore('Attempted legacy write'),
-                automationEditId: 'event_current',
-                transcriptStorage: 'direct',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                mcpSelection: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: null,
-                allowedTargetServerIds: ['server-a'],
-                authoringDraft: buildAutomationAuthoringDraft({
-                    prompt: 'Attempted legacy write',
-                    modelMode: 'gpt-5' as ModelMode,
-                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                    automation: automationDraft,
-                    transcriptStorage: 'direct',
-                }),
-            });
-
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
-        expect(updateAutomationSpy).not.toHaveBeenCalled();
-        expect(automationCaptured.value).toBeNull();
-        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
     });
 
     it('uses the latest automation draft values after rerendering before save', async () => {
         const {
             useCreateNewSession,
-            updateAutomationSpy,
+            saveAutomationEditorDraftSpy,
         } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -3605,7 +1812,6 @@ describe('useCreateNewSession permission seeding', () => {
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'gpt-5' as ModelMode,
                 promptStore: createNewSessionPromptStore('Update the scheduled work'),
-                automationEditId: 'auto_existing',
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
@@ -3631,15 +1837,11 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        const initialDraft: NewSessionAutomationDraft = {
-            enabled: true,
+        const initialDraft = createScheduleAutomationDraft({
             name: 'Nightly edit',
             description: 'desc',
-            scheduleKind: 'interval',
             everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
+        });
         const updatedDraft: NewSessionAutomationDraft = {
             ...initialDraft,
             name: 'Nightly edit updated',
@@ -3655,15 +1857,15 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(updateAutomationSpy).toHaveBeenCalledWith('auto_existing', expect.objectContaining({
+        expect(saveAutomationEditorDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
             name: 'Nightly edit updated',
-        }));
+        }), expect.objectContaining({ isCurrent: expect.any(Function) }));
     });
 
     it('uses the latest automation draft values even when an older submit handler reference is invoked', async () => {
         const {
             useCreateNewSession,
-            updateAutomationSpy,
+            saveAutomationEditorDraftSpy,
         } = await setupUseCreateNewSessionHarness();
 
         let latestHandleCreateSession: null | (() => Promise<void>) = null;
@@ -3707,7 +1909,6 @@ describe('useCreateNewSession permission seeding', () => {
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'gpt-5' as ModelMode,
                 promptStore: createNewSessionPromptStore('Update the scheduled work'),
-                automationEditId: 'auto_existing',
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
@@ -3736,15 +1937,11 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        const initialDraft: NewSessionAutomationDraft = {
-            enabled: true,
+        const initialDraft = createScheduleAutomationDraft({
             name: 'Nightly edit',
             description: 'desc',
-            scheduleKind: 'interval',
             everyMinutes: 30,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
+        });
         const updatedDraft: NewSessionAutomationDraft = {
             ...initialDraft,
             name: 'Nightly edit updated again',
@@ -3766,9 +1963,9 @@ describe('useCreateNewSession permission seeding', () => {
             await staleHandleCreateSession();
         });
 
-        expect(updateAutomationSpy).toHaveBeenCalledWith('auto_existing', expect.objectContaining({
+        expect(saveAutomationEditorDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
             name: 'Nightly edit updated again',
-        }));
+        }), expect.objectContaining({ isCurrent: expect.any(Function) }));
     });
 
     it('keeps vendor resume and the first message in the strict Action request', async () => {
@@ -3841,7 +2038,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(captured.value).toEqual(expect.objectContaining({
-            initialMessage: 'PROMPT',
+            initialInput: { text: 'PROMPT' },
             configuration: expect.objectContaining({
                 providerSessionResume: {
                     kind: 'provider_session.v1',
@@ -3939,7 +2136,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(captured.value).toEqual(expect.objectContaining({
             profileId: 'profile-test',
-            initialMessage: 'PROMPT',
+            initialInput: { text: 'PROMPT' },
         }));
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
@@ -4096,7 +2293,7 @@ describe('useCreateNewSession permission seeding', () => {
             await invokeHandleCreateSession(handleCreateSession, { initialMessage: 'skip' });
         });
 
-        expect(captured.value?.initialMessage).toBeUndefined();
+        expect(captured.value?.initialInput).toBeUndefined();
         expect(syncSendMessageSpy).toHaveBeenCalledTimes(0);
         expect(routerReplace).toHaveBeenCalledWith('/session/sess_new?serverId=server-a', expect.anything());
     });

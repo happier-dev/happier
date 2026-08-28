@@ -103,7 +103,7 @@ describe('ActionInputFields', () => {
         />);
 
         const enabled = screen.findAllByType('Pressable')
-            .find((node) => node.props.accessibilityRole === 'switch');
+            .find((node) => (node.props.role ?? node.props.accessibilityRole) === 'switch');
         expect(enabled).toBeDefined();
 
         await pressTestInstanceAsync(enabled);
@@ -135,7 +135,7 @@ describe('ActionInputFields', () => {
         const webhook = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Webhook');
 
         expect(radioGroup).toBeDefined();
-        expect(webhook?.props.accessibilityRole).toBe('radio');
+        expect(webhook?.props.role ?? webhook?.props.accessibilityRole).toBe('radio');
     });
 
     it('compares selected Connected Account refs semantically and preserves the exact selected value', async () => {

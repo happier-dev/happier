@@ -249,7 +249,7 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         ['status'],
         ['phase'],
     ] as const)(
-        'rejects an action result whose exact presentation %s differs at the same operation revision',
+        'ignores an action result whose exact presentation %s differs without erasing matching LKG',
         async (field) => {
             const initialProgress = createProgress();
             machineExternalSessionOperationStatusSpy.mockResolvedValue({
@@ -268,7 +268,7 @@ describe('useExternalSessionOperationOwnerHydration', () => {
             });
 
             expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
-            expect(hook.getCurrent().progress).toBeNull();
+            expect(hook.getCurrent().progress).toEqual(initialProgress);
         },
     );
 
@@ -686,7 +686,7 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         await act(async () => {
             hook.getCurrent().onActionResult(actionProgress);
         });
-        expect(hook.getCurrent().progress).toBeNull();
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
         forcedRefresh.resolve({ ok: true, progress: refreshedProgress });
         await flushHookEffects();
@@ -709,7 +709,7 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         await act(async () => {
             hook.getCurrent().onActionResult(createProgress({ revision: 5 }));
         });
-        expect(hook.getCurrent().progress).toBeNull();
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
 
         await hook.rerender({
@@ -719,6 +719,32 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         });
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
         expect(hook.getCurrent().progress).toEqual(progress5);
+    });
+
+    it('retains matching last-known-good detail when action revalidation fails', async () => {
+        const initialProgress = createProgress();
+        const forcedRefresh = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        machineExternalSessionOperationStatusSpy
+            .mockResolvedValueOnce({ ok: true, progress: initialProgress })
+            .mockReturnValueOnce(forcedRefresh.promise);
+        const hook = await renderOwnerHydration({
+            presentation: createPresentation(),
+            isExactOwner: true,
+            machineOnline: true,
+        });
+
+        await act(async () => {
+            hook.getCurrent().onActionResult(createProgress({ updatedAtMs: 1_700_000_000_001 }));
+        });
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
+
+        forcedRefresh.reject(new Error('offline'));
+        await flushHookEffects();
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
+        expect(hook.getCurrent().status).toBe('ready');
     });
 
     it('keeps complete progress component-local across unmounts', async () => {

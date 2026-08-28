@@ -10,7 +10,12 @@ import {
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ComposerAttachmentAvailabilityCatalog } from '@/components/sessions/composer/composerScopeAdapters';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    clearAppliedNewSessionComposerAttachmentSeeds,
+    readNewSessionComposerAttachmentSeeds,
+    type NewSessionComposerAttachmentSeedV1,
+} from './newSessionComposerAttachmentSeedStore';
 
 /**
  * Places the attachments a plugin seeded this New Session draft with, once its
@@ -35,12 +40,9 @@ import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempData
  * explicitly chose with nothing said about it.
  */
 export function useNewSessionSeededComposerAttachments(params: Readonly<{
-    /**
-     * The one-shot host handoff held by this mounted New Session screen. It is
-     * never persisted as a draft record; accepted requests disappear from this
-     * hook as the canonical composer transaction mints their records.
-     */
-    seeds: readonly NewSessionPluginAttachmentSeedV1[];
+    /** Exact Account + draft address of the app-lifetime pre-admission handoff. */
+    scope: ServerAccountScope | null | undefined;
+    draftId: string | null | undefined;
     ref: ComposerRefV1;
     /** The exact current daemon projection for this draft's machine/account scope. */
     entriesById: ComposerAttachmentAvailabilityCatalog['entriesById'];
@@ -48,24 +50,14 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
     localize: PluginLocalizedTextResolver;
     isCurrent: () => boolean;
 }>): void {
-    const { ref, entriesById, seeds } = params;
+    const { ref, entriesById } = params;
     const isCurrentRef = React.useRef(params.isCurrent);
     isCurrentRef.current = params.isCurrent;
-    const seedSignature = JSON.stringify(seeds);
-    const pendingRef = React.useRef<Readonly<{
-        signature: string;
-        seeds: readonly NewSessionPluginAttachmentSeedV1[];
-    }> | null>(null);
-    if (pendingRef.current?.signature !== seedSignature) {
-        pendingRef.current = Object.freeze({
-            signature: seedSignature,
-            seeds: Object.freeze([...seeds]),
-        });
-    }
 
     React.useEffect(() => {
         if (!isCurrentRef.current()) return;
-        const pending = pendingRef.current?.seeds ?? [];
+        const address = { scope: params.scope, draftId: params.draftId } as const;
+        const pending = readNewSessionComposerAttachmentSeeds(address);
         if (pending.length === 0) return;
         const catalog = entriesById ?? {};
         const applier = createComposerPresentationTransactionApplier({
@@ -73,7 +65,7 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
             localize: params.localize,
         });
 
-        const applied: NewSessionPluginAttachmentSeedV1[] = [];
+        const applied: NewSessionComposerAttachmentSeedV1[] = [];
         for (const seed of pending) {
             const entry = catalog[buildQualifiedPluginContributionKey({
                 pluginId: seed.pluginId,
@@ -105,10 +97,14 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
             if (result.status === 'applied') applied.push(seed);
         }
         if (applied.length > 0) {
-            pendingRef.current = Object.freeze({
-                signature: seedSignature,
-                seeds: Object.freeze(pending.filter((seed) => !applied.includes(seed))),
-            });
+            clearAppliedNewSessionComposerAttachmentSeeds(address, applied);
         }
-    }, [entriesById, params.localize, ref, seedSignature]);
+    }, [
+        entriesById,
+        params.draftId,
+        params.localize,
+        params.scope?.accountId,
+        params.scope?.serverId,
+        ref,
+    ]);
 }

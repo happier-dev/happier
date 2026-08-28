@@ -14,6 +14,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { requireLocalSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
+import { settleSpawnAttemptCustodyFromActionOperation } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 
 type NewSessionReentryRouter = Readonly<{
     replace(path: unknown, options?: unknown): void;
@@ -102,6 +103,14 @@ export function useNewSessionActionOperationReconciliation(params: Readonly<{
                     },
                 });
                 actionOperationPresentationCoordinator.acknowledgeRequestPresented(requestId, operation);
+                await settleSpawnAttemptCustodyFromActionOperation({
+                    scope: {
+                        serverId: destinationServerId,
+                        accountId: draftScope.accountId,
+                    },
+                    userAttemptId: requestId,
+                    createdSessionId: sessionId,
+                });
                 completed = true;
             } catch (error) {
                 handledTerminalOperationIdRef.current = null;

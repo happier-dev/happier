@@ -10,31 +10,30 @@ import {
     type SessionMcpSelectionV1,
     type SessionModelSelectionV1,
     type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV2,
+    type AgentExecutionTargetV1,
+    type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 type PersistedAuthoringDraftLike = Readonly<{
-    agentId?: string | null;
-    backendTarget?: BackendTargetRefV2 | null;
+    agentTarget?: AgentExecutionTargetV1 | null;
     modelId?: string | null;
     modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     mcpSelection?: unknown;
-    codexBackendMode?: string | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
 }> | null | undefined;
 
 type TempAuthoringDraftLike = Readonly<{
-    agentId?: string | null;
-    backendTarget?: BackendTargetRefV2 | null;
+    agentTarget?: AgentExecutionTargetV1 | null;
     modelId?: string | null;
     modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     mcpSelection?: unknown;
-    codexBackendMode?: string | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
 }> | null | undefined;
 
 type TargetScopedState<Value> = Readonly<{
@@ -49,10 +48,10 @@ type TargetScopedEngineSelection = Readonly<{
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
 }>;
 
-function resolveBackendTargetKeySafe(backendTarget: BackendTargetRefV2 | null | undefined): string | null {
-    if (!backendTarget) return null;
+function resolveAgentTargetKeySafe(agentTarget: AgentExecutionTargetV1 | null | undefined): string | null {
+    if (!agentTarget) return null;
     try {
-        return resolveBackendTargetKeyV2(backendTarget);
+        return resolveBackendTargetKeyV2(agentTarget);
     } catch {
         return null;
     }
@@ -64,19 +63,10 @@ function resolveTargetScopedAuthoringDraft<Draft extends TempAuthoringDraftLike 
     allowTargetlessDraftEngineSelection?: boolean;
 }>): Draft | null {
     if (!params.draft) return null;
-    const draftBackendTargetKey = resolveBackendTargetKeySafe(params.draft.backendTarget);
+    const draftBackendTargetKey = resolveAgentTargetKeySafe(params.draft.agentTarget);
     if (!draftBackendTargetKey) {
         if (params.allowTargetlessDraftEngineSelection === false) return null;
-
-        const draftAgentId = typeof params.draft.agentId === 'string' ? params.draft.agentId.trim() : '';
-        if (!draftAgentId) return params.backendTargetKey ? null : params.draft;
-        if (!isBundledAgentId(draftAgentId)) return null;
-
-        const legacyBuiltInTargetKey = resolveBackendTargetKeySafe({
-            kind: 'backend',
-            backendId: draftAgentId,
-        });
-        return legacyBuiltInTargetKey && legacyBuiltInTargetKey === params.backendTargetKey ? params.draft : null;
+        return params.backendTargetKey ? null : params.draft;
     }
     return draftBackendTargetKey === params.backendTargetKey ? params.draft : null;
 }
@@ -407,21 +397,17 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         backendTargetKey: currentBackendTargetKey,
         value: initialSessionConfigOptionOverrides,
     }));
-    const sessionConfigOptionOverrides = sessionConfigOptionOverridesState.backendTargetKey === currentBackendTargetKey
+    let sessionConfigOptionOverrides = sessionConfigOptionOverridesState.backendTargetKey === currentBackendTargetKey
         ? sessionConfigOptionOverridesState.value
         : initialSessionConfigOptionOverrides;
 
-    React.useEffect(() => {
-        setSessionConfigOptionOverridesState((current) => {
-            if (current.backendTargetKey === currentBackendTargetKey) {
-                return current;
-            }
-            return {
-                backendTargetKey: currentBackendTargetKey,
-                value: initialSessionConfigOptionOverrides,
-            };
+    if (sessionConfigOptionOverridesState.backendTargetKey !== currentBackendTargetKey) {
+        sessionConfigOptionOverrides = initialSessionConfigOptionOverrides;
+        setSessionConfigOptionOverridesState({
+            backendTargetKey: currentBackendTargetKey,
+            value: initialSessionConfigOptionOverrides,
         });
-    }, [currentBackendTargetKey, initialSessionConfigOptionOverrides]);
+    }
 
     const setSessionConfigOptionOverrides = React.useCallback<React.Dispatch<React.SetStateAction<AcpConfigOptionOverridesV1 | null>>>((next) => {
         setSessionConfigOptionOverridesState((current) => {

@@ -18,7 +18,7 @@ import {
     composerStructuredMentionsFromReferences,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import {
-    ComposerStructuredInputMentionsSchema,
+    parseComposerStructuredInputMentionsForText,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
@@ -65,7 +65,13 @@ function readRepositoryComposerDocument(
     const snapshot = getSessionDraftSnapshot(scope, repositoryAddress);
     if (!snapshot) return { document: EMPTY_DOCUMENT, repositoryRevision: 0 };
 
-    const mentions = ComposerStructuredInputMentionsSchema.safeParse(snapshot.document.composer.mentions.value);
+    const text = typeof snapshot.document.composer.text.value === 'string'
+        ? snapshot.document.composer.text.value
+        : '';
+    const mentions = parseComposerStructuredInputMentionsForText(
+        snapshot.document.composer.mentions.value,
+        text,
+    );
     const attachments = Array.isArray(snapshot.document.composer.attachments.value)
         ? snapshot.document.composer.attachments.value.flatMap((value) => {
             const parsed = ComposerAttachmentDraftV1Schema.safeParse(value);
@@ -74,10 +80,8 @@ function readRepositoryComposerDocument(
         : [];
     return {
         document: Object.freeze({
-            text: typeof snapshot.document.composer.text.value === 'string'
-                ? snapshot.document.composer.text.value
-                : '',
-            structuredInputMentions: Object.freeze(mentions.success ? mentions.data : []),
+            text,
+            structuredInputMentions: Object.freeze(mentions.mentions),
             composerAttachments: Object.freeze(attachments),
         }),
         repositoryRevision: snapshot.revision,

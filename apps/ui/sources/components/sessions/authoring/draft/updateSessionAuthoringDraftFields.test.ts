@@ -6,12 +6,16 @@ import { updateSessionAuthoringDraftModelMode } from './updateSessionAuthoringDr
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/project',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
-    agentId: 'claude',
-    backendTarget: { kind: 'backend', backendId: 'claude' },
+    agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    },
     transcriptStorage: 'direct',
     profileId: null,
     environmentVariables: null,
@@ -25,8 +29,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     terminal: { mode: 'integrated' },
     windowsRemoteSessionLaunchMode: null,
     windowsRemoteSessionConsole: null,
-    experimentalCodexAcp: null,
-    codexBackendMode: null,
+    runtimeDescriptorV1: null,
     acpSessionModeId: null,
     sessionConfigOptionOverrides: null,
     existingSessionId: 'session-1',
@@ -42,7 +45,7 @@ describe('updateSessionAuthoringDraftModelMode', () => {
             v: 1,
             updatedAt: 456,
             ref: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
                 modelId: 'vendor/model',
             },
@@ -53,7 +56,7 @@ describe('updateSessionAuthoringDraftModelMode', () => {
 
         expect(updated.modelSelection).toBe(providerSelection);
         expect(updated.modelSelection?.ref).toEqual({
-            agentTargetKey: 'backend:claude',
+            agentTargetKey: 'agent:happier.agent.claude/claude',
             providerConnectionId: 'pc_work',
             modelId: 'vendor/model',
         });
@@ -64,7 +67,7 @@ describe('updateSessionAuthoringDraftModelMode', () => {
             v: 1,
             updatedAt: 456,
             ref: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
                 modelId: 'vendor/model',
             },
@@ -80,7 +83,7 @@ describe('updateSessionAuthoringDraftModelMode', () => {
             v: 1,
             updatedAt: 999,
             ref: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: null,
                 modelId: 'claude-sonnet-4-6',
             },

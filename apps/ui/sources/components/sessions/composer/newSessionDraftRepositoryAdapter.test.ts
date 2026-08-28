@@ -53,7 +53,7 @@ describe('newSessionDraftRepositoryAdapter', () => {
             draftId,
             patch: {
                 text: 'live composer text',
-                mentions: [{ kind: 'mention', tokenText: '@issue' }],
+                mentions: [{ kind: 'mention', tokenText: '@issue', start: 0, end: 6 }],
                 attachments: [attachment],
             },
             materializationIntent: 'userEdit',
@@ -68,7 +68,7 @@ describe('newSessionDraftRepositoryAdapter', () => {
         const snapshot = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
         expect(snapshot?.document.composer).toMatchObject({
             text: { value: 'live composer text' },
-            mentions: { value: [{ kind: 'mention', tokenText: '@issue' }] },
+            mentions: { value: [{ kind: 'mention', tokenText: '@issue', start: 0, end: 6 }] },
             attachments: { value: [attachment] },
         });
         expect(snapshot?.document.target).toMatchObject({

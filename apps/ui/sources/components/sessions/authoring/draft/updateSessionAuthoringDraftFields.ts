@@ -1,6 +1,5 @@
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { buildBackendTargetKeyV2, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
 
@@ -35,12 +34,10 @@ export function updateSessionAuthoringDraftModelMode(
     if (modelMode === 'default') {
         return { ...draft, modelSelection: null };
     }
-    const backendTarget = draft.backendTarget
-        ?? (draft.agentId ? { kind: 'backend' as const, backendId: draft.agentId } : null);
-    if (!backendTarget) {
-        throw new Error('Session authoring model selection requires backend target');
+    if (!draft.agentTarget) {
+        throw new Error('Session authoring model selection requires agent target');
     }
-    const agentTargetKey = resolveBackendTargetKeyV2(backendTarget);
+    const agentTargetKey = buildBackendTargetKeyV2(draft.agentTarget);
     if (
         draft.modelSelection?.ref.agentTargetKey === agentTargetKey
         && draft.modelSelection.ref.modelId === modelMode

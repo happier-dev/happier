@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
+import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
@@ -80,6 +81,7 @@ vi.mock('@/components/sessions/new/components/NewSessionFavoriteModelsDetail', (
 function createBuiltInBackendEntry(backendId: 'claude' | 'codex', title: string, subtitle: string | null): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'builtInAgent',
@@ -90,6 +92,7 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex', title: string,
         iconAgentId: backendId as any,
         title,
         subtitle,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 
@@ -101,6 +104,7 @@ function createConfiguredBackendEntry(
 ): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId, configuredBackendId: backendId };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'configuredBackend',
@@ -112,6 +116,7 @@ function createConfiguredBackendEntry(
         capabilities,
         title,
         subtitle,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 
@@ -123,6 +128,7 @@ function createPluginBackendEntry(
 ): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: catalogAgentId }),
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'pluginBackend',
@@ -133,6 +139,7 @@ function createPluginBackendEntry(
         iconAgentId: catalogAgentId,
         title,
         subtitle,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 

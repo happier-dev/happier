@@ -1,39 +1,30 @@
 import type {
     AcpConfigOptionOverridesV1,
-    BackendTargetRefV2,
-    SessionAuthoringAutomationV1,
     SessionAuthoringCheckoutCreationDraftV1,
-    SessionAuthoringCodexBackendMode,
+    RuntimeDescriptorV1,
     SessionAuthoringTerminalV1,
     SessionAuthoringValueV1,
     SessionMcpSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/protocol';
-
-import type { AutomationTargetType } from '@/sync/domains/automations/automationTypes';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 
 type SessionAuthoringDraftBase = Readonly<Omit<
     SessionAuthoringValueV1,
-    'targetType' | 'checkoutCreationDraft' | 'backendTarget' | 'modelSelection' | 'mcpSelection' | 'windowsRemoteSessionLaunchMode' | 'windowsTerminalWindowName' | 'codexBackendMode' | 'sessionConfigOptionOverrides' | 'automation'
+    'targetType' | 'checkoutCreationDraft' | 'modelSelection' | 'mcpSelection' | 'windowsRemoteSessionLaunchMode' | 'windowsTerminalWindowName' | 'runtimeDescriptorV1' | 'sessionConfigOptionOverrides' | 'automation'
 > & {
-    targetType: AutomationTargetType;
+    targetType: SessionAuthoringValueV1['targetType'];
     checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1 | null;
-    backendTarget: BackendTargetRefV2 | null;
     modelSelection?: SessionAuthoringValueV1['modelSelection'];
     mcpSelection: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     windowsTerminalWindowName?: string | null;
-    codexBackendMode?: SessionAuthoringCodexBackendMode | CodexBackendMode | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
-    automation?: SessionAuthoringAutomationV1 | null;
+    automation?: NewSessionAutomationDraft | null;
 }>;
 
 export type SessionAuthoringDraft = Readonly<SessionAuthoringDraftBase & {
     connectedServices: SessionAuthoringValueV1['connectedServices'];
     terminal: SessionAuthoringTerminalV1 | null;
-    /**
-     * Legacy read fallback only. New authored draft state should use `codexBackendMode`.
-     */
-    experimentalCodexAcp: boolean | null;
 }>;

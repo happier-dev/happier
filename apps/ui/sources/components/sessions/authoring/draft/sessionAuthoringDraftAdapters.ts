@@ -5,11 +5,13 @@ import {
     SessionServerStartSpawnDraftV1Schema,
     SessionSpawnNewInputV2Schema,
     SessionModelSelectionV1Schema,
+    buildBackendTargetKeyV2,
     readBackendTargetRefV2,
+    readPersistedAgentContributionIdentityV1,
+    readRuntimeDescriptorV1,
+    writePersistedBackendTargetRefV2,
     type AgentExecutionTargetV1,
-    type AiLaunchProfile,
     type BackendTargetRefV2,
-    type ProviderSettingsMigrationStateV1,
     type SessionModelSelectionV1,
     type SessionCreationKeyV1,
     type SessionServerStartSpawnDraftV1,
@@ -25,23 +27,17 @@ import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
-import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
-import { resolveAutomationTemplatePayload } from '@/sync/domains/automations/automationTemplateTransport';
-import { AutomationTemplateEncryptionMaterialUnavailableError } from '@/sync/domains/automations/automationTemplateAvailability';
 import { isModelMode, isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { deriveSessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/deriveSessionAuthoringSnapshot';
 import {
-    normalizeCodexBackendMode,
     normalizeOptionalNumber,
     normalizeOptionalRecord,
     normalizeSessionAuthoringConnectedServices,
     normalizeSessionAuthoringTerminal,
     normalizeOptionalString,
     normalizeRequiredString,
-    resolveCanonicalCodexBackendMode,
 } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { AutomationTemplate } from '@/sync/domains/automations/automationTypes';
-import { normalizeAutomationTemplateLaunchProfileReference } from '@/sync/domains/automations/normalizeAutomationTemplateLaunchProfileReference';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
 import {
     normalizeBackendNewSessionOptionStateByTargetKey,
@@ -79,8 +75,29 @@ function normalizeSessionConfigOptionOverrides(value: unknown): SessionAuthoring
 }
 
 function normalizeAutomationDraft(value: unknown): SessionAuthoringDraft['automation'] {
-    const draft = sanitizeNewSessionAutomationDraft(value);
-    return draft.enabled ? draft : null;
+    if (value === null || value === undefined) return null;
+    return sanitizeNewSessionAutomationDraft(value);
+}
+
+function normalizeOrganizationPlacement(
+    value: SessionAuthoringDraft['organizationPlacement'] | null | undefined,
+): SessionAuthoringDraft['organizationPlacement'] {
+    const folderId = normalizeOptionalString(value?.folderId) ?? null;
+    const tagIds = [...new Set((value?.tagIds ?? []).map((tagId) => tagId.trim()).filter(Boolean))];
+    return { folderId, tagIds };
+}
+
+function resolveCompatibilityAgentTarget(
+    backendTarget: BackendTargetRefV2 | null | undefined,
+    fallbackAgentId?: unknown,
+): AgentExecutionTargetV1 | null {
+    if (backendTarget) {
+        const persisted = writePersistedBackendTargetRefV2(stripBackendTargetSourceKind(backendTarget));
+        const parsed = AgentExecutionTargetV1Schema.safeParse(persisted);
+        if (parsed.success) return parsed.data;
+    }
+    const identity = readPersistedAgentContributionIdentityV1(fallbackAgentId);
+    return identity ? AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity }) : null;
 }
 
 function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
@@ -89,31 +106,40 @@ function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
 }>): SessionAuthoringDraft {
     return {
         targetType: 'existing_session',
+        executionTarget: null,
         directory: params.snapshot.directory,
         checkoutCreationDraft: null,
+        organizationPlacement: { folderId: null, tagIds: [] },
         prompt: params.message,
         displayText: params.message,
-        agentId: params.snapshot.agentId,
-        backendTarget: params.snapshot.backendTarget ? stripBackendTargetSourceKind(params.snapshot.backendTarget) : null,
+        agentTarget: params.snapshot.agentTarget,
         transcriptStorage: params.snapshot.transcriptStorage,
         profileId: params.snapshot.profileId,
         environmentVariables: null,
         resumeSessionId: null,
         permissionMode: params.snapshot.permissionMode,
         permissionModeUpdatedAt: params.snapshot.permissionModeUpdatedAt,
-        modelSelection: buildCanonicalDraftModelSelection({
-            backendTarget: params.snapshot.backendTarget,
-            agentId: params.snapshot.agentId,
-            modelSelection: params.snapshot.modelSelection,
-        }),
+        // Current Agent-backed Sessions move the released backend-keyed snapshot
+        // onto the canonical qualified Agent key. A released configured-ACP
+        // Session has no Agent identity to project, so retain its exact
+        // compatibility selection instead of inventing one or rejecting the
+        // otherwise valid existing-Session draft.
+        modelSelection: params.snapshot.agentTarget
+            ? buildCanonicalDraftModelSelection({
+                agentTarget: params.snapshot.agentTarget,
+                modelSelection: rekeyCompatibilityModelSelection(
+                    params.snapshot.modelSelection,
+                    params.snapshot.agentTarget,
+                ),
+            })
+            : params.snapshot.modelSelection,
         mcpSelection: params.snapshot.mcpSelection,
         connectedServices: params.snapshot.connectedServices,
         terminal: params.snapshot.terminal,
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,
         windowsTerminalWindowName: null,
-        experimentalCodexAcp: null,
-        codexBackendMode: params.snapshot.codexBackendMode,
+        runtimeDescriptorV1: params.snapshot.runtimeDescriptorV1,
         acpSessionModeId: null,
         sessionConfigOptionOverrides: null,
         existingSessionId: params.snapshot.existingSessionId,
@@ -134,8 +160,9 @@ export function mergeExistingSessionAuthoringDraftInheritedFields(
 
     return {
         ...current,
-        agentId: current.agentId ?? fallback.agentId,
-        backendTarget: current.backendTarget ?? fallback.backendTarget,
+        executionTarget: current.executionTarget ?? fallback.executionTarget,
+        organizationPlacement: current.organizationPlacement ?? fallback.organizationPlacement,
+        agentTarget: current.agentTarget ?? fallback.agentTarget,
         transcriptStorage: current.transcriptStorage ?? fallback.transcriptStorage,
         profileId: current.profileId ?? fallback.profileId,
         environmentVariables: current.environmentVariables ?? fallback.environmentVariables,
@@ -151,8 +178,7 @@ export function mergeExistingSessionAuthoringDraftInheritedFields(
         windowsRemoteSessionLaunchMode: current.windowsRemoteSessionLaunchMode ?? fallback.windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole: current.windowsRemoteSessionConsole ?? fallback.windowsRemoteSessionConsole,
         windowsTerminalWindowName: current.windowsTerminalWindowName ?? fallback.windowsTerminalWindowName,
-        experimentalCodexAcp: null,
-        codexBackendMode: current.codexBackendMode ?? fallback.codexBackendMode,
+        runtimeDescriptorV1: current.runtimeDescriptorV1 ?? fallback.runtimeDescriptorV1,
         acpSessionModeId: current.acpSessionModeId ?? fallback.acpSessionModeId,
         sessionEncryptionMode: current.sessionEncryptionMode ?? fallback.sessionEncryptionMode,
         sessionEncryptionKeyBase64: current.sessionEncryptionKeyBase64 ?? fallback.sessionEncryptionKeyBase64,
@@ -233,29 +259,25 @@ function stripBackendTargetSourceKind(target: BackendTargetRefV2): BackendTarget
     return rest;
 }
 
-function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): BackendTargetRefV2 | null {
-    if (draft.backendTarget) {
-        return stripBackendTargetSourceKind(draft.backendTarget);
+function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'agentTarget'>): BackendTargetRefV2 | null {
+    if (!draft.agentTarget) return null;
+    try {
+        return stripBackendTargetSourceKind(readBackendTargetRefV2(draft.agentTarget));
+    } catch {
+        return null;
     }
-    return normalizeOptionalString(draft.agentId)
-        ? { kind: 'backend', backendId: draft.agentId!.trim() } satisfies BackendTargetRefV2
-        : null;
 }
 
 function buildCanonicalDraftModelSelection(params: Readonly<{
-    backendTarget: BackendTargetRefV2 | null | undefined;
-    agentId: string | null | undefined;
+    agentTarget: AgentExecutionTargetV1 | null | undefined;
     modelSelection?: SessionModelSelectionV1 | null;
     legacyModelId?: string | null;
     legacyUpdatedAt?: number | null;
 }>): SessionModelSelectionV1 | null {
-    const target = resolveDraftBackendTarget({
-        backendTarget: params.backendTarget ?? null,
-        agentId: params.agentId ?? null,
-    });
+    const targetKey = params.agentTarget ? buildBackendTargetKeyV2(params.agentTarget) : null;
     if (params.modelSelection) {
         const selection = SessionModelSelectionV1Schema.parse(params.modelSelection);
-        if (!target || selection.ref.agentTargetKey !== resolveBackendTargetKeyV2(target)) {
+        if (!targetKey || selection.ref.agentTargetKey !== targetKey) {
             throw new Error('Session authoring model selection target mismatch');
         }
         return selection;
@@ -263,21 +285,35 @@ function buildCanonicalDraftModelSelection(params: Readonly<{
 
     const modelId = normalizeOptionalString(params.legacyModelId);
     if (!modelId || modelId === 'default') return null;
-    if (!target) {
+    if (!targetKey) {
         throw new Error('Session authoring model selection requires backend target');
     }
     return SessionModelSelectionV1Schema.parse({
         v: 1,
         updatedAt: normalizeOptionalNumber(params.legacyUpdatedAt) ?? 0,
         ref: {
-            agentTargetKey: resolveBackendTargetKeyV2(target),
+            agentTargetKey: targetKey,
             providerConnectionId: null,
             modelId,
         },
     });
 }
 
-function resolveDraftSpawnBackendTarget(draft: Pick<SessionAuthoringDraft, 'backendTarget' | 'agentId'>): SpawnSessionOptions['backendTarget'] | null {
+function rekeyCompatibilityModelSelection(
+    selection: SessionModelSelectionV1 | null | undefined,
+    agentTarget: AgentExecutionTargetV1 | null,
+): SessionModelSelectionV1 | null | undefined {
+    if (!selection || !agentTarget) return selection;
+    return SessionModelSelectionV1Schema.parse({
+        ...selection,
+        ref: {
+            ...selection.ref,
+            agentTargetKey: buildBackendTargetKeyV2(agentTarget),
+        },
+    });
+}
+
+function resolveDraftSpawnBackendTarget(draft: Pick<SessionAuthoringDraft, 'agentTarget'>): SpawnSessionOptions['backendTarget'] | null {
     const backendTarget = resolveDraftBackendTarget(draft);
     return backendTarget ? readBackendTargetRefV2(backendTarget) : null;
 }
@@ -316,9 +352,8 @@ function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
 
 type NewSessionAuthoringDraftParams = Omit<
     SessionAuthoringDraft,
-    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'experimentalCodexAcp' | 'windowsTerminalWindowName' | 'modelSelection' | 'modelId' | 'modelUpdatedAt'
+    'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'windowsTerminalWindowName' | 'modelSelection' | 'modelId' | 'modelUpdatedAt'
 > & Readonly<{
-    experimentalCodexAcp?: boolean | null;
     windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
     modelSelection?: SessionModelSelectionV1 | null;
     modelId?: string | null;
@@ -326,16 +361,12 @@ type NewSessionAuthoringDraftParams = Omit<
 }>;
 
 export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftParams): SessionAuthoringDraft {
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: params.codexBackendMode,
-        experimentalCodexAcp: params.experimentalCodexAcp,
-    });
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1(params.runtimeDescriptorV1) ?? null;
 
     const hasModelSelectionInput = params.modelSelection !== undefined || params.modelId !== undefined;
     const normalizedModelSelection = hasModelSelectionInput
         ? buildCanonicalDraftModelSelection({
-            backendTarget: params.backendTarget,
-            agentId: params.agentId,
+            agentTarget: params.agentTarget,
             modelSelection: params.modelSelection,
             legacyModelId: params.modelId,
             legacyUpdatedAt: params.modelUpdatedAt,
@@ -344,12 +375,18 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
 
     return {
         targetType: 'new_session',
+        executionTarget: params.executionTarget
+            ? {
+                serverId: params.executionTarget.serverId.trim(),
+                machineId: params.executionTarget.machineId.trim(),
+            }
+            : null,
         directory: normalizeRequiredString(params.directory),
         checkoutCreationDraft: params.checkoutCreationDraft,
+        organizationPlacement: normalizeOrganizationPlacement(params.organizationPlacement),
         prompt: params.prompt.trim(),
         displayText: params.displayText.trim(),
-        agentId: normalizeOptionalString(params.agentId),
-        backendTarget: params.backendTarget ?? null,
+        agentTarget: params.agentTarget ? AgentExecutionTargetV1Schema.parse(params.agentTarget) : null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.profileId === '' ? '' : normalizeOptionalString(params.profileId),
         environmentVariables: params.environmentVariables ?? null,
@@ -363,8 +400,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.windowsRemoteSessionConsole ?? null,
         windowsTerminalWindowName: normalizeOptionalString(params.windowsTerminalWindowName),
-        experimentalCodexAcp: null,
-        codexBackendMode,
+        runtimeDescriptorV1,
         acpSessionModeId: normalizeOptionalString(params.acpSessionModeId),
         sessionConfigOptionOverrides: normalizeSessionConfigOptionOverrides(params.sessionConfigOptionOverrides),
         existingSessionId: null,
@@ -376,12 +412,13 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
 }
 
 type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
+    executionTarget?: SessionAuthoringDraft['executionTarget'];
     directory: string;
     checkoutCreationDraft?: SessionAuthoringDraft['checkoutCreationDraft'];
+    organizationPlacement?: SessionAuthoringDraft['organizationPlacement'];
     prompt: string;
     displayText?: string | null;
-    agentId?: SessionAuthoringDraft['agentId'];
-    backendTarget?: SessionAuthoringDraft['backendTarget'];
+    agentTarget?: SessionAuthoringDraft['agentTarget'];
     transcriptStorage?: SessionAuthoringDraft['transcriptStorage'];
     profileId?: SessionAuthoringDraft['profileId'];
     environmentVariables?: SessionAuthoringDraft['environmentVariables'];
@@ -397,8 +434,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     windowsRemoteSessionLaunchMode?: SessionAuthoringDraft['windowsRemoteSessionLaunchMode'];
     windowsRemoteSessionConsole?: SessionAuthoringDraft['windowsRemoteSessionConsole'];
     windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
-    experimentalCodexAcp?: boolean | null;
-    codexBackendMode?: SessionAuthoringDraft['codexBackendMode'];
+    runtimeDescriptorV1?: SessionAuthoringDraft['runtimeDescriptorV1'];
     acpSessionModeId?: SessionAuthoringDraft['acpSessionModeId'];
     sessionConfigOptionOverrides?: SessionAuthoringDraft['sessionConfigOptionOverrides'];
     automation?: SessionAuthoringDraft['automation'];
@@ -408,12 +444,13 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
     params: ResolvedNewSessionAuthoringDraftInputs,
 ): SessionAuthoringDraft {
     return buildNewSessionAuthoringDraft({
+        executionTarget: params.executionTarget ?? null,
         directory: params.directory,
         checkoutCreationDraft: params.checkoutCreationDraft ?? null,
+        organizationPlacement: params.organizationPlacement ?? { folderId: null, tagIds: [] },
         prompt: params.prompt,
         displayText: params.displayText ?? params.prompt,
-        agentId: params.agentId ?? null,
-        backendTarget: params.backendTarget ?? null,
+        agentTarget: params.agentTarget ?? null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.profileId ?? null,
         environmentVariables: params.environmentVariables ?? null,
@@ -429,8 +466,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.windowsRemoteSessionConsole ?? null,
         windowsTerminalWindowName: params.windowsTerminalWindowName ?? null,
-        experimentalCodexAcp: params.experimentalCodexAcp ?? null,
-        codexBackendMode: params.codexBackendMode ?? null,
+        runtimeDescriptorV1: params.runtimeDescriptorV1 ?? null,
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides ?? null,
         automation: params.automation ?? null,
@@ -472,26 +508,35 @@ function resolveNewSessionSourceModelId(source: NewSessionAuthoringDraftSource):
 
 function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraftSource): SessionAuthoringDraft {
     const backendTarget = source.source.backendTarget ?? null;
-    const agentId = resolveNewSessionDraftAgentId({
-        agentId: source.source.agentType,
+    const agentTarget = source.source.agentTarget ?? resolveCompatibilityAgentTarget(
         backendTarget,
-    });
+        source.source.agentType,
+    );
     const backendNewSessionOptionStateByTargetKey = readBackendNewSessionOptionStateByTargetKey(source.source);
 
     return buildNewSessionAuthoringDraft({
+        executionTarget: source.source.executionTarget ?? (
+            source.kind === 'persistedDraft'
+            && source.source.targetServerId
+            && source.source.selectedMachineId
+                ? { serverId: source.source.targetServerId, machineId: source.source.selectedMachineId }
+                : null
+        ),
         directory: resolveNewSessionSourceDirectory(source) ?? '/',
         checkoutCreationDraft: source.source.checkoutCreationDraft ?? null,
+        organizationPlacement: source.source.organizationPlacement ?? { folderId: null, tagIds: [] },
         prompt: resolveNewSessionSourcePrompt(source) ?? '',
         displayText: resolveNewSessionSourcePrompt(source) ?? '',
-        agentId,
-        backendTarget,
+        agentTarget,
         transcriptStorage: source.source.transcriptStorage ?? null,
         profileId: resolveNewSessionSourceProfileId(source) ?? null,
         environmentVariables: null,
         resumeSessionId: source.source.resumeSessionId ?? null,
         permissionMode: source.source.permissionMode ?? null,
         permissionModeUpdatedAt: null,
-        modelSelection: source.source.modelSelection,
+        modelSelection: source.source.agentTarget
+            ? source.source.modelSelection
+            : rekeyCompatibilityModelSelection(source.source.modelSelection, agentTarget),
         modelId: source.source.modelSelection === undefined
             && (source.kind === 'tempData' && Object.prototype.hasOwnProperty.call(source.source, 'modelMode'))
             ? resolveNewSessionSourceModelId(source)
@@ -506,8 +551,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,
         windowsTerminalWindowName: null,
-        experimentalCodexAcp: null,
-        codexBackendMode: normalizeCodexBackendMode(source.source.codexBackendMode),
+        runtimeDescriptorV1: source.source.runtimeDescriptorV1 ?? null,
         acpSessionModeId: source.source.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: source.source.sessionConfigOptionOverrides ?? null,
         automation: source.source.automationDraft ?? null,
@@ -594,24 +638,23 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
     targetType: SessionAuthoringDraft['targetType'];
     template: AutomationTemplate;
 }>): SessionAuthoringDraft {
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: params.template.codexBackendMode,
-        experimentalCodexAcp: params.template.experimentalCodexAcp,
-    });
     const backendTarget = params.template.backendTarget
         ?? (normalizeOptionalString(params.template.agent)
             ? { kind: 'backend', backendId: normalizeOptionalString(params.template.agent)! } satisfies BackendTargetRefV2
             : null);
     const sanitizedBackendTarget = backendTarget ? stripBackendTargetSourceKind(backendTarget) : null;
+    const agentTarget = params.template.agentTarget ?? resolveCompatibilityAgentTarget(
+        sanitizedBackendTarget,
+        params.template.agent,
+    );
     const hasModelSelectionInput = params.template.modelSelection !== undefined
         || params.template.modelId !== undefined;
     const modelSelection = hasModelSelectionInput
         ? buildCanonicalDraftModelSelection({
-            backendTarget: sanitizedBackendTarget,
-            agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId
-                ? sanitizedBackendTarget.backendId
-                : params.template.agent,
-            modelSelection: params.template.modelSelection,
+            agentTarget,
+            modelSelection: params.template.agentTarget
+                ? params.template.modelSelection
+                : rekeyCompatibilityModelSelection(params.template.modelSelection, agentTarget),
             legacyModelId: params.template.modelId,
             legacyUpdatedAt: params.template.modelUpdatedAt,
         })
@@ -619,14 +662,13 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
 
     return {
         targetType: params.targetType,
+        executionTarget: params.template.executionTarget ?? null,
         directory: normalizeRequiredString(params.template.directory),
         checkoutCreationDraft: parseCheckoutCreationDraft(params.template.checkoutCreationDraft),
+        organizationPlacement: normalizeOrganizationPlacement(params.template.organizationPlacement),
         prompt: params.template.prompt ?? '',
         displayText: params.template.displayText ?? '',
-        agentId: sanitizedBackendTarget && !sanitizedBackendTarget.configuredBackendId && isBundledAgentId(sanitizedBackendTarget.backendId)
-            ? normalizeOptionalString(sanitizedBackendTarget.backendId)
-            : normalizeOptionalString(params.template.agent),
-        backendTarget: sanitizedBackendTarget,
+        agentTarget,
         transcriptStorage: params.template.transcriptStorage ?? null,
         profileId: normalizeOptionalString(params.template.profileId),
         environmentVariables: params.template.environmentVariables ?? null,
@@ -641,8 +683,7 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
         windowsRemoteSessionLaunchMode: params.template.windowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: params.template.windowsRemoteSessionConsole ?? null,
         windowsTerminalWindowName: normalizeOptionalString(params.template.windowsTerminalWindowName),
-        experimentalCodexAcp: null,
-        codexBackendMode,
+        runtimeDescriptorV1: params.template.runtimeDescriptorV1 ?? null,
         acpSessionModeId: normalizeOptionalString(params.template.agentModeId),
         existingSessionId: params.targetType === 'existing_session'
             ? normalizeOptionalString(params.template.existingSessionId)
@@ -660,79 +701,9 @@ export function hydrateSessionAuthoringDraftFromAutomationTemplate(params: Reado
     };
 }
 
-export async function buildAutomationEditTemplateSeed(params: Readonly<{
-    automation: Readonly<{
-        targetType: SessionAuthoringDraft['targetType'];
-        templateCiphertext: string;
-        enabled: boolean;
-        name: string;
-        description?: string | null;
-        schedule: Readonly<{
-            kind: 'interval' | 'cron';
-            everyMs?: number | null;
-            scheduleExpr?: string | null;
-            timezone?: string | null;
-        }>;
-    }>;
-    decryptAutomationTemplateRaw?: (payloadCiphertext: string) => Promise<unknown | null>;
-    launchProfileContext?: Readonly<{
-        profiles: readonly AiLaunchProfile[];
-        migration: ProviderSettingsMigrationStateV1 | undefined;
-    }>;
-}>): Promise<Readonly<{
-    hydratedDraft: SessionAuthoringDraft;
-    seededAutomationDraft: NewSessionAutomationDraft;
-}>> {
-    const payload = await resolveAutomationTemplatePayload({
-        templateCiphertext: params.automation.templateCiphertext,
-        decryptRaw: params.decryptAutomationTemplateRaw,
-    });
-    if (payload.kind === 'invalid') {
-        throw new Error('Invalid automation template envelope payload');
-    }
-    if (payload.kind === 'locked') {
-        throw new AutomationTemplateEncryptionMaterialUnavailableError();
-    }
-    const decoded = decodeAutomationTemplate(JSON.stringify(payload.payload));
-    if (!decoded) {
-        throw new Error('Invalid decrypted automation template payload');
-    }
-    const normalizedTemplate = params.launchProfileContext
-        ? normalizeAutomationTemplateLaunchProfileReference({
-            template: decoded,
-            ...params.launchProfileContext,
-        })
-        : decoded;
-
-    return {
-        hydratedDraft: hydrateSessionAuthoringDraftFromAutomationTemplate({
-            targetType: params.automation.targetType,
-            template: normalizedTemplate,
-        }),
-        seededAutomationDraft: sanitizeNewSessionAutomationDraft({
-            enabled: params.automation.enabled,
-            name: params.automation.name,
-            description: params.automation.description ?? '',
-            scheduleKind: params.automation.schedule.kind,
-            everyMinutes: params.automation.schedule.kind === 'interval' && typeof params.automation.schedule.everyMs === 'number'
-                ? Math.max(1, Math.round(params.automation.schedule.everyMs / 60_000))
-                : 60,
-            cronExpr: params.automation.schedule.kind === 'cron' && typeof params.automation.schedule.scheduleExpr === 'string'
-                ? params.automation.schedule.scheduleExpr
-                : '0 * * * *',
-            timezone: params.automation.schedule.timezone ?? null,
-        }),
-    };
-}
-
 export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionAuthoringDraft): AutomationTemplate {
-    const normalizedBackendTarget = resolveDraftBackendTarget(draft);
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: draft.codexBackendMode,
-        experimentalCodexAcp: draft.experimentalCodexAcp,
-    });
-
     return {
+        ...(draft.executionTarget ? { executionTarget: draft.executionTarget } : {}),
         directory: normalizeRequiredString(draft.directory),
         ...(draft.checkoutCreationDraft
             ? {
@@ -746,14 +717,10 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
                 },
             }
             : {}),
+        organizationPlacement: normalizeOrganizationPlacement(draft.organizationPlacement),
         ...(normalizeOptionalString(draft.prompt) ? { prompt: draft.prompt.trim() } : {}),
         ...(normalizeOptionalString(draft.displayText) ? { displayText: draft.displayText.trim() } : {}),
-        ...(normalizedBackendTarget ? { backendTarget: normalizedBackendTarget } : {}),
-        ...(normalizedBackendTarget && !normalizedBackendTarget.configuredBackendId && isBundledAgentId(normalizedBackendTarget.backendId)
-            ? { agent: normalizedBackendTarget.backendId.trim() }
-            : normalizeOptionalString(draft.agentId)
-                ? { agent: draft.agentId!.trim() }
-                : {}),
+        ...(draft.agentTarget ? { agentTarget: draft.agentTarget } : {}),
         ...(draft.transcriptStorage ? { transcriptStorage: draft.transcriptStorage } : {}),
         ...(normalizeOptionalString(draft.profileId) ? { profileId: draft.profileId!.trim() } : {}),
         ...(draft.environmentVariables ? { environmentVariables: draft.environmentVariables } : {}),
@@ -768,7 +735,7 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
         ...(draft.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: draft.windowsRemoteSessionLaunchMode } : {}),
         ...(draft.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: draft.windowsRemoteSessionConsole } : {}),
         ...(normalizeOptionalString(draft.windowsTerminalWindowName) ? { windowsTerminalWindowName: draft.windowsTerminalWindowName!.trim() } : {}),
-        ...(codexBackendMode ? { codexBackendMode } : {}),
+        ...(draft.runtimeDescriptorV1 ? { runtimeDescriptorV1: draft.runtimeDescriptorV1 } : {}),
         ...(normalizeOptionalString(draft.acpSessionModeId) ? { agentModeId: draft.acpSessionModeId!.trim() } : {}),
         ...(draft.targetType === 'existing_session' && normalizeOptionalString(draft.existingSessionId)
             ? { existingSessionId: draft.existingSessionId!.trim() }
@@ -835,9 +802,6 @@ function buildStrictV2TerminalFromAuthoringDraft(
 
 type SessionServerStartSpawnDraftFromAuthoringParams = Readonly<{
     draft: SessionAuthoringDraft;
-    executionTarget: Readonly<{ serverId: string; machineId: string }>;
-    organizationPlacement?: Readonly<{ folderId: string | null; tagIds: readonly string[] }>;
-    agentTarget: AgentExecutionTargetV1;
     permissionMode: string;
     configurationUpdatedAtMs: number;
 }>;
@@ -889,6 +853,7 @@ function resolveSessionAuthoringAgentTargetCatalogEntry(params: Readonly<{
 }>): Readonly<{
     kind: 'available';
     entry: Readonly<{
+        agentTarget: AgentExecutionTargetV1;
         agentId: string;
         backendTarget: BackendTargetRefV2;
     }>;
@@ -897,6 +862,7 @@ function resolveSessionAuthoringAgentTargetCatalogEntry(params: Readonly<{
     reason: 'agent_target_unavailable' | 'agent_target_ambiguous';
 }> {
     const matches: Array<Readonly<{
+        agentTarget: AgentExecutionTargetV1;
         agentId: string;
         backendTarget: BackendTargetRefV2;
     }>> = [];
@@ -921,7 +887,7 @@ function resolveSessionAuthoringAgentTargetCatalogEntry(params: Readonly<{
         // instance identity, and the forward mapper fails closed for them too.
         if (backendTarget.configuredBackendId) continue;
 
-        matches.push({ agentId, backendTarget });
+        matches.push({ agentTarget: candidateAgentTarget.data, agentId, backendTarget });
     }
 
     if (matches.length === 0) {
@@ -1000,7 +966,7 @@ export function buildSessionAuthoringDraftFromServerStartSpawnDraftV1(params: Re
 
     if (
         spawn.modelSelection
-        && spawn.modelSelection.ref.agentTargetKey !== resolveBackendTargetKeyV2(resolvedAgentTarget.entry.backendTarget)
+        && spawn.modelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(resolvedAgentTarget.entry.agentTarget)
     ) {
         return { kind: 'unavailable', reason: 'model_selection_target_mismatch' };
     }
@@ -1016,12 +982,13 @@ export function buildSessionAuthoringDraftFromServerStartSpawnDraftV1(params: Re
         return {
             kind: 'available',
             draft: buildNewSessionAuthoringDraft({
+                executionTarget: spawn.executionTarget,
                 directory: spawn.directory,
                 checkoutCreationDraft: spawn.checkoutCreationDraft ?? null,
+                organizationPlacement: spawn.organizationPlacement ?? { folderId: null, tagIds: [] },
                 prompt: params.prompt,
                 displayText: params.displayText ?? params.prompt,
-                agentId: resolvedAgentTarget.entry.agentId,
-                backendTarget: resolvedAgentTarget.entry.backendTarget,
+                agentTarget: resolvedAgentTarget.entry.agentTarget,
                 transcriptStorage: spawn.transcriptStorage ?? null,
                 profileId: spawn.profileId ?? null,
                 environmentVariables: null,
@@ -1035,8 +1002,7 @@ export function buildSessionAuthoringDraftFromServerStartSpawnDraftV1(params: Re
                 windowsRemoteSessionLaunchMode: windows?.launchMode ?? null,
                 windowsRemoteSessionConsole: windows?.console ?? null,
                 windowsTerminalWindowName: windows?.windowName ?? null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: spawn.agentModeId ?? null,
                 sessionConfigOptionOverrides: buildSessionConfigOptionOverridesFromServerStart(configuration),
                 automation: null,
@@ -1067,18 +1033,14 @@ export function buildSessionServerStartSpawnDraftV1FromAuthoringDraft(
         },
     ]));
 
+    if (!params.draft.executionTarget || !params.draft.agentTarget) {
+        throw new Error('New Session authoring draft requires executionTarget and agentTarget');
+    }
     return SessionServerStartSpawnDraftV1Schema.parse({
-        executionTarget: params.executionTarget,
+        executionTarget: params.draft.executionTarget,
         directory: fields.directory,
-        ...(params.organizationPlacement
-            ? {
-                organizationPlacement: {
-                    folderId: params.organizationPlacement.folderId,
-                    tagIds: [...params.organizationPlacement.tagIds],
-                },
-            }
-            : {}),
-        agentTarget: params.agentTarget,
+        organizationPlacement: normalizeOrganizationPlacement(params.draft.organizationPlacement),
+        agentTarget: params.draft.agentTarget,
         ...(fields.modelSelection ? { modelSelection: fields.modelSelection } : {}),
         ...(fields.profileId ? { profileId: fields.profileId } : {}),
         permissionMode: params.permissionMode,
@@ -1134,7 +1096,7 @@ export function buildSessionSpawnNewInputV2FromAuthoringDraft(params: Readonly<
         ...SessionSpawnNewInputV2Schema.parse({
             ...spawnDraft,
             creationKey,
-            ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
+            ...(normalizedInitialMessage ? { initialInput: { text: normalizedInitialMessage } } : {}),
             ...(params.sourceContext ? { sourceContext: params.sourceContext } : {}),
         }),
         creationKey,
@@ -1151,10 +1113,6 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
 }>): SpawnSessionOptions {
     const backendTarget = params.spawnBackendTarget ?? resolveDraftSpawnBackendTarget(params.draft);
     const fields = resolveSharedSessionAuthoringSpawnFields(params.draft);
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: params.draft.codexBackendMode,
-        experimentalCodexAcp: params.draft.experimentalCodexAcp,
-    });
     if (!backendTarget) {
         throw new Error('Session authoring draft requires backendTarget to spawn a session');
     }
@@ -1185,7 +1143,7 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
             : {}),
         ...(fields.modelSelection ? { modelSelection: fields.modelSelection } : {}),
         ...(fields.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: fields.sessionConfigOptionOverrides } : {}),
-        ...(codexBackendMode ? { codexBackendMode, experimentalCodexAcp: codexBackendMode === 'acp' } : {}),
+        ...(params.draft.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.draft.runtimeDescriptorV1 } : {}),
         ...(params.draft.terminal ? { terminal: params.draft.terminal as SpawnSessionOptions['terminal'] } : {}),
         ...(params.draft.windowsRemoteSessionLaunchMode
             ? { windowsRemoteSessionLaunchMode: params.draft.windowsRemoteSessionLaunchMode }
@@ -1207,15 +1165,8 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
     draft: SessionAuthoringDraft;
     machineId: string | null;
 }>): NewSessionData {
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: params.draft.codexBackendMode,
-        experimentalCodexAcp: params.draft.experimentalCodexAcp,
-    });
-    const normalizedAgentId = isBundledAgentId(params.draft.agentId) ? params.draft.agentId : null;
-    const backendTarget = params.draft.backendTarget
-        ?? (normalizedAgentId
-        ? { kind: 'backend', backendId: normalizedAgentId } satisfies BackendTargetRefV2
-            : null);
+    const backendTarget = resolveDraftBackendTarget(params.draft);
+    const normalizedAgentId = backendTarget ? resolveCatalogAgentIdForBackendTarget(backendTarget) : null;
     const canonicalAgentId = backendTarget
         ? backendTarget.configuredBackendId
             ? normalizedAgentId
@@ -1234,18 +1185,21 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
 
     return {
         prompt: params.draft.displayText || params.draft.prompt,
-        machineId: params.machineId ?? undefined,
+        ...(params.machineId ? { machineId: params.machineId } : {}),
+        ...(params.draft.executionTarget ? { executionTarget: params.draft.executionTarget } : {}),
         directory: params.draft.directory,
+        organizationPlacement: params.draft.organizationPlacement,
         checkoutCreationDraft: params.draft.checkoutCreationDraft,
-        agentType: canonicalAgentId ?? undefined,
-        backendTarget: backendTarget ?? undefined,
+        ...(canonicalAgentId ? { agentType: canonicalAgentId } : {}),
+        ...(params.draft.agentTarget ? { agentTarget: params.draft.agentTarget } : {}),
+        ...(backendTarget ? { backendTarget } : {}),
         selectedProfileId: params.draft.profileId,
         transcriptStorage: params.draft.transcriptStorage ?? undefined,
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : undefined,
         modelSelection: params.draft.modelSelection,
         acpSessionModeId: params.draft.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.draft.sessionConfigOptionOverrides ?? null,
-        codexBackendMode,
+        runtimeDescriptorV1: params.draft.runtimeDescriptorV1 ?? null,
         mcpSelection: params.draft.mcpSelection,
         ...(params.draft.automation ? { automationDraft: params.draft.automation } : {}),
         backendNewSessionOptionStateByTargetKey: backendOptionStateByTargetKey,
@@ -1267,23 +1221,20 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     preferredPersistedAgentId?: unknown;
     updatedAt: number;
 }>): NewSessionDraft {
-    const normalizedAgentId = isBundledAgentId(params.draft.agentId) ? params.draft.agentId : null;
-    const builtInBackendAgentId = params.draft.backendTarget && !params.draft.backendTarget.configuredBackendId && isBundledAgentId(params.draft.backendTarget.backendId)
-        ? params.draft.backendTarget.backendId
+    const backendTarget = resolveDraftBackendTarget(params.draft);
+    const normalizedAgentId = backendTarget ? resolveCatalogAgentIdForBackendTarget(backendTarget) : null;
+    const builtInBackendAgentId = backendTarget && !backendTarget.configuredBackendId && isBundledAgentId(backendTarget.backendId)
+        ? backendTarget.backendId
         : null;
-    const canonicalSelectedBuiltInAgentId = params.draft.backendTarget
-        ? (!params.draft.backendTarget.configuredBackendId && isBundledAgentId(params.draft.backendTarget.backendId)
-            ? params.draft.backendTarget.backendId
+    const canonicalSelectedBuiltInAgentId = backendTarget
+        ? (!backendTarget.configuredBackendId && isBundledAgentId(backendTarget.backendId)
+            ? backendTarget.backendId
             : (normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID))
         : normalizedAgentId ?? builtInBackendAgentId ?? DEFAULT_AGENT_ID;
     const agentType = resolvePersistedAgentIdForBackendTarget({
-        backendTarget: params.draft.backendTarget ?? null,
+        backendTarget,
         persistedAgentId: params.preferredPersistedAgentId,
         selectedBuiltInAgentId: canonicalSelectedBuiltInAgentId,
-    });
-    const codexBackendMode = resolveCanonicalCodexBackendMode({
-        codexBackendMode: params.draft.codexBackendMode,
-        experimentalCodexAcp: params.draft.experimentalCodexAcp,
     });
     const normalizedBackendNewSessionOptionStateByTargetKey = normalizeBackendNewSessionOptionStateByTargetKey(
         params.backendNewSessionOptionStateByTargetKey,
@@ -1303,7 +1254,9 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
             ? { composerAttachments: params.composerAttachments }
             : {}),
         selectedMachineId: params.machineId,
+        executionTarget: params.draft.executionTarget,
         selectedPath: params.draft.directory,
+        organizationPlacement: params.draft.organizationPlacement,
         ...(targetServerId ? { targetServerId } : {}),
         ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
         ...(params.entryIntent ? { entryIntent: params.entryIntent } : {}),
@@ -1317,13 +1270,13 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
             sessionOnlySecretValueEncByProfileIdByEnvVarName: params.sessionOnlySecretValueEncByProfileIdByEnvVarName,
         } : {}),
         agentType,
-        ...(params.draft.backendTarget ? { backendTarget: params.draft.backendTarget } : {}),
+        agentTarget: params.draft.agentTarget,
         ...(params.draft.transcriptStorage ? { transcriptStorage: params.draft.transcriptStorage } : {}),
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : 'default',
         modelSelection: params.draft.modelSelection,
         acpSessionModeId: normalizeOptionalString(params.draft.acpSessionModeId),
         ...(params.draft.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: params.draft.sessionConfigOptionOverrides } : {}),
-        ...(codexBackendMode ? { codexBackendMode } : {}),
+        ...(params.draft.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.draft.runtimeDescriptorV1 } : {}),
         ...(params.draft.mcpSelection ? { mcpSelection: params.draft.mcpSelection } : {}),
         ...(normalizeOptionalString(params.draft.resumeSessionId) ? { resumeSessionId: normalizeOptionalString(params.draft.resumeSessionId)! } : {}),
         ...(normalizedBackendNewSessionOptionStateByTargetKey ? {

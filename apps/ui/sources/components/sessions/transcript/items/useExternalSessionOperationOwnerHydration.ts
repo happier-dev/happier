@@ -19,8 +19,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
  * read failure must stay distinguishable from "this reader is not the owner" and from
  * "the machine is offline", because only the failure is recoverable by asking again.
  *
- * Only settled outcomes are recorded, so a refresh cannot blank an already-hydrated row:
- * the reader keeps seeing the last good progress until the new read settles.
+ * Only settled outcomes are recorded, and a revalidation cannot blank an already-hydrated
+ * matching row: the reader keeps seeing the last good progress until a newer good read lands.
+ * An initial read failure remains `unavailable`; a later refresh failure does not erase detail.
  */
 type OwnerHydrationRead =
     | Readonly<{
@@ -175,7 +176,10 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 )
             ) {
                 if (current.key === snapshot.key) {
-                    commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                    const settled = hydratedRef.current;
+                    if (settled?.key !== snapshot.key || settled.outcome !== 'ready') {
+                        commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                    }
                 }
                 return;
             }
@@ -191,7 +195,10 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 && latestRequestRef.current.sequence === sequence
                 && currentRef.current.key === snapshot.key
             ) {
-                commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                const settled = hydratedRef.current;
+                if (settled?.key !== snapshot.key || settled.outcome !== 'ready') {
+                    commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                }
             }
         }
     }, [commitRead, sessionId]);
@@ -253,7 +260,6 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             return;
         }
         if (!current.readEligible) return;
-        commitRead(null);
         if (!matchesExternalSessionOperationPresentation(
             progress,
             current.presentation,

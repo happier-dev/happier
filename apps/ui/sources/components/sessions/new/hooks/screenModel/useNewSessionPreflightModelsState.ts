@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
@@ -48,7 +48,7 @@ function createUnavailableModelProbeAttempt(retryDelayMs: number): DynamicModelP
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV2 | null | undefined;
     providerConnectionId?: string | null;
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -91,7 +91,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         return readBackendTargetRefV2(backendTarget);
     }, [backendTargetKey]);
 
-    const agentType = React.useMemo<AgentId | null>(() => {
+    const agentType = React.useMemo<string | null>(() => {
         if (!backendTarget) return null;
         if (backendTarget.configuredBackendId) {
             return params.runtimeCarrierAgentId ?? null;
@@ -108,7 +108,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         if (!agentType) return false;
         // An Agent with no bundled model config declares probing through its own
         // contribution; the bundled static-only veto does not apply to it.
-        return getAgentCore(agentType)?.model.dynamicProbe !== 'static-only';
+        return !isBundledAgentId(agentType)
+            || getAgentCore(agentType)?.model.dynamicProbe !== 'static-only';
     }, [agentType]);
 
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);

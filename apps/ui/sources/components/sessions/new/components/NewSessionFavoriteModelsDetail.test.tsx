@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { AgentId } from '@/agents/catalog/catalog';
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/protocol';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 import { SelectionList } from '@/components/ui/selectionList';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
@@ -40,9 +41,10 @@ function expectedNativeSelection(backendTargetKey: string, modelId: string) {
     });
 }
 
-function getOptionIconAgentId(icon: React.ReactNode): string | null {
-    return React.isValidElement<{ agentId?: string }>(icon)
-        ? icon.props.agentId ?? null
+function getOptionIdentityIconProps(icon: React.ReactNode): React.ComponentProps<typeof AgentCatalogIdentityIcon> | null {
+    return React.isValidElement<React.ComponentProps<typeof AgentCatalogIdentityIcon>>(icon)
+        && icon.type === AgentCatalogIdentityIcon
+        ? icon.props
         : null;
 }
 
@@ -80,6 +82,7 @@ const settings = settingsParse({});
 function createBuiltInEntry(agentId: AgentId, title: string): ResolvedBackendCatalogEntry {
     const backendTarget: BackendTargetRefV2 = { kind: 'backend', backendId: agentId, sourceKind: 'built_in' };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId }),
         backendTarget,
         backendTargetKey: `agent:${agentId}`,
         kind: 'builtInAgent',
@@ -90,6 +93,7 @@ function createBuiltInEntry(agentId: AgentId, title: string): ResolvedBackendCat
         iconAgentId: agentId,
         title,
         subtitle: agentId,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 
@@ -226,9 +230,21 @@ describe('NewSessionFavoriteModelsDetail', () => {
             { label: 'Opus 4.6', description: 'Claude' },
             { label: 'GPT 5.5', description: 'Codex' },
         ]);
-        expect(latestPickerProps?.options.map((option) => getOptionIconAgentId(option.icon))).toEqual([
-            'claude',
-            'codex',
+        expect(latestPickerProps?.options.map((option) => getOptionIdentityIconProps(option.icon))).toEqual([
+            expect.objectContaining({
+                entry: expect.objectContaining({ agentId: 'claude' }),
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                current: true,
+                size: 20,
+            }),
+            expect.objectContaining({
+                entry: expect.objectContaining({ agentId: 'codex' }),
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                current: true,
+                size: 20,
+            }),
         ]);
         expect(latestPickerProps?.options.map((option) => getOptionIconSize(option.icon))).toEqual([
             20,
@@ -990,14 +1006,14 @@ describe('NewSessionFavoriteModelsDetail', () => {
             value: option.value,
             label: option.label,
             description: option.description,
-            iconAgentId: getOptionIconAgentId(option.icon),
+                identityAgentId: getOptionIdentityIconProps(option.icon)?.entry.agentId ?? null,
             iconSize: getOptionIconSize(option.icon),
         }))).toEqual([
             {
                 value: favoriteOptionValue('agent:claude', 'retired-model'),
                 label: 'Retired model',
                 description: 'Claude',
-                iconAgentId: 'claude',
+                identityAgentId: 'claude',
                 iconSize: 20,
             },
         ]);

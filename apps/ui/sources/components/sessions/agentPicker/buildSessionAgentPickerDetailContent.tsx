@@ -1,9 +1,8 @@
 import * as React from 'react';
 
-import type { BackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
-import type { AgentId } from '@/agents/catalog/catalog';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
@@ -31,8 +30,8 @@ export type SessionAgentPickerSelection = Readonly<{
 }>;
 
 export function buildSessionAgentPickerDetailContent(params: Readonly<{
-    backendTarget: BackendTargetRefV2;
-    runtimeCarrierAgentId?: AgentId | null;
+    backendTarget: PersistedBackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd: string | null;

@@ -1,10 +1,11 @@
+import * as React from 'react';
 import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { SessionModelSelectionV1Schema, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
@@ -17,6 +18,49 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('reconciles config overrides for a backend target switch without a passive follow-up commit', async () => {
+        const commitPhases: string[] = [];
+        const wrapper = (props: React.PropsWithChildren) => (
+            <React.Profiler
+                id="authoring-options"
+                onRender={(_id, phase) => {
+                    commitPhases.push(phase);
+                }}
+            >
+                {props.children}
+            </React.Profiler>
+        );
+        const buildProps = (agentType: AgentId, value: string | null) => ({
+            agentType,
+            backendTargetKey: `agent:happier.agent.${agentType}/${agentType}`,
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: value === null ? null : {
+                agentTarget: {
+                    kind: 'agent' as const,
+                    identity: { pluginId: `happier.agent.${agentType}`, localId: agentType },
+                },
+                sessionConfigOptionOverrides: {
+                    v: 1 as const,
+                    updatedAt: 123,
+                    overrides: {
+                        service_tier: { updatedAt: 123, value },
+                    },
+                },
+            },
+            rememberedEngineSelection: null,
+        });
+        const hook = await renderHook(
+            (props: ReturnType<typeof buildProps>) => useNewSessionAgentAuthoringOptionsState(props),
+            { initialProps: buildProps('codex', 'fast'), wrapper },
+        );
+        commitPhases.length = 0;
+
+        await hook.rerender(buildProps('opencode', null));
+
+        expect(commitPhases).toEqual(['update']);
+        expect(hook.getCurrent().sessionConfigOptionOverrides).toBeNull();
+    });
+
     it('keeps an unbacked external Agent model control neutral', async () => {
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'acme.review.backend',
@@ -35,17 +79,17 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             v: 1,
             updatedAt: 123,
             ref: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: 'pc_01J00000000000000000000000',
                 modelId: 'provider/claude-sonnet',
             },
         });
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'claude',
-            backendTargetKey: 'backend:claude',
+            backendTargetKey: 'agent:happier.agent.claude/claude',
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: {
-                backendTarget: { kind: 'backend', backendId: 'claude' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 modelSelection,
             },
             rememberedEngineSelection: null,
@@ -60,17 +104,17 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             v: 1,
             updatedAt: 123,
             ref: {
-                agentTargetKey: 'backend:opencode',
+                agentTargetKey: 'agent:happier.agent.opencode/opencode',
                 providerConnectionId: 'pc_01J00000000000000000000000',
                 modelId: 'default',
             },
         });
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'opencode',
-            backendTargetKey: 'backend:opencode',
+            backendTargetKey: 'agent:happier.agent.opencode/opencode',
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: {
-                backendTarget: { kind: 'backend', backendId: 'opencode' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
                 modelSelection,
             },
             rememberedEngineSelection: null,
@@ -83,11 +127,12 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     it('seeds model, session mode, and config options from a remembered engine selection when no draft exists', async () => {
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'claude',
+            backendTargetKey: 'agent:happier.agent.claude/claude',
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: null,
             rememberedEngineSelection: {
                 v: 1,
-                modelSelection: nativeSelection('backend:claude', 'claude-sonnet-4-5', 123),
+                modelSelection: nativeSelection('agent:happier.agent.claude/claude', 'claude-sonnet-4-5', 123),
                 acpSessionModeId: 'plan',
                 sessionConfigOptionOverrides: {
                     v: 1,
@@ -120,11 +165,12 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     it('seeds a remembered dynamic backend model even when the static catalog is stale', async () => {
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'codex',
+            backendTargetKey: 'agent:happier.agent.codex/codex',
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: null,
             rememberedEngineSelection: {
                 v: 1,
-                modelSelection: nativeSelection('backend:codex', 'gpt-5.5', 123),
+                modelSelection: nativeSelection('agent:happier.agent.codex/codex', 'gpt-5.5', 123),
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 updatedAt: 123,
@@ -135,14 +181,14 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     });
 
     it('rejects stale persisted freeform models that do not match constrained provider prefixes', async () => {
-        const geminiTarget = { kind: 'backend', backendId: 'gemini' } satisfies BackendTargetRefV2;
+        const geminiTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } } as const;
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'gemini',
             backendTargetKey: resolveBackendTargetKeyV2(geminiTarget),
             allowTargetlessDraftEngineSelection: false,
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: {
-                backendTarget: geminiTarget,
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } },
                 modelId: 'gpt-5.5',
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
@@ -174,7 +220,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             },
             rememberedEngineSelection: {
                 v: 1,
-                modelSelection: nativeSelection('backend:claude', 'remembered-model', 123),
+                modelSelection: nativeSelection('agent:happier.agent.claude/claude', 'remembered-model', 123),
                 acpSessionModeId: 'remembered-mode',
                 sessionConfigOptionOverrides: {
                     v: 1,
@@ -207,25 +253,25 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     it('uses implicit profile model intent after explicit drafts but before remembered selection', async () => {
         const profileSelection = SessionModelSelectionV1Schema.parse({
             v: 1, updatedAt: 200,
-            ref: { agentTargetKey: 'backend:claude', providerConnectionId: 'pc_profile', modelId: 'profile-model' },
+            ref: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_profile', modelId: 'profile-model' },
         });
         const implicitHook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
-            agentType: 'claude', backendTargetKey: 'backend:claude',
+            agentType: 'claude', backendTargetKey: 'agent:happier.agent.claude/claude',
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: null,
             implicitProfileModelSelection: profileSelection,
             rememberedEngineSelection: {
-                v: 1, modelSelection: nativeSelection('backend:claude', 'remembered-model', 100),
+                v: 1, modelSelection: nativeSelection('agent:happier.agent.claude/claude', 'remembered-model', 100),
                 acpSessionModeId: null, sessionConfigOptionOverrides: null, updatedAt: 100,
             },
         }));
         expect(implicitHook.getCurrent().modelSelection).toEqual(profileSelection);
 
-        const explicitSelection = nativeSelection('backend:claude', 'draft-model', 300);
+        const explicitSelection = nativeSelection('agent:happier.agent.claude/claude', 'draft-model', 300);
         const explicitHook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
-            agentType: 'claude', backendTargetKey: 'backend:claude',
+            agentType: 'claude', backendTargetKey: 'agent:happier.agent.claude/claude',
             hydratedTempAuthoringDraft: {
-                backendTarget: { kind: 'backend', backendId: 'claude' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 modelSelection: explicitSelection,
             },
             hydratedPersistedAuthoringDraft: null,
@@ -277,7 +323,10 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             rememberedEngineSelection: Props['rememberedEngineSelection'],
         ): Props => ({
             agentType,
-            backendTargetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentType }),
+            backendTargetKey: resolveBackendTargetKeyV2({
+                kind: 'agent',
+                identity: { pluginId: `happier.agent.${agentType}`, localId: agentType },
+            }),
             hydratedTempAuthoringDraft: null,
             hydratedPersistedAuthoringDraft: null,
             rememberedEngineSelection,
@@ -292,7 +341,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
                         v: 1,
                         updatedAt: 123,
                         ref: {
-                            agentTargetKey: 'backend:codex',
+                            agentTargetKey: 'agent:happier.agent.codex/codex',
                             providerConnectionId: null,
                             modelId: 'gpt-5.5',
                         },
@@ -326,10 +375,10 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     });
 
     it('ignores persisted draft engine state when the selected backend target differs', async () => {
-        const codexTarget = { kind: 'backend', backendId: 'codex' } satisfies BackendTargetRefV2;
-        const opencodeTarget = { kind: 'backend', backendId: 'opencode' } satisfies BackendTargetRefV2;
+        const codexTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const opencodeTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } } as const;
         const persistedCodexDraft = {
-            backendTarget: codexTarget,
+            agentTarget: codexTarget,
             modelId: 'gpt-5.5',
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
@@ -372,9 +421,9 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         expect(mismatchedHook.getCurrent().sessionConfigOptionOverrides).toBeNull();
     });
 
-    it('ignores targetless legacy draft engine state outside the draft agent backend target', async () => {
-        const codexTarget = { kind: 'backend', backendId: 'codex' } satisfies BackendTargetRefV2;
-        const geminiTarget = { kind: 'backend', backendId: 'gemini' } satisfies BackendTargetRefV2;
+    it('ignores a targetless draft instead of inferring retired Agent identity fields', async () => {
+        const codexTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const geminiTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } } as const;
         const legacyCodexDraft = {
             agentId: 'codex',
             modelId: 'gpt-5.5',
@@ -400,8 +449,8 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             rememberedEngineSelection: null,
         }));
 
-        expect(matchingHook.getCurrent().modelMode).toBe('gpt-5.5');
-        expect(matchingHook.getCurrent().acpSessionModeId).toBe('plan');
+        expect(matchingHook.getCurrent().modelMode).toBe(getAgentCore('codex').model.defaultMode);
+        expect(matchingHook.getCurrent().acpSessionModeId).toBeNull();
 
         const mismatchedHook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
             agentType: 'gemini',
@@ -415,7 +464,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
                     v: 1,
                     updatedAt: 456,
                     ref: {
-                        agentTargetKey: 'backend:gemini',
+                        agentTargetKey: 'agent:happier.agent.gemini/gemini',
                         providerConnectionId: null,
                         modelId: 'gemini-2.5-pro',
                     },
@@ -433,10 +482,10 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
     });
 
     it('reconciles mcp selection from target-scoped drafts when the selected backend changes', async () => {
-        const claudeTarget = { kind: 'backend', backendId: 'claude' } satisfies BackendTargetRefV2;
-        const codexTarget = { kind: 'backend', backendId: 'codex' } satisfies BackendTargetRefV2;
+        const claudeTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+        const codexTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
         const codexDraft = {
-            backendTarget: codexTarget,
+            agentTarget: codexTarget,
             modelId: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
@@ -450,7 +499,7 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
         const buildProps = (
             agentType: AgentId,
-            backendTarget: BackendTargetRefV2,
+            backendTarget: typeof claudeTarget | typeof codexTarget,
         ): Props => ({
             agentType,
             backendTargetKey: resolveBackendTargetKeyV2(backendTarget),

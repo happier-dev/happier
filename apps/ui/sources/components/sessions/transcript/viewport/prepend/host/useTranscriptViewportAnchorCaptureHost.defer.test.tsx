@@ -1085,6 +1085,36 @@ describe('useTranscriptViewportAnchorCaptureHost deferral', () => {
         }
     });
 
+    it('preserves a renderer-owned keyed anchor instead of persisting teardown geometry', async () => {
+        const originalPlatformOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        try {
+            const members = createMembers();
+            members.wantsPinnedRef.current = false;
+            members.listRef.current = {
+                hasLiveWebHold: (target: Readonly<{ kind: 'end' | 'item' }>) => target.kind === 'item',
+            } as never;
+            members.resolveWebScrollMetrics = vi.fn(() => createFakeExitMetrics({
+                clientHeight: 600,
+                scrollHeight: 4_000,
+                scrollTop: 0,
+            }));
+            const hook = await renderHook(
+                (deps: AnchorCaptureHostDeps) => useTranscriptViewportAnchorCaptureHost(deps),
+                { initialProps: buildDeps(members) },
+            );
+
+            expect(hook.getCurrent().captureAtExit({ deferEmit: false })).toBeNull();
+            expect(members.cancelScheduledViewportAnchorCapture).toHaveBeenCalled();
+            expect(members.resolveWebScrollMetrics).not.toHaveBeenCalled();
+            expect(members.emitViewportChange).not.toHaveBeenCalled();
+
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatformOS });
+        }
+    });
+
     it('captures native detached identity and within-row offset at exit despite stale live-tail intent', async () => {
         // Live iOS A->B->A RED (2026-07-24): after an explicit jump-to-bottom, a trusted
         // far-up swipe left Legend visibly detached for 10s, but the earlier tail intent

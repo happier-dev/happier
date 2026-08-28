@@ -4,6 +4,7 @@ import {
     readLegacyConfiguredAcpBackendId,
     type AcpCatalogSettingsV1,
     type BackendTargetRefV2,
+    type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
 import {
@@ -21,9 +22,11 @@ import { buildAvailableReviewEngineOptions, type ExecutionRunsBackendSnapshotEnt
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 
 export type ExecutionRunLauncherBackendChoice = Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     targetKey: string;
     backendId: string;
+    /** Operational Agent identity that owns this selected backend. */
+    agentId: string;
     title: string;
     disabled: boolean;
 }>;
@@ -115,10 +118,14 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
             }),
         }).map((option) => {
             const target: BackendTargetRefV2 = { kind: 'backend', backendId: option.id };
+            const projectedAgentId = params.mergedBackendProjectionById?.[option.id]?.agentId?.trim()
+                || params.mergedProviderProjectionById?.[option.id]?.agentId?.trim()
+                || option.id;
             return {
                 backendTarget: target,
                 targetKey: resolveBackendTargetKeyV2(target),
                 backendId: option.id,
+                agentId: projectedAgentId,
                 title: option.label,
                 disabled: option.disabled === true,
             };
@@ -144,11 +151,14 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
         // (`agent:*`, `acpBackend:*`) for execution-run launcher surfaces. Keep V2 backend-target
         // identity elsewhere (routes/settings/spawn/resume), but do not push V2 keys into action
         // schemas that do not accept them.
-        const legacyTargetKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget) as any);
+        const legacyTargetKey = entry.backendTarget.kind === 'agent'
+            ? buildBackendTargetKey({ kind: 'builtInAgent', agentId: entry.agentId })
+            : buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget));
         return {
             backendTarget: entry.backendTarget,
             targetKey: legacyTargetKey,
             backendId,
+            agentId: entry.agentId,
             title: entry.title,
             disabled: !isAvailable,
         };

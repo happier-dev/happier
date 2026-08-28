@@ -740,6 +740,52 @@ describe('SessionView header action menu visibility', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
   });
 
+  it('offers “When this turn finishes…” only for an exact active parent turn and preserves its identity in navigation', async () => {
+    automationsSupportState.enabled = true;
+    sessionState.session = {
+      ...sessionState.session,
+      serverId: 'server-1',
+      latestTurnId: 'turn-exact',
+      latestTurnStatus: 'in_progress',
+    } as any;
+
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    const exactTurnItem = (props?.extraItems ?? []).find(
+      (item: any) => item?.id === 'header.automateExactTurnCompletion',
+    );
+    expect(exactTurnItem?.title).toBe('automations.exactTurn.actionTitle');
+    expect(props?.onSelectExtraItem?.('header.automateExactTurnCompletion')).toBe(true);
+    expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+    expect(routerPushSpy).toHaveBeenCalledWith({
+      pathname: '/session/s1/automations/when-turn-finishes',
+      params: {
+        sourceSessionId: 's1',
+        sourceTurnId: 'turn-exact',
+        sourceServerId: 'server-1',
+        serverId: 'server-1',
+      },
+    });
+  });
+
+  it('withholds the exact-turn Automation action after the parent turn becomes terminal', async () => {
+    automationsSupportState.enabled = true;
+    sessionState.session = {
+      ...sessionState.session,
+      serverId: 'server-1',
+      latestTurnId: 'turn-completed',
+      latestTurnStatus: 'completed',
+    } as any;
+
+    await renderSessionView();
+
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect((props?.extraItems ?? []).map((item: any) => item?.id)).not.toContain(
+      'header.automateExactTurnCompletion',
+    );
+  });
+
   it('preserves the visible header props when rerendered with identical session values', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
@@ -997,14 +1043,14 @@ describe('SessionView header action menu visibility', () => {
     expect(headerActionMenuSpy).toHaveBeenCalled();
   });
 
-  it('offers and handles the attached Claude terminal action when supported', async () => {
+  it('offers and handles the provider-neutral attached terminal action when supported', async () => {
     attachedTerminalState.available = true;
     await renderSessionView();
 
     const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
     const extraIds = (props?.extraItems ?? []).map((item: any) => item?.id);
-    expect(extraIds).toContain('header.openAttachedClaudeTerminal');
-    expect(props?.onSelectExtraItem?.('header.openAttachedClaudeTerminal')).toBe(true);
+    expect(extraIds).toContain('header.openAttachedSessionTerminal');
+    expect(props?.onSelectExtraItem?.('header.openAttachedSessionTerminal')).toBe(true);
     expect(attachedTerminalState.open).toHaveBeenCalledTimes(1);
   });
 

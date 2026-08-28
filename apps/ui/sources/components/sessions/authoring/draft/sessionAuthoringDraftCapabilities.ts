@@ -24,8 +24,7 @@ export function resolveExistingSessionAuthoringCapabilities(params: Readonly<{
     availability: ExistingSessionAutomationAvailability;
 }>): ExistingSessionAuthoringCapabilities {
     const inheritedRuntimeVisible = params.availability.kind === 'ready';
-    const hasBackend = !!params.draft.backendTarget
-        || (typeof params.draft.agentId === 'string' && params.draft.agentId.trim().length > 0);
+    const hasBackend = !!params.draft.agentTarget;
     const hasSessionEncryption = params.draft.sessionEncryptionMode === 'e2ee' || params.draft.sessionEncryptionMode === 'plain';
     const hasTranscriptStorage = params.draft.transcriptStorage === 'direct' || params.draft.transcriptStorage === 'persisted';
     const hasProfile = typeof params.draft.profileId === 'string' && params.draft.profileId.trim().length > 0;

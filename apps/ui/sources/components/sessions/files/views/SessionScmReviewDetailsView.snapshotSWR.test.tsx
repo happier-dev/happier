@@ -20,6 +20,7 @@ const invalidateFromMutationAndAwaitSpy = vi.hoisted(() => vi.fn());
 const invalidateFromUserSpy = vi.hoisted(() => vi.fn());
 const serverFetchSpy = vi.hoisted(() => vi.fn());
 const reviewCommentsSurfaceSpy = vi.hoisted(() => vi.fn());
+const frontDoorActionExecuteSpy = vi.hoisted(() => vi.fn());
 
 const mockSession = {
     id: 'session-1',
@@ -68,6 +69,10 @@ vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', (
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: serverFetchSpy,
+}));
+
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+    createFrontDoorUiActionExecutor: () => frontDoorActionExecuteSpy,
 }));
 
 vi.mock('@/components/reviews/ReviewCommentsSessionSurface', () => ({
@@ -235,6 +240,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         invalidateFromMutationAndAwaitSpy.mockClear();
         invalidateFromUserSpy.mockClear();
         serverFetchSpy.mockReset();
+        frontDoorActionExecuteSpy.mockReset();
         reviewCommentsSurfaceSpy.mockClear();
         reviewDraftHandlers.onUpsertReviewCommentDraft.mockClear();
         reviewDraftHandlers.onDeleteReviewCommentDraft.mockClear();
@@ -358,10 +364,10 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
     it('mounts durable review comments in the session SCM review surface', async () => {
         reviewCommentsFeatureEnabled = true;
         mockProject = { id: 'project-1' };
-        serverFetchSpy.mockImplementation(async () => jsonResponse({
+        frontDoorActionExecuteSpy.mockResolvedValue({
             items: [reviewComment({ body: 'Durable session review comment.' })],
             cursor: null,
-        }));
+        });
         const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
 
         mockSnapshot = {
@@ -405,11 +411,10 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
             items: [expect.objectContaining({ body: 'Durable session review comment.' })],
             cursor: null,
         });
-        const [path] = serverFetchSpy.mock.calls.find(([candidatePath]) =>
-            String(candidatePath).includes('/v1/reviews/comments?'),
-        ) ?? [];
-        expect(String(path)).toContain('/v1/reviews/comments?');
-        expect(String(path)).toContain('projectId=project-1');
+        expect(frontDoorActionExecuteSpy).toHaveBeenCalledWith('reviews.comments.list', {
+            projectId: 'project-1',
+            includeHistory: true,
+        });
     });
 
     it('keeps review callbacks stable across unrelated parent rerenders', async () => {

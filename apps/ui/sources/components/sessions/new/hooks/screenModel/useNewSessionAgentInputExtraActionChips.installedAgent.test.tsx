@@ -50,10 +50,14 @@ const BASE_PARAMS = {
         enabled: false,
         name: '',
         description: '',
-        scheduleKind: 'interval' as const,
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: null,
+        triggers: [{
+            clientId: 'schedule-hourly',
+            definition: {
+                kind: 'schedule' as const,
+                enabled: true,
+                schedule: { kind: 'interval' as const, everyMs: 60 * 60_000 },
+            },
+        }],
     },
     automationLabel: 'Automate',
     showServerPickerChip: false,

@@ -3,32 +3,32 @@ import {
     type PluginUiNewSessionSeedV1,
 } from '@happier-dev/protocol/plugins/ui';
 
+import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    writeNewSessionComposerAttachmentSeeds,
+    type NewSessionComposerAttachmentSeedV1,
+} from './attachments/newSessionComposerAttachmentSeedStore';
 
 import {
+    getTempData,
     storeTempData,
     type NewSessionData,
-    type NewSessionPluginAttachmentSeedV1,
 } from '@/utils/sessions/tempDataStore';
-import {
-    newSessionDraftSeedDeclaresChangeV1,
-    seedNewSessionDraftV1,
-    type NewSessionDraftSeedV1,
-} from './newSessionDraftSeed';
 
 /**
- * The literal host arm that seeds the real New Session screen and opens it.
+ * The Session-owned settlement behind the semantic `openNewSession` method.
  *
  * It deliberately settles with nothing but an acknowledgement. Handing the
- * caller a draft back is what the `serverStartDraft` projection is for; here the
+ * caller a draft back is what no-invoke input selection is for; here the
  * screen's own canonical snapshot owns every subsequent edit and the send, and a
  * copy in the caller's hands would be the second competing draft this
- * projection exists to avoid.
+ * operation exists to avoid.
  *
  * It creates no Session, dispatches nothing, and holds no Action handle.
  */
 export type SessionNewSessionSeedOutcome =
-    | Readonly<{ kind: 'seeded'; dataId?: string }>
+    | Readonly<{ kind: 'opened'; dataId: string }>
     | Readonly<{
         kind: 'invalid';
         reason: 'seed_invalid' | 'seed_empty' | 'seed_attachments_uncredited';
@@ -40,21 +40,9 @@ export type SessionNewSessionSeedOutcome =
     | Readonly<{ kind: 'stale'; reason: 'host_retired' }>;
 
 /** Parses the plugin-authored seed at its one boundary. */
-export function readPluginNewSessionSeedV1(value: unknown): NewSessionDraftSeedV1 | null {
+export function readPluginNewSessionSeedV1(value: unknown): PluginUiNewSessionSeedV1 | null {
     const parsed = PluginUiNewSessionSeedV1Schema.safeParse(value);
-    if (!parsed.success) return null;
-    return projectPluginNewSessionSeedV1(parsed.data);
-}
-
-function projectPluginNewSessionSeedV1(seed: PluginUiNewSessionSeedV1): NewSessionDraftSeedV1 {
-    return {
-        ...(seed.prompt === undefined ? {} : { prompt: seed.prompt }),
-        ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
-        ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
-        ...(seed.placement === undefined ? {} : { placement: seed.placement }),
-        ...(seed.candidates === undefined ? {} : { candidates: seed.candidates }),
-        ...(seed.attachments === undefined ? {} : { attachments: seed.attachments }),
-    };
+    return parsed.success ? parsed.data : null;
 }
 
 type NewSessionCheckoutIntentSettlement =
@@ -77,7 +65,7 @@ type NewSessionCheckoutIntentSettlement =
  * draft, handoff or navigation write.
  */
 function settleNewSessionCheckoutIntent(
-    checkoutIntent: NewSessionDraftSeedV1['checkoutIntent'],
+    checkoutIntent: PluginUiNewSessionSeedV1['checkoutIntent'],
 ): NewSessionCheckoutIntentSettlement {
     switch (checkoutIntent) {
         case undefined:
@@ -114,24 +102,34 @@ export function seedAndOpenNewSession(params: Readonly<{
      * so a seed with attachments and no caller identity places nothing.
      */
     pluginId?: string;
-    scope?: ServerAccountScope | null;
+    scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
     navigateToNewSession: (input: Readonly<{
         dataId: string | null;
         draftId: string;
         worktree?: 'new';
+        spawnServerId?: string;
+        machineId?: string;
+        directory?: string;
     }>) => void;
-    nowMs?: () => number;
-    createDraftId?: Parameters<typeof seedNewSessionDraftV1>[0]['createDraftId'];
-    writeDraft?: Parameters<typeof seedNewSessionDraftV1>[0]['writeDraft'];
+    createDraftId?: () => string;
     storeTempData?: typeof storeTempData;
+    retireTempData?: typeof getTempData;
+    writeAttachmentSeeds?: typeof writeNewSessionComposerAttachmentSeeds;
 }>): SessionNewSessionSeedOutcome {
     const seed = readPluginNewSessionSeedV1(params.seed);
     if (!seed) return { kind: 'invalid', reason: 'seed_invalid' };
     // A seed that declares nothing must not navigate: it would drop the reader
     // onto the New Session screen having asked for nothing at all.
-    if (!newSessionDraftSeedDeclaresChangeV1(seed)) return { kind: 'invalid', reason: 'seed_empty' };
+    if (
+        seed.prompt === undefined
+        && seed.profileId === undefined
+        && seed.checkoutIntent === undefined
+        && seed.placement === undefined
+        && seed.candidates === undefined
+        && seed.attachments === undefined
+    ) return { kind: 'invalid', reason: 'seed_empty' };
     // A seed that asks for attachments and names no caller cannot place any of
     // them, and opening the screen anyway would show the reader a New Session
     // that quietly lost every entry they chose. It is refused before anything
@@ -145,46 +143,59 @@ export function seedAndOpenNewSession(params: Readonly<{
     const checkoutSettlement = settleNewSessionCheckoutIntent(seed.checkoutIntent);
     if (checkoutSettlement.kind === 'unavailable') return checkoutSettlement;
 
-    const draftId = seedNewSessionDraftV1({
-        seed,
-        scope: params.scope ?? null,
-        ...(params.nowMs ? { nowMs: params.nowMs } : {}),
-        ...(params.createDraftId ? { createDraftId: params.createDraftId } : {}),
-        ...(params.writeDraft ? { writeDraft: params.writeDraft } : {}),
-    });
-    if (!draftId) return { kind: 'unavailable', reason: 'navigation_unavailable' };
+    const draftId = (params.createDraftId ?? randomUUID)();
 
-    // Requests that cannot become a persisted draft field travel through the
-    // incumbent one-shot New Session handoff. Only its mounted composer can
-    // resolve their qualified contribution, generation, presentation label and
-    // minted instance id; candidate placement is likewise not selected until
-    // the reader uses the normal route controls.
-    const attachmentSeeds: readonly NewSessionPluginAttachmentSeedV1[] = (seed.attachments ?? [])
+    // Only the mounted composer can resolve attachment contribution authority,
+    // generation, presentation and the host-minted instance id. Their author
+    // requests therefore wait in the Account + draft keyed pre-admission owner;
+    // they never enter destructively consumed route data.
+    const attachmentSeeds: readonly NewSessionComposerAttachmentSeedV1[] = (seed.attachments ?? [])
         .map((attachment) => ({
             pluginId: pluginId ?? '',
             attachmentLocalId: attachment.attachmentLocalId,
             value: attachment.value,
         }));
     const placementCandidates = seed.candidates ?? [];
-    const handoff: NewSessionData['pluginNewSessionSeed'] = {
-        ...(attachmentSeeds.length === 0 ? {} : { attachments: attachmentSeeds }),
-        ...(placementCandidates.length === 0 ? {} : { placementCandidates }),
-    };
-    const dataId = attachmentSeeds.length === 0 && placementCandidates.length === 0
-        ? null
-        : (params.storeTempData ?? storeTempData)({ pluginNewSessionSeed: handoff });
+    // Ordinary fields and unresolved placement candidates remain a one-shot
+    // route handoff. Nothing becomes a canonical draft until the incumbent
+    // mounted New Session owner accepts this navigation.
+    const dataId = (params.storeTempData ?? storeTempData)({
+        ...(seed.prompt === undefined ? {} : { prompt: seed.prompt }),
+        ...(seed.profileId === undefined ? {} : { selectedProfileId: seed.profileId }),
+        ...(seed.placement?.machineId === undefined ? {} : { machineId: seed.placement.machineId }),
+        ...(seed.placement?.directory === undefined ? {} : { directory: seed.placement.directory }),
+        ...(placementCandidates.length === 0
+            ? {}
+            : { pluginNewSessionSeed: { placementCandidates } }),
+    } satisfies NewSessionData);
+    const attachmentSeedAddress = { scope: params.scope, draftId } as const;
+    if (attachmentSeeds.length > 0) {
+        (params.writeAttachmentSeeds ?? writeNewSessionComposerAttachmentSeeds)(
+            attachmentSeedAddress,
+            attachmentSeeds,
+        );
+    }
 
     try {
         params.navigateToNewSession({
             dataId,
             draftId,
             ...(checkoutSettlement.worktree === undefined ? {} : { worktree: checkoutSettlement.worktree }),
+            ...(seed.placement?.serverId === undefined ? {} : { spawnServerId: seed.placement.serverId }),
+            ...(seed.placement?.machineId === undefined ? {} : { machineId: seed.placement.machineId }),
+            ...(seed.placement?.directory === undefined ? {} : { directory: seed.placement.directory }),
         });
     } catch {
-        // The draft is already written, so the reader can still reach it by
-        // opening New Session themselves. Reporting success would claim a
-        // navigation that did not happen.
+        // Navigation was refused synchronously. Retire the exact one-shot
+        // handoff and leave no durable draft for a retry to duplicate.
+        (params.retireTempData ?? getTempData)(dataId);
+        if (attachmentSeeds.length > 0) {
+            (params.writeAttachmentSeeds ?? writeNewSessionComposerAttachmentSeeds)(
+                attachmentSeedAddress,
+                [],
+            );
+        }
         return { kind: 'unavailable', reason: 'navigation_unavailable' };
     }
-    return { kind: 'seeded', ...(dataId ? { dataId } : {}) };
+    return { kind: 'opened', dataId };
 }

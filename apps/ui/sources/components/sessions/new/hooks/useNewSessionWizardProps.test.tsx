@@ -19,6 +19,117 @@ installNewSessionScreenModelCommonModuleMocks({
 });
 
 describe('useNewSessionWizardProps', () => {
+    it('preserves projected installable presentation in the shared installer props', async () => {
+        let observed: ReturnType<typeof useNewSessionWizardProps> | null = null;
+
+        function Probe() {
+            observed = useNewSessionWizardProps({
+                theme: {},
+                styles: {},
+                safeAreaBottom: 0,
+                headerHeight: 0,
+                newSessionSidePadding: 0,
+                newSessionBottomPadding: 0,
+                useProfiles: false,
+                profiles: [],
+                favoriteProfileIds: [],
+                setFavoriteProfileIds: () => {},
+                selectedProfileId: null,
+                onPressDefaultEnvironment: () => {},
+                onPressProfile: () => {},
+                selectedMachineId: 'machine-1',
+                getProfileDisabled: () => false,
+                getProfileSubtitleExtra: () => null,
+                handleAddProfile: () => {},
+                openProfileEdit: () => {},
+                handleDuplicateProfile: () => {},
+                handleDeleteProfile: () => {},
+                suppressNextSecretAutoPromptKeyRef: { current: null },
+                openSecretRequirementModal: () => {},
+                profilesGroupTitles: { favorites: 'favorites', custom: 'custom', builtIn: 'builtIn' },
+                machineEnvPresence: { meta: {}, isPreviewEnvSupported: false, isLoading: false },
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                wizardInstallableDeps: [{
+                    entry: {
+                        experimental: false,
+                        groupTitleKey: 'machine.tools.installablesTitle',
+                        capabilityId: 'dep.acme.cli',
+                        title: 'Acme CLI',
+                        subtitle: 'Tools for Acme workspaces',
+                        iconName: 'terminal',
+                        setupUrl: 'https://docs.acme.test/setup',
+                        installLabels: { install: 'Install', update: 'Update', reinstall: 'Reinstall' },
+                        installModal: {
+                            installTitle: 'Install Acme CLI',
+                            updateTitle: 'Update Acme CLI',
+                            reinstallTitle: 'Reinstall Acme CLI',
+                            description: 'Install the Acme command-line tools.',
+                        },
+                        buildLatestVersionDetectRequest: () => ({ requests: [] }),
+                    },
+                    depStatus: null,
+                }],
+                selectedMachineCapabilities: { status: 'loaded' },
+                cliAvailability: { timestamp: 1, available: {} },
+                tmuxRequested: false,
+                enabledAgentIds: [],
+                isAgentSelectable: () => true,
+                isCliBannerDismissed: () => false,
+                dismissCliBanner: () => {},
+                agentType: 'customAcp',
+                setAgentType: () => {},
+                modelOptions: [],
+                modelMode: 'default',
+                setModelMode: () => {},
+                selectedIndicatorColor: 'blue',
+                profileMap: new Map(),
+                permissionMode: 'default',
+                handlePermissionModeChange: () => {},
+                machines: [],
+                targetServerId: null,
+                selectedMachine: null,
+                recentMachines: [],
+                favoriteMachineItems: [],
+                useMachinePickerSearch: false,
+                refreshMachineData: () => {},
+                setSelectedMachineId: () => {},
+                getBestPathForMachine: () => '',
+                setSelectedPath: () => {},
+                favoriteMachines: [],
+                setFavoriteMachines: () => {},
+                selectedPath: '',
+                recentPaths: [],
+                usePathPickerSearch: false,
+                favoriteDirectories: [],
+                setFavoriteDirectories: () => {},
+                promptStore: createNewSessionPromptStore(''),
+                setSessionPrompt: () => {},
+                handleCreateSession: () => {},
+                canCreate: false,
+                isCreating: false,
+                emptyAutocompleteKinds: [],
+                emptyAutocompleteSuggestions: vi.fn(),
+                resumeSessionId: '',
+                isResumeSupportChecking: false,
+            } as any);
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.installableDepInstallers).toEqual([
+            expect.objectContaining({
+                depId: 'dep.acme.cli',
+                depTitle: 'Acme CLI',
+                depSubtitle: 'Tools for Acme workspaces',
+                setupUrl: 'https://docs.acme.test/setup',
+            }),
+        ]);
+    });
+
     it('updates memoized agent and typed Provider launch recovery fields', async () => {
         let observed: ReturnType<typeof useNewSessionWizardProps> | null = null;
 

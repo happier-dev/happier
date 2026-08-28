@@ -27,6 +27,7 @@ import { HappyError } from '@/utils/errors/errors';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
 import { Icon } from '@/components/ui/icons/Icon';
+import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
 import {
     SESSION_ROW_ACTION_SELECT_ID,
     type SessionRowActionMenuState,
@@ -111,17 +112,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     deferredContextActionDelayMs: number;
 }>): SessionRowActionMenuState {
     const target = params.target;
-    const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
-        return params.knownTags.map((tag) => ({
-            id: tag,
-            title: tag,
-            rightElement: params.activeTags.includes(tag) ? (
-                <Icon name="check" size={16} color={params.iconColor} />
-            ) : undefined,
-        }));
-    }, [params.activeTags, params.iconColor, params.knownTags]);
-
-    const handleTagMenuSelect = React.useCallback((tagId: string) => {
+    const applyTagToggle = React.useCallback((tagId: string) => {
         if (!params.onSetTags) return;
         const next = params.activeTags.includes(tagId)
             ? params.activeTags.filter((tag) => tag !== tagId)
@@ -134,7 +125,7 @@ export function useSessionRowActionMenu(params: Readonly<{
         }).catch(showActionError);
     }, [params.activeTags, params.onSetTags, target]);
 
-    const handleTagMenuCreate = React.useCallback((query: string) => {
+    const applyTagCreate = React.useCallback((query: string) => {
         if (!params.onSetTags) return;
         const newTag = query.trim();
         if (!newTag || params.activeTags.includes(newTag)) return;
@@ -145,6 +136,16 @@ export function useSessionRowActionMenu(params: Readonly<{
             onSetTags: params.onSetTags,
         }).catch(showActionError);
     }, [params.activeTags, params.onSetTags, target]);
+    const tagMenuContent = React.useMemo(() => buildSessionTagsMenuContent({
+        tags: params.knownTags.map((tag) => ({ id: tag, label: tag })),
+        selectedTagIds: params.activeTags,
+        iconColor: params.iconColor,
+        onToggle: applyTagToggle,
+        onCreate: applyTagCreate,
+    }), [applyTagCreate, applyTagToggle, params.activeTags, params.iconColor, params.knownTags]);
+    const tagMenuItems = React.useMemo(() => [...tagMenuContent.dropdownItems], [tagMenuContent.dropdownItems]);
+    const handleTagMenuSelect = tagMenuContent.dropdownOnSelect;
+    const handleTagMenuCreate = tagMenuContent.dropdownOnCreate ?? (() => {});
 
     const [stoppingSession, performStopMutation] = useHappyAction(async () => {
         await executeSessionAction({

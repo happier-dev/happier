@@ -669,7 +669,7 @@ vi.mock('@/sync/ops/sessionSwitch', () => ({
     sessionSwitch: vi.fn(),
 }));
 vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
-    countEnabledAutomationsLinkedToSession: () => 0,
+  countEnabledAutomationDefinitionsLinkedToSession: () => 0,
 }));
 
 const {

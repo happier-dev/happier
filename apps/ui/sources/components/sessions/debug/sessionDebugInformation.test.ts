@@ -67,6 +67,7 @@ describe('sessionDebugInformation', () => {
                     },
                 },
                 piSessionId: 'legacy-pi-session',
+                nativeResumeIdentityV1: { v: 1, vendorResumeId: 'pi-session-1' },
                 piSessionFile: '/tmp/pi/session.jsonl',
             },
             vendorResumeIdField: 'piSessionId',
@@ -83,6 +84,7 @@ describe('sessionDebugInformation', () => {
                     },
                 },
                 codexSessionId: 'codex-legacy-session',
+                nativeResumeIdentityV1: { v: 1, vendorResumeId: 'codex-runtime-session' },
             },
             vendorResumeIdField: 'codexSessionId',
         })).toBe('codex-runtime-session');
@@ -111,7 +113,7 @@ describe('sessionDebugInformation', () => {
                 },
             },
             piSessionFile: '/tmp/pi/legacy.jsonl',
-        })).toBe('/tmp/pi/from-runtime.jsonl');
+        })).toBeNull();
 
         expect(resolveProviderSessionArtifactPath({
             piSessionFile: ' /tmp/pi/legacy.jsonl ',

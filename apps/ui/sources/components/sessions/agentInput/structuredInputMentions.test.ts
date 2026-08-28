@@ -12,6 +12,7 @@ import {
     buildStructuredInputMetaOverrides,
     createStructuredInputMentionFromSuggestion,
     mergeMessageMetaOverrides,
+    reconcileStructuredInputMentionsWithTextChange,
     reconcileStructuredInputMentionsWithText,
     type ComposerStructuredInputMention,
     type ComposerStructuredInputMentionPayload,
@@ -20,6 +21,8 @@ import {
 const vendorPluginMention = {
     kind: 'vendorPlugin',
     tokenText: '@gmail',
+    start: 5,
+    end: 11,
     vendorPluginRef: 'plugin://gmail@openai-curated',
     label: 'Gmail',
 } satisfies ComposerStructuredInputMention;
@@ -27,6 +30,8 @@ const vendorPluginMention = {
 const skillMention = {
     kind: 'skill',
     tokenText: '$review',
+    start: 12,
+    end: 19,
     id: 'vendor:codex:codex-native:review',
     name: 'review',
     path: '/skills/review/SKILL.md',
@@ -38,19 +43,33 @@ const skillMention = {
 } satisfies ComposerStructuredInputMention;
 
 describe('structured input mentions', () => {
-    it.each([
-        { what: 'text inserted before the token', text: 'Please Call @gmail' },
-        { what: 'text inserted after the token', text: 'Call @gmail now' },
-        { what: 'the whole prefix removed', text: '@gmail' },
-        { what: 'a leading newline', text: '\nCall @gmail' },
-    ])('keeps a selected mention through $what', ({ text }) => {
-        expect(reconcileStructuredInputMentionsWithText({ text, mentions: [vendorPluginMention] }))
-            .toEqual([vendorPluginMention]);
+    it('keeps an exact occurrence binding when an equal literal token remains elsewhere', () => {
+        const mention = {
+            ...vendorPluginMention,
+            start: 0,
+            end: 6,
+        } as ComposerStructuredInputMention;
+
+        expect(reconcileStructuredInputMentionsWithTextChange({
+            previousText: '@gmail @gmail',
+            nextText: ' @gmail',
+            previousSelection: { start: 0, end: 6 },
+            mentions: [mention],
+        })).toEqual([]);
+    });
+
+    it('shifts the exact range when text is inserted before the token', () => {
+        expect(reconcileStructuredInputMentionsWithText({
+            previousText: 'Call @gmail',
+            nextText: 'Please Call @gmail',
+            mentions: [vendorPluginMention],
+        })).toEqual([{ ...vendorPluginMention, start: 12, end: 18 }]);
     });
 
     it('drops a selected mention when the token text is edited', () => {
         const mentions = reconcileStructuredInputMentionsWithText({
-            text: 'Call @gmai',
+            previousText: 'Call @gmail',
+            nextText: 'Call @gmai',
             mentions: [vendorPluginMention],
         });
 
@@ -68,9 +87,17 @@ describe('structured input mentions', () => {
             text: composerText,
         });
         const admitted = sanitizeSessionUserMessageSendMeta(overrides, { text: composerText.trim() });
-        const envelope = admitted.happierStructuredInputV1 as { mentions?: readonly unknown[] };
+        const envelope = admitted.happierStructuredInputV1 as {
+            mentions?: readonly Record<string, unknown>[];
+        };
 
         expect(envelope?.mentions).toHaveLength(1);
+        expect(envelope?.mentions?.[0]).toEqual(expect.objectContaining({
+            kind: MENTION_KIND_V1.vendorPlugin,
+            token: '@gmail',
+        }));
+        expect(envelope?.mentions?.[0]).not.toHaveProperty('start');
+        expect(envelope?.mentions?.[0]).not.toHaveProperty('end');
     });
 
     it('does not infer a manually typed vendor plugin token', () => {
@@ -91,7 +118,7 @@ describe('structured input mentions', () => {
                 vendorPluginMention,
                 skillMention,
             ],
-            text: 'Call @gmai $review',
+            text: 'Call @gmaix $review',
         });
 
         expect(meta).toMatchObject({
@@ -182,6 +209,8 @@ describe('structured input mentions', () => {
         const legacySkill = {
             kind: 'skill',
             tokenText: '$review',
+            start: 12,
+            end: 19,
             name: 'review',
         } satisfies ComposerStructuredInputMention;
 
@@ -206,18 +235,24 @@ describe('structured input mentions', () => {
                 {
                     kind: 'skill',
                     tokenText: '$review',
+                    start: 0,
+                    end: 7,
                     name: 'review',
                     origin: 'codex_native',
                 },
                 {
                     kind: 'skill',
                     tokenText: '$summarize',
+                    start: 8,
+                    end: 18,
                     name: 'summarize',
                     origin: 'happier_projected',
                 },
                 {
                     kind: 'skill',
                     tokenText: '$plan',
+                    start: 19,
+                    end: 24,
                     name: 'plan',
                     origin: 'cursor_native',
                     backendId: 'cursor',
@@ -253,25 +288,30 @@ describe('structured input mentions', () => {
 
     it('decides each mention independently of its siblings', () => {
         expect(reconcileStructuredInputMentionsWithText({
-            text: 'Hey @gmail',
+            previousText: 'Call @gmail $review',
+            nextText: 'Call @gmail',
             mentions: [vendorPluginMention, skillMention],
         })).toEqual([vendorPluginMention]);
     });
 
     it('matches a token containing an astral code point', () => {
-        // Containment compares strings, so a surrogate pair needs no special handling — but a
-        // token that differs only in its emoji must still not match.
+        // React Native selections and String.slice both use UTF-16 offsets, so a surrogate pair
+        // needs no alternate unit — but a token that differs only in its emoji must not match.
         const emojiMention = {
             ...vendorPluginMention,
             tokenText: '@"notes \u{1F600}.md"',
+            start: 5,
+            end: 5 + '@"notes \u{1F600}.md"'.length,
         } satisfies ComposerStructuredInputMention;
 
         expect(reconcileStructuredInputMentionsWithText({
-            text: 'read @"notes \u{1F600}.md" first',
+            previousText: 'read @"notes \u{1F600}.md" first',
+            nextText: 'read @"notes \u{1F600}.md" first',
             mentions: [emojiMention],
         })).toEqual([emojiMention]);
         expect(reconcileStructuredInputMentionsWithText({
-            text: 'read @"notes \u{1F601}.md" first',
+            previousText: 'read @"notes \u{1F600}.md" first',
+            nextText: 'read @"notes \u{1F601}.md" first',
             mentions: [emojiMention],
         })).toEqual([]);
     });
@@ -280,15 +320,19 @@ describe('structured input mentions', () => {
         const unknownMention = {
             kind: 'happier.session',
             tokenText: '@session:abc',
+            start: 5,
+            end: 17,
         } satisfies ComposerStructuredInputMention;
 
         expect(reconcileStructuredInputMentionsWithText({
-            text: 'Please Call @session:abc',
+            previousText: 'Call @session:abc',
+            nextText: 'Please Call @session:abc',
             mentions: [unknownMention],
-        })).toEqual([unknownMention]);
+        })).toEqual([{ ...unknownMention, start: 12, end: 24 }]);
 
         expect(reconcileStructuredInputMentionsWithText({
-            text: 'Call @session:ab',
+            previousText: 'Call @session:abc',
+            nextText: 'Call @session:ab',
             mentions: [unknownMention],
         })).toEqual([]);
     });
@@ -298,6 +342,8 @@ describe('structured input mentions', () => {
             mentions: [{
                 kind: 'happier.session',
                 tokenText: '@session:abc',
+                start: 5,
+                end: 17,
             }],
             text: 'Call @session:abc',
         })).toEqual({});
@@ -310,6 +356,8 @@ describe('structured input mentions', () => {
                 ref: 'partner:thread-42',
                 label: 'Thread 42',
                 tokenText: '@thread-42',
+                start: 5,
+                end: 15,
             }],
             text: 'Open @thread-42',
         });
@@ -341,6 +389,7 @@ describe('structured input mentions', () => {
                     label: 'Fix Detached Dev Stack Startup',
                 },
             },
+            start: 5,
         });
 
         expect(selected).not.toBeNull();
@@ -372,9 +421,12 @@ describe('structured input mentions', () => {
         const selected = {
             ...payload,
             tokenText: '@incident-42',
+            start: 10,
+            end: 22,
         } satisfies ComposerStructuredInputMention;
         const mentions = reconcileStructuredInputMentionsWithText({
-            text: 'Read Open @incident-42',
+            previousText: 'Read Open @incident-42',
+            nextText: 'Read Open @incident-42',
             mentions: [selected],
         });
 

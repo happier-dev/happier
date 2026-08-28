@@ -5,6 +5,7 @@ import { ProviderConnectionIdSchema, type SessionModelSelectionV1 } from '@happi
 
 import {
     createCapturingLegendListMock,
+    createResolvedAgentCatalogEntryFixture,
     renderScreen,
     withPopoverWebGlobals,
 } from '@/dev/testkit';
@@ -34,6 +35,7 @@ vi.mock('@legendapp/list/react-native', () => ({
 const CONNECTION_ID = ProviderConnectionIdSchema.parse('pc_large_catalog');
 const TARGET_KEY = 'backend:codex';
 const CODEX_BACKEND_ENTRY: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'codex' }),
     backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     backendTargetKey: TARGET_KEY,
     kind: 'builtInAgent',
@@ -44,6 +46,7 @@ const CODEX_BACKEND_ENTRY: ResolvedBackendCatalogEntry = {
     iconAgentId: 'codex',
     title: 'Codex',
     subtitle: 'Codex',
+    cliAuthBackgroundCheckSafe: false,
 };
 
 function providerGroup(count: number): SessionModelProjectionGroup {

@@ -10,9 +10,12 @@ import {
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import {
+    resolveAgentCatalogProjection,
+    type ResolvedAgentCatalogEntry,
+} from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -24,7 +27,7 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useProfile } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
@@ -114,7 +117,14 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const styles = stylesheet;
     const machines = useAllMachines();
     const profile = useProfile();
-    const settings = useSettings();
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const connectedServicesProfileLabelByKey = useSetting('connectedServicesProfileLabelByKey');
+    const settings = React.useMemo(() => ({
+        backendEnabledByTargetKey,
+        acpCatalogSettingsV1,
+        connectedServicesProfileLabelByKey,
+    }), [acpCatalogSettingsV1, backendEnabledByTargetKey, connectedServicesProfileLabelByKey]);
     const activeServerId = useActiveServerSnapshot().serverId;
     const externalSessionsSettings = readExternalSessionsSettingsV1(
         useSetting('externalSessionsSettingsV1'),
@@ -148,7 +158,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const providers = React.useMemo<ReadonlyArray<Readonly<{
         id: ExternalSessionBrowseProviderId;
         label: string;
-        iconAgentId: string;
+        entry: ResolvedAgentCatalogEntry;
     }>>>(
         () => browseProviderIds.map((providerId) => {
             const projection = resolveAgentCatalogProjection(providerId, {
@@ -161,7 +171,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             return {
                 id: providerId,
                 label: projection.title,
-                iconAgentId: projection.iconAgentId ?? providerId,
+                entry: projection,
             };
         }),
         [
@@ -232,6 +242,18 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
+    const identityServerId = lockScope?.serverId ?? activeServerId;
+    const selectedAgentIdentity = React.useMemo(() => selectedAgentProjection ? ({
+        entry: selectedAgentProjection,
+        machineId: effectiveSelectedMachineId,
+        serverId: identityServerId,
+        current: daemonMergedProjection.phase === 'ready',
+    } as const) : null, [
+        daemonMergedProjection.phase,
+        effectiveSelectedMachineId,
+        identityServerId,
+        selectedAgentProjection,
+    ]);
 
     React.useEffect(() => {
         if (lockScope) return;
@@ -286,8 +308,21 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const providerMenuItems = React.useMemo(() => providers.map((provider) => ({
         id: provider.id,
         title: provider.label,
-        icon: <AgentIcon agentId={provider.iconAgentId} size={18} />,
-    })), [providers, theme.colors.text.secondary]);
+        icon: (
+            <AgentCatalogIdentityIcon
+                entry={provider.entry}
+                machineId={effectiveSelectedMachineId}
+                serverId={identityServerId}
+                current={daemonMergedProjection.phase === 'ready'}
+                size={18}
+            />
+        ),
+    })), [
+        daemonMergedProjection.phase,
+        effectiveSelectedMachineId,
+        identityServerId,
+        providers,
+    ]);
     const sourceMenuItems = React.useMemo(() => sourceOptions.map((sourceOption) => ({
         id: sourceOption.key,
         title: sourceOption.label,
@@ -730,7 +765,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                     linkingSessionId={linkingSessionId}
                     candidateActionsDisabled={!candidateActionsAllowed}
                     interaction={interaction}
-                    agentId={selectedAgentProjection?.iconAgentId ?? selectedProviderId}
+                    agentIdentity={selectedAgentIdentity}
                     agentLabel={selectedAgentProjection?.title ?? null}
                     machineLabel={selectedMachineLabel}
                     machineHomeDir={selectedMachineHomeDir}

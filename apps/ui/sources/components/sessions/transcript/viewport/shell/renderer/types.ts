@@ -151,7 +151,11 @@ export type TranscriptListShellRef<TItem = unknown> = Readonly<{
 
 export type TranscriptRendererWebHoldTarget =
     | Readonly<{ kind: 'end' }>
-    | Readonly<{ kind: 'item'; itemId: string }>;
+    | Readonly<{
+        kind: 'item';
+        /** Omit to query whether any keyed anchor currently owns the viewport. */
+        itemId?: string;
+    }>;
 
 export type TranscriptRendererEntryAnchorHold = Readonly<{
     kind: 'message' | 'toolGroup' | 'item';

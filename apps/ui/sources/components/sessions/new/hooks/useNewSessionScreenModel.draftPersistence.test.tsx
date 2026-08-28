@@ -19,6 +19,7 @@ import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happ
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import {
     clearAllNewSessionComposerPlacementSeeds,
     readNewSessionComposerPlacementSeeds,
@@ -121,22 +122,12 @@ const persistedDraft = vi.hoisted(() => ({
         },
     },
     automationDraft: {
+        pendingAutomationId: null,
         enabled: false,
         name: '',
         description: '',
-        scheduleKind: 'interval' as const,
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: null,
-    } as {
-        enabled: boolean;
-        name: string;
-        description: string;
-        scheduleKind: 'interval' | 'cron';
-        everyMinutes: number;
-        cronExpr: string;
-        timezone: string | null;
-    },
+        triggers: [],
+    } as NewSessionAutomationDraft,
     updatedAt: 123,
 }) as {
     input: string;
@@ -163,15 +154,7 @@ const persistedDraft = vi.hoisted(() => ({
         updatedAt: number;
         overrides: Record<string, { updatedAt: number; value: string }>;
     };
-    automationDraft: {
-        enabled: boolean;
-        name: string;
-        description: string;
-        scheduleKind: 'interval' | 'cron';
-        everyMinutes: number;
-        cronExpr: string;
-        timezone: string | null;
-    };
+    automationDraft: NewSessionAutomationDraft;
     updatedAt: number;
     backendTarget?: { kind: 'builtInAgent'; agentId: string };
     resumeSessionId?: string | null;
@@ -607,10 +590,6 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/components/sessions/agentInput/components/AgentInputChipPickerPopover', () => ({
     AgentInputChipPickerPopover: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AgentInputChipPickerPopover', props, props.children),
-}));
-
-vi.mock('@/components/automations/editor/AutomationSettingsForm', () => ({
-    AutomationSettingsForm: (props: Record<string, unknown>) => React.createElement('AutomationSettingsForm', props),
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -1174,13 +1153,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.selectedPath = '/repo/custom';
         persistedDraft.updatedAt = 123;
         persistedDraft.automationDraft = {
+            pendingAutomationId: null,
             enabled: false,
             name: '',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [],
         };
         persistedDraft.checkoutCreationDraft = {
             kind: 'git_worktree',
@@ -2236,13 +2213,18 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     it('exposes an automation submit accessibility label when automation is enabled in the draft', async () => {
         featureFlags.automationsEnabled = true;
         persistedDraft.automationDraft = {
+            pendingAutomationId: 'automation-daily-summary',
             enabled: true,
             name: 'Daily summary',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [{
+                clientId: 'daily-summary-schedule',
+                definition: {
+                    kind: 'schedule',
+                    enabled: true,
+                    schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null },
+                },
+            }],
         };
         let model: any = null;
         await renderNewSessionScreenModel((nextModel) => {
@@ -2250,18 +2232,34 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.create.createButtonTitle');
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
+            automationDraft: expect.objectContaining({
+                pendingAutomationId: 'automation-daily-summary',
+                triggers: [expect.objectContaining({
+                    clientId: 'daily-summary-schedule',
+                })],
+            }),
+        }));
     });
 
     it('resets stale automation-only draft fields when the route explicitly starts a fresh automation create flow', async () => {
         featureFlags.automationsEnabled = true;
         persistedDraft.automationDraft = {
+            pendingAutomationId: 'automation-stale',
             enabled: true,
             name: 'Legacy automation',
             description: 'Carryover description',
-            scheduleKind: 'interval',
-            everyMinutes: 90,
-            cronExpr: '0 * * * *',
-            timezone: 'Europe/Zurich',
+            triggers: [{
+                clientId: 'stale-schedule-row',
+                definition: {
+                    kind: 'schedule',
+                    enabled: true,
+                    schedule: { kind: 'interval', everyMs: 5_400_000, scheduleExpr: null, timezone: 'Europe/Zurich' },
+                },
+            }],
         };
         searchParamsState.value = {
             automation: '1',
@@ -2278,27 +2276,25 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
             automationDraft: expect.objectContaining({
+                pendingAutomationId: expect.any(String),
                 enabled: true,
                 name: '',
                 description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 60,
-                cronExpr: '0 * * * *',
-                timezone: null,
+                triggers: [],
             }),
         }));
+        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]?.automationDraft.pendingAutomationId)
+            .not.toBe('automation-stale');
     });
 
     it('drops stale in-memory automation mode when focus reloads a plain /new draft after automation create', async () => {
         featureFlags.automationsEnabled = true;
         persistedDraft.automationDraft = {
+            pendingAutomationId: null,
             enabled: false,
             name: '',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [],
         };
         searchParamsState.value = {
             automation: '1',
@@ -2312,13 +2308,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         searchParamsState.value = {};
         persistedDraft.automationDraft = {
+            pendingAutomationId: null,
             enabled: false,
             name: '',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [],
         };
         persistedDraft.updatedAt = 456;
 
@@ -2339,13 +2333,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     it('does not rehydrate plain /new into automation mode after autosaving a forced automation route draft', async () => {
         featureFlags.automationsEnabled = true;
         persistedDraft.automationDraft = {
+            pendingAutomationId: null,
             enabled: false,
             name: '',
             description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
+            triggers: [],
         };
         searchParamsState.value = {
             automation: '1',
@@ -2366,7 +2358,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const savedAutomationDraft = saveNewSessionDraftMock.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
         expect(savedAutomationDraft).toEqual(expect.objectContaining({
             automationDraft: expect.objectContaining({
+                pendingAutomationId: expect.any(String),
                 enabled: true,
+                triggers: [],
             }),
             entryIntent: 'automation',
         }));
@@ -2386,195 +2380,6 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             authoringDraft: expect.objectContaining({
                 automation: null,
             }),
-        }));
-    });
-
-    it('hydrates temp edit seed data and exposes save semantics for automation editing', async () => {
-        settingsState.useProfiles = true;
-        searchParamsState.value = {
-            dataId: 'temp-edit-seed',
-            automation: '1',
-            automationEditId: 'auto-1',
-        };
-        tempSessionDataState.value = {
-            prompt: 'Review the open pull requests',
-            machineId: 'machine-1',
-            path: '/repo/edit-seed',
-            agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
-            codexBackendMode: 'appServer',
-            transcriptStorage: 'direct',
-            permissionMode: 'acceptEdits',
-            automationDraft: {
-                enabled: true,
-                name: 'PR review',
-                description: 'Nightly review',
-                scheduleKind: 'interval',
-                everyMinutes: 30,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
-        };
-
-        let model: any = null;
-        await renderNewSessionScreenModel((nextModel) => {
-            model = nextModel;
-        });
-
-        expect(model?.simpleProps?.agentType).toBe('codex');
-        expect(model?.simpleProps?.selectedPath).toBe('/repo/edit-seed');
-        expect(model?.simpleProps?.permissionMode).toBe('acceptEdits');
-        expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.edit.saveAutomationLabel');
-        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            authoringDraft: expect.objectContaining({
-                directory: '/repo/edit-seed',
-                backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'codex' }),
-                prompt: 'Review the open pull requests',
-                displayText: 'Review the open pull requests',
-            }),
-        }));
-
-        await act(async () => {
-            persistDraftNowRef.current?.();
-        });
-
-        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
-            input: 'Review the open pull requests',
-            selectedMachineId: 'machine-1',
-            selectedPath: '/repo/edit-seed',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
-            permissionMode: 'acceptEdits',
-            automationDraft: expect.objectContaining({
-                enabled: true,
-                name: 'PR review',
-                everyMinutes: 30,
-            }),
-        }));
-    });
-
-    it('hands a direct Event edit to the incumbent writer with its exact authoring seed and CAS target', async () => {
-        featureFlags.automationsEnabled = true;
-        searchParamsState.value = {
-            dataId: 'event-edit-seed',
-            automation: '1',
-            automationEditId: 'event-automation-1',
-        };
-        tempSessionDataState.value = {
-            prompt: 'Review the repository event',
-            machineId: 'machine-1',
-            directory: '/repo/from-event-definition',
-            automationDraft: {
-                enabled: true,
-                name: 'Repository triage',
-                description: 'Review repository activity',
-                scheduleKind: 'interval',
-                everyMinutes: 60,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
-            eventAutomationEditSeed: {
-                automationId: 'event-automation-1',
-                expectedTemplateVersion: 7,
-                name: 'Repository triage',
-                description: 'Review repository activity',
-                enabled: true,
-                eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
-                source: {
-                    v: 1,
-                    sourceInstanceId: 'repository:acme/widgets',
-                    sourceContractVersion: 3,
-                    sourceConfig: { repository: 'acme/widgets' },
-                    displayLabel: 'acme/widgets',
-                },
-                watcherMaterializationRef: {
-                    machineId: 'watcher-machine',
-                    pluginId: 'acme.github',
-                    materializationId: 'github-materialization',
-                },
-                filter: null,
-                maximumObservationAgeMs: null,
-                prompt: 'Review the repository event',
-                target: {
-                    kind: 'newSession',
-                    spawn: {
-                        executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
-                        directory: '/repo/from-event-definition',
-                        agentTarget: {
-                            kind: 'agent',
-                            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                        },
-                        permissionMode: 'default',
-                        configuration: {
-                            mode: { value: null, updatedAtMs: 10 },
-                            model: { value: null, updatedAtMs: 10 },
-                            permissionIntent: { value: 'default', updatedAtMs: 41 },
-                            options: {},
-                        },
-                        terminal: {
-                            mode: 'tmux',
-                            tmux: { sessionName: 'event-review' },
-                        },
-                    },
-                },
-            },
-        };
-
-        await renderNewSessionScreenModel(() => {});
-        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            automationEditId: 'event-automation-1',
-            eventAutomationEdit: {
-                automationId: 'event-automation-1',
-                expectedTemplateVersion: 7,
-            },
-            authoringDraft: expect.objectContaining({
-                directory: '/repo/from-event-definition',
-                prompt: 'Review the repository event',
-                displayText: 'Review the repository event',
-                agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
-                permissionMode: 'default',
-                permissionModeUpdatedAt: 41,
-                terminal: expect.objectContaining({
-                    mode: 'tmux',
-                }),
-            }),
-        }));
-    });
-
-    it('does not let an unconfigured Event selection fall through to legacy schedule creation', async () => {
-        featureFlags.automationsEnabled = true;
-        automationActionChipsState.enabled = true;
-        searchParamsState.value = { automation: '1' };
-        persistedDraft.automationDraft = {
-            enabled: true,
-            name: 'Repository triage',
-            description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 60,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        };
-
-        let model: any = null;
-        await renderNewSessionScreenModel((nextModel) => {
-            model = nextModel;
-        });
-        expect(model?.simpleProps?.canCreate).toBe(true);
-        const automationChip = model?.simpleProps?.agentInputExtraActionChips?.find(
-            (chip: any) => chip?.key === 'new-session-automate',
-        );
-        expect(automationChip).toBeTruthy();
-        const screen = await renderScreen(automationChip.collapsedContentPopover.renderContent());
-
-        await act(async () => {
-            screen.findByProps({ testID: 'automation-trigger-event' }).props.onPress();
-            await flushHookEffects({ cycles: 2, turns: 2 });
-        });
-
-        expect(model?.simpleProps?.canCreate).toBe(false);
-        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            eventAutomationDraft: null,
-            eventAutomationEdit: null,
         }));
     });
 

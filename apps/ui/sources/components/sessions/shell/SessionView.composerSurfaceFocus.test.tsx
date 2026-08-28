@@ -373,7 +373,7 @@ vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
   supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
-  countEnabledAutomationsLinkedToSession: () => 0,
+  countEnabledAutomationDefinitionsLinkedToSession: () => 0,
 }));
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
   getResolvedBackendCatalogEntries: () => [],

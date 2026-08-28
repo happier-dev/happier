@@ -106,10 +106,8 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
         };
     }, [takeoverScopeKey]);
 
-    const readLatestStatus = React.useCallback(async (
-        options?: Readonly<{ takeoverReadiness?: 'fresh' }>,
-    ) => {
-        return await params.externalSessionRuntime.refreshNow(options);
+    const readLatestStatus = React.useCallback(async () => {
+        return await params.externalSessionRuntime.refreshNow();
     }, [params.externalSessionRuntime]);
 
     const requestTakeover = React.useCallback(async (
@@ -360,9 +358,7 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
             while (true) {
                 let latestStatus: Awaited<ReturnType<typeof readLatestStatus>>;
                 try {
-                    latestStatus = await readLatestStatus({
-                        takeoverReadiness: 'fresh',
-                    });
+                    latestStatus = await readLatestStatus();
                 } catch (error) {
                     if (!isRequestCurrent()) {
                         return false;

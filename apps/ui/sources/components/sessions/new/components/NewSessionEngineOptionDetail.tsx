@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import {
     isNativeAutomaticModelSelectionInputV1,
     readProviderSettingsFromAccountSettingsV1,
-    type BackendTargetRefV2,
+    type PersistedBackendTargetRefV2,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
@@ -20,6 +20,7 @@ import {
     useNewSessionPreflightModelsState,
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
@@ -46,8 +47,8 @@ import { useSettings } from '@/sync/domains/state/storage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
-    backendTarget: BackendTargetRefV2;
-    runtimeCarrierAgentId?: AgentId | null;
+    backendTarget: PersistedBackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -140,8 +141,12 @@ function EngineFavoriteToggle(props: Readonly<{
 
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
     const settings = useSettings();
-    const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
+    const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget: props.backendTarget,
+        runtimeCarrierAgentId: props.runtimeCarrierAgentId,
+    }), [props.backendTarget, props.runtimeCarrierAgentId]);
+    const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
+        backendTarget: operationalBackendTarget,
         providerConnectionId: props.selectedModelSelection?.ref.providerConnectionId ?? null,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
@@ -150,7 +155,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         probeContext: props.capabilityProbeContext ?? null,
     });
     const { configOptions, unavailable: configOptionsUnavailable, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
-        backendTarget: props.backendTarget,
+        backendTarget: operationalBackendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
@@ -234,17 +239,17 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         if (isBundledAgentId(props.runtimeCarrierAgentId)) {
             return props.runtimeCarrierAgentId;
         }
-        return resolveCatalogAgentIdForBackendTarget(props.backendTarget)
-            ?? (isBundledAgentId(props.backendTarget.backendId) ? props.backendTarget.backendId : null);
-    }, [props.backendTarget, props.runtimeCarrierAgentId]);
+        return resolveCatalogAgentIdForBackendTarget(operationalBackendTarget)
+            ?? (isBundledAgentId(operationalBackendTarget.backendId) ? operationalBackendTarget.backendId : null);
+    }, [operationalBackendTarget, props.runtimeCarrierAgentId]);
     const providerCore = React.useMemo(() => (
         catalogAgentId ? getAgentCore(catalogAgentId) : null
     ), [catalogAgentId]);
-    const providerId = props.backendTarget.configuredBackendId ?? props.backendTarget.backendId;
+    const providerId = operationalBackendTarget.configuredBackendId ?? operationalBackendTarget.backendId;
     const providerSupportsFreeform = React.useMemo(() => {
-        if (props.backendTarget.configuredBackendId) return true;
+        if (operationalBackendTarget.configuredBackendId) return true;
         return providerCore?.model.supportsFreeform === true;
-    }, [props.backendTarget.configuredBackendId, providerCore?.model.supportsFreeform]);
+    }, [operationalBackendTarget.configuredBackendId, providerCore?.model.supportsFreeform]);
     const canEnterCustomModel = preflightModels?.unavailable === true
         ? false
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
@@ -311,10 +316,11 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
 
     const favoriteBackendIdentity = React.useMemo(() => buildFavoriteBackendIdentity({
         backendTargetKey: formatBackendTargetKeyV2(props.backendTarget),
-        backendTarget: props.backendTarget,
+        backendId: operationalBackendTarget.backendId,
+        kind: operationalBackendTarget.configuredBackendId ? 'configuredBackend' : 'builtInAgent',
         catalogAgentId,
-        builtInAgentId: props.backendTarget.configuredBackendId ? null : catalogAgentId,
-    }), [props.backendTarget, catalogAgentId]);
+        builtInAgentId: operationalBackendTarget.configuredBackendId ? null : catalogAgentId,
+    }), [catalogAgentId, operationalBackendTarget, props.backendTarget]);
     const agentTargetKey = favoriteBackendIdentity.backendTargetKey;
     const canonicalSelectedRef = React.useMemo(() => {
         if (selectedModelSelection) {

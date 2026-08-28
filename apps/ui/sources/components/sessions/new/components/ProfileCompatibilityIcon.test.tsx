@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -113,6 +113,7 @@ describe('ProfileCompatibilityIcon', () => {
     it('shows the neutral fallback glyph when legacy customAcp compatibility resolves to a configured backend with no canonical icon carrier', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
         const compatEntries: ResolvedBackendCatalogEntry[] = [{
+            agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'acp:custom-acp' }),
             backendTarget: { kind: 'backend', backendId: 'custom-acp', configuredBackendId: 'custom-acp', sourceKind: 'configured' },
             backendTargetKey: 'backend:custom-acp:configured:custom-acp',
             kind: 'configuredBackend',
@@ -123,6 +124,7 @@ describe('ProfileCompatibilityIcon', () => {
             iconAgentId: null,
             title: 'Custom ACP',
             subtitle: 'custom-acp',
+            cliAuthBackgroundCheckSafe: false,
         }];
 
         const screen = await renderScreen(

@@ -340,4 +340,21 @@ describe('SessionExecutionRunLauncherView', () => {
         });
     });
 
+    it('reuses the accepted choice key for an exact external Agent target', async () => {
+        const { resolveInitialExecutionRunBackendTargetKey } = await import('./SessionExecutionRunLauncherView');
+        const target = {
+            kind: 'agent' as const,
+            identity: { pluginId: 'acme.agent', localId: 'runner' },
+        };
+
+        expect(resolveInitialExecutionRunBackendTargetKey(target, [{
+            backendTarget: target,
+            targetKey: 'agent:acme.agent/runner',
+            backendId: 'acme.agent/runner',
+            agentId: 'acme.agent/runner',
+            title: 'Acme Runner',
+            disabled: false,
+        }])).toBe('agent:acme.agent/runner');
+    });
+
 });

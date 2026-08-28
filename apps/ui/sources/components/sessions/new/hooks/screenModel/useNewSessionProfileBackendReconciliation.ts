@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { type AgentId } from '@/agents/catalog/catalog';
 import {
@@ -25,7 +25,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
     profileMap: ReadonlyMap<string, AIBackendProfile>;
     getCompatibleProfileBackendEntries: (profile: AIBackendProfile) => readonly NewSessionSelectableBackendEntry[];
     selectedBackendTargetKey: string;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     cliAvailabilityTimestamp: number;
     cliAvailabilityByAgentId: AgentAvailabilityById;
     cliAuthStatusByAgentId: AgentAuthStatusById;

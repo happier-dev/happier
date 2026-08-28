@@ -20,15 +20,6 @@ import type {
 type ComposerMentionRef = ComposerSnapshotV1['references'][number];
 
 /**
- * Reading a reference back into a composer mention needs identity and token, never a
- * position — so these take the positionless persisted/transmitted shape. Only
- * `composerReferencesFromStructuredMentions`, which places references INTO a document
- * snapshot, produces the positional `ComposerMentionRef`, and it derives those ranges by
- * locating each token in that exact text.
- */
-type ComposerMentionIdentity = Omit<ComposerMentionRef, 'start' | 'end'>;
-
-/**
  * The current daemon-normalized attachment declarations for one live Composer
  * scope. It is deliberately supplied by that scope's projection/currentness
  * owner; draft persistence retains neither this catalog nor its generation.
@@ -157,10 +148,10 @@ function readReferenceFromMention(
 ): MentionRefV1 | null {
     // Delegates identity encoding to the incumbent writer. The mention's own token is a
     // sufficient text basis: the writer admits a reference whose token the text contains.
-    // This used to build a token-sized fake document and then restore the real document
-    // range, which existed only to satisfy a range contract that no longer exists.
+    // The envelope owns only positionless Message identity. Normalize this token-sized
+    // identity probe while retaining the real editable-draft range in the caller.
     const envelope = readHappierStructuredInputV1FromMeta(buildStructuredInputMetaOverrides({
-        mentions: [mention],
+        mentions: [{ ...mention, start: 0, end: mention.tokenText.length }],
         text: mention.tokenText,
     }));
     return envelope?.mentions?.[0] ?? null;
@@ -175,51 +166,45 @@ export function composerReferencesFromStructuredMentions(input: Readonly<{
     text: string;
     mentions: readonly ComposerStructuredInputMention[];
 }>): readonly ComposerMentionRef[] {
-    const envelope = readHappierStructuredInputV1FromMeta(buildStructuredInputMetaOverrides({
-        mentions: input.mentions,
-        text: input.text,
-    }));
-    const occupiedRanges: Array<Readonly<{ start: number; end: number }>> = [];
-    const references = (envelope?.mentions ?? []).flatMap((reference) => {
-        let start = input.text.indexOf(reference.token);
-        while (start >= 0) {
-            const end = start + reference.token.length;
-            if (!occupiedRanges.some((range) => start < range.end && end > range.start)) {
-                occupiedRanges.push({ start, end });
-                return [{ ...reference, start, end }];
-            }
-            start = input.text.indexOf(reference.token, start + 1);
-        }
-        return [];
+    const references = input.mentions.flatMap((mention) => {
+        if (input.text.slice(mention.start, mention.end) !== mention.tokenText) return [];
+        const reference = readReferenceFromMention(mention);
+        return reference ? [{ ...reference, start: mention.start, end: mention.end }] : [];
     });
     return references.sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
 function rebaseStoredMention(
     mention: ComposerStructuredInputMention,
-    reference: ComposerMentionIdentity,
+    reference: ComposerMentionRef,
 ): ComposerStructuredInputMention {
     if (mention.kind === 'skill' && 'name' in mention) {
         return {
             ...mention,
             tokenText: reference.token,
+            start: reference.start,
+            end: reference.end,
             ...(reference.label ? { displayName: reference.label } : {}),
         };
     }
     return {
         ...mention,
         tokenText: reference.token,
+        start: reference.start,
+        end: reference.end,
         ...(reference.label ? { label: reference.label } : {}),
     };
 }
 
-function createOpaqueMention(reference: ComposerMentionIdentity): ComposerUnknownMention {
+function createOpaqueMention(reference: ComposerMentionRef): ComposerUnknownMention {
     return {
         kind: reference.kind,
         ref: reference.ref,
         ...(reference.label ? { label: reference.label } : {}),
         ...(reference.composerReference ? { composerReference: reference.composerReference } : {}),
         tokenText: reference.token,
+        start: reference.start,
+        end: reference.end,
     };
 }
 
@@ -229,7 +214,8 @@ function createOpaqueMention(reference: ComposerMentionIdentity): ComposerUnknow
  * instead of being interpreted as a host/vendor/skill spelling.
  */
 export function composerStructuredMentionsFromReferences(input: Readonly<{
-    references: readonly ComposerMentionIdentity[];
+    /** Positional document references; ranges remain editable Composer custody. */
+    references: readonly ComposerMentionRef[];
     existing: readonly ComposerStructuredInputMention[];
 }>): readonly ComposerStructuredInputMention[] {
     const existingByReference = new Map<string, ComposerStructuredInputMention>();

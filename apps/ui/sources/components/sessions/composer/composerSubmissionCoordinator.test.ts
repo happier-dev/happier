@@ -146,6 +146,38 @@ describe('composerSubmissionCoordinator', () => {
         });
     });
 
+    it('refuses submission capture when a reference no longer names its exact UTF-16 range', () => {
+        expect(captureComposerSubmissionSnapshot(createSnapshot({
+            text: '@issue-42 @issue-42',
+            references: [{ ...issueReference, start: 10, end: 19 }],
+        }))).not.toBeNull();
+
+        expect(captureComposerSubmissionSnapshot(createSnapshot({
+            text: '@issue-42 @issue-42',
+            references: [{ ...issueReference, start: 1, end: 10 }],
+        }))).toBeNull();
+    });
+
+    it('refuses submission capture unless reference ranges are canonically ordered and non-overlapping', () => {
+        const secondReference = {
+            ...issueReference,
+            kind: 'acme.otherIssue',
+            ref: 'issue:43',
+            start: 10,
+            end: 19,
+            label: 'Issue #43',
+        } satisfies ComposerMentionRef;
+
+        expect(captureComposerSubmissionSnapshot(createSnapshot({
+            text: '@issue-42 @issue-42',
+            references: [secondReference, issueReference],
+        }))).toBeNull();
+        expect(captureComposerSubmissionSnapshot(createSnapshot({
+            text: '@issue-42',
+            references: [issueReference, { ...secondReference, start: 1, end: 9 }],
+        }))).toBeNull();
+    });
+
     it('tracks text, references, and attachments independently for every live composer document owner', () => {
         const refs: readonly ComposerRefV1[] = [
             { kind: 'session', sessionId: 'session-1' },
@@ -437,6 +469,7 @@ describe('composerSubmissionCoordinator', () => {
         const result = await submitComposerSnapshot({
             snapshot: createSnapshot({
                 text: 'Send this staged image',
+                references: [],
                 attachments: [stagedMediaAttachment],
             }),
             route: {
@@ -622,7 +655,7 @@ describe('composerSubmissionCoordinator', () => {
         expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
     });
 
-    it('does not delegate or clear a references-only draft', async () => {
+    it('does not delegate or clear an invalid references-only draft', async () => {
         const admit = vi.fn(async () => ({ status: 'accepted' as const }));
         const clearAcceptedSnapshot = vi.fn(() => true);
 
@@ -632,7 +665,7 @@ describe('composerSubmissionCoordinator', () => {
             clearAcceptedSnapshot,
         });
 
-        expect(result).toMatchObject({ status: 'notSendable' });
+        expect(result).toMatchObject({ status: 'unavailable' });
         expect(admit).not.toHaveBeenCalled();
         expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
     });
@@ -694,6 +727,7 @@ describe('composerSubmissionCoordinator', () => {
         const snapshot = createSnapshot({
             ref: { kind: 'newSession', instanceId: 'new-session-composer-1' },
             text: 'Create the session with this issue',
+            references: [],
         });
 
         const result = await submitComposerSnapshot({
@@ -717,7 +751,7 @@ describe('composerSubmissionCoordinator', () => {
         } satisfies ComposerAttachmentViewV1;
 
         const result = await submitComposerSnapshot({
-            snapshot: createSnapshot({ text: 'Keep this visible', attachments: [unavailableAttachment] }),
+            snapshot: createSnapshot({ text: 'Keep this visible', references: [], attachments: [unavailableAttachment] }),
             route: { kind: 'session', ref: { kind: 'session', sessionId: 'session-1' }, admit },
             clearAcceptedSnapshot,
         });

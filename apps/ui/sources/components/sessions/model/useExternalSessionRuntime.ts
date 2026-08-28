@@ -30,10 +30,6 @@ import {
 
 export type ExternalSessionRuntimeStatus = Extract<ExternalSessionStatusGetResponse, { ok: true }>;
 
-export type ExternalSessionRuntimeRefreshOptions = Readonly<{
-    takeoverReadiness?: 'fresh';
-}>;
-
 type UseExternalSessionRuntimeParams = Readonly<{
     sessionId: string;
     metadata: Metadata | null | undefined;
@@ -45,7 +41,7 @@ export type UseExternalSessionRuntimeResult = Readonly<{
     externalAgent: ExternalAgentObservationSnapshotV1 | null;
     sessionServerId: string | null;
     status: ExternalSessionRuntimeStatus | null;
-    refreshNow: (options?: ExternalSessionRuntimeRefreshOptions) => Promise<ExternalSessionRuntimeStatus | null>;
+    refreshNow: () => Promise<ExternalSessionRuntimeStatus | null>;
 }>;
 
 type ExternalSessionTarget = Readonly<{
@@ -259,9 +255,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         previousRuntimeScopeRef.current = nextRuntimeScope;
     }, [externalSessionTargetKey, normalizedSessionId, runtimeEnabled]);
 
-    const refreshNow = React.useCallback(async (
-        options?: ExternalSessionRuntimeRefreshOptions,
-    ): Promise<ExternalSessionRuntimeStatus | null> => {
+    const refreshNow = React.useCallback(async (): Promise<ExternalSessionRuntimeStatus | null> => {
         if (!runtimeEnabled) {
             if (statusRef.current !== null) {
                 statusRef.current = null;
@@ -278,13 +272,8 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             return null;
         }
 
-        const requiresFreshTakeoverReadiness = options?.takeoverReadiness === 'fresh';
-        if (inFlightRefreshRef.current && !requiresFreshTakeoverReadiness) {
-            return inFlightRefreshRef.current;
-        }
         if (inFlightRefreshRef.current) {
-            inFlightRefreshRef.current = null;
-            generationRef.current += 1;
+            return inFlightRefreshRef.current;
         }
 
         const currentGeneration = generationRef.current;
@@ -303,9 +292,6 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                 agentId: externalSessionTarget.agentId,
                 remoteSessionId: externalSessionTarget.remoteSessionId,
                 source: externalSessionTarget.source,
-                ...(requiresFreshTakeoverReadiness
-                    ? { takeoverReadiness: 'fresh' as const }
-                    : {}),
             }, { serverId: sessionServerId ?? undefined })
                 .then((response) => ({ ok: true as const, response }))
                 .catch((error: unknown) => ({ ok: false as const, error }));

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { getAgentCore, buildNewSessionOptionsFromUiState, type AgentId } from '@/agents/catalog/catalog';
+import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import {
     useNewSessionConnectedServices,
     type NewSessionConnectedServicesResult,
@@ -18,7 +19,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
      * bundled presentation id, so the declared option base must be built from
      * the operational identity the composer rendered those options under.
      */
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     /**
      * The machine the composer is about to spawn on. An installed Agent's
      * option declaration is a per-machine fact.
@@ -28,6 +29,12 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     agentType?: AgentId;
     targetServerId: string | null;
     selectedBackendTargetKey: string;
+    /**
+     * Exact Connected Account declarations from the authoritative machine Agent
+     * catalog projection for the selected target. Session connected-account
+     * selection keys are the canonical qualified keys of these declarations.
+     */
+    connectedAccounts?: ResolvedAgentCatalogEntry['connectedAccounts'];
     setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
     agentOptionState: Record<string, unknown> | null;
     settings: ConnectedServicesParams['settings'];
@@ -60,6 +67,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 
     const { connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip } = useNewSessionConnectedServices({
         agentCore,
+        connectedAccounts: params.connectedAccounts ?? [],
         agentOptionState: params.agentOptionState,
         settings: params.settings,
         targetServerId: params.targetServerId,

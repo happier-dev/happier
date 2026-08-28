@@ -1,5 +1,11 @@
 import type { ComposerAttachmentAuthorValueV1 } from '@happier-dev/protocol';
 
+import {
+    createServerAccountScope,
+    serverAccountScopeKeySuffix,
+    type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
+
 /**
  * The author-shaped composer attachments a seeded New Session is still waiting
  * to place, keyed by the draft they were seeded for.
@@ -39,7 +45,12 @@ export type NewSessionComposerAttachmentSeedV1 = Readonly<{
     value: ComposerAttachmentAuthorValueV1;
 }>;
 
-const seedsByDraftId = new Map<string, readonly NewSessionComposerAttachmentSeedV1[]>();
+export type NewSessionComposerAttachmentSeedAddressV1 = Readonly<{
+    scope: ServerAccountScope | null | undefined;
+    draftId: string | null | undefined;
+}>;
+
+const seedsByScopedDraft = new Map<string, readonly NewSessionComposerAttachmentSeedV1[]>();
 
 function normalizeDraftId(draftId: string | null | undefined): string | null {
     if (typeof draftId !== 'string') return null;
@@ -47,25 +58,34 @@ function normalizeDraftId(draftId: string | null | undefined): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function addressKey(address: NewSessionComposerAttachmentSeedAddressV1): string | null {
+    const scope = address.scope
+        ? createServerAccountScope(address.scope.serverId, address.scope.accountId)
+        : null;
+    const draftId = normalizeDraftId(address.draftId);
+    if (!scope || !draftId) return null;
+    return `${serverAccountScopeKeySuffix(scope)}${draftId.length}:${draftId}`;
+}
+
 export function writeNewSessionComposerAttachmentSeeds(
-    draftId: string | null | undefined,
+    address: NewSessionComposerAttachmentSeedAddressV1,
     seeds: readonly NewSessionComposerAttachmentSeedV1[],
 ): void {
-    const key = normalizeDraftId(draftId);
+    const key = addressKey(address);
     if (!key) return;
     if (seeds.length === 0) {
-        seedsByDraftId.delete(key);
+        seedsByScopedDraft.delete(key);
         return;
     }
-    seedsByDraftId.set(key, Object.freeze([...seeds]));
+    seedsByScopedDraft.set(key, Object.freeze([...seeds]));
 }
 
 export function readNewSessionComposerAttachmentSeeds(
-    draftId: string | null | undefined,
+    address: NewSessionComposerAttachmentSeedAddressV1,
 ): readonly NewSessionComposerAttachmentSeedV1[] {
-    const key = normalizeDraftId(draftId);
+    const key = addressKey(address);
     if (!key) return [];
-    return seedsByDraftId.get(key) ?? [];
+    return seedsByScopedDraft.get(key) ?? [];
 }
 
 /**
@@ -78,18 +98,18 @@ export function readNewSessionComposerAttachmentSeeds(
  * than the reader chose.
  */
 export function clearAppliedNewSessionComposerAttachmentSeeds(
-    draftId: string | null | undefined,
+    address: NewSessionComposerAttachmentSeedAddressV1,
     applied: readonly NewSessionComposerAttachmentSeedV1[],
 ): void {
-    const key = normalizeDraftId(draftId);
+    const key = addressKey(address);
     if (!key) return;
-    const pending = seedsByDraftId.get(key);
+    const pending = seedsByScopedDraft.get(key);
     if (!pending) return;
     const remaining = pending.filter((seed) => !applied.includes(seed));
-    if (remaining.length === 0) seedsByDraftId.delete(key);
-    else seedsByDraftId.set(key, Object.freeze(remaining));
+    if (remaining.length === 0) seedsByScopedDraft.delete(key);
+    else seedsByScopedDraft.set(key, Object.freeze(remaining));
 }
 
 export function clearAllNewSessionComposerAttachmentSeeds(): void {
-    seedsByDraftId.clear();
+    seedsByScopedDraft.clear();
 }

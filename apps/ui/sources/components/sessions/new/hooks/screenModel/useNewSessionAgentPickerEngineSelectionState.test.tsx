@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderHook } from '@/dev/testkit';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
@@ -10,6 +10,7 @@ import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAge
 function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title: string): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'builtInAgent',
@@ -20,6 +21,7 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title
         iconAgentId: backendId as any,
         title,
         subtitle: null,
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 

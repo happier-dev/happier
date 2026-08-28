@@ -105,4 +105,49 @@ describe('useTranscriptRootRollbackActions', () => {
 
         await hook.unmount();
     });
+
+    it('recomputes rollback actions when the transcript store mutates stable message containers', async () => {
+        const messageIdsOldestFirst = ['user'];
+        const stableMessagesById: Record<string, Message> = { ...messagesById };
+        const session = createSession([1, 4]);
+        const hook = await renderHook(
+            ({ revision }: { revision: number }) => {
+                void revision;
+                return useTranscriptRootRollbackActions({
+                    messageIdsOldestFirst,
+                    messagesById: stableMessagesById,
+                    session,
+                    sessionMetadataSignature: 'metadata-v1',
+                    stableSessionMetadata: metadata,
+                });
+            },
+            { initialProps: { revision: 1 } },
+        );
+
+        expect(hook.getCurrent().rollbackActionsByMessageId).toHaveProperty('user');
+
+        messageIdsOldestFirst.push('second-user');
+        stableMessagesById['second-user'] = {
+            kind: 'user-text',
+            id: 'second-user',
+            seq: 4,
+            localId: 'local-second-user',
+            createdAt: 4,
+            text: 'second prompt',
+        };
+        await hook.rerender({ revision: 2 });
+
+        expect(hook.getCurrent().rollbackActionsByMessageId).toMatchObject({
+            user: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'first prompt',
+            },
+            'second-user': {
+                target: { type: 'before_user_message', userMessageSeq: 4 },
+                restoredDraftText: 'second prompt',
+            },
+        });
+
+        await hook.unmount();
+    });
 });

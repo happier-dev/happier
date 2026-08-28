@@ -18,6 +18,13 @@ import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTe
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+// Canonical qualified Connected Account service keys used across this suite.
+const CLAUDE_SERVICE_KEY = 'happier.agent.claude/anthropic';
+const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
+// Novel external plugin service: no bundled enum member and no generated
+// legacy mapping.
+const NOVEL_SERVICE_KEY = 'acme.review/reviewer-service';
+
 const modalShowMock = vi.hoisted(() => vi.fn());
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const newSessionConnectedAccountProjection = {
@@ -67,40 +74,92 @@ const newSessionConnectedAccountProjection = {
         capabilities: [],
         availability: { state: 'available', reason: 'resolved' },
         diagnostics: [],
+    }, {
+        id: 'reviewer-service',
+        serviceId: 'reviewer-service',
+        pluginId: 'acme.review',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Acme Reviewer Auth',
+        authentication: {
+            defaultModeId: 'api-key',
+            modes: [{
+                id: 'api-key',
+                kind: 'manual',
+                outcomeReconciliation: 'none',
+                fields: [{
+                    id: 'token',
+                    title: 'Acme token',
+                    schema: { type: 'string', minLength: 1 },
+                    secret: true,
+                }],
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
     }],
     conflicts: [],
     errorReason: null,
 } satisfies ConnectedAccountDescriptorProjectionState;
-type TestAccountProfile = Readonly<{
-    connectedServicesV2: Array<{
-        serviceId: string;
-        profiles: Array<{
-            profileId: string;
-            status: string;
-            kind: string;
-            providerEmail: string;
-        }>;
-        groups?: unknown;
-    }>;
-}>;
 
-const profileState = vi.hoisted((): { current: TestAccountProfile } => ({
+type TestAccountProfile = {
+    connectedAccountsV4: Array<Record<string, unknown>>;
+    connectedAccountGroupsV4: Array<Record<string, unknown>>;
+    connectedServiceCredentialRevisionsV1?: Array<Record<string, unknown>>;
+};
+
+function v4Account(params: Readonly<{
+    pluginId: string;
+    localId: string;
+    accountId: string;
+    email?: string;
+    displayName?: string;
+    kind?: 'oauth' | 'token';
+    status?: string;
+}>): Record<string, unknown> {
+    return {
+        revisionSemantics: 'legacy_unfenced',
+        ref: {
+            service: { pluginId: params.pluginId, localId: params.localId },
+            accountId: params.accountId,
+        },
+        status: params.status ?? 'connected',
+        authenticationModeId: null,
+        configurationReady: true,
+        configurationRevision: null,
+        kind: params.kind ?? null,
+        expiresAt: null,
+        lastUsedAt: null,
+        providerIdentity: params.email ? { email: params.email } : {},
+        ...(params.displayName ? { displayName: params.displayName } : {}),
+    };
+}
+
+const profileState = vi.hoisted(() => ({
     current: {
-        connectedServicesV2: [
-            {
-                serviceId: 'anthropic',
-                profiles: [
-                    {
-                        profileId: 'work',
-                        status: 'connected',
-                        kind: 'token',
-                        providerEmail: 'work@example.com',
-                    },
-                ],
-            },
-        ],
-    },
+        connectedAccountsV4: [],
+        connectedAccountGroupsV4: [],
+        connectedServiceCredentialRevisionsV1: [],
+    } as TestAccountProfile,
 }));
+
+function seedClaudeProfile(): void {
+    profileState.current = {
+        connectedAccountsV4: [
+            v4Account({
+                pluginId: 'happier.agent.claude',
+                localId: 'anthropic',
+                accountId: 'work',
+                email: 'work@example.com',
+                kind: 'token',
+                displayName: 'Work',
+            }),
+        ],
+        connectedAccountGroupsV4: [],
+        connectedServiceCredentialRevisionsV1: [],
+    };
+}
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -148,6 +207,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => profileState.current,
 }));
+
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
     const popover = chip?.collapsedContentPopover;
     if (!popover) {
@@ -156,27 +216,25 @@ function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) 
     return popover;
 }
 
+type ConnectedAccountsParam = ReadonlyArray<Readonly<{
+    purpose: string;
+    service: { pluginId: string; localId: string };
+}>>;
+
+const CLAUDE_CONNECTED_ACCOUNTS: ConnectedAccountsParam = [
+    { purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+];
+const NOVEL_CONNECTED_ACCOUNTS: ConnectedAccountsParam = [
+    { purpose: 'primary', service: { pluginId: 'acme.review', localId: 'reviewer-service' } },
+];
+
 describe('useNewSessionConnectedServices', () => {
     beforeEach(() => {
         installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
         modalShowMock.mockReset();
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
-        profileState.current = {
-            connectedServicesV2: [
-                {
-                    serviceId: 'anthropic',
-                    profiles: [
-                        {
-                            profileId: 'work',
-                            status: 'connected',
-                            kind: 'token',
-                            providerEmail: 'work@example.com',
-                        },
-                    ],
-                },
-            ],
-        };
+        seedClaudeProfile();
     });
 
     afterEach(() => {
@@ -193,15 +251,11 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -258,15 +312,11 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -288,7 +338,7 @@ describe('useNewSessionConnectedServices', () => {
         }) as React.ReactElement<{ setBindingForService: (serviceId: string, binding: unknown) => void }>;
 
         await act(async () => {
-            firstPopover.props.setBindingForService('anthropic', {
+            firstPopover.props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -297,7 +347,7 @@ describe('useNewSessionConnectedServices', () => {
 
         expect(setAgentOptionStateForCurrentAgent).toHaveBeenCalledWith(
             'connectedServicesBindingsByServiceId',
-            { anthropic: { source: 'connected', selection: 'profile', profileId: 'work' } },
+            { [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' } },
         );
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
             .toBe('Anthropic API key: Work');
@@ -314,7 +364,7 @@ describe('useNewSessionConnectedServices', () => {
         }) as React.ReactElement<{ bindingsByServiceId: Record<string, unknown> }>;
 
         expect(reopenedPopover.props.bindingsByServiceId).toEqual({
-            anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+            [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
         });
 
         await hook.unmount();
@@ -331,15 +381,11 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -371,15 +417,11 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -405,16 +447,11 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    id: 'claude',
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: { id: 'claude', connectedServices: null },
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -422,7 +459,7 @@ describe('useNewSessionConnectedServices', () => {
                             claude: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    anthropic: {
+                                    [CLAUDE_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'work',
@@ -441,7 +478,7 @@ describe('useNewSessionConnectedServices', () => {
         expect(hook.getCurrent().connectedServicesBindingsPayload).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
@@ -454,36 +491,41 @@ describe('useNewSessionConnectedServices', () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         profileState.current = {
-            connectedServicesV2: [
-                {
-                    serviceId: 'openai-codex',
-                    profiles: [
-                        {
-                            profileId: 'fresh-profile',
-                            status: 'connected',
-                            kind: 'oauth',
-                            providerEmail: 'fresh@example.com',
-                        },
-                    ],
-                    groups: [{
-                        groupId: 'primary',
-                        displayName: 'Primary pool',
-                        activeProfileId: 'fresh-profile',
-                        memberProfileIds: ['fresh-profile'],
-                    }],
-                },
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'fresh-profile',
+                    email: 'fresh@example.com',
+                    kind: 'oauth',
+                    displayName: 'Fresh',
+                }),
             ],
+            connectedAccountGroupsV4: [{
+                v: 1,
+                ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'primary' },
+                incarnation: 'primary:1',
+                displayName: 'Primary pool',
+                policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true } },
+                activeConnectedAccountId: 'fresh-profile',
+                generation: 1,
+                runtimeStateRevision: 1,
+                state: { status: 'ready' },
+                createdAt: 0,
+                updatedAt: 0,
+                members: [
+                    { v: 1, connectedAccountId: 'fresh-profile', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+                ],
+            }],
+            connectedServiceCredentialRevisionsV1: [],
         };
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    id: 'codex',
-                    connectedServices: {
-                        supportedServiceIds: ['openai-codex'],
-                        supportedKindsByServiceId: { 'openai-codex': ['oauth'] },
-                    },
-                },
+                agentCore: { id: 'codex', connectedServices: null },
+                connectedAccounts: [
+                    { purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
+                ],
                 agentOptionState: null,
                 settings: {
                     connectedServicesProfileLabelByKey: {},
@@ -494,7 +536,7 @@ describe('useNewSessionConnectedServices', () => {
                             codex: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'group',
                                         groupId: 'primary',
@@ -513,7 +555,7 @@ describe('useNewSessionConnectedServices', () => {
         expect(hook.getCurrent().connectedServicesBindingsPayload).toEqual({
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_SERVICE_KEY]: {
                     source: 'connected',
                     selection: 'group',
                     groupId: 'primary',
@@ -530,42 +572,37 @@ describe('useNewSessionConnectedServices', () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         profileState.current = {
-            connectedServicesV2: [
-                {
-                    serviceId: 'openai-codex',
-                    profiles: [
-                        {
-                            profileId: 'work',
-                            status: 'connected',
-                            kind: 'oauth',
-                            providerEmail: 'work@example.com',
-                        },
-                    ],
-                    groups: [],
-                },
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'work',
+                    email: 'work@example.com',
+                    kind: 'oauth',
+                    displayName: 'Work',
+                }),
             ],
+            connectedAccountGroupsV4: [],
+            connectedServiceCredentialRevisionsV1: [],
         };
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    id: 'codex',
-                    connectedServices: {
-                        supportedServiceIds: ['openai-codex'],
-                        supportedKindsByServiceId: { 'openai-codex': ['oauth'] },
-                    },
-                },
+                agentCore: { id: 'codex', connectedServices: null },
+                connectedAccounts: [
+                    { purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
+                ],
                 agentOptionState: null,
                 settings: {
                     connectedServicesProfileLabelByKey: {},
-                    connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
+                    connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
                         bindingsByAgentId: {
                             codex: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'group',
                                         groupId: 'missing-group',
@@ -584,7 +621,7 @@ describe('useNewSessionConnectedServices', () => {
         expect(hook.getCurrent().connectedServicesBindingsPayload).toEqual({
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_SERVICE_KEY]: {
                     source: 'connected',
                     selection: 'group',
                     groupId: 'missing-group',
@@ -608,11 +645,88 @@ describe('useNewSessionConnectedServices', () => {
         }>;
 
         expect(popover.props.resolveOptionAvailability?.({
-            serviceId: 'openai-codex',
-            optionId: 'connected-service:openai-codex:native',
+            serviceId: CODEX_SERVICE_KEY,
+            optionId: `connected-service:${encodeURIComponent(CODEX_SERVICE_KEY)}:native`,
         })).toEqual({
             subtitle: 'connectedServices.defaultAuth.warning.connected_group_unavailable',
         });
+
+        await hook.unmount();
+    });
+
+    it('offers a NOVEL external plugin service from its projected declaration and emits the qualified spawn payload', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+
+        profileState.current = {
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'acme.review',
+                    localId: 'reviewer-service',
+                    accountId: 'reviewer',
+                    email: 'reviewer@acme.test',
+                    kind: 'token',
+                    displayName: 'Reviewer',
+                }),
+            ],
+            connectedAccountGroupsV4: [],
+            connectedServiceCredentialRevisionsV1: [],
+        };
+
+        const setAgentOptionStateForCurrentAgent = vi.fn();
+
+        const hook = await renderHook(() =>
+            useNewSessionConnectedServices({
+                // An installed external Agent has no bundled core and no bundled
+                // scalar service declaration — only the machine projection.
+                agentCore: null,
+                connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
+                agentOptionState: null,
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+                },
+                targetServerId: null,
+                router: { push: vi.fn() },
+                setAgentOptionStateForCurrentAgent,
+            }),
+        );
+
+        // Neutral/public presentation from the applied descriptor projection.
+        expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
+            .toBe('connectedServices.authChip.nativeLabel');
+
+        const popoverRenderer = requireCollapsedContentPopover(
+            hook.getCurrent().connectedServicesAuthChip,
+        ).renderContent;
+        if (typeof popoverRenderer !== 'function') {
+            throw new Error('Expected connected services popover content renderer');
+        }
+        const popover = popoverRenderer({
+            requestClose: vi.fn(),
+            maxHeight: 420,
+        }) as React.ReactElement<{ setBindingForService: (serviceId: string, binding: unknown) => void }>;
+
+        await act(async () => {
+            popover.props.setBindingForService(NOVEL_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'reviewer',
+            });
+        });
+
+        expect(setAgentOptionStateForCurrentAgent).toHaveBeenCalledWith(
+            'connectedServicesBindingsByServiceId',
+            { [NOVEL_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'reviewer' } },
+        );
+        expect(hook.getCurrent().connectedServicesBindingsPayload).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                [NOVEL_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'reviewer' },
+            },
+        });
+        expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
+            .toBe('Acme Reviewer Auth: Reviewer');
 
         await hook.unmount();
     });
@@ -625,12 +739,8 @@ describe('useNewSessionConnectedServices', () => {
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
                     connectedServicesProfileLabelByKey: {},
@@ -658,7 +768,7 @@ describe('useNewSessionConnectedServices', () => {
 
         expect(typeof popover.props.onOpenSettings).toBe('function');
         act(() => {
-            popover.props.onOpenSettings('anthropic');
+            popover.props.onOpenSettings(CLAUDE_SERVICE_KEY);
         });
 
         // UI-2: the picker's settings action deep-links to the tapped service's
@@ -678,33 +788,29 @@ describe('useNewSessionConnectedServices', () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         profileState.current = {
-            connectedServicesV2: [
-                {
-                    serviceId: 'openai-codex',
-                    profiles: [
-                        {
-                            profileId: 'happier',
-                            status: 'needs_reauth',
-                            kind: 'oauth',
-                            providerEmail: 'happier@example.com',
-                        },
-                    ],
-                    groups: [],
-                },
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'happier',
+                    email: 'happier@example.com',
+                    kind: 'oauth',
+                    displayName: 'Happier',
+                    status: 'needs_reauth',
+                }),
             ],
+            connectedAccountGroupsV4: [],
+            connectedServiceCredentialRevisionsV1: [],
         };
         const requestClose = vi.fn();
         const routerPush = vi.fn();
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    id: 'codex',
-                    connectedServices: {
-                        supportedServiceIds: ['openai-codex'],
-                        supportedKindsByServiceId: { 'openai-codex': ['oauth'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: [
+                    { purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
+                ],
                 agentOptionState: null,
                 settings: {
                     connectedServicesProfileLabelByKey: {},
@@ -732,7 +838,7 @@ describe('useNewSessionConnectedServices', () => {
 
         expect(typeof popover.props.onReconnectProfile).toBe('function');
         act(() => {
-            popover.props.onReconnectProfile?.('openai-codex', 'happier');
+            popover.props.onReconnectProfile?.(CODEX_SERVICE_KEY, 'happier');
         });
 
         expect(requestClose).not.toHaveBeenCalled();
@@ -752,33 +858,27 @@ describe('useNewSessionConnectedServices', () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
         profileState.current = {
-            connectedServicesV2: [
-                {
-                    serviceId: 'anthropic',
-                    profiles: [
-                        {
-                            profileId: 'work@example.com',
-                            status: 'needs_reauth',
-                            kind: 'token',
-                            providerEmail: 'work@example.com',
-                        },
-                    ],
-                    groups: [],
-                },
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.claude',
+                    localId: 'anthropic',
+                    accountId: 'work@example.com',
+                    email: 'work@example.com',
+                    kind: 'token',
+                    displayName: 'Work',
+                    status: 'needs_reauth',
+                }),
             ],
+            connectedAccountGroupsV4: [],
+            connectedServiceCredentialRevisionsV1: [],
         };
         const requestClose = vi.fn();
         const routerPush = vi.fn();
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
-                agentCore: {
-                    id: 'claude',
-                    connectedServices: {
-                        supportedServiceIds: ['anthropic'],
-                        supportedKindsByServiceId: { anthropic: ['token'] },
-                    },
-                },
+                agentCore: null,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
                     connectedServicesProfileLabelByKey: {},
@@ -806,7 +906,7 @@ describe('useNewSessionConnectedServices', () => {
 
         expect(typeof popover.props.onReconnectProfile).toBe('function');
         act(() => {
-            popover.props.onReconnectProfile?.('anthropic', 'work@example.com');
+            popover.props.onReconnectProfile?.(CLAUDE_SERVICE_KEY, 'work@example.com');
         });
 
         expect(requestClose).not.toHaveBeenCalled();

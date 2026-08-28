@@ -37,13 +37,6 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'agent',
     'agentType',
     'automation',
-    'automationCronExpr',
-    'automationDescription',
-    'automationEnabled',
-    'automationEveryMinutes',
-    'automationName',
-    'automationScheduleKind',
-    'automationTimezone',
     'backendTarget',
     'backendTargetKey',
     'dataId',
@@ -148,9 +141,9 @@ function normalizeNewSessionRouteParams(nextParams: RouteParams): RouteParams {
     });
 
     const resolvedBackendTarget = resolveBackendTargetFromRouteParams(backendTargetRouteParams);
-    if (resolvedBackendTarget?.configuredBackendId) {
+    if (resolvedBackendTarget?.kind === 'backend' && resolvedBackendTarget.configuredBackendId) {
         delete nextParams.agentType;
-    } else if (resolvedBackendTarget && isBundledAgentId(resolvedBackendTarget.backendId)) {
+    } else if (resolvedBackendTarget?.kind === 'backend' && isBundledAgentId(resolvedBackendTarget.backendId)) {
         nextParams.agentType = resolvedBackendTarget.backendId;
     } else if (resolvedBackendTarget) {
         // Plugin backend targets must not revive legacy compat agentType carriers.

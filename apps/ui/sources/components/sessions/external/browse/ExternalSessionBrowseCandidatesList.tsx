@@ -2,7 +2,8 @@ import * as React from 'react';
 import { AccessibilityInfo, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import {
     resolveExternalSessionBrowseCandidateIdentityPresentation,
 } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
@@ -163,6 +164,13 @@ type BrowseCandidatePresentationContext = Readonly<{
     machineHomeDir?: string | null;
 }>;
 
+type BrowseAgentIdentity = Readonly<{
+    entry: ResolvedAgentCatalogEntry;
+    machineId: string | null;
+    serverId: string | null;
+    current: boolean;
+}>;
+
 function resolveBrowseCandidateIdentity(
     context: BrowseCandidatePresentationContext,
     candidate: ExternalSessionBrowseCandidate,
@@ -319,7 +327,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     }>;
     theme: AppTheme;
     density: ReturnType<typeof useResolvedItemDensity>;
-    agentId?: string | null;
+    agentIdentity?: BrowseAgentIdentity | null;
     agentLabel?: string | null;
     machineLabel?: string | null;
     machineHomeDir?: string | null;
@@ -407,7 +415,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
             const candidatePath = candidatePaths[candidateIndex] ?? null;
             const interaction = params.getInteractionState();
             const isPending = candidateKey === interaction.linkingSessionId;
-            const agentId = params.agentId;
+            const agentIdentity = params.agentIdentity;
             return {
                 id: candidateKey,
                 testID: `direct-session-candidate:${candidateKey}`,
@@ -425,9 +433,12 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                     candidate,
                     candidatePath,
                 ),
-                icon: agentId ? () => (
-                    <AgentIcon
-                        agentId={agentId}
+                icon: agentIdentity ? () => (
+                    <AgentCatalogIdentityIcon
+                        entry={agentIdentity.entry}
+                        machineId={agentIdentity.machineId}
+                        serverId={agentIdentity.serverId}
+                        current={agentIdentity.current}
                         size={20}
                         testID={`external-session-candidate-agent:${candidate.remoteSessionId}`}
                     />
@@ -598,7 +609,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     onRetry?: () => void;
     onCancelPreparation?: () => void;
     onRequestClose?: () => void;
-    agentId?: string | null;
+    agentIdentity?: BrowseAgentIdentity | null;
     agentLabel?: string | null;
     machineLabel?: string | null;
     machineHomeDir?: string | null;
@@ -638,7 +649,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             getInteractionState,
             theme,
             density: itemDensity,
-            agentId: props.agentId,
+            agentIdentity: props.agentIdentity,
             agentLabel: props.agentLabel,
             machineLabel: props.machineLabel,
             machineHomeDir: props.machineHomeDir,
@@ -649,7 +660,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             getInteractionState,
             handleSelectCandidate,
             itemDensity,
-            props.agentId,
+            props.agentIdentity,
             props.agentLabel,
             props.candidates,
             props.machineHomeDir,

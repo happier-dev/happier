@@ -299,6 +299,8 @@ describe('composer scope adapters', () => {
             label: 'Gmail',
             backendId: 'gmail',
             tokenText: '@gmail',
+            start: 6,
+            end: 12,
         }] satisfies readonly ComposerStructuredInputMention[];
         const originalReferences = composerReferencesFromStructuredMentions({
             text: 'Email @gmail now',
@@ -325,6 +327,8 @@ describe('composer scope adapters', () => {
         })).toEqual([{
             ...existing[0],
             label: 'Updated Gmail',
+            start: 12,
+            end: 18,
         }]);
     });
 
@@ -340,6 +344,8 @@ describe('composer scope adapters', () => {
             projectionRef: 'codex-native:review',
             backendId: 'codex',
             agentId: 'codex-agent',
+            start: 0,
+            end: 7,
         }] satisfies readonly ComposerStructuredInputMention[];
         const [reference] = composerReferencesFromStructuredMentions({
             text: '$review',
@@ -371,6 +377,8 @@ describe('composer scope adapters', () => {
             ref: 'issue:42',
             tokenText: '@issue-42',
             label: 'Issue #42',
+            start: 0,
+            end: 9,
         }]);
     });
 
@@ -381,8 +389,8 @@ describe('composer scope adapters', () => {
                 candidate: { id: 'incident-42', label: 'Incident 42' },
             }),
             token: '@incident-42',
-            start: 0,
-            end: 12,
+            start: 12,
+            end: 24,
         } satisfies ComposerMentionRef;
         const mentions = composerStructuredMentionsFromReferences({
             references: [reference],
@@ -399,5 +407,38 @@ describe('composer scope adapters', () => {
             candidateId: 'incident-42',
             label: 'Incident 42',
         });
+    });
+
+    it('preserves two equal-token occurrences at their exact persisted ranges across remount projection', () => {
+        const existing = [
+            {
+                kind: 'vendorPlugin',
+                vendorPluginRef: 'plugin://gmail@openai-curated',
+                tokenText: '@gmail',
+                start: 0,
+                end: 6,
+            },
+            {
+                kind: 'vendorPlugin',
+                vendorPluginRef: 'plugin://gmail@openai-curated',
+                tokenText: '@gmail',
+                start: 7,
+                end: 13,
+            },
+        ] satisfies readonly ComposerStructuredInputMention[];
+
+        const references = composerReferencesFromStructuredMentions({
+            text: '@gmail @gmail',
+            mentions: existing,
+        });
+
+        expect(references.map(({ start, end }) => ({ start, end }))).toEqual([
+            { start: 0, end: 6 },
+            { start: 7, end: 13 },
+        ]);
+        expect(composerStructuredMentionsFromReferences({ references, existing }))
+            .toEqual(existing);
+        expect(composerStructuredMentionsFromReferences({ references: references.slice(1), existing }))
+            .toEqual([existing[1]]);
     });
 });

@@ -273,7 +273,6 @@ import {
     readPendingMessageComposerSemanticDraftFieldsToRestore,
     type PendingMessageComposerEditState,
     type PendingMessageComposerExposedSuccessor,
-    type PendingMessageComposerSemanticDraftMutationRevisions,
     type PendingMessageComposerSemanticDraftSnapshot as ComposerSemanticDraftSnapshot,
 } from './pendingMessageComposerEditSnapshot';
 import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
@@ -332,6 +331,10 @@ import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/vo
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import {
+    buildExactTurnAutomationRouteParams,
+    readExactActiveParentTurn,
+} from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import {
@@ -365,7 +368,10 @@ import {
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { createGoalActionChip } from '@/components/sessions/agentInput/definitions/createGoalActionChip';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+    resolveSessionActionDefaultBackend,
+    resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
@@ -459,6 +465,7 @@ import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime'
 import { combineSessionViewExtraActionChips } from './view/combineSessionViewExtraActionChips';
 import { resolveSessionViewModeOptionIds } from './view/resolveSessionViewModeOptionIds';
 import { resolveSessionViewHeaderProps } from './view/resolveSessionViewHeaderProps';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import {
     readExternalAgentObservationPresentationInput,
     resolveExternalSessionRuntimePresentation,
@@ -546,7 +553,9 @@ import {
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
-import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import {
+    resolveConnectedServiceQuotaProfileRefForSession,
+} from './resolveConnectedServiceQuotaProfileRefForSession';
 import {
     computeProviderAccountUsageGaugeViewModel,
     selectProviderUsageDisplaySource,
@@ -557,7 +566,6 @@ import {
     type ComposerAgentContinuationIntentV1,
     type SessionAgentTransitionResultV1,
 } from '@happier-dev/protocol';
-import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export { resolveSessionAuthSurfaceState } from './sessionAuthSurfaceState';
@@ -628,7 +636,6 @@ function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: strin
 
 type ComposerSemanticDraftCurrentnessSnapshot = Readonly<{
     values: ComposerSemanticDraftSnapshot;
-    mutationRevisions: PendingMessageComposerSemanticDraftMutationRevisions;
     repositoryCurrentness: SessionDraftCurrentness;
 }>;
 
@@ -1685,7 +1692,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
         && ((pane.scopeState?.right.isOpen ?? false) || (pane.scopeState?.details.isOpen ?? false)));
 
     const handleHeaderExtraItemSelect = React.useCallback((actionId: string) => {
-        if (actionId === 'header.openAttachedClaudeTerminal') {
+        if (actionId === 'header.openAttachedSessionTerminal') {
             attachedSessionTerminal.open();
             return true;
         }
@@ -1700,6 +1707,18 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
         }
         if (actionId === 'header.openAutomations') {
             navigateWithBlurOnWeb(() => routerRef.current.push(buildCurrentSessionHref('/automations') as any));
+            return true;
+        }
+        if (actionId === 'header.automateExactTurnCompletion') {
+            const observed = readExactActiveParentTurn(storage.getState().sessions[sessionId]);
+            if (!observed) return true;
+            navigateWithBlurOnWeb(() => routerRef.current.push({
+                pathname: `/session/${sessionId}/automations/when-turn-finishes` as any,
+                params: {
+                    ...buildExactTurnAutomationRouteParams(observed),
+                    serverId: observed.sourceServerId,
+                },
+            }));
             return true;
         }
         const workspaceModeToggleActionId = resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience);
@@ -1727,8 +1746,8 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
         const items: DropdownMenuItem[] = [];
         if (attachedSessionTerminal.available) {
             items.push({
-                id: 'header.openAttachedClaudeTerminal',
-                title: t('tools.askUserQuestion.claudeDialogNotice.openTerminal'),
+                id: 'header.openAttachedSessionTerminal',
+                title: t('tools.askUserQuestion.attachedTerminalNotice.openTerminal'),
                 icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
             });
         }
@@ -1739,8 +1758,15 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
                 icon: <Icon name="arrows-left-right" size={16} color={theme.colors.text.secondary} />,
             });
         }
+        if (showAutomations && readExactActiveParentTurn(stableSessionForHeader)) {
+            items.push({
+                id: 'header.automateExactTurnCompletion',
+                title: t('automations.exactTurn.actionTitle'),
+                icon: <Icon name="clock" size={16} color={theme.colors.text.secondary} />,
+            });
+        }
         return items.length > 0 ? items : undefined;
-    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, showWorkspaceExperienceToggle, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
+    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, showAutomations, showWorkspaceExperienceToggle, stableSessionForHeader, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
 
     const headerWorkspaceDisplay = React.useMemo(() => resolveSessionWorkspaceDisplayPresentation({
         serverId: currentSessionRouteServerId,
@@ -1943,6 +1969,15 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
                 }} {...pane.overlayFocusReturnCaptureProps}>
                     <ChatHeaderView
                         {...headerProps}
+                        agentIdentity={headerProps.agentId ? (
+                            <SessionAgentCatalogIdentityIcon
+                                agentId={headerProps.agentId}
+                                machineId={headerMachineTarget?.machineId ?? null}
+                                serverId={currentSessionRouteServerId}
+                                color={theme.colors.chrome.header.foreground}
+                                size={26}
+                            />
+                        ) : null}
                         onBackPress={handleBackPress}
                         showBackButton={!isTablet}
                         constrainWidth={constrainHeaderWidth}
@@ -2358,7 +2393,7 @@ function SessionViewLoaded({
         launchBinding: providerLaunchBinding,
     });
     const providerAgentTargetKey = agentId
-        ? resolveBackendTargetKeyV2(sessionActionDefaultBackend?.backendTarget ?? { kind: 'builtInAgent', agentId })
+        ? resolveBackendTargetKeyV2(resolveSessionActionDefaultTarget(sessionActionDefaultBackend) ?? { kind: 'builtInAgent', agentId })
         : null;
     const providerModelProjection = useProviderModelProjection({
         enabled: providersFeatureEnabled && surfaceFocused && providerAgentTargetKey !== null,
@@ -2656,9 +2691,18 @@ function SessionViewLoaded({
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
+    const currentSessionAgentCatalogEntry = React.useMemo(() => (
+        agentId === null
+            ? null
+            : sessionAgentCatalogEntries.find((entry) => (
+                entry.agentId === agentId
+                || entry.agentCatalogEntry.qualifiedId === agentId
+            ))?.agentCatalogEntry ?? null
+    ), [agentId, sessionAgentCatalogEntries]);
     const sessionActionDefaultBackendEntry = React.useMemo(() => {
-        if (!sessionActionDefaultBackend) return null;
-        const selectedTargetKey = resolveBackendTargetKeyV2(sessionActionDefaultBackend.backendTarget as any);
+        const target = resolveSessionActionDefaultTarget(sessionActionDefaultBackend);
+        if (!target) return null;
+        const selectedTargetKey = resolveBackendTargetKeyV2(target);
         return sessionAgentCatalogEntries.find((entry) => entry.backendTargetKey === selectedTargetKey) ?? null;
     }, [sessionActionDefaultBackend, sessionAgentCatalogEntries]);
     const voiceEnabled = useFeatureEnabled('voice');
@@ -2813,6 +2857,7 @@ function SessionViewLoaded({
         featureDecision: agentSwitchingDecision,
         source: agentContinuationSource,
         machine: agentContinuationMachine,
+        projectionCurrent: daemonMergedProjection.phase === 'ready',
         detail: agentContinuationTargetDetail,
     });
     const restoredArmedContinuationOutcomeKeyRef = React.useRef<string | null>(null);
@@ -3070,14 +3115,32 @@ function SessionViewLoaded({
             metadata: ownerMetadata,
             agentId: liveComposerState.agentId ?? '',
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+            connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, ownerMetadata]);
+    ), [accountProfile?.connectedServicesV2, currentSessionAgentCatalogEntry?.connectedAccounts, liveComposerState.agentId, ownerMetadata]);
     const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
-        connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
+        connectedServiceQuotaProfileRef
+            ? [{
+                serviceId: connectedServiceQuotaProfileRef.legacyServiceId,
+                profileId: connectedServiceQuotaProfileRef.profileId,
+            }]
+            : [],
     );
-    const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
-        ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
-        : null;
+    /**
+     * The released scalar identity the session quota corridor consumes (V2/V3
+     * quota transports, the recovery-credit consume wire, V2 group facts). The
+     * resolver's canonical resolution is qualified; this is its typed local
+     * projection for the legacy quota surfaces.
+     */
+    const connectedServiceQuotaProfileIdentity = React.useMemo(() => (
+        connectedServiceQuotaProfileRef
+            ? {
+                serviceId: connectedServiceQuotaProfileRef.legacyServiceId,
+                profileId: connectedServiceQuotaProfileRef.profileId,
+            }
+            : null
+    ), [connectedServiceQuotaProfileRef]);
+    const connectedServiceQuotaProfileKey = connectedServiceQuotaSnapshots.profiles[0]?.key ?? null;
     const connectedServiceQuotaPolledSnapshot = connectedServiceQuotaProfileKey
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
@@ -3113,11 +3176,11 @@ function SessionViewLoaded({
         providerId: agentId,
         metadataRecordIds: providerAccountUsageRecordIds,
         accountUsageSnapshotsByRecordId: providerAccountUsageSnapshots.snapshotsByRecordId,
-        connectedServiceProfileRef: connectedServiceQuotaProfileRef,
+        connectedServiceProfileRef: connectedServiceQuotaProfileIdentity,
         connectedServiceQuotaView: connectedServiceQuotaSnapshot,
     }), [
         agentId,
-        connectedServiceQuotaProfileRef,
+        connectedServiceQuotaProfileIdentity,
         connectedServiceQuotaSnapshot,
         providerAccountUsageRecordIds,
         providerAccountUsageSnapshots.snapshotsByRecordId,
@@ -3299,9 +3362,9 @@ function SessionViewLoaded({
         && providerUsageConnectedServiceQuotaSnapshot
         && connectedServiceQuotaSnapshotMatchesProfileRef(
             providerUsageConnectedServiceQuotaSnapshot,
-            connectedServiceQuotaProfileRef,
+            connectedServiceQuotaProfileIdentity,
         )
-        ? connectedServiceQuotaProfileRef
+        ? connectedServiceQuotaProfileIdentity
         : null;
     const providerUsageGauge = React.useMemo(() => {
         if (!connectedServiceQuotasEnabled || sessionProviderUsageGaugeMode === 'hidden') return null;
@@ -3336,6 +3399,7 @@ function SessionViewLoaded({
             formatter: connectedServiceQuotaGaugeFormatter,
         });
     }, [
+        connectedServiceQuotaProfileIdentity,
         connectedServiceQuotaProfileRef,
         connectedServiceQuotasEnabled,
         providerUsageDisplaySource?.kind,
@@ -3612,7 +3676,7 @@ function SessionViewLoaded({
                     nowServerMs(),
                 );
                 const consumed = await consumeConnectedServiceRecoveryCreditForProfile({
-                    profileRef: connectedServiceQuotaProfileRef,
+                    profileRef: connectedServiceQuotaProfileIdentity,
                     profileKey: connectedServiceQuotaProfileKey,
                     snapshotFetchedAtMs: connectedServiceQuotaSnapshot?.fetchedAt ?? null,
                 });
@@ -3687,7 +3751,7 @@ function SessionViewLoaded({
         markCurrentUsageLimitRecoveryOperationStatus,
         markUsageLimitRecoveryIssueResolved,
         connectedServiceQuotaProfileKey,
-        connectedServiceQuotaProfileRef,
+        connectedServiceQuotaProfileIdentity,
         connectedServiceQuotaSnapshot?.fetchedAt,
         consumeConnectedServiceRecoveryCreditForProfile,
         session.active,
@@ -4053,7 +4117,6 @@ function SessionViewLoaded({
             agentId: lifecycleAgentId,
             capability: 'surface.terminal',
             metadata: ownerMetadata,
-            accountSettings: settings,
             currentAgentCapabilities: currentLifecycleAgentCapabilities,
         });
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
@@ -4281,26 +4344,15 @@ function SessionViewLoaded({
         }
         return snapshot;
     }, [activeServerAccountScope, existingSessionComposerOwner, sessionId]);
-    const captureComposerSemanticDraftMutationRevisions = React.useCallback((): PendingMessageComposerSemanticDraftMutationRevisions => {
-        const revisions = {} as {
-            [FieldId in SessionDraftValueFieldId]: number;
-        };
-        const revision = existingSessionComposerOwner.read().revision;
-        for (const fieldId of SESSION_COMPOSER_DRAFT_FIELD_IDS) {
-            revisions[fieldId] = revision;
-        }
-        return revisions;
-    }, [existingSessionComposerOwner]);
     const captureComposerSemanticDraftCurrentnessSnapshot = React.useCallback((): ComposerSemanticDraftCurrentnessSnapshot => ({
         values: captureComposerSemanticDraftSnapshot(),
-        mutationRevisions: captureComposerSemanticDraftMutationRevisions(),
         repositoryCurrentness: activeServerAccountScope
             ? captureSessionDraftCurrentness({
                 scope: activeServerAccountScope,
                 address: { kind: 'session', sessionId },
             })
             : { address: { kind: 'session', sessionId }, mutationIds: {} },
-    }), [activeServerAccountScope, captureComposerSemanticDraftMutationRevisions, captureComposerSemanticDraftSnapshot, sessionId]);
+    }), [activeServerAccountScope, captureComposerSemanticDraftSnapshot, sessionId]);
     const clearSemanticDraftValuesAfterOutboundHandoff = React.useCallback((
         snapshot: ComposerSemanticDraftCurrentnessSnapshot,
     ): readonly SessionDraftValueFieldId[] => {
@@ -4330,8 +4382,6 @@ function SessionViewLoaded({
             input.snapshot.values,
             captureComposerSemanticDraftSnapshot(),
             input.clearedFieldIds,
-            input.clearedSnapshot.mutationRevisions,
-            captureComposerSemanticDraftMutationRevisions(),
             input.clearedSnapshot.values,
         );
         if (!activeServerAccountScope) return [];
@@ -4395,7 +4445,6 @@ function SessionViewLoaded({
         return fieldsToRestore;
     }, [
         activeServerAccountScope,
-        captureComposerSemanticDraftMutationRevisions,
         captureComposerSemanticDraftSnapshot,
         sessionId,
     ]);
@@ -5184,7 +5233,7 @@ function SessionViewLoaded({
             const permissionOverride = getPermissionModeOverrideForSpawn(session);
             const modelOverride = getModelOverrideForSpawn(
                 session,
-                resolveBackendTargetKeyV2(sessionActionDefaultBackend?.backendTarget ?? { kind: 'builtInAgent', agentId }),
+                resolveBackendTargetKeyV2(resolveSessionActionDefaultTarget(sessionActionDefaultBackend) ?? { kind: 'builtInAgent', agentId }),
             );
             const resumeTarget = reachableMachineTarget;
             const base = buildResumeSessionBaseOptionsFromSession({
@@ -5205,18 +5254,16 @@ function SessionViewLoaded({
                 return false;
             }
 
-            if (isBundledAgentId(agentId)) {
-                fireAndForget(
-                    ensureAgentInstallablesBackground({
-                        agentId,
-                        machineId: base.machineId,
-                        serverId: capabilityServerId,
-                        settings,
-                        resumeSessionId: base.resume ?? null,
-                    }),
-                    { tag: `SessionView.installables.ensure.${agentId}` },
-                );
-            }
+            fireAndForget(
+                ensureAgentInstallablesBackground({
+                    agentId,
+                    machineId: base.machineId,
+                    serverId: capabilityServerId,
+                    settings,
+                    resumeSessionId: base.resume ?? null,
+                }),
+                { tag: `SessionView.installables.ensure.${agentId}` },
+            );
 
             const result = await resumeSession({
                 ...base,
@@ -5772,7 +5819,7 @@ function SessionViewLoaded({
             reviewCommentsEnabled,
             reviewScope,
             reviewCommentDrafts,
-            defaultBackendTarget: sessionActionDefaultBackend?.backendTarget ?? null,
+            defaultBackendTarget: resolveSessionActionDefaultTarget(sessionActionDefaultBackend),
             defaultBackendId: sessionActionDefaultBackend?.defaultBackendId ?? null,
             instructionsText: visibleComposerText,
             browserContext: browserContextComposerContext,
@@ -5900,7 +5947,7 @@ function SessionViewLoaded({
             agentId,
             machineId: controlMachineTarget?.machineId ?? null,
             serverId: capabilityServerId,
-            agentCore,
+            connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
             sessionMetadata: ownerMetadata,
             settings: {
                 connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
@@ -7665,7 +7712,7 @@ function SessionViewLoaded({
                             resolved,
                             sessionId,
                             agentId: agentId ?? '',
-                            backendTarget: sessionActionDefaultBackend?.backendTarget ?? null,
+                            backendTarget: resolveSessionActionDefaultTarget(sessionActionDefaultBackend),
                             permissionMode,
                             actionExecutor,
                             previousMessage,

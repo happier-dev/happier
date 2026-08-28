@@ -8,7 +8,7 @@ import {
     supportsDirectTranscriptStorageForNewSession,
     type NewSessionTranscriptStorage,
 } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 
 type PersistedAuthoringDraftLike = Readonly<{
     transcriptStorage?: NewSessionTranscriptStorage | null;
@@ -30,7 +30,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     selectedProfileId: string | null;
     newSessionDefaultPersistenceModeV1: Settings['newSessionDefaultPersistenceModeV1'];
     newSessionDefaultPersistenceModeByTargetKeyV1: Settings['newSessionDefaultPersistenceModeByTargetKeyV1'];
-    resolvedBackendTargets: ReadonlyArray<BackendTargetRefV2>;
+    resolvedBackendTargets: ReadonlyArray<PersistedBackendTargetRefV2>;
     agentType: string;
     /**
      * The machine the composer will spawn on. An installed Agent's transcript
@@ -38,7 +38,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
      * read from the machine that will actually run the Session.
      */
     selectedMachineId: string | null;
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     settings: Settings;
     externalSessionsFeatureEnabled: boolean;
 }>): Readonly<{

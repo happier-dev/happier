@@ -21,6 +21,7 @@ import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from '@/agents/backendCatalog/mergedProjectionTypes';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { installNewSessionComponentsCommonModuleMocks } from '../../new/components/newSessionComponentsTestHelpers';
 
 
@@ -36,7 +37,6 @@ const candidatesListSpy = vi.hoisted(() => vi.fn(async (): Promise<ExternalSessi
             activity: 'running',
             details: {
                 path: '/tmp/worktree',
-                codexBackendMode: 'appServer',
                 source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
             },
         },
@@ -241,9 +241,17 @@ installNewSessionComponentsCommonModuleMocks({
     }).module,
     storage: () => createStorageModuleStub({
         useAllMachines: () => machinesState,
-        useSetting: (key: string) => key === 'externalSessionsSettingsV1'
-            ? accountSettingsState.current.externalSessionsSettingsV1
-            : undefined,
+        useSetting: (key: string) => {
+            if (key === 'externalSessionsSettingsV1') {
+                return accountSettingsState.current.externalSessionsSettingsV1;
+            }
+            if (key === 'connectedServicesProfileLabelByKey') {
+                return settingsMock.connectedServicesProfileLabelByKey;
+            }
+            if (key === 'backendEnabledByTargetKey') return {};
+            if (key === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
+            return undefined;
+        },
     }),
 });
 vi.mock('@/sync/sync', () => ({
@@ -254,7 +262,6 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => profileMock,
-    useSettings: () => settingsMock,
     useLocalSetting: (key: string) => key === 'uiItemDensity' ? 'comfortable' : undefined,
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
@@ -305,6 +312,10 @@ type DropdownTriggerPresentation = Readonly<{
 
 type DropdownMenuTestNode = Readonly<{
     props?: {
+        items?: ReadonlyArray<Readonly<{
+            id: string;
+            icon?: React.ReactElement;
+        }>>;
         itemRowProps?: {
             density?: unknown;
         };
@@ -357,7 +368,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                     activity: 'running',
                     details: {
                         path: '/tmp/worktree',
-                        codexBackendMode: 'appServer',
                         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                     },
                 },
@@ -525,6 +535,8 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(machineDropdown?.props?.itemTrigger?.showSelectedDetail).toBe(false);
         expect(providerDropdown?.props?.itemTrigger?.showSelectedDetail).toBe(false);
         expect(sourceDropdown?.props?.itemTrigger?.showSelectedDetail).toBe(false);
+        expect(providerDropdown?.props?.items?.length).toBeGreaterThan(0);
+        expect(providerDropdown?.props?.items?.every((item) => item.icon?.type === AgentCatalogIdentityIcon)).toBe(true);
         expect(machineDropdown?.props?.itemRowProps?.density).toBeUndefined();
         expect(providerDropdown?.props?.itemRowProps?.density).toBeUndefined();
         expect(sourceDropdown?.props?.itemRowProps?.density).toBeUndefined();
@@ -642,7 +654,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                     activity: 'active_recently',
                     details: {
                         path: '/tmp/claude-project',
-                        codexBackendMode: 'appServer',
                         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                     },
                 },
@@ -783,14 +794,14 @@ describe('ExternalSessionsBrowseScreen', () => {
                     title: 'Refactor direct session UX',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'running',
-                    details: { path: '/tmp/happier/dev', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/happier/dev', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
                 {
                     remoteSessionId: 'codex-session-2',
                     title: 'Investigate opencode startup',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'idle',
-                    details: { path: '/tmp/opencode', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/opencode', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
             ],
             nextCursor: null,
@@ -802,14 +813,14 @@ describe('ExternalSessionsBrowseScreen', () => {
                     title: 'Fast filesystem result',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'idle',
-                    details: { path: '/tmp/hidden', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/hidden', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
                 {
                     remoteSessionId: 'codex-fast-only-session-8',
                     title: 'Fast-only filesystem result',
                     updatedAtMs: 1_699_999_999_000,
                     activity: 'idle',
-                    details: { path: '/tmp/fast-only', codexBackendMode: 'exec', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/fast-only', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
             ],
             nextCursor: null,
@@ -869,14 +880,14 @@ describe('ExternalSessionsBrowseScreen', () => {
                         title: 'Augmented app-server result',
                         updatedAtMs: 1_700_000_000_000,
                         activity: 'idle',
-                        details: { path: '/tmp/hidden', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                        details: { path: '/tmp/hidden', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                     },
                     {
                         remoteSessionId: 'codex-augmented-only-session-7',
                         title: 'Augmented-only app-server result',
                         updatedAtMs: 1_699_999_998_000,
                         activity: 'idle',
-                        details: { path: '/tmp/augmented-only', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                        details: { path: '/tmp/augmented-only', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                     },
                 ],
                 nextCursor: null,
@@ -905,7 +916,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                     activity: 'running',
                     details: {
                         path: '/tmp/worktree',
-                        codexBackendMode: 'appServer',
                         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                     },
                 },
@@ -917,7 +927,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                     linkedSessionId: 'happy-session-linked',
                     details: {
                         path: '/tmp/worktree',
-                        codexBackendMode: 'appServer',
                         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                     },
                 },
@@ -976,25 +985,7 @@ describe('ExternalSessionsBrowseScreen', () => {
             remoteSessionId: 'codex-session-1',
             titleHint: 'Existing Codex Session',
             directoryHint: '/tmp/worktree',
-            codexBackendMode: 'appServer',
             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
-            runtimeDescriptorV1: expect.objectContaining({
-                v: 1,
-                agentId: 'codex',
-                agent: expect.objectContaining({
-                    backendMode: 'appServer',
-                    home: 'user',
-                    homePath: '/tmp/custom-home',
-                    agentExtra: expect.objectContaining({
-                        owner: 'codex',
-                        runtimeHandle: expect.objectContaining({
-                            backendMode: 'appServer',
-                            home: 'user',
-                            homePath: '/tmp/custom-home',
-                        }),
-                    }),
-                }),
-            }),
         }));
         expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
     });
@@ -1012,7 +1003,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                         activity: 'running',
                         details: {
                             path: '/tmp/worktree',
-                            codexBackendMode: 'appServer',
                             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
                         },
                     },
@@ -1500,7 +1490,6 @@ describe('ExternalSessionsBrowseScreen', () => {
                     activity: 'running',
                     details: {
                         path: '/tmp/worktree',
-                        codexBackendMode: 'appServer',
                         source: {
                             kind: 'codexHome',
                             home: 'connectedService',
@@ -1536,27 +1525,7 @@ describe('ExternalSessionsBrowseScreen', () => {
             remoteSessionId: 'codex-session-1',
             titleHint: 'Existing Codex Session',
             directoryHint: '/tmp/worktree',
-            codexBackendMode: 'appServer',
             source: expect.objectContaining({ kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' } as any),
-            runtimeDescriptorV1: expect.objectContaining({
-                v: 1,
-                agentId: 'codex',
-                agent: expect.objectContaining({
-                    backendMode: 'appServer',
-                    home: 'connectedService',
-                    connectedServiceId: 'openai-codex',
-                    connectedServiceProfileId: 'work',
-                    agentExtra: expect.objectContaining({
-                        owner: 'codex',
-                        runtimeHandle: expect.objectContaining({
-                            backendMode: 'appServer',
-                            home: 'connectedService',
-                            connectedServiceId: 'openai-codex',
-                            connectedServiceProfileId: 'work',
-                        }),
-                    }),
-                }),
-            }),
         }));
     });
 
@@ -1694,7 +1663,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                     title: 'Initial Session',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'running',
-                    details: { path: '/tmp/initial', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/initial', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
             ],
             nextCursor: null,
@@ -1710,7 +1679,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                         title: 'Stale Session',
                         updatedAtMs: 1_700_000_000_000,
                         activity: 'idle',
-                        details: { path: '/tmp/stale', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                        details: { path: '/tmp/stale', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                     },
                 ],
                 nextCursor: null,
@@ -1739,7 +1708,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                     title: 'Fresh Session',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'running',
-                    details: { path: '/tmp/fresh', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    details: { path: '/tmp/fresh', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
                 },
             ],
             nextCursor: null,
@@ -1760,7 +1729,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                     title: 'Stale Session',
                     updatedAtMs: 1_700_000_000_000,
                     activity: 'idle',
-                    details: { path: '/tmp/stale', codexBackendMode: 'appServer' },
+                    details: { path: '/tmp/stale' },
                 },
             ],
             nextCursor: null,
@@ -1912,6 +1881,19 @@ describe('ExternalSessionsBrowseScreen', () => {
                 mergedProviderProjectionById: {
                     'acme.dynamic': {
                         agentId: 'acme.dynamic',
+                        qualifiedId: 'happier.agent.acme/dynamic',
+                        identity: {
+                            pluginId: 'happier.agent.acme',
+                            localId: 'dynamic',
+                        },
+                        installedPackage: {
+                            id: 'happier.agent.acme',
+                            displayName: 'Acme Agents',
+                            enabled: true,
+                            source: { kind: 'path', locator: '/tmp/acme-agent' },
+                            immutableGenerationId: 'acme-generation-7',
+                        },
+                        projectionGeneration: 7,
                         title: 'Acme Dynamic',
                         iconAgentId: 'codex',
                         channel: 'plugin',
@@ -1937,6 +1919,24 @@ describe('ExternalSessionsBrowseScreen', () => {
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
         const subtitleChildren = React.Children.toArray(candidateItem!.props.subtitle.props.children) as any[];
         expect(String(subtitleChildren[2]?.props?.children)).toContain('Acme Dynamic');
-        expect(candidateItem?.props.icon?.props.agentId).toBe('codex');
+        expect(candidateItem?.props.icon?.type).toBe(AgentCatalogIdentityIcon);
+        expect(candidateItem?.props.icon?.props).toMatchObject({
+            entry: {
+                qualifiedId: 'happier.agent.acme/dynamic',
+                identity: {
+                    pluginId: 'happier.agent.acme',
+                    localId: 'dynamic',
+                },
+                installedPackage: {
+                    id: 'happier.agent.acme',
+                    immutableGenerationId: 'acme-generation-7',
+                },
+                projectionGeneration: 7,
+                isBuiltIn: false,
+            },
+            machineId: 'machine-1',
+            current: true,
+        });
+        expect(candidateItem?.props.icon?.props.entry.iconAgentId).toBe('codex');
     });
 });

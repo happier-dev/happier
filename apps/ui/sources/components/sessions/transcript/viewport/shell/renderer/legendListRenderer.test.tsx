@@ -2040,6 +2040,7 @@ describe('Legend transcript renderer adapter', () => {
             messageId: null,
         });
         expect(shellRef.hasLiveWebHold?.({ kind: 'item', itemId: 'row-1' })).toBe(true);
+        expect(shellRef.hasLiveWebHold?.({ kind: 'item' })).toBe(true);
         shellRef.notifyViewportInput?.({
             kind: 'keyboard',
             verticalDirection: 'toward-end',

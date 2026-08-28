@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View, Platform, Pressable, type LayoutChangeEvent } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -31,8 +30,8 @@ interface ChatHeaderViewProps {
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
-    /** Resolved agent for this session, when there is one. Shown in place of the avatar on request. */
-    agentId?: string | null;
+    /** Canonical machine-scoped Agent identity mark, shown in place of the avatar on request. */
+    agentIdentity?: React.ReactNode;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;
@@ -61,7 +60,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     badges,
     onBackPress,
     avatarId,
-    agentId,
+    agentIdentity,
     rightElement,
     isConnected = true,
     flavor,
@@ -104,12 +103,12 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     const leadingIdentity = React.useMemo(() => {
         if (identityMode === 'none') return null;
         if (identityMode === 'agentLogo') {
-            return agentId ? <AgentIcon agentId={agentId} size={26} /> : null;
+            return agentIdentity ?? null;
         }
         return avatarId
             ? <Avatar id={avatarId} size={32} monochrome={!isConnected} flavor={flavor} />
             : null;
-    }, [agentId, avatarId, flavor, identityMode, isConnected]);
+    }, [agentIdentity, avatarId, flavor, identityMode, isConnected]);
 
     const handleBackPress = () => {
         if (onBackPress) {

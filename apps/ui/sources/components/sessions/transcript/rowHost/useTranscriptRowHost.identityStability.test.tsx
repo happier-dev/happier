@@ -45,6 +45,9 @@ vi.mock('@/components/sessions/external/progress/externalSessionOperationRowCapa
         canInvokeOwnerActions: true,
     }),
 }));
+vi.mock('@/components/sessions/transcript/PluginTranscriptActivityCard', () => ({
+    PluginTranscriptActivityCard: () => null,
+}));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
     usePreferredServerIdForSession: () => 'server-1',
 }));
@@ -638,6 +641,74 @@ describe('useTranscriptItemRenderer identity stability', () => {
         expect(returnFocusToTranscriptViewport).toHaveBeenCalledTimes(2);
         await hook.unmount();
     });
+
+    it.each([
+        ['onResume', resumeOperationSpy],
+        ['onRetry', retryOperationSpy],
+        ['onCancel', cancelOperationSpy],
+        ['onDiscard', discardOperationSpy],
+    ] as const)(
+        'returns focus from %s when its detailed card is replaced to the stable transcript viewport',
+        async (actionProp, actionSpy) => {
+        const returnFocusToTranscriptViewport = vi.fn();
+        actionSpy.mockResolvedValue({
+            ok: true,
+            progress: {
+                operationId: 'operation-owner-focus',
+                revision: 2,
+            },
+        });
+        const hydratedItem = {
+            kind: 'external-session-operation' as const,
+            id: 'external-session-operation:operation-owner-focus',
+            presentation: {
+                v: 1 as const,
+                operationId: 'operation-owner-focus',
+                revision: 1,
+                kind: 'materialize' as const,
+                status: 'awaiting_user_resume' as const,
+                phase: 'validating' as const,
+            },
+            progress: {} as never,
+            createdAt: 0,
+        };
+        const sharedItem = { ...hydratedItem, progress: null };
+        const baseDeps = {
+            ...createRendererDeps(createRendererProps({
+                externalSessionOperationOwnerTarget: {
+                    machineId: 'machine-1',
+                    machineOnline: true,
+                    machineStatusKnown: true,
+                    serverId: 'server-1',
+                },
+            })),
+            returnFocusToTranscriptViewport,
+        } as TranscriptItemRendererDeps;
+        const hook = await renderHook(
+            ({ listData }: { listData: readonly typeof hydratedItem[] }) => useTranscriptItemRenderer({
+                ...baseDeps,
+                listData,
+            }),
+            { initialProps: { listData: [hydratedItem] } },
+        );
+        const row = hook.getCurrent().renderItem({ item: hydratedItem, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+
+        await act(async () => {
+            await (card.props[actionProp] as (
+                ref: { operationId: string; revision: number },
+            ) => Promise<void>)({
+                operationId: 'operation-owner-focus',
+                revision: 1,
+            });
+        });
+        await hook.rerender({ listData: [sharedItem] });
+        expect(returnFocusToTranscriptViewport).toHaveBeenCalledOnce();
+        await hook.unmount();
+        },
+    );
 
     it('leaves focus on the surviving shared card when Check Again only removes its own action', async () => {
         // The card-local action hook already knows how to advance focus to Dismiss when the

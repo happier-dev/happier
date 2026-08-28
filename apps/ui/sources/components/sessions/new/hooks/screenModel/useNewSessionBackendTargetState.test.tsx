@@ -7,17 +7,27 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 
 import { useNewSessionBackendTargetState } from './useNewSessionBackendTargetState';
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 
 
 const applySettingsMock = vi.fn();
+
+function resolvedEntryFixture(
+    entry: Omit<ResolvedBackendCatalogEntry, 'agentCatalogEntry' | 'cliAuthBackgroundCheckSafe'>,
+): ResolvedBackendCatalogEntry {
+    return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: entry.agentId }),
+        cliAuthBackgroundCheckSafe: false,
+        ...entry,
+    };
+}
 
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
 }));
 
 const entries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-    {
+    resolvedEntryFixture({
         backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
         backendTargetKey: 'backend:review-bot:configured:review-bot',
         kind: 'configuredBackend',
@@ -28,11 +38,11 @@ const entries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         iconAgentId: null,
         title: 'Review Bot',
         subtitle: 'review-bot',
-    },
+    }),
 ];
 
 const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-    {
+    resolvedEntryFixture({
         backendTarget: { kind: 'backend', backendId: 'codex' },
         backendTargetKey: 'backend:codex',
         kind: 'builtInAgent',
@@ -43,8 +53,8 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         iconAgentId: 'codex',
         title: 'Codex',
         subtitle: 'codex',
-    },
-    {
+    }),
+    resolvedEntryFixture({
         backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
         backendTargetKey: 'backend:review-bot:configured:review-bot',
         kind: 'configuredBackend',
@@ -55,7 +65,7 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
         iconAgentId: null,
         title: 'Review Bot',
         subtitle: 'review-bot',
-    },
+    }),
 ];
 
 describe('useNewSessionBackendTargetState', () => {
@@ -115,7 +125,7 @@ describe('useNewSessionBackendTargetState', () => {
 
     it('falls back to an available last-used built-in target when temp agent params point to an unavailable built-in agent', async () => {
         const fallbackEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-            {
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
@@ -126,7 +136,7 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: 'codex',
                 title: 'Codex',
                 subtitle: 'codex',
-            },
+            }),
         ];
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
@@ -167,7 +177,7 @@ describe('useNewSessionBackendTargetState', () => {
 
     it('keeps an unbacked plugin Agent separate from bundled static policy', async () => {
         const pluginEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-            {
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
@@ -178,8 +188,8 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: 'codex',
                 title: 'Codex',
                 subtitle: 'codex',
-            },
-            {
+            }),
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
@@ -190,7 +200,7 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: null,
                 title: 'Acme Review Backend',
                 subtitle: 'acme.review.backend',
-            },
+            }),
         ];
 
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
@@ -220,7 +230,7 @@ describe('useNewSessionBackendTargetState', () => {
 
     it('preserves an unresolved plugin backend target while daemon projection metadata is still loading', async () => {
         const pluginEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-            {
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
@@ -231,7 +241,7 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: 'codex',
                 title: 'Codex',
                 subtitle: 'codex',
-            },
+            }),
         ];
 
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
@@ -256,7 +266,7 @@ describe('useNewSessionBackendTargetState', () => {
 
     it('uses projected provider carrier metadata for plugin backend runtime selection', async () => {
         const pluginEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-            {
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
@@ -267,7 +277,7 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: 'claude',
                 title: 'Acme Review Backend',
                 subtitle: 'acme.review.backend',
-            },
+            }),
         ];
 
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
@@ -291,7 +301,7 @@ describe('useNewSessionBackendTargetState', () => {
 
     it('persists plugin backend selection without writing lastUsedAgent (V1 compatibility only)', async () => {
         const pluginEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
-            {
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 backendTargetKey: 'backend:codex',
                 kind: 'builtInAgent',
@@ -302,8 +312,8 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: 'codex',
                 title: 'Codex',
                 subtitle: 'codex',
-            },
-            {
+            }),
+            resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
                 backendTargetKey: 'backend:acme.review.backend',
                 kind: 'pluginBackend',
@@ -314,7 +324,7 @@ describe('useNewSessionBackendTargetState', () => {
                 iconAgentId: null,
                 title: 'Acme Review Backend',
                 subtitle: 'acme.review.backend',
-            },
+            }),
         ];
 
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
@@ -350,7 +360,7 @@ describe('useNewSessionBackendTargetState', () => {
     });
 
     it('persists Oh My Pi selection as structured identity and clears the flat compatibility field', async () => {
-        const ohMyPiEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [{
+        const ohMyPiEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [resolvedEntryFixture({
             backendTarget: { kind: 'backend', backendId: 'ohMyPi' },
             backendTargetKey: 'agent:happier.agent.ohmypi/ohmypi',
             kind: 'builtInAgent',
@@ -361,7 +371,7 @@ describe('useNewSessionBackendTargetState', () => {
             iconAgentId: 'ohMyPi',
             title: 'Oh My Pi',
             subtitle: 'ohMyPi',
-        }];
+        })];
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {

@@ -930,7 +930,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'yes',
@@ -996,7 +995,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'yes',
@@ -1069,7 +1067,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'yes',
@@ -1129,7 +1126,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'yes',
@@ -1190,7 +1186,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'yes',
@@ -1331,7 +1326,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'unknown',
@@ -1386,7 +1380,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'unknown',
@@ -1432,7 +1425,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'unknown',
@@ -1692,7 +1684,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp-a',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'unknown',
@@ -1710,7 +1701,6 @@ describe('useNewSessionScreenModel (installables)', () => {
                     command: 'custom-acp-b',
                     args: ['serve'],
                     env: {},
-                    transportProfile: 'generic',
                     capabilities: {
                         supportsLoadSession: false,
                         supportsModes: 'unknown',

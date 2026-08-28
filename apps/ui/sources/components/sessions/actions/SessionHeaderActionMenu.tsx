@@ -29,7 +29,10 @@ import {
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+  resolveSessionActionDefaultBackend,
+  resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { resolveSessionTargetServerId } from '@/components/sessions/model/resolveSessionTargetServerId';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
@@ -717,7 +720,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         const input = buildExecutionRunActionDraftInputForUi({
           actionId: actionId as any,
           sessionId: props.sessionId,
-          defaultBackendTarget: defaultBackend.backendTarget,
+          defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
           defaultBackendId: defaultBackend.defaultBackendId,
           instructions: '',
         });

@@ -7,13 +7,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     readComposerPresentationSnapshot,
     registerComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
+import {
+    clearAllNewSessionComposerAttachmentSeeds,
+    readNewSessionComposerAttachmentSeeds,
+    writeNewSessionComposerAttachmentSeeds,
+    type NewSessionComposerAttachmentSeedV1,
+} from './newSessionComposerAttachmentSeedStore';
 
 import { useNewSessionSeededComposerAttachments } from './useNewSessionSeededComposerAttachments';
 
@@ -37,7 +43,17 @@ const entry = {
     valueValidator: () => true,
 } satisfies PluginUiComposerAttachmentProjection;
 
-const seeds: readonly NewSessionPluginAttachmentSeedV1[] = [{
+const scope = Object.freeze({
+    serverId: 'server-a',
+    accountId: 'account-a',
+}) satisfies ServerAccountScope;
+const otherScope = Object.freeze({
+    serverId: 'server-a',
+    accountId: 'account-b',
+}) satisfies ServerAccountScope;
+const draftId = 'draft-seeded-attachments';
+
+const seeds: readonly NewSessionComposerAttachmentSeedV1[] = [{
     pluginId: 'happier.triage',
     attachmentLocalId: 'entry',
     value: {
@@ -118,13 +134,16 @@ describe('useNewSessionSeededComposerAttachments', () => {
 
     afterEach(() => {
         while (cleanups.length > 0) cleanups.pop()?.();
+        clearAllNewSessionComposerAttachmentSeeds();
         standardCleanup();
     });
 
     it('admits a host seed only through the mounted Composer transaction and does not repeat it', async () => {
+        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, seeds);
         cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
         const hook = await renderHook(() => useNewSessionSeededComposerAttachments({
-            seeds,
+            scope,
+            draftId,
             ref,
             entriesById: { [entry.id]: entry },
             isCurrent: () => true,
@@ -158,23 +177,67 @@ describe('useNewSessionSeededComposerAttachments', () => {
         await hook.rerender();
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
+        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual([]);
     });
 
-    it('keeps a seed pending until the current Composer catalog admits its contribution', async () => {
+    it('keeps a seed pending across unmount until the current Composer catalog admits it', async () => {
+        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, seeds);
+        writeNewSessionComposerAttachmentSeeds({ scope: otherScope, draftId }, [{
+            ...seeds[0]!,
+            value: { ...seeds[0]!.value, key: 'other-account' },
+        }]);
         cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
-        const hook = await renderHook((entriesById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>) => (
-            useNewSessionSeededComposerAttachments({
-                seeds,
-                ref,
-                entriesById,
-                isCurrent: () => true,
-                localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
-            })
-        ), { initialProps: {} });
+        const firstMount = await renderHook(() => useNewSessionSeededComposerAttachments({
+            scope,
+            draftId,
+            ref,
+            entriesById: {},
+            isCurrent: () => true,
+            localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
+        }));
 
         expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([]);
+        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual(seeds);
+        await firstMount.unmount();
 
-        await hook.rerender({ [entry.id]: entry });
+        await renderHook(() => useNewSessionSeededComposerAttachments({
+            scope,
+            draftId,
+            ref,
+            entriesById: { [entry.id]: entry },
+            isCurrent: () => true,
+            localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
+        }));
         expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
+        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual([]);
+        expect(readNewSessionComposerAttachmentSeeds({ scope: otherScope, draftId }))
+            .toHaveLength(1);
+    });
+
+    it('clears only the exact seeds whose canonical Composer transactions applied', async () => {
+        const unavailableSeed: NewSessionComposerAttachmentSeedV1 = {
+            pluginId: 'acme.unavailable',
+            attachmentLocalId: 'entry',
+            value: {
+                key: 'unavailable:1',
+                value: { entryId: 'unavailable' },
+                presentation: { label: 'Unavailable entry' },
+            },
+        };
+        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, [seeds[0]!, unavailableSeed]);
+        cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
+
+        await renderHook(() => useNewSessionSeededComposerAttachments({
+            scope,
+            draftId,
+            ref,
+            entriesById: { [entry.id]: entry },
+            isCurrent: () => true,
+            localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
+        }));
+
+        expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(1);
+        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId }))
+            .toEqual([unavailableSeed]);
     });
 });

@@ -1,11 +1,17 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol';
 
-import { resolveConnectedServiceShortName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import {
+    resolveConnectedServiceShortName,
+    resolveQualifiedConnectedServiceRegistryDisplayName,
+} from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { t } from '@/text';
 
 type ConnectedServiceAccountSwitchEvent = Readonly<{
-    serviceId: ConnectedServiceId;
+    /** Canonical qualified key on current writers; released bundled scalar ids retain legacy display. */
+    serviceId: string;
     groupId: string | null;
     groupLabel?: string | null;
     fromProfileId: string | null;
@@ -20,8 +26,33 @@ function readDisplayLabel(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
+/**
+ * Daemon-produced service ids are canonical qualified keys: resolve the short
+ * brand name or public descriptor title from the applied projection, with a
+ * neutral fallback for an unknown service. Released bundled scalar ids keep
+ * the generated built-in compatibility display.
+ */
+function resolveSwitchServiceDisplay(serviceId: string): string {
+    const qualifiedService = parseQualifiedPluginContributionKey(serviceId);
+    if (qualifiedService) {
+        const entryShortName = getConnectedServiceRegistrySnapshot()
+            .entries.find((candidate) => (
+                candidate.service?.pluginId === qualifiedService.pluginId
+                && candidate.service.localId === qualifiedService.localId
+            ))
+            ?.shortName?.trim();
+        if (entryShortName) return entryShortName;
+        return resolveQualifiedConnectedServiceRegistryDisplayName(
+            getConnectedServiceRegistrySnapshot(),
+            qualifiedService,
+            t,
+        );
+    }
+    return resolveConnectedServiceShortName(serviceId as ConnectedServiceId, t);
+}
+
 function resolveSwitchProfileLabel(params: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: string;
     profileId: string | null;
     profileLabel?: string | null;
     labelsByKey: Readonly<Record<string, string | undefined>>;
@@ -41,7 +72,7 @@ export function buildConnectedServiceAccountSwitchMessage(params: Readonly<{
     labelsByKey: Readonly<Record<string, string | undefined>> | undefined;
 }>): string {
     const labelsByKey = params.labelsByKey ?? {};
-    const provider = resolveConnectedServiceShortName(params.event.serviceId, t);
+    const provider = resolveSwitchServiceDisplay(params.event.serviceId);
     const from = resolveSwitchProfileLabel({
         serviceId: params.event.serviceId,
         profileId: params.event.fromProfileId,

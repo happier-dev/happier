@@ -11,7 +11,7 @@ import {
     buildAutomationTemplateFromSessionAuthoringDraft,
     buildExistingSessionAutomationFallbackDraft,
     buildExistingSessionAuthoringDraftFromSessionSnapshot,
-    buildNewSessionAuthoringDraft,
+    buildNewSessionAuthoringDraft as buildCanonicalNewSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
@@ -26,6 +26,7 @@ import {
     refreshExistingSessionAuthoringDraftFromSessionSnapshot,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 
 function modelSelection(
     agentTargetKey: string,
@@ -44,7 +45,91 @@ function modelSelection(
     });
 }
 
+function buildNewSessionAuthoringDraft(
+    input: Omit<Parameters<typeof buildCanonicalNewSessionAuthoringDraft>[0], 'executionTarget' | 'organizationPlacement' | 'agentTarget'> & Readonly<{
+        executionTarget?: SessionAuthoringDraft['executionTarget'];
+        organizationPlacement?: SessionAuthoringDraft['organizationPlacement'];
+        agentTarget: SessionAuthoringDraft['agentTarget'];
+    }>,
+): SessionAuthoringDraft {
+    return buildCanonicalNewSessionAuthoringDraft({
+        ...input,
+        executionTarget: input.executionTarget ?? { serverId: 'server-1', machineId: 'machine-1' },
+        organizationPlacement: input.organizationPlacement ?? { folderId: null, tagIds: [] },
+    });
+}
+
+function intervalAutomationDraft(params: Readonly<{
+    name: string;
+    description?: string;
+    cadenceMinutes: number;
+    timezone?: string | null;
+}>): NewSessionAutomationDraft {
+    return {
+        pendingAutomationId: 'automation-test',
+        enabled: true,
+        name: params.name,
+        description: params.description ?? '',
+        triggers: [{
+            clientId: 'trigger-test',
+            definition: {
+                kind: 'schedule',
+                enabled: true,
+                schedule: {
+                    kind: 'interval',
+                    everyMs: params.cadenceMinutes * 60_000,
+                    scheduleExpr: null,
+                    timezone: params.timezone ?? null,
+                },
+            },
+        }],
+    };
+}
+
 describe('sessionAuthoringDraftAdapters', () => {
+    it('keeps execution, organization, and Agent selection in the canonical authoring draft', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            executionTarget: { serverId: ' server-1 ', machineId: ' machine-1 ' },
+            organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1', 'tag-1', 'tag-2'] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review this',
+            displayText: 'Review this',
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'default',
+            permissionModeUpdatedAt: 123,
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            runtimeDescriptorV1: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        expect(draft).toMatchObject({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1', 'tag-2'] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+        });
+        expect(draft).not.toHaveProperty('agentId');
+        expect(draft).not.toHaveProperty('backendTarget');
+    });
+
     it('hydrates every representable strict server-start field through an exact catalog Agent target', () => {
         const spawn = SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
@@ -54,7 +139,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 kind: 'agent',
                 identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
             },
-            modelSelection: modelSelection('backend:review-agent', 'review-model', 30, 'provider-1'),
+            modelSelection: modelSelection('agent:acme.review-agent/review-agent', 'review-model', 30, 'provider-1'),
             profileId: 'profile-1',
             permissionMode: 'plan',
             agentModeId: 'plan',
@@ -74,7 +159,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             connectedServices: {
                 v: 1,
                 bindingsByServiceId: {
-                    github: { source: 'connected', selection: 'profile', profileId: 'github-1' },
+                    'happier.service.github/github': { source: 'connected', selection: 'profile', profileId: 'github-1' },
                 },
             },
             mcpSelection: {
@@ -110,12 +195,13 @@ describe('sessionAuthoringDraftAdapters', () => {
             kind: 'available',
             draft: expect.objectContaining({
                 targetType: 'new_session',
+                executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
                 directory: '/workspace/project',
+                organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
                 prompt: 'Review the changed files',
                 displayText: 'Review the changed files',
-                agentId: 'reviewAgent',
-                backendTarget: { kind: 'backend', backendId: 'review-agent' },
-                modelSelection: modelSelection('backend:review-agent', 'review-model', 30, 'provider-1'),
+                agentTarget: spawn.agentTarget,
+                modelSelection: modelSelection('agent:acme.review-agent/review-agent', 'review-model', 30, 'provider-1'),
                 profileId: 'profile-1',
                 permissionMode: 'plan',
                 permissionModeUpdatedAt: 20,
@@ -132,7 +218,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 connectedServices: {
                     v: 1,
                     bindingsByServiceId: {
-                        github: { source: 'connected', selection: 'profile', profileId: 'github-1' },
+                        'happier.service.github/github': { source: 'connected', selection: 'profile', profileId: 'github-1' },
                     },
                 },
                 mcpSelection: {
@@ -201,7 +287,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 kind: 'agent',
                 identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
             },
-            modelSelection: modelSelection('backend:review-agent', 'review-model', 30),
+            modelSelection: modelSelection('agent:acme.review-agent/review-agent', 'review-model', 30),
             permissionMode: 'default',
             configuration: {
                 mode: { value: null, updatedAtMs: 10 },
@@ -231,23 +317,21 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review this',
             displayText: 'Review this',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
             resumeSessionId: 'vendor-session-1',
             permissionMode: 'default',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: null,
             terminal: { mode: 'integrated' },
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -289,23 +373,21 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review this',
             displayText: 'Review this',
-            agentId: 'mercury',
-            backendTarget: { kind: 'backend', backendId: 'mercury' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'com.acme.mercury', localId: 'mercury' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
             resumeSessionId: null,
             permissionMode: 'default',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:mercury', 'mercury-pro', 789),
+            modelSelection: modelSelection('agent:com.acme.mercury/mercury', 'mercury-pro', 789),
             mcpSelection: null,
             connectedServices: null,
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -322,8 +404,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             permissionMode: 'default',
             configurationUpdatedAtMs: 999,
+            initialMessage: 'Review this',
         })).toMatchObject({
-            modelSelection: modelSelection('backend:mercury', 'mercury-pro', 789),
+            initialInput: { text: 'Review this' },
+                modelSelection: modelSelection('agent:com.acme.mercury/mercury', 'mercury-pro', 789),
             configuration: {
                 model: { value: 'mercury-pro', updatedAtMs: 789 },
             },
@@ -336,23 +420,21 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review this',
             displayText: 'Review this',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
             resumeSessionId: 'vendor-session-1',
             permissionMode: 'default',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: null,
             terminal: { mode: 'integrated' },
             windowsRemoteSessionLaunchMode: 'windows_terminal',
             windowsRemoteSessionConsole: 'visible',
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -390,8 +472,14 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('carries a source-context continuation recipe onto the strict spawn input, and omits it otherwise', () => {
         const draft = buildNewSessionAuthoringDraftFromTempData({
             machineId: 'machine-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/repo',
+            organizationPlacement: { folderId: null, tagIds: [] },
             agentType: 'codex',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
         } as any);
         const base = {
             draft,
@@ -450,7 +538,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resume: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -462,8 +550,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'hidden',
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: true,
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             agentModeId: 'plan',
             existingSessionId: 'session-1',
             sessionEncryptionMode: 'plain',
@@ -489,7 +580,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -501,8 +592,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'hidden',
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: null,
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: null,
             existingSessionId: 'session-1',
@@ -516,6 +610,7 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('builds a new-session automation template from the shared draft without leaking existing-session-only fields', () => {
         const template = buildAutomationTemplateFromSessionAuthoringDraft({
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
@@ -524,23 +619,29 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Open the repository and run checks',
             displayText: 'Open the repository and run checks',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'persisted',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: { github: { installationId: '123' } },
             terminal: { mode: 'integrated' },
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'visible',
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: null,
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             acpSessionModeId: 'plan',
             existingSessionId: 'session-1',
             sessionEncryptionMode: 'plain',
@@ -557,20 +658,29 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Open the repository and run checks',
             displayText: 'Open the repository and run checks',
-            agent: 'codex',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'persisted',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
             resume: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             connectedServices: { github: { installationId: '123' } },
             terminal: { mode: 'integrated' },
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'visible',
             windowsTerminalWindowName: 'happier-qa',
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             agentModeId: 'plan',
         }));
         expect(template.experimentalCodexAcp).toBeUndefined();
@@ -592,23 +702,21 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Open the repository and run checks',
             displayText: '',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
             resumeSessionId: null,
             permissionMode: null,
             permissionModeUpdatedAt: null,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: null,
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             existingSessionId: null,
             sessionEncryptionMode: null,
@@ -634,15 +742,17 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Run the nightly maintenance checklist',
             displayText: 'Run the nightly maintenance checklist',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { FOO: 'bar' },
             resumeSessionId: 'resume-1',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -654,8 +764,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'visible',
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: true,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -668,14 +781,23 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(draft).toEqual(expect.objectContaining({
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             profileId: 'profile-1',
             permissionMode: 'acceptEdits',
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             transcriptStorage: 'direct',
             acpSessionModeId: 'plan',
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -691,6 +813,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             serverId: 'server-a',
             approvedNewDirectoryCreation: true,
             agentModeUpdatedAt: 123,
+            spawnBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
         });
 
         expect(spawnOptions).toEqual(expect.objectContaining({
@@ -711,7 +834,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             permissionModeUpdatedAt: 123,
             agentModeId: 'plan',
             agentModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -730,7 +853,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: 'visible',
             windowsTerminalWindowName: 'happier-qa',
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         }));
         expect(spawnOptions).not.toHaveProperty('workspaceId');
         expect(spawnOptions).not.toHaveProperty('workspaceLocationId');
@@ -741,12 +868,16 @@ describe('sessionAuthoringDraftAdapters', () => {
         const spawnOptions = buildSpawnSessionOptionsFromAuthoringDraft({
             draft: {
                 targetType: 'new_session',
+                executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
                 directory: '/tmp/project',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Prompt',
                 displayText: 'Prompt',
-                agentId: 'claude',
-                backendTarget: { kind: 'backend', backendId: 'claude' },
+                agentTarget: {
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                },
                 transcriptStorage: 'persisted',
                 profileId: '',
                 environmentVariables: null,
@@ -760,8 +891,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 existingSessionId: null,
@@ -781,19 +911,23 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('round-trips an existing-session authoring draft through the shared automation template adapter', () => {
         const initialDraft = {
             targetType: 'existing_session',
+            executionTarget: null,
             directory: '/tmp/project',
             checkoutCreationDraft: null,
+            organizationPlacement: { folderId: null, tagIds: [] },
             prompt: 'Send the daily reminder',
             displayText: 'Send the daily reminder',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: {
+                kind: 'agent' as const,
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: { FOO: 'bar' },
             resumeSessionId: null,
             permissionMode: 'readOnly',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -805,8 +939,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: null,
             existingSessionId: 'session-1',
@@ -826,14 +959,13 @@ describe('sessionAuthoringDraftAdapters', () => {
     });
 
     it('preserves a provider-bound model literally named default across authoring boundaries', () => {
-        const explicitDefault = modelSelection('backend:codex', 'default', 456, 'pc_openrouter');
+        const explicitDefault = modelSelection('agent:happier.agent.codex/codex', 'default', 456, 'pc_openrouter');
         const draft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',
             checkoutCreationDraft: null,
             prompt: 'Run the review',
             displayText: 'Run the review',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
@@ -847,8 +979,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -862,6 +993,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         const spawnOptions = buildSpawnSessionOptionsFromAuthoringDraft({
             draft: hydrated,
             machineId: 'machine-1',
+            spawnBackendTarget: { kind: 'backend', backendId: 'codex' },
         });
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
             draft: hydrated,
@@ -894,7 +1026,11 @@ describe('sessionAuthoringDraftAdapters', () => {
                     profileId: 'profile-1',
                     flavor: 'codex',
                     codexSessionId: 'codex-session-1',
-                    codexBackendMode: 'acp',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'acp' },
+                    },
                     permissionMode: 'read-only',
                     permissionModeUpdatedAt: 10,
                     acpConfiguredBackendV1: {
@@ -922,14 +1058,17 @@ describe('sessionAuthoringDraftAdapters', () => {
             directory: '/tmp/project',
             prompt: 'Send the daily summary',
             displayText: 'Send the daily summary',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
             modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
-            experimentalCodexAcp: null,
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             existingSessionId: 'session-1',
             sessionEncryptionMode: 'e2ee',
             sessionEncryptionKeyBase64: 'dek-base64',
@@ -961,8 +1100,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 checkoutCreationDraft: null,
                 prompt: 'Keep this message',
                 displayText: 'Keep this message',
-                agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 transcriptStorage: null,
                 profileId: 'profile-1',
                 environmentVariables: null,
@@ -976,8 +1114,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 existingSessionId: 'session-1',
@@ -985,24 +1122,44 @@ describe('sessionAuthoringDraftAdapters', () => {
                 sessionEncryptionKeyBase64: 'old-dek',
                 sessionEncryptionVariant: 'dataKey',
                 automation: {
+                    pendingAutomationId: 'automation-current',
                     enabled: true,
                     name: 'Scheduled message',
                     description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 60,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
+                    triggers: [{
+                        clientId: 'trigger-current',
+                        definition: {
+                            kind: 'schedule',
+                            enabled: true,
+                            schedule: {
+                                kind: 'interval',
+                                everyMs: 60 * 60_000,
+                                scheduleExpr: null,
+                                timezone: null,
+                            },
+                        },
+                    }],
                 },
             },
             sessionDekBase64: 'new-dek',
             fallbackAutomationDraft: {
+                pendingAutomationId: 'automation-fallback',
                 enabled: true,
                 name: 'Default automation',
                 description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 30,
-                cronExpr: '*/30 * * * *',
-                timezone: null,
+                triggers: [{
+                    clientId: 'trigger-fallback',
+                    definition: {
+                        kind: 'schedule',
+                        enabled: true,
+                        schedule: {
+                            kind: 'interval',
+                            everyMs: 30 * 60_000,
+                            scheduleExpr: null,
+                            timezone: null,
+                        },
+                    },
+                }],
             },
         });
 
@@ -1013,12 +1170,16 @@ describe('sessionAuthoringDraftAdapters', () => {
             displayText: 'Keep this message',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             existingSessionId: 'session-1',
             sessionEncryptionKeyBase64: 'new-dek',
             automation: expect.objectContaining({
                 name: 'Scheduled message',
-                everyMinutes: 60,
+                triggers: [expect.objectContaining({
+                    definition: expect.objectContaining({
+                        schedule: expect.objectContaining({ everyMs: 60 * 60_000 }),
+                    }),
+                })],
             }),
         }));
     });
@@ -1035,7 +1196,11 @@ describe('sessionAuthoringDraftAdapters', () => {
                     profileId: 'profile-live',
                     flavor: 'codex',
                     codexSessionId: 'codex-session-3',
-                    codexBackendMode: 'acp',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'acp' },
+                    },
                     acpConfiguredBackendV1: {
                         v: 1,
                         updatedAt: 20,
@@ -1057,12 +1222,16 @@ describe('sessionAuthoringDraftAdapters', () => {
             directory: '/tmp/project-live',
             prompt: 'Keep the latest review summary',
             displayText: 'Keep the latest review summary',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             profileId: 'profile-live',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
             modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'acp' },
+            },
             existingSessionId: 'session-1',
             sessionEncryptionKeyBase64: 'dek-live',
         }));
@@ -1076,8 +1245,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 checkoutCreationDraft: null,
                 prompt: 'Template prompt',
                 displayText: '',
-                agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 transcriptStorage: 'persisted',
                 profileId: 'template-profile',
                 environmentVariables: null,
@@ -1091,8 +1259,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 existingSessionId: 'session-1',
@@ -1129,8 +1296,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 checkoutCreationDraft: null,
                 prompt: 'Keep my edited message',
                 displayText: 'Keep my edited message',
-                agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 transcriptStorage: 'persisted',
                 profileId: 'old-profile',
                 environmentVariables: null,
@@ -1144,8 +1310,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 existingSessionId: 'session-1',
@@ -1153,40 +1318,64 @@ describe('sessionAuthoringDraftAdapters', () => {
                 sessionEncryptionKeyBase64: 'old-dek',
                 sessionEncryptionVariant: 'dataKey',
                 automation: {
+                    pendingAutomationId: 'automation-current',
                     enabled: true,
                     name: 'Current automation',
                     description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 60,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
+                    triggers: [{
+                        clientId: 'trigger-current',
+                        definition: {
+                            kind: 'schedule',
+                            enabled: true,
+                            schedule: {
+                                kind: 'interval',
+                                everyMs: 60 * 60_000,
+                                scheduleExpr: null,
+                                timezone: null,
+                            },
+                        },
+                    }],
                 },
             },
             sessionDekBase64: 'new-dek',
             seededAutomationDraft: {
+                pendingAutomationId: 'automation-seeded',
                 enabled: true,
                 name: 'Seeded automation',
                 description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 30,
-                cronExpr: '*/30 * * * *',
-                timezone: null,
+                triggers: [{
+                    clientId: 'trigger-seeded',
+                    definition: {
+                        kind: 'schedule',
+                        enabled: true,
+                        schedule: {
+                            kind: 'interval',
+                            everyMs: 30 * 60_000,
+                            scheduleExpr: null,
+                            timezone: null,
+                        },
+                    },
+                }],
             },
         });
 
         expect(merged).toEqual(expect.objectContaining({
             directory: '/live/project',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             profileId: 'live-profile',
             prompt: 'Keep my edited message',
             displayText: 'Keep my edited message',
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             sessionEncryptionKeyBase64: 'new-dek',
             automation: expect.objectContaining({
                 name: 'Current automation',
-                everyMinutes: 60,
+                triggers: [expect.objectContaining({
+                    definition: expect.objectContaining({
+                        schedule: expect.objectContaining({ everyMs: 60 * 60_000 }),
+                    }),
+                })],
             }),
         }));
     });
@@ -1195,13 +1384,13 @@ describe('sessionAuthoringDraftAdapters', () => {
         const merged = mergeExistingSessionAutomationTemplateDraft({
             hydratedTemplateDraft: {
                 targetType: 'existing_session', directory: '/template', checkoutCreationDraft: null,
-                prompt: 'Template', displayText: 'Template', agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' }, transcriptStorage: 'persisted',
+                prompt: 'Template', displayText: 'Template',
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, transcriptStorage: 'persisted',
                 profileId: null, environmentVariables: null, resumeSessionId: null,
                 permissionMode: 'default', permissionModeUpdatedAt: 1, modelSelection: null,
                 mcpSelection: null, connectedServices: null, terminal: null,
                 windowsRemoteSessionLaunchMode: null, windowsRemoteSessionConsole: null,
-                windowsTerminalWindowName: null, experimentalCodexAcp: null, codexBackendMode: null,
+                windowsTerminalWindowName: null, runtimeDescriptorV1: null,
                 acpSessionModeId: null, sessionConfigOptionOverrides: null, existingSessionId: 'session-1',
                 sessionEncryptionMode: 'e2ee', sessionEncryptionKeyBase64: null,
                 sessionEncryptionVariant: null, automation: null,
@@ -1234,8 +1423,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 checkoutCreationDraft: null,
                 prompt: 'Template prompt',
                 displayText: 'Template prompt',
-                agentId: 'claude',
-                backendTarget: { kind: 'backend', backendId: 'claude' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 transcriptStorage: 'persisted',
                 profileId: 'template-profile',
                 environmentVariables: null,
@@ -1249,8 +1437,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 existingSessionId: 'session-1',
@@ -1276,15 +1463,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             currentDraft: null,
             sessionDekBase64: 'live-dek',
-            seededAutomationDraft: {
-                enabled: true,
+            seededAutomationDraft: intervalAutomationDraft({
                 name: 'Scheduled message',
-                description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 60,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
+                cadenceMinutes: 60,
+            }),
         });
 
         expect(merged).toEqual(expect.objectContaining({
@@ -1295,15 +1477,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             permissionModeUpdatedAt: 12,
             modelSelection: modelSelection('backend:claude', 'claude-sonnet-4-6', 34),
             sessionEncryptionKeyBase64: 'live-dek',
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Scheduled message',
-                description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 60,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
+                cadenceMinutes: 60,
+            }),
         }));
     });
 
@@ -1325,32 +1502,27 @@ describe('sessionAuthoringDraftAdapters', () => {
         const tempData = buildNewSessionTempDataFromAuthoringDraft({
             draft: {
                 ...draft,
-                automation: {
-                    enabled: true,
+                automation: intervalAutomationDraft({
                     name: 'Nightly',
-                    description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 15,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
-                },
+                    cadenceMinutes: 15,
+                }),
             },
             machineId: 'machine-1',
         });
 
-        expect(draft.codexBackendMode).toBe('acp');
-        expect(draft.experimentalCodexAcp).toBeNull();
-        expect(tempData.codexBackendMode).toBe('acp');
-        expect(tempData.backendNewSessionOptionStateByTargetKey).toBeUndefined();
-        expect(tempData.automationDraft).toEqual({
-            enabled: true,
-            name: 'Nightly',
-            description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
+        expect(draft.runtimeDescriptorV1).toMatchObject({
+            agentId: 'codex',
+            agent: { backendMode: 'acp' },
         });
+        expect(tempData.runtimeDescriptorV1).toMatchObject({
+            agentId: 'codex',
+            agent: { backendMode: 'acp' },
+        });
+        expect(tempData.backendNewSessionOptionStateByTargetKey).toBeUndefined();
+        expect(tempData.automationDraft).toEqual(intervalAutomationDraft({
+            name: 'Nightly',
+            cadenceMinutes: 15,
+        }));
     });
 
     it('round-trips new-session worktree intent through the shared automation template adapter into temp data', () => {
@@ -1364,38 +1536,35 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Open the feature branch worktree',
             displayText: 'Open the feature branch worktree',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: 'profile-1',
             environmentVariables: null,
             resumeSessionId: null,
             permissionMode: 'acceptEdits',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:codex'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: null,
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: 'happier-qa',
-            experimentalCodexAcp: null,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: null,
             existingSessionId: null,
             sessionEncryptionMode: null,
             sessionEncryptionKeyBase64: null,
             sessionEncryptionVariant: null,
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly',
-                description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 15,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
+                cadenceMinutes: 15,
+            }),
         } satisfies SessionAuthoringDraft;
 
         const template = buildAutomationTemplateFromSessionAuthoringDraft(draft);
@@ -1422,7 +1591,11 @@ describe('sessionAuthoringDraftAdapters', () => {
             automation: null,
         });
         expect(tempData).toEqual(expect.objectContaining({
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             checkoutCreationDraft: {
                 kind: 'git_worktree',
                 displayName: 'feature/auth',
@@ -1441,8 +1614,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 checkoutCreationDraft: null,
                 prompt: 'Run the review',
                 displayText: 'Run the review',
-                agentId: 'codex',
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 transcriptStorage: 'persisted',
                 profileId: null,
                 environmentVariables: null,
@@ -1456,39 +1628,30 @@ describe('sessionAuthoringDraftAdapters', () => {
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                experimentalCodexAcp: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: 'plan',
                 existingSessionId: null,
                 sessionEncryptionMode: null,
                 sessionEncryptionKeyBase64: null,
                 sessionEncryptionVariant: null,
-                automation: {
-                    enabled: true,
+                automation: intervalAutomationDraft({
                     name: 'Nightly',
-                    description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 15,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
-                },
+                    cadenceMinutes: 15,
+                }),
             },
             machineId: 'machine-1',
         });
 
         expect(tempData.acpSessionModeId).toBe('plan');
-        expect(tempData.automationDraft).toEqual({
-            enabled: true,
+        expect(tempData.automationDraft).toEqual(intervalAutomationDraft({
             name: 'Nightly',
-            description: '',
-            scheduleKind: 'interval',
-            everyMinutes: 15,
-            cronExpr: '0 * * * *',
-            timezone: null,
-        });
+            cadenceMinutes: 15,
+        }));
     });
 
     it('builds a new-session authoring draft from resolved inputs', () => {
         const draft = buildNewSessionAuthoringDraftFromResolvedInputs({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
@@ -1496,27 +1659,34 @@ describe('sessionAuthoringDraftAdapters', () => {
                 baseRef: 'main',
             },
             prompt: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { OPENAI_API_KEY: 'secret' },
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
                 forceIncludeServerIds: ['portable'],
                 forceExcludeServerIds: ['disabled'],
             },
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
             terminal: { mode: 'tmux', tmux: { sessionName: 'nightly' } },
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1525,19 +1695,17 @@ describe('sessionAuthoringDraftAdapters', () => {
                     reasoning: { updatedAt: 789, value: 'high' },
                 },
             },
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         });
 
         expect(draft).toEqual(expect.objectContaining({
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
@@ -1546,23 +1714,31 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: { OPENAI_API_KEY: 'secret' },
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
                 forceIncludeServerIds: ['portable'],
                 forceExcludeServerIds: ['disabled'],
             },
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
             terminal: { mode: 'tmux', tmux: { sessionName: 'nightly' } },
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1571,15 +1747,12 @@ describe('sessionAuthoringDraftAdapters', () => {
                     reasoning: { updatedAt: 789, value: 'high' },
                 },
             },
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         }));
     });
 
@@ -1593,38 +1766,37 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
                 forceIncludeServerIds: ['portable'],
                 forceExcludeServerIds: ['disabled'],
             },
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
             terminal: { mode: 'tmux', tmux: { sessionName: 'nightly' } },
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         });
 
         const composerAttachments = [{
@@ -1665,7 +1837,9 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(persistedDraft).toEqual({
             input: 'Review the queued invoices',
             selectedMachineId: 'machine-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             selectedPath: '/tmp/project',
+            organizationPlacement: { folderId: null, tagIds: [] },
             composerAttachments,
             checkoutCreationDraft: {
                 kind: 'git_worktree',
@@ -1685,12 +1859,19 @@ describe('sessionAuthoringDraftAdapters', () => {
                 },
             },
             agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             acpSessionModeId: 'plan',
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             mcpSelection: {
                 v: 1,
                 managedServersEnabled: false,
@@ -1703,15 +1884,12 @@ describe('sessionAuthoringDraftAdapters', () => {
                     experimentalCodexAcp: true,
                 },
             },
-            automationDraft: {
-                enabled: true,
+            automationDraft: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
             updatedAt: 987,
         });
     });
@@ -1722,8 +1900,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Open the workspace',
             displayText: 'Open the workspace',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
@@ -1738,8 +1915,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: 'console',
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -1775,8 +1951,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Open the workspace',
             displayText: 'Open the workspace',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'persisted',
             profileId: null,
             environmentVariables: null,
@@ -1791,8 +1966,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -1831,23 +2005,28 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1856,15 +2035,12 @@ describe('sessionAuthoringDraftAdapters', () => {
                     speed: { updatedAt: 789, value: 'fast' },
                 },
             },
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         });
 
         const tempData = buildNewSessionTempDataFromAuthoringDraft({
@@ -1876,13 +2052,17 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(tempData.path).toBeUndefined();
         expect(buildNewSessionAuthoringDraftFromTempData(tempData)).toEqual(expect.objectContaining({
             directory: '/tmp/project',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1891,16 +2071,13 @@ describe('sessionAuthoringDraftAdapters', () => {
                     speed: { updatedAt: 789, value: 'fast' },
                 },
             },
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
-            automation: {
-                enabled: true,
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         }));
     });
 
@@ -1914,23 +2091,25 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             environmentVariables: null,
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
             connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1939,15 +2118,12 @@ describe('sessionAuthoringDraftAdapters', () => {
                     speed: { updatedAt: 789, value: 'fast' },
                 },
             },
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         });
 
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
@@ -1958,7 +2134,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
             backendNewSessionOptionStateByTargetKey: {
                 ['backend:review-bot:configured:review-bot']: {
-                    connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+                    connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
                 },
             },
             updatedAt: 987,
@@ -1966,13 +2142,20 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
             directory: '/tmp/project',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
-            codexBackendMode: 'appServer',
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -1981,16 +2164,13 @@ describe('sessionAuthoringDraftAdapters', () => {
                     speed: { updatedAt: 789, value: 'fast' },
                 },
             },
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
-            automation: {
-                enabled: true,
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
+            automation: intervalAutomationDraft({
                 name: 'Nightly summary',
                 description: 'Summarize the nightly state',
-                scheduleKind: 'interval',
-                everyMinutes: 120,
-                cronExpr: '0 * * * *',
+                cadenceMinutes: 120,
                 timezone: 'Europe/Zurich',
-            },
+            }),
         }));
     });
 
@@ -2000,8 +2180,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2016,8 +2195,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2035,11 +2213,16 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft).toEqual(expect.objectContaining({
             agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
         }));
         expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
         }));
     });
 
@@ -2049,8 +2232,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2065,8 +2247,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2085,8 +2266,9 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft).toEqual(expect.objectContaining({
             agentType: DEFAULT_AGENT_ID,
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
         }));
+        expect(persistedDraft).not.toHaveProperty('backendTarget');
     });
 
     it('does not manufacture the legacy customAcp sentinel in temp data for configured ACP backend drafts', () => {
@@ -2095,8 +2277,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Review the queued invoices',
             displayText: 'Review the queued invoices',
-            agentId: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: null,
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2111,8 +2292,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2124,9 +2304,12 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
 
         expect(tempData).toEqual(expect.objectContaining({
-            agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
         }));
+        expect(tempData).not.toHaveProperty('backendTarget');
         expect(tempData.agentType).not.toBe('customAcp');
     });
 
@@ -2136,8 +2319,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Run the plugin backend',
             displayText: 'Run the plugin backend',
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2152,8 +2334,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2172,12 +2353,12 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft).toEqual(expect.objectContaining({
             agentType: 'claude',
-            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
         }));
+        expect(persistedDraft).not.toHaveProperty('backendTarget');
 
         expect(buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)).toEqual(expect.objectContaining({
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
         }));
     });
 
@@ -2187,8 +2368,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Run the plugin backend',
             displayText: 'Run the plugin backend',
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2203,8 +2383,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2223,7 +2402,7 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft.agentType).toBe(DEFAULT_AGENT_ID);
         expect(persistedDraft.agentType).not.toBe('customAcp');
-        expect(persistedDraft.backendTarget).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
+        expect(persistedDraft).not.toHaveProperty('backendTarget');
     });
 
     it('builds plugin backend spawn options with the canonical V2 backend target', () => {
@@ -2232,8 +2411,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             checkoutCreationDraft: null,
             prompt: 'Run the plugin backend',
             displayText: 'Run the plugin backend',
-            agentId: null,
-            backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'acme.review', localId: 'review' },
+            },
             transcriptStorage: 'direct',
             profileId: null,
             environmentVariables: null,
@@ -2248,8 +2429,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
-            codexBackendMode: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: null,
             automation: null,
@@ -2258,6 +2438,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(buildSpawnSessionOptionsFromAuthoringDraft({
             draft,
             machineId: 'machine-1',
+            spawnBackendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
         }).backendTarget).toEqual({
             kind: 'backend',
             backendId: 'acme.review.backend',
@@ -2267,12 +2448,16 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('round-trips configured ACP backend targets and session config overrides through the shared new-session authoring draft', () => {
         const draft = {
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: null,
+            organizationPlacement: { folderId: null, tagIds: [] },
             prompt: 'Review the repo state',
             displayText: 'Review the repo state',
-            agentId: null,
-            backendTarget: { kind: 'backend' as const, backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: {
+                kind: 'agent' as const,
+                identity: { pluginId: 'acme.review', localId: 'review' },
+            },
             transcriptStorage: 'persisted' as const,
             profileId: null,
             environmentVariables: null,
@@ -2287,7 +2472,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
             windowsTerminalWindowName: null,
-            experimentalCodexAcp: null,
+            runtimeDescriptorV1: null,
             acpSessionModeId: null,
             sessionConfigOptionOverrides: {
                 v: 1,
@@ -2300,15 +2485,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             sessionEncryptionMode: null,
             sessionEncryptionKeyBase64: null,
             sessionEncryptionVariant: null,
-            automation: {
-                enabled: true,
+            automation: intervalAutomationDraft({
                 name: 'Backend review',
-                description: '',
-                scheduleKind: 'interval',
-                everyMinutes: 30,
-                cronExpr: '0 * * * *',
-                timezone: null,
-            },
+                cadenceMinutes: 30,
+            }),
         } satisfies SessionAuthoringDraft;
 
         const template = buildAutomationTemplateFromSessionAuthoringDraft(draft);
@@ -2322,7 +2502,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
 
         expect(template).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: draft.agentTarget,
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -2332,7 +2512,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
         }));
         expect(hydrated).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: draft.agentTarget,
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,
@@ -2343,7 +2523,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             automation: null,
         }));
         expect(tempData).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            agentTarget: draft.agentTarget,
             sessionConfigOptionOverrides: {
                 v: 1,
                 updatedAt: 789,

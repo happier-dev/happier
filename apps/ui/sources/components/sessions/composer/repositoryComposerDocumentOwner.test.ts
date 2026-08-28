@@ -38,6 +38,53 @@ describe('repositoryComposerDocumentOwner', () => {
 });
 
 describe('repositoryComposerDocumentOwner Session revision', () => {
+    it('does not reconstruct duplicate positionless mentions onto arbitrary equal tokens', () => {
+        const sessionId = 'session-legacy-mentions';
+        const text = 'first @same then @same';
+        writeExistingSessionDraft({
+            scope,
+            sessionId,
+            patch: {
+                text,
+                mentions: [
+                    { kind: 'mention', ref: 'first', tokenText: '@same' },
+                    { kind: 'mention', ref: 'second', tokenText: '@same' },
+                ],
+            },
+        });
+
+        const owner = createRepositoryComposerDocumentOwner({
+            scope,
+            ref: { kind: 'session', sessionId },
+        });
+
+        expect(owner.read().document.structuredInputMentions).toEqual([]);
+        expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId })
+            ?.document.composer.mentions.value).toEqual([
+            { kind: 'mention', ref: 'first', tokenText: '@same' },
+            { kind: 'mention', ref: 'second', tokenText: '@same' },
+        ]);
+    });
+
+    it('does not relocate a current ranged mention whose exact occurrence is stale', () => {
+        const sessionId = 'session-stale-ranged-mention';
+        const staleMention = { kind: 'mention', ref: 'stale', tokenText: '@same', start: 0, end: 5 };
+        writeExistingSessionDraft({
+            scope,
+            sessionId,
+            patch: { text: 'prefix @same then @same', mentions: [staleMention] },
+        });
+
+        const owner = createRepositoryComposerDocumentOwner({
+            scope,
+            ref: { kind: 'session', sessionId },
+        });
+
+        expect(owner.read().document.structuredInputMentions).toEqual([]);
+        expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId })
+            ?.document.composer.mentions.value).toEqual([staleMention]);
+    });
+
     it('reports that no accepted fields cleared when every captured mutation was superseded', () => {
         const sessionId = 'session-currentness-a';
         const ref = { kind: 'session', sessionId } as const;

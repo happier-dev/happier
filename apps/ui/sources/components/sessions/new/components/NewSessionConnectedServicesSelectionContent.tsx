@@ -2,9 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import {
+    parseQualifiedPluginContributionKey,
+} from '@happier-dev/protocol';
 
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -69,6 +72,15 @@ function SettingsActionIcon() {
 export function NewSessionConnectedServicesSelectionContent(props: NewSessionConnectedServicesSelectionContentProps) {
     const styles = stylesheet;
     const [bindingsByServiceId, setBindingsByServiceId] = React.useState(props.bindingsByServiceId);
+    const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
+
+    /** Public applied-descriptor title; neutral fallback for an unknown service. */
+    const resolveServiceTitle = React.useCallback((serviceId: string) => {
+        const service = parseQualifiedPluginContributionKey(serviceId);
+        return service
+            ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServicesRegistry, service, t)
+            : t('connectedServices.fallbackName');
+    }, [connectedServicesRegistry]);
 
     React.useEffect(() => {
         setBindingsByServiceId(props.bindingsByServiceId);
@@ -145,7 +157,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             setBindingForService,
             onOpenSettings: openSettings,
             translate: t,
-            resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t),
+            resolveServiceTitle,
             renderSelectionIcon: ({ selected, variant }) => <SelectionStateIcon selected={selected} variant={variant} />,
             renderSettingsIcon: () => <SettingsActionIcon />,
             renderQuotaBadges: (badges) => <ConnectedServiceQuotaBadgesView badges={badges} />,
@@ -167,14 +179,16 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.includeNativeAuthOption,
         props.groupOptionsByServiceId,
         props.profileOptionsByServiceId,
-        // Kept as a dependency on purpose: unlike the handlers above, this one is
-        // INVOKED during the build and its result is baked into every option's
-        // `disabled` / `subtitle` / icon variant, so a stale reference would
-        // freeze availability. Each host supplies it as a memoised callback.
+        // Kept as a dependency on purpose: unlike the handlers above, these two
+        // are INVOKED during the build and their results are baked into every
+        // option's `disabled` / `subtitle` / icon variant / section title, so a
+        // stale reference would freeze availability or titles. Each is supplied
+        // as a memoised callback.
         props.resolveOptionAvailability,
         props.supportedServiceIds,
         quotaBadgesByKey,
         reconnectProfile,
+        resolveServiceTitle,
         setBindingForService,
     ]);
 

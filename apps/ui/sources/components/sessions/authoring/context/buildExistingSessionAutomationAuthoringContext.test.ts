@@ -36,8 +36,11 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     terminal: { mode: 'integrated' },
     windowsRemoteSessionLaunchMode: null,
     windowsRemoteSessionConsole: null,
-    experimentalCodexAcp: null,
-    codexBackendMode: 'appServer',
+    runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+    },
     acpSessionModeId: null,
     sessionConfigOptionOverrides: null,
     existingSessionId: 'session-1',
@@ -48,10 +51,39 @@ const BASE_DRAFT: SessionAuthoringDraft = {
         enabled: true,
         name: 'Nightly summary',
         description: 'Summarize the latest state',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: 'Europe/Zurich',
+        triggers: [
+            {
+                clientId: 'nightly-summary-schedule',
+                kind: 'schedule',
+                persisted: null,
+                enabled: true,
+                definition: {
+                    kind: 'schedule',
+                    schedule: {
+                        kind: 'interval',
+                        scheduleExpr: null,
+                        everyMs: 60 * 60_000,
+                        timezone: null,
+                    },
+                },
+            },
+            {
+                clientId: 'nightly-summary-turn-completed',
+                kind: 'sessionLifecycle',
+                persisted: null,
+                enabled: false,
+                definition: {
+                    kind: 'sessionLifecycle',
+                    event: 'parentTurnCompleted',
+                    scope: {
+                        kind: 'exactTurn',
+                        sourceSessionId: 'session-1',
+                        sourceTurnId: 'turn-1',
+                    },
+                    consumption: 'once',
+                },
+            },
+        ],
     },
 };
 

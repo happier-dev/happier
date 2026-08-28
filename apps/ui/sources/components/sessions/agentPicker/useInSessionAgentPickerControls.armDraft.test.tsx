@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -60,6 +61,7 @@ function entry(
     overrides: Partial<ResolvedBackendCatalogEntry> = {},
 ): ResolvedBackendCatalogEntry {
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
         backendTarget: { kind: 'backend', backendId },
         backendTargetKey: `backend:${backendId}`,
         kind: 'builtInAgent',
@@ -70,6 +72,7 @@ function entry(
         iconAgentId: backendId as ResolvedBackendCatalogEntry['iconAgentId'],
         title: backendId === 'claude' ? 'Claude Code' : backendId,
         subtitle: null,
+        cliAuthBackgroundCheckSafe: false,
         ...overrides,
     };
 }

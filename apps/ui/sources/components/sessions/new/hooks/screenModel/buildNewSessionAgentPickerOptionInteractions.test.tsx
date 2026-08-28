@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { installNewSessionComponentsCommonModuleMocks } from '@/components/sessions/new/components/newSessionComponentsTestHelpers';
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
@@ -126,6 +126,7 @@ const backendTarget: BackendTargetRefV2 = {
 };
 
 const entry: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'custom-preset' }),
     backendTarget,
     backendTargetKey: 'backend:custom-preset',
     kind: 'configuredBackend',
@@ -136,6 +137,7 @@ const entry: ResolvedBackendCatalogEntry = {
     iconAgentId: null,
     title: 'Custom Preset',
     subtitle: null,
+    cliAuthBackgroundCheckSafe: false,
 };
 
 /**
@@ -146,6 +148,7 @@ const entry: ResolvedBackendCatalogEntry = {
  * keys on.
  */
 const pluginEntry: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'acme.review.agent' }),
     backendTarget: { kind: 'backend', backendId: 'acme.review.agent' },
     backendTargetKey: 'backend:acme.review.agent',
     kind: 'pluginBackend',
@@ -156,6 +159,7 @@ const pluginEntry: ResolvedBackendCatalogEntry = {
     iconAgentId: null,
     title: 'Acme Review',
     subtitle: null,
+    cliAuthBackgroundCheckSafe: false,
 };
 
 describe('buildNewSessionAgentPickerOptionInteractions', () => {

@@ -1,7 +1,10 @@
 import { renderHook } from '@/dev/testkit';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { AGENTS_CORE } from '@happier-dev/agents';
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol';
+import {
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
+    type PluginProjectedAgentConnectedAccountPurposeV2,
+} from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
 import {
     createConnectedAccountDescriptorProjectionLoadingState,
@@ -14,36 +17,50 @@ const setSessionConnectedServiceAuthBindingMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
+
+// Canonical qualified Connected Account service keys used across this suite.
+const CLAUDE_SERVICE_KEY = 'happier.agent.claude/anthropic';
+const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
+const GEMINI_SERVICE_KEY = 'happier.agent.gemini/gemini-account';
+const OPENAI_SERVICE_KEY = 'happier.voice.openai/openai';
+// Novel external plugin service: no bundled enum member, no generated legacy
+// mapping, no built-in Agent identity.
+const NOVEL_SERVICE_KEY = 'acme.review/reviewer-service';
+
 const profileState = vi.hoisted(() => ({
     current: {
-        connectedServicesV2: [
-            {
-                serviceId: 'anthropic',
-                profiles: [
-                    {
-                        profileId: 'work',
-                        status: 'connected',
-                        kind: 'token',
-                        providerEmail: 'work@example.com',
-                    },
-                ],
-                groups: [],
-            },
-            {
-                serviceId: 'openai-codex',
-                profiles: [
-                    {
-                        profileId: 'happier',
-                        status: 'connected',
-                        kind: 'oauth',
-                        providerEmail: 'happier@example.com',
-                    },
-                ],
-                groups: [],
-            },
-        ],
+        connectedAccountsV4: [] as Array<Record<string, unknown>>,
+        connectedAccountGroupsV4: [] as Array<Record<string, unknown>>,
+        connectedServiceCredentialRevisionsV1: [] as Array<Record<string, unknown>>,
     },
 }));
+
+function v4Account(params: Readonly<{
+    pluginId: string;
+    localId: string;
+    accountId: string;
+    email?: string;
+    displayName?: string;
+    kind?: 'oauth' | 'token';
+    status?: string;
+}>): Record<string, unknown> {
+    return {
+        revisionSemantics: 'legacy_unfenced',
+        ref: {
+            service: { pluginId: params.pluginId, localId: params.localId },
+            accountId: params.accountId,
+        },
+        status: params.status ?? 'connected',
+        authenticationModeId: null,
+        configurationReady: true,
+        configurationRevision: null,
+        kind: params.kind ?? null,
+        expiresAt: null,
+        lastUsedAt: null,
+        providerIdentity: params.email ? { email: params.email } : {},
+        ...(params.displayName ? { displayName: params.displayName } : {}),
+    };
+}
 
 const authSwitchConnectedAccountProjection = {
     scopeKey: 'auth-switch-test',
@@ -116,10 +133,125 @@ const authSwitchConnectedAccountProjection = {
         capabilities: [],
         availability: { state: 'available', reason: 'resolved' },
         diagnostics: [],
+    }, {
+        // Public descriptor for the novel external plugin service: the exact
+        // machine-published presentation used by every neutral/public surface.
+        id: 'reviewer-service',
+        serviceId: 'reviewer-service',
+        pluginId: 'acme.review',
+        provenance: 'first_party',
+        sourceKind: 'bundled',
+        title: 'Acme Reviewer Auth',
+        authentication: {
+            defaultModeId: 'api-key',
+            modes: [{
+                id: 'api-key',
+                kind: 'manual',
+                outcomeReconciliation: 'none',
+                fields: [{
+                    id: 'token',
+                    title: 'Acme token',
+                    schema: { type: 'string', minLength: 1 },
+                    secret: true,
+                }],
+            }],
+        },
+        capabilities: [],
+        availability: { state: 'available', reason: 'resolved' },
+        diagnostics: [],
     }],
     conflicts: [],
     errorReason: null,
 } satisfies ConnectedAccountDescriptorProjectionState;
+
+const CLAUDE_CONNECTED_ACCOUNTS = [
+    {
+        purpose: 'primary',
+        service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+    },
+    {
+        purpose: 'primary',
+        service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+    },
+] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+const CODEX_CONNECTED_ACCOUNTS = [
+    {
+        purpose: 'primary',
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+    },
+    {
+        purpose: 'model_upstream',
+        service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+    },
+] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+const CLAUDE_SUBSCRIPTION_SERVICE_KEY = 'happier.agent.claude/claude-subscription';
+const GEMINI_CONNECTED_ACCOUNTS = [{
+    purpose: 'primary',
+    service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+}] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+const NOVEL_CONNECTED_ACCOUNTS = [{
+    purpose: 'primary',
+    service: { pluginId: 'acme.review', localId: 'reviewer-service' },
+}] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+
+function seedClaudeProfile(): void {
+    profileState.current = {
+        connectedAccountsV4: [
+            v4Account({
+                pluginId: 'happier.agent.claude',
+                localId: 'anthropic',
+                accountId: 'work',
+                email: 'work@example.com',
+                kind: 'token',
+                displayName: 'Work',
+            }),
+        ],
+        connectedAccountGroupsV4: [],
+        connectedServiceCredentialRevisionsV1: [],
+    };
+}
+
+function seedCodexProfile(): void {
+    profileState.current = {
+        connectedAccountsV4: [
+            v4Account({
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'happier',
+                email: 'happier@example.com',
+                kind: 'oauth',
+                displayName: 'Happier',
+            }),
+            v4Account({
+                pluginId: 'happier.voice.openai',
+                localId: 'openai',
+                accountId: 'api',
+                email: 'api@example.com',
+                kind: 'token',
+                displayName: 'API',
+            }),
+        ],
+        connectedAccountGroupsV4: [],
+        connectedServiceCredentialRevisionsV1: [],
+    };
+}
+
+function seedNovelProfile(): void {
+    profileState.current = {
+        connectedAccountsV4: [
+            v4Account({
+                pluginId: 'acme.review',
+                localId: 'reviewer-service',
+                accountId: 'reviewer',
+                email: 'reviewer@acme.test',
+                kind: 'token',
+                displayName: 'Reviewer',
+            }),
+        ],
+        connectedAccountGroupsV4: [],
+        connectedServiceCredentialRevisionsV1: [],
+    };
+}
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -189,6 +321,34 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
     AgentInputChipLabel: 'AgentInputChipLabel',
 }));
 
+type PopoverContentProps = {
+    resolveOptionAvailability: (params: {
+        serviceId: string;
+        binding: { source: 'connected'; selection: 'profile' | 'group'; profileId?: string; groupId?: string };
+    }) => { disabled?: boolean };
+    setBindingForService: (
+        serviceId: string,
+        binding: { source: 'connected'; selection: 'profile' | 'group'; profileId?: string; groupId?: string },
+    ) => void;
+};
+
+type AuthSwitchHookLike = {
+    getCurrent: () => {
+        connectedServicesAuthChip: import('@/components/sessions/agentInput/agentInputContracts').AgentInputExtraActionChip | null;
+    };
+};
+
+function renderChipPopover(
+    hook: AuthSwitchHookLike,
+    maxHeight = 320,
+): PopoverContentProps {
+    const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+    expect(typeof renderContent).toBe('function');
+    if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
+    const content = renderContent({ requestClose: vi.fn(), maxHeight }) as { props: PopoverContentProps };
+    return content.props;
+}
+
 describe('useSessionConnectedServicesAuthSwitch', () => {
     beforeEach(() => {
         installConnectedAccountDescriptorProjection(authSwitchConnectedAccountProjection);
@@ -200,6 +360,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         modalConfirmMock.mockReset();
         modalConfirmMock.mockResolvedValue(true);
         routerPushMock.mockClear();
+        seedClaudeProfile();
     });
 
     afterEach(() => {
@@ -217,11 +378,12 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: null,
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
+                        v: 1,
                         bindingsByServiceId: {
-                            anthropic: { source: 'native' },
+                            [CLAUDE_SERVICE_KEY]: { source: 'native' },
                         },
                     },
                 },
@@ -233,36 +395,30 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const chip = hook.getCurrent().connectedServicesAuthChip;
-        expect(chip).not.toBeNull();
-        const renderContent = chip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-        expect(content).toEqual(expect.objectContaining({
-            props: expect.objectContaining({
-                resolveOptionAvailability: expect.any(Function),
-            }),
-        }));
-
-        const resolveOptionAvailability = (content as { props: {
-            resolveOptionAvailability: (params: {
-                serviceId: string;
-                binding: { source: 'connected'; selection: 'profile'; profileId: string };
-            }) => { disabled?: boolean };
-        } }).props.resolveOptionAvailability;
-
-        expect(resolveOptionAvailability({
-            serviceId: 'anthropic',
+        const props = renderChipPopover(hook);
+        expect(props.resolveOptionAvailability({
+            serviceId: CLAUDE_SERVICE_KEY,
             binding: { source: 'connected', selection: 'profile', profileId: 'work' },
         })).toEqual({ disabled: true });
     });
 
-    it('routes Gemini native-to-connected session switches to the daemon', async () => {
+    it('routes Gemini native-to-connected session switches to the daemon with the qualified key', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+
+        profileState.current = {
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.gemini',
+                    localId: 'gemini-account',
+                    accountId: 'work',
+                    email: 'work@example.com',
+                    kind: 'token',
+                    displayName: 'Work',
+                }),
+            ],
+            connectedAccountGroupsV4: [],
+            connectedServiceCredentialRevisionsV1: [],
+        };
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -270,47 +426,31 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'gemini',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.gemini,
+                connectedAccounts: GEMINI_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
+                        v: 1,
                         bindingsByServiceId: {
-                            gemini: { source: 'native' },
+                            [GEMINI_SERVICE_KEY]: { source: 'native' },
                         },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'gemini/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-        const props = (content as { props: {
-            resolveOptionAvailability: (params: {
-                serviceId: string;
-                binding: { source: 'connected'; selection: 'profile'; profileId: string };
-            }) => { disabled?: boolean };
-            setBindingForService: (
-                serviceId: string,
-                binding: { source: 'connected'; selection: 'profile'; profileId: string },
-            ) => void;
-        } }).props;
-
+        const props = renderChipPopover(hook);
         expect(props.resolveOptionAvailability({
-            serviceId: 'gemini',
+            serviceId: GEMINI_SERVICE_KEY,
             binding: { source: 'connected', selection: 'profile', profileId: 'work' },
         })).toEqual({});
 
         await act(async () => {
-            props.setBindingForService('gemini', {
+            props.setBindingForService(GEMINI_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -326,7 +466,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    gemini: {
+                    [GEMINI_SERVICE_KEY]: {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
@@ -336,8 +476,192 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
     });
 
-    it('enables Codex native-to-connected session switches when provider state sharing is shared', async () => {
+    it('offers a NOVEL external plugin service with neutral/public presentation and never a bundled identity', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedNovelProfile();
+
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-novel',
+            agentId: 'acme.review/reviewer',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
+            sessionMetadata: {
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        [NOVEL_SERVICE_KEY]: { source: 'native' },
+                    },
+                },
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: {},
+                connectedServicesDefaultProfileByServiceId: {},
+            },
+            switchingDisabledReason: null,
+        }));
+
+        // Public presentation: the applied machine descriptor title, not a
+        // borrowed Codex/Claude brand name, and not a raw service id.
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
+            .toBe('Acme Reviewer Auth: Reviewer');
+
+        const props = renderChipPopover(hook);
+        expect(props.resolveOptionAvailability({
+            serviceId: NOVEL_SERVICE_KEY,
+            binding: { source: 'connected', selection: 'profile', profileId: 'reviewer' },
+        })).toEqual({});
+
+        await act(async () => {
+            props.setBindingForService(NOVEL_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'reviewer',
+            });
+            await Promise.resolve();
+        });
+
+        // The canonical switch RPC receives the exact qualified key.
+        const rpcParams = setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0];
+        expect(rpcParams).toEqual(expect.objectContaining({
+            sessionId: 'session-novel',
+            agentId: 'acme.review/reviewer',
+            machineId: 'machine-1',
+        }));
+        expect(rpcParams.bindings).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                [NOVEL_SERVICE_KEY]: {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'reviewer',
+                },
+            },
+        });
+        // The novel service must not collapse onto a bundled Agent identity.
+        expect(Object.keys(rpcParams.bindings.bindingsByServiceId))
+            .toEqual([NOVEL_SERVICE_KEY]);
+        expect(rpcParams.bindings.bindingsByServiceId[CODEX_SERVICE_KEY]).toBeUndefined();
+        expect(rpcParams.bindings.bindingsByServiceId[CLAUDE_SERVICE_KEY]).toBeUndefined();
+    });
+
+    it('settles a novel-service switch from refreshed session state and survives rerender', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedNovelProfile();
+
+        const nativeMetadata: unknown = {
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: { [NOVEL_SERVICE_KEY]: { source: 'native' } },
+            },
+        };
+        const connectedMetadata: unknown = {
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    [NOVEL_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'reviewer' },
+                },
+            },
+        };
+
+        const hook = await renderHook(
+            (props: { sessionActive: boolean; sessionMetadata: unknown }) => useSessionConnectedServicesAuthSwitch({
+                sessionId: 'session-novel',
+                agentId: 'acme.review/reviewer',
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
+                sessionMetadata: props.sessionMetadata,
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                },
+                switchingDisabledReason: null,
+                sessionActive: props.sessionActive,
+            }),
+            { initialProps: { sessionActive: false, sessionMetadata: nativeMetadata } },
+        );
+
+        const props = renderChipPopover(hook);
+        await act(async () => {
+            props.setBindingForService(NOVEL_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'reviewer',
+            });
+            await Promise.resolve();
+        });
+
+        expect(hook.getCurrent().statusBadges).toEqual([
+            expect.objectContaining({ key: 'connected-services-auth-switch-restarting' }),
+        ]);
+
+        // Refreshed session evidence carries the requested qualified binding.
+        await hook.rerender({ sessionActive: true, sessionMetadata: connectedMetadata });
+        expect(hook.getCurrent().statusBadges).toEqual([]);
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
+            .toBe('Acme Reviewer Auth: Reviewer');
+    });
+
+    it('displays bundled legacy persisted bindings through the compatibility adapter while new writes stay qualified', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedClaudeProfile();
+
+        const hook = await renderHook(() =>
+            useSessionConnectedServicesAuthSwitch({
+                sessionId: 'session-legacy',
+                agentId: 'claude',
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+                // Released bundled Sessions persisted the scalar service id;
+                // the provenance-named ingress maps it to the canonical key.
+                sessionMetadata: {
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                        },
+                    },
+                },
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                },
+                switchingDisabledReason: null,
+            }),
+        );
+
+        // Display: the legacy binding is shown through the compatibility adapter
+        // under the canonical qualified identity.
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
+            .toBe('Anthropic API key: Work');
+
+        // New writes are qualified: switching away emits ONLY canonical keys.
+        const props = renderChipPopover(hook);
+        await act(async () => {
+            props.setBindingForService(CLAUDE_SERVICE_KEY, { source: 'native' });
+            await Promise.resolve();
+        });
+        expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    [CLAUDE_SERVICE_KEY]: { source: 'native' },
+                    [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: { source: 'native' },
+                },
+            },
+        }));
+        const writtenKeys = Object.keys(
+            setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0].bindings.bindingsByServiceId,
+        );
+        expect(writtenKeys).toEqual([CLAUDE_SERVICE_KEY]);
+        expect(writtenKeys).not.toContain('anthropic');
+    });
+
+    it('fails closed for an undeclared service and writes only declared services', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -345,16 +669,119 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                // The Agent declares ONLY the Codex service.
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+                // Metadata carries a binding for an undeclared novel service.
                 sessionMetadata: {
                     connectedServices: {
+                        v: 1,
                         bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
+                            [CODEX_SERVICE_KEY]: { source: 'native' },
+                            [NOVEL_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'reviewer' },
                         },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                },
+                switchingDisabledReason: null,
+            }),
+        );
+
+        // The undeclared connected binding never surfaces as connected auth.
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).toBe('Native');
+
+        const props = renderChipPopover(hook);
+        await act(async () => {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'happier',
+            });
+            await Promise.resolve();
+        });
+
+        const rpcParams = setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0];
+        expect(rpcParams.bindings.bindingsByServiceId).toEqual({
+            [OPENAI_SERVICE_KEY]: { source: 'native' },
+            [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'happier' },
+        });
+        expect(rpcParams.bindings.bindingsByServiceId[NOVEL_SERVICE_KEY]).toBeUndefined();
+    });
+
+    it('fails closed with neutral actions when the daemon rejects an unsupported service', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedNovelProfile();
+        setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'unsupported_service',
+            serviceId: NOVEL_SERVICE_KEY,
+        });
+
+        const hook = await renderHook(() =>
+            useSessionConnectedServicesAuthSwitch({
+                sessionId: 'session-novel',
+                agentId: 'acme.review/reviewer',
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
+                sessionMetadata: {
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: { [NOVEL_SERVICE_KEY]: { source: 'native' } },
+                    },
+                },
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                },
+                switchingDisabledReason: null,
+            }),
+        );
+
+        const props = renderChipPopover(hook);
+        await act(async () => {
+            props.setBindingForService(NOVEL_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'reviewer',
+            });
+            await Promise.resolve();
+        });
+
+        // Neutral failure surface: a plain error alert, no routing, no
+        // actionable diagnostic, and the optimistic binding is reverted.
+        expect(modalAlertMock).toHaveBeenCalledWith(
+            'common.error',
+            'connectedServices.authSwitch.errors.unsupportedService',
+        );
+        expect(routerPushMock).not.toHaveBeenCalled();
+        expect(hook.getCurrent().statusBadges).toEqual([]);
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).toBe('Native');
+    });
+
+    it('enables Codex native-to-connected session switches when provider state sharing is shared', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
+
+        const hook = await renderHook(() =>
+            useSessionConnectedServicesAuthSwitch({
+                sessionId: 'session-1',
+                agentId: 'codex',
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+                sessionMetadata: {
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            [CODEX_SERVICE_KEY]: { source: 'native' },
+                        },
+                    },
+                },
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -369,31 +796,14 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-        const props = (content as { props: {
-            resolveOptionAvailability: (params: {
-                serviceId: string;
-                binding: { source: 'connected'; selection: 'profile'; profileId: string };
-            }) => { disabled?: boolean };
-            setBindingForService: (
-                serviceId: string,
-                binding: { source: 'connected'; selection: 'profile'; profileId: string },
-            ) => void;
-        } }).props;
-
+        const props = renderChipPopover(hook);
         expect(props.resolveOptionAvailability({
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             binding: { source: 'connected', selection: 'profile', profileId: 'happier' },
         })).toEqual({});
 
         await act(async () => {
-            props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -409,10 +819,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    openai: {
-                        source: 'native',
-                    },
-                    'openai-codex': {
+                    [OPENAI_SERVICE_KEY]: { source: 'native' },
+                    [CODEX_SERVICE_KEY]: {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'happier',
@@ -424,6 +832,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
     it('lets the daemon decide Codex native-to-connected switches that require shared provider state', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -431,16 +840,17 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
+                        v: 1,
                         bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
+                            [CODEX_SERVICE_KEY]: { source: 'native' },
                         },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -453,31 +863,14 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-        const props = (content as { props: {
-            resolveOptionAvailability: (params: {
-                serviceId: string;
-                binding: { source: 'connected'; selection: 'profile'; profileId: string };
-            }) => { disabled?: boolean };
-            setBindingForService: (
-                serviceId: string,
-                binding: { source: 'connected'; selection: 'profile'; profileId: string },
-            ) => void;
-        } }).props;
-
+        const props = renderChipPopover(hook);
         expect(props.resolveOptionAvailability({
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             binding: { source: 'connected', selection: 'profile', profileId: 'happier' },
         })).toEqual({});
 
         await act(async () => {
-            props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -497,9 +890,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'group_generation_conflict',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -507,16 +901,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -529,22 +922,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-        const props = (content as { props: {
-            setBindingForService: (
-                serviceId: string,
-                binding: { source: 'connected'; selection: 'profile'; profileId: string },
-            ) => void;
-        } }).props;
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -562,17 +942,18 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'hot_apply_failed',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 failurePhase: 'hot_apply',
                 serviceResultsByServiceId: {
-                    anthropic: { status: 'applied' },
-                    'openai-codex': { status: 'failed', errorCode: 'hot_apply_failed' },
-                    openai: { status: 'not_attempted' },
+                    [CLAUDE_SERVICE_KEY]: { status: 'applied' },
+                    [CODEX_SERVICE_KEY]: { status: 'failed', errorCode: 'hot_apply_failed' },
+                    [OPENAI_SERVICE_KEY]: { status: 'not_attempted' },
                 },
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -580,16 +961,19 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: [
+                    ...CODEX_CONNECTED_ACCOUNTS,
+                    { purpose: 'model_upstream', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+                    { purpose: 'model_upstream', service: { pluginId: 'happier.voice.openai', localId: 'openai' } },
+                ] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[],
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -602,20 +986,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -625,14 +998,14 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(hook.getCurrent().statusBadges).toEqual([
             expect.objectContaining({
-                key: 'connected-services-auth-switch-service-openai-codex-failed',
-                testID: 'session-connected-services-auth-switch-service-openai-codex-failed-status',
+                key: 'connected-services-auth-switch-service-happier.agent.codex_openai-codex-failed',
+                testID: 'session-connected-services-auth-switch-service-happier.agent.codex_openai-codex-failed-status',
                 label: 'Codex auth failed',
                 tone: 'warning',
             }),
             expect.objectContaining({
-                key: 'connected-services-auth-switch-service-openai-not-attempted',
-                testID: 'session-connected-services-auth-switch-service-openai-not-attempted-status',
+                key: 'connected-services-auth-switch-service-happier.voice.openai_openai-not-attempted',
+                testID: 'session-connected-services-auth-switch-service-happier.voice.openai_openai-not-attempted-status',
                 label: 'OpenAI API key auth not applied',
                 tone: 'warning',
             }),
@@ -643,13 +1016,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'provider_account_adoption_mismatch',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 uxDiagnostic: {
                     code: 'provider_account_adoption_mismatch',
                     failurePhase: 'post_switch_recovery',
                     source: 'manual_auth_switch',
-                    serviceId: 'openai-codex',
+                    serviceId: CODEX_SERVICE_KEY,
                     agentId: 'codex',
                     retryable: true,
                     suggestedActions: ['retry', 'open_connected_accounts', 'dismiss'],
@@ -660,6 +1033,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -667,16 +1041,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -689,20 +1062,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -739,12 +1101,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'partial_applied_pending_reconciliation',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -752,16 +1115,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -774,20 +1136,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -807,12 +1158,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'partial_applied_pending_reconciliation',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -820,16 +1172,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -842,21 +1193,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         modalAlertMock.mockClear();
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -864,8 +1204,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             await Promise.resolve();
         });
 
-        // The badge itself is the reconcile affordance; the failure is not
-        // double-surfaced through the generic one-shot error alert.
         expect(modalAlertMock).not.toHaveBeenCalled();
         const partialBadge = hook.getCurrent().statusBadges.find(
             (badge) => badge.testID === 'session-connected-services-auth-switch-partial-application-status',
@@ -883,7 +1221,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect.objectContaining({ text: 'common.cancel' }),
         ]);
 
-        // Retry re-applies the ATTEMPTED binding via the same canonical mutation.
         setSessionConnectedServiceAuthBindingMock.mockClear();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({ ok: true, action: 'metadata_updated' });
         modalConfirmMock.mockClear();
@@ -895,7 +1232,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             bindings: expect.objectContaining({
                 bindingsByServiceId: expect.objectContaining({
-                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'happier' },
+                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'happier' },
                 }),
             }),
         }));
@@ -906,12 +1243,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'partial_applied_pending_reconciliation',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -919,16 +1257,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -941,20 +1278,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -972,9 +1298,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
         const alertButtons = modalAlertMock.mock.calls[0]?.[2] as Array<{ text: string; onPress?: () => void }> | undefined;
 
-        // Revert re-applies the PREVIOUS binding (native) with forceReapply — the
-        // optimistic binding was already reset, so a plain re-apply would no-op
-        // while the live session may still be diverged. The notice clears on success.
         setSessionConnectedServiceAuthBindingMock.mockClear();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({ ok: true, action: 'metadata_updated' });
         await act(async () => {
@@ -984,7 +1307,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             bindings: expect.objectContaining({
                 bindingsByServiceId: expect.objectContaining({
-                    'openai-codex': { source: 'native' },
+                    [CODEX_SERVICE_KEY]: { source: 'native' },
                 }),
             }),
         }));
@@ -1030,9 +1353,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode,
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1040,16 +1364,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -1062,20 +1385,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -1092,7 +1404,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'profile_action_required',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 actionRequired: {
                     kind: 'reconnect_profile',
@@ -1101,6 +1413,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1108,16 +1421,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -1130,20 +1442,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -1171,13 +1472,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'provider_session_state_unavailable_for_resume',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 uxDiagnostic: {
                     code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
                     failurePhase: 'continuity',
                     source: 'manual_auth_switch',
-                    serviceId: 'openai-codex',
+                    serviceId: CODEX_SERVICE_KEY,
                     agentId: 'codex',
                     profileId: 'happier',
                     retryable: false,
@@ -1196,6 +1497,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1203,16 +1505,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesProviderStateSharingSettingsV1: {
                         v: 1,
@@ -1225,20 +1526,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -1330,7 +1620,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
         expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(2);
         expect(setSessionConnectedServiceAuthBindingMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-            rematerializeServiceId: 'openai-codex',
+            rematerializeServiceId: CODEX_SERVICE_KEY,
         }));
     });
 
@@ -1338,13 +1628,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'provider_account_adoption_mismatch',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 uxDiagnostic: {
                     code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerAccountAdoptionMismatch,
                     failurePhase: 'post_switch_verification',
                     source: 'manual_auth_switch',
-                    serviceId: 'openai-codex',
+                    serviceId: CODEX_SERVICE_KEY,
                     agentId: 'codex',
                     profileId: 'happier',
                     retryable: true,
@@ -1361,6 +1651,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1368,36 +1659,24 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -1440,7 +1719,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
         expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(2);
         expect(setSessionConnectedServiceAuthBindingMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-            rematerializeServiceId: 'openai-codex',
+            rematerializeServiceId: CODEX_SERVICE_KEY,
         }));
         expect(modalAlertMock).not.toHaveBeenCalledWith(
             'common.error',
@@ -1452,13 +1731,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'provider_state_sharing_unavailable',
-            serviceId: 'openai-codex',
+            serviceId: CODEX_SERVICE_KEY,
             diagnostics: {
                 uxDiagnostic: {
                     code: 'provider_session_state_unavailable_for_resume',
                     failurePhase: 'continuity',
                     source: 'manual_auth_switch',
-                    serviceId: 'openai-codex',
+                    serviceId: CODEX_SERVICE_KEY,
                     agentId: 'opencode',
                     retryable: false,
                     suggestedActions: ['dismiss'],
@@ -1469,6 +1748,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         });
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1476,36 +1756,24 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.codex,
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            'openai-codex': { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({
-            requestClose: vi.fn(),
-            maxHeight: 320,
-        });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('openai-codex', {
+            props.setBindingForService(CODEX_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'happier',
@@ -1526,6 +1794,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
     it('recovers the active Codex connected profile from the runtime descriptor when session bindings are missing', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -1533,13 +1802,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'codex',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: {
-                    id: 'codex',
-                    connectedServices: {
-                        supportedServiceIds: ['openai-codex'],
-                        sessionAuthSwitch: { continuityMode: 'restart_shared_state_required' },
-                    },
-                },
+                connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     agentRuntimeDescriptorV1: {
                         v: 1,
@@ -1564,7 +1827,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'openai-codex/happier': 'Happier' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
@@ -1584,12 +1847,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
@@ -1612,12 +1874,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
@@ -1652,12 +1913,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
@@ -1669,16 +1929,20 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         );
 
         const requestClose = vi.fn();
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose, maxHeight: 320 });
+        const props = renderChipPopover(hook);
+        props.resolveOptionAvailability({
+            serviceId: CLAUDE_SERVICE_KEY,
+            binding: { source: 'connected', selection: 'profile', profileId: 'work' },
+        });
 
-        (content as { props: { onOpenSettings: (serviceId: string) => void } }).props.onOpenSettings('anthropic');
+        const popoverRenderer = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+        if (typeof popoverRenderer !== 'function') throw new Error('Expected renderContent');
+        const content = popoverRenderer({ requestClose, maxHeight: 320 }) as {
+            props: { onOpenSettings: (serviceId: string) => void };
+        };
+        content.props.onOpenSettings(CLAUDE_SERVICE_KEY);
 
         expect(requestClose).toHaveBeenCalledOnce();
-        // UI-2: the picker's settings action deep-links to the tapped service's
-        // settings screen, matching the settings-side onOpenConnectedServiceSettings
-        // consumers instead of discarding the serviceId.
         expect(routerPushMock).toHaveBeenCalledWith({
             pathname: '/(app)/settings/connected-services/account',
             params: {
@@ -1706,16 +1970,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
@@ -1725,17 +1988,12 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const requestClose = vi.fn(() => {
             switchOrder.push('close');
         });
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose, maxHeight: 320 });
+        const popoverRenderer = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+        if (typeof popoverRenderer !== 'function') throw new Error('Expected renderContent');
+        const content = popoverRenderer({ requestClose, maxHeight: 320 }) as { props: PopoverContentProps };
 
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('anthropic', {
+            content.props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -1756,31 +2014,28 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             agentId: 'claude',
             machineId: 'machine-1',
             serverId: 'server-1',
-            agentCore: AGENTS_CORE.claude,
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             sessionMetadata: {
                 connectedServices: {
-                    bindingsByServiceId: { anthropic: { source: 'native' } },
+                    v: 1,
+                    bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                 },
             },
             settings: {
-                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesProfileLabelByKey: {},
                 connectedServicesDefaultProfileByServiceId: {},
             },
             switchingDisabledReason: null,
             sessionActive: true,
         }));
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: { setBindingForService: (serviceId: string, binding: unknown) => void } })
-                .props.setBindingForService('anthropic', {
-                    source: 'connected',
-                    selection: 'profile',
-                    profileId: 'work',
-                });
+            props.setBindingForService(CLAUDE_SERVICE_KEY, {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'work',
+            });
             await Promise.resolve();
         });
 
@@ -1797,15 +2052,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         }>;
         const nativeSessionMetadata: unknown = {
             connectedServices: {
-                bindingsByServiceId: {
-                    anthropic: { source: 'native' },
-                },
+                v: 1,
+                bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
             },
         };
         const connectedSessionMetadata: unknown = {
             connectedServices: {
+                v: 1,
                 bindingsByServiceId: {
-                    anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                 },
             },
         };
@@ -1814,10 +2069,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             agentId: 'claude',
             machineId: 'machine-1',
             serverId: 'server-1',
-            agentCore: AGENTS_CORE.claude,
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             sessionMetadata: props.sessionMetadata,
             settings: {
-                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesProfileLabelByKey: {},
                 connectedServicesDefaultProfileByServiceId: {},
             },
             switchingDisabledReason: null,
@@ -1834,17 +2089,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('anthropic', {
+            props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -1882,21 +2129,59 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     it('clears the restarting badge when daemon materializes the selected group with its active profile id', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
+        profileState.current = {
+            connectedAccountsV4: [
+                v4Account({
+                    pluginId: 'happier.agent.claude',
+                    localId: 'anthropic',
+                    accountId: 'work',
+                    email: 'work@example.com',
+                    kind: 'token',
+                    displayName: 'Work',
+                }),
+                v4Account({
+                    pluginId: 'happier.agent.claude',
+                    localId: 'claude-subscription',
+                    accountId: 'pro',
+                    email: 'pro@example.com',
+                    kind: 'oauth',
+                    displayName: 'Pro',
+                }),
+            ],
+            connectedAccountGroupsV4: [{
+                v: 1,
+                ref: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, groupId: 'team' },
+                incarnation: 'team:1',
+                displayName: 'Team pool',
+                policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true } },
+                activeConnectedAccountId: 'work',
+                generation: 3,
+                runtimeStateRevision: 1,
+                state: { status: 'ready' },
+                createdAt: 0,
+                updatedAt: 0,
+                members: [
+                    { v: 1, connectedAccountId: 'work', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+                ],
+            }],
+            connectedServiceCredentialRevisionsV1: [],
+        };
+
         type HookProps = Readonly<{
             sessionActive: boolean;
             sessionMetadata: unknown;
         }>;
         const nativeSessionMetadata: unknown = {
             connectedServices: {
-                bindingsByServiceId: {
-                    anthropic: { source: 'native' },
-                },
+                v: 1,
+                bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
             },
         };
         const materializedGroupSessionMetadata: unknown = {
             connectedServices: {
+                v: 1,
                 bindingsByServiceId: {
-                    anthropic: {
+                    [CLAUDE_SERVICE_KEY]: {
                         source: 'connected',
                         selection: 'group',
                         groupId: 'team',
@@ -1910,10 +2195,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             agentId: 'claude',
             machineId: 'machine-1',
             serverId: 'server-1',
-            agentCore: AGENTS_CORE.claude,
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             sessionMetadata: props.sessionMetadata,
             settings: {
-                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesProfileLabelByKey: {},
                 connectedServicesDefaultProfileByServiceId: {},
             },
             switchingDisabledReason: null,
@@ -1930,17 +2215,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'group'; groupId: string },
-                ) => void;
-            } }).props.setBindingForService('anthropic', {
+            props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'group',
                 groupId: 'team',
@@ -1949,15 +2226,16 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
 
         expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+            expectedGroupGenerationByServiceId: { [CLAUDE_SERVICE_KEY]: 3 },
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    anthropic: {
+                    [CLAUDE_SERVICE_KEY]: {
                         source: 'connected',
                         selection: 'group',
                         groupId: 'team',
                     },
-                    'claude-subscription': { source: 'native' },
+                    'happier.agent.claude/claude-subscription': { source: 'native' },
                 },
             },
         }));
@@ -1986,16 +2264,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
@@ -2036,16 +2313,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: {
                     connectedServices: {
-                        bindingsByServiceId: {
-                            anthropic: { source: 'native' },
-                        },
+                        v: 1,
+                        bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                     },
                 },
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
@@ -2053,17 +2329,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }),
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('anthropic', {
+            props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -2094,9 +2362,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         }>;
         const nativeSessionMetadata: unknown = {
             connectedServices: {
-                bindingsByServiceId: {
-                    anthropic: { source: 'native' },
-                },
+                v: 1,
+                bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
             },
         };
         const buildHookProps = (props: HookProps) => ({
@@ -2104,10 +2371,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             agentId: 'claude',
             machineId: 'machine-1',
             serverId: 'server-1',
-            agentCore: AGENTS_CORE.claude,
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             sessionMetadata: props.sessionMetadata,
             settings: {
-                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesProfileLabelByKey: {},
                 connectedServicesDefaultProfileByServiceId: {},
             },
             switchingDisabledReason: null,
@@ -2124,17 +2391,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
         );
 
-        const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-        if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+        const props = renderChipPopover(hook);
         await act(async () => {
-            (content as { props: {
-                setBindingForService: (
-                    serviceId: string,
-                    binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                ) => void;
-            } }).props.setBindingForService('anthropic', {
+            props.setBindingForService(CLAUDE_SERVICE_KEY, {
                 source: 'connected',
                 selection: 'profile',
                 profileId: 'work',
@@ -2180,16 +2439,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                     agentId: 'claude',
                     machineId: 'machine-1',
                     serverId: 'server-1',
-                    agentCore: AGENTS_CORE.claude,
+                    connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                     sessionMetadata: {
                         connectedServices: {
-                            bindingsByServiceId: {
-                                anthropic: { source: 'native' },
-                            },
+                            v: 1,
+                            bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                         },
                     },
                     settings: {
-                        connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                        connectedServicesProfileLabelByKey: {},
                         connectedServicesDefaultProfileByServiceId: {},
                     },
                     switchingDisabledReason: null,
@@ -2197,17 +2455,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 }),
             );
 
-            const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-            if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-            const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+            const props = renderChipPopover(hook);
             await act(async () => {
-                (content as { props: {
-                    setBindingForService: (
-                        serviceId: string,
-                        binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                    ) => void;
-                } }).props.setBindingForService('anthropic', {
+                props.setBindingForService(CLAUDE_SERVICE_KEY, {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',
@@ -2255,15 +2505,15 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }>;
             const nativeSessionMetadata: unknown = {
                 connectedServices: {
-                    bindingsByServiceId: {
-                        anthropic: { source: 'native' },
-                    },
+                    v: 1,
+                    bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
                 },
             };
             const connectedSessionMetadata: unknown = {
                 connectedServices: {
+                    v: 1,
                     bindingsByServiceId: {
-                        anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                        [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                     },
                 },
             };
@@ -2272,10 +2522,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 agentId: 'claude',
                 machineId: 'machine-1',
                 serverId: 'server-1',
-                agentCore: AGENTS_CORE.claude,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 sessionMetadata: props.sessionMetadata,
                 settings: {
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                 },
                 switchingDisabledReason: null,
@@ -2292,17 +2542,9 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             );
 
-            const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-            if (typeof renderContent !== 'function') throw new Error('Expected renderContent');
-            const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
-
+            const props = renderChipPopover(hook);
             await act(async () => {
-                (content as { props: {
-                    setBindingForService: (
-                        serviceId: string,
-                        binding: { source: 'connected'; selection: 'profile'; profileId: string },
-                    ) => void;
-                } }).props.setBindingForService('anthropic', {
+                props.setBindingForService(CLAUDE_SERVICE_KEY, {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',

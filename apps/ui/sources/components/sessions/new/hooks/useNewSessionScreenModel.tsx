@@ -34,14 +34,13 @@ import {
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
 import { getProfilePrimaryCli, isProfileEnabled } from '@/sync/domains/profiles/profileUtils';
-import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { usePluginEventAutomationComposer } from '@/components/automations/editor/usePluginEventAutomationComposer';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
@@ -62,11 +61,9 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import {
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
-    buildSessionAuthoringDraftFromServerStartSpawnDraftV1,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
@@ -75,7 +72,10 @@ import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/s
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import {
     buildAcpConfigOptionOverridesV1,
+    readBackendTargetRefV2,
+    type AgentExecutionTargetV1,
     type AcpConfigOptionOverridesV1,
+    type BackendTargetRefV2,
     type SessionModelSelectionV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
@@ -110,6 +110,7 @@ import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/h
 import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
 import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
+import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatusBadges } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
@@ -145,6 +146,7 @@ import { notifyComposerPresentationTargetChanged } from '@/components/sessions/p
 import { useNewSessionActionOperationReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionActionOperationReconciliation';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import { createNewSessionSeededPlacementActionChip } from '@/components/sessions/new/newSessionSeededPlacementActionChip';
+import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/new/attachments/newSessionDraftAttachmentFlowId';
 import { randomUUID } from '@/platform/randomUUID';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
@@ -154,6 +156,17 @@ import { subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepo
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
 const styles = newSessionScreenStyles;
+
+function resolveCompatibilityBackendTarget(
+    agentTarget: AgentExecutionTargetV1 | null | undefined,
+): BackendTargetRefV2 | null {
+    if (!agentTarget) return null;
+    try {
+        return readBackendTargetRefV2(agentTarget);
+    } catch {
+        return null;
+    }
+}
 
 function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
     const ref = React.useRef(value);
@@ -223,14 +236,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         profileId: profileIdParam,
         spawnServerId: spawnServerIdParam,
         automation: automationParam,
-        automationEnabled: automationEnabledParam,
-        automationName: automationNameParam,
-        automationDescription: automationDescriptionParam,
-        automationScheduleKind: automationScheduleKindParam,
-        automationEveryMinutes: automationEveryMinutesParam,
-        automationCronExpr: automationCronExprParam,
-        automationTimezone: automationTimezoneParam,
-        automationEditId: automationEditIdParam,
         resumeSessionId: resumeSessionIdParam,
         secretId: secretIdParam,
         secretSessionOnlyId,
@@ -248,14 +253,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         profileId?: string;
         spawnServerId?: string;
         automation?: string;
-        automationEnabled?: string;
-        automationName?: string;
-        automationDescription?: string;
-        automationScheduleKind?: string;
-        automationEveryMinutes?: string;
-        automationCronExpr?: string;
-        automationTimezone?: string;
-        automationEditId?: string;
         resumeSessionId?: string;
         secretId?: string;
         secretSessionOnlyId?: string;
@@ -312,12 +309,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             onSelect: selectSeededPlacement,
         })
     ), [seededPlacementCandidates, selectSeededPlacement]);
-    // Direct Event details are intentionally transient. The generic composer
-    // may retain editable Automation metadata, but its session fields must
-    // never replace the strict server-start seed owned by the Event definition.
-    const eventAutomationEditSeed = tempSessionData?.eventAutomationEditSeed ?? null;
-    const eventAutomationExistingSessionServerId = tempSessionData?.eventAutomationExistingSessionServerId ?? null;
-    const eventAutomationInitialTarget = tempSessionData?.eventAutomationInitialTarget ?? null;
     const shouldReplacePersistedDraftSelections = tempSessionData?.replacePersistedDraftSelections === true;
     const loadScopedNewSessionDraft = React.useCallback(() => {
         return draftScope ? readNewSessionDraftFromRepository({ scope: draftScope, draftId }) : null;
@@ -445,6 +436,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
             ? buildNewSessionAuthoringDraftFromPersistedDraft(scopedPersistedDraft)
             : null;
     }, [scopedPersistedDraft]);
+    const hydratedTempBackendTarget = React.useMemo(
+        () => resolveCompatibilityBackendTarget(hydratedTempAuthoringDraft?.agentTarget),
+        [hydratedTempAuthoringDraft?.agentTarget],
+    );
+    const hydratedPersistedBackendTarget = React.useMemo(
+        () => resolveCompatibilityBackendTarget(hydratedPersistedAuthoringDraft?.agentTarget),
+        [hydratedPersistedAuthoringDraft?.agentTarget],
+    );
     const hydratedResumeSessionId = React.useMemo(() => {
         if (typeof hydratedTempAuthoringDraft?.resumeSessionId === 'string') {
             return hydratedTempAuthoringDraft.resumeSessionId;
@@ -672,15 +671,24 @@ export function useNewSessionScreenModel(input?: Readonly<{
         serverId: targetServerId,
         enabled: Boolean(selectedMachineId),
     });
+    // New Session currentness gate: inputs retained while the selected
+    // machine's projection is loading/errored/unsupported are inert metadata.
+    // Everything projected here for Agent selection — catalog entries, model
+    // and permission state, preferred target restoration, and the spawn
+    // target — derives only from an authoritative `ready` projection, so a
+    // same-machine generation advance can never keep displaying, restoring,
+    // or launching a previous generation's external Agent. Bundled defaults
+    // do not depend on this projection and remain usable.
+    const projectionCurrent = daemonMergedProjection.phase === 'ready';
+    const currentProjectionInputs = projectionCurrent ? daemonMergedProjection.inputs : null;
     // New Session draft records have no generation field. Revalidate them
     // only against the exact current machine/account projection; retained
     // inputs during a target/account transition are intentionally inert.
     const composerAttachmentEntriesById = React.useMemo(() => {
-        if (daemonMergedProjection.phase !== 'ready') return null;
         return normalizePluginUiProjection(
-            daemonMergedProjection.inputs?.pluginProjectionV2 ?? null,
+            currentProjectionInputs?.pluginProjectionV2 ?? null,
         ).composerAttachmentsById;
-    }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase]);
+    }, [currentProjectionInputs?.pluginProjectionV2]);
     const enabledAgentIds = useEnabledAgentIds();
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
@@ -688,33 +696,18 @@ export function useNewSessionScreenModel(input?: Readonly<{
             acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
-            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
-            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
-            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds,
+            mergedProviderProjectionById: currentProjectionInputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: currentProjectionInputs?.mergedBackendProjectionById ?? null,
+            discoveredBackendIds: currentProjectionInputs?.discoveredBackendIds,
         });
     }, [
-        daemonMergedProjection.inputs?.discoveredBackendIds,
-        daemonMergedProjection.inputs?.mergedBackendProjectionById,
-        daemonMergedProjection.inputs?.mergedProviderProjectionById,
+        currentProjectionInputs?.discoveredBackendIds,
+        currentProjectionInputs?.mergedBackendProjectionById,
+        currentProjectionInputs?.mergedProviderProjectionById,
         enabledAgentIds,
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
-    const eventAuthoringAgentTargetCatalog = React.useMemo(() => {
-        return resolvedBackendEntries.flatMap((entry) => {
-            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
-                backendTarget: entry.backendTarget,
-                daemonMergedProjectionInputs: daemonMergedProjection.inputs,
-            });
-            return agentTarget
-                ? [{
-                    agentTarget,
-                    agentId: entry.agentId,
-                    backendTarget: entry.backendTarget,
-                }]
-                : [];
-        });
-    }, [daemonMergedProjection.inputs, resolvedBackendEntries]);
     const profilePreferredBackendTarget = React.useMemo(() => {
         if (!initialProfileAuthoringIntent.preferredAgentTargetKey) return null;
         return resolveBackendTargetFromRouteParams({
@@ -722,12 +715,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         });
     }, [initialProfileAuthoringIntent.preferredAgentTargetKey]);
     const implicitProfileBackendTarget = routeBackendTarget
-        || hydratedTempAuthoringDraft?.backendTarget
+        || hydratedTempBackendTarget
         || tempSessionData?.backendTarget
-        || hydratedTempAuthoringDraft?.agentId
         || agentTypeParam
-        || hydratedPersistedAuthoringDraft?.backendTarget
-        || hydratedPersistedAuthoringDraft?.agentId
+        || hydratedPersistedBackendTarget
         ? null
         : profilePreferredBackendTarget;
     const {
@@ -741,27 +732,37 @@ export function useNewSessionScreenModel(input?: Readonly<{
         lastUsedAgent,
         lastUsedBackendTarget,
         routeBackendTarget,
-        persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
+        persistedBackendTarget: hydratedPersistedBackendTarget,
         tempBackendTarget: routeBackendTarget
-            ?? hydratedTempAuthoringDraft?.backendTarget
+            ?? hydratedTempBackendTarget
             ?? tempSessionData?.backendTarget
             ?? implicitProfileBackendTarget,
-        tempAgentType: hydratedTempAuthoringDraft?.agentId
-            ?? agentTypeParam
-            ?? hydratedPersistedAuthoringDraft?.agentId,
+        tempAgentType: agentTypeParam,
         projectionPhase: daemonMergedProjection.phase,
     });
+    const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
+        backendTarget,
+        runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
+    }), [backendTarget, selectedRuntimeCarrierAgentId]);
+    const canonicalAgentTarget = React.useMemo(() => resolveAgentExecutionTargetForBackendTarget({
+        backendTarget: operationalBackendTarget,
+        daemonMergedProjectionInputs: currentProjectionInputs,
+    }), [currentProjectionInputs, operationalBackendTarget]);
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {
-            if (typeof next !== 'function') {
-                return { kind: 'backend', backendId: next };
-            }
-            if (!isBundledAgentId(prevTarget.backendId)) {
-                return prevTarget;
-            }
-            return { kind: 'backend', backendId: next(prevTarget.backendId) };
+            const currentAgentId = prevTarget.kind === 'agent'
+                ? resolveBundledAgentIdFromContributionIdentity(prevTarget.identity)
+                : (!prevTarget.configuredBackendId && isBundledAgentId(prevTarget.backendId)
+                    ? prevTarget.backendId
+                    : null);
+            if (!currentAgentId && typeof next === 'function') return prevTarget;
+            const nextAgentId = typeof next === 'function'
+                ? next(currentAgentId ?? 'claude')
+                : next;
+            return resolvedBackendEntries.find((entry) => entry.builtInAgentId === nextAgentId)?.backendTarget
+                ?? prevTarget;
         });
-    }, [setBackendTarget]);
+    }, [resolvedBackendEntries, setBackendTarget]);
     const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
     const agentOptionState = backendNewSessionOptionStateByTargetKey[selectedBackendTargetKey] ?? null;
     const selectedBackendEntry = React.useMemo(() => {
@@ -807,6 +808,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setBackendTarget,
     });
 
+    const executionTarget = selectedMachineId
+        ? { serverId: targetServerId ?? activeServerSource.activeServerId, machineId: selectedMachineId }
+        : null;
+    const organizationPlacementState = useNewSessionOrganizationPlacement({
+        executionTarget,
+        directory: selectedPath,
+        initialPlacement: persistedDraft?.organizationPlacement ?? null,
+    });
     const {
         modelMode,
         modelSelection,
@@ -994,8 +1003,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         settings,
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
+        pluginProjectionV2: currentProjectionInputs?.pluginProjectionV2 ?? null,
         resumeSessionId,
-        enabledAgentIds,
         backendNewSessionOptionStateByTargetKey,
         resolvedBackendEntries,
         selectedBackendEntry,
@@ -1032,6 +1041,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedMachineId,
         targetServerId,
         selectedBackendTargetKey,
+        connectedAccounts: selectedBackendEntry?.agentCatalogEntry.connectedAccounts,
         setBackendNewSessionOptionStateByTargetKey,
         agentOptionState,
         settings,
@@ -1098,43 +1108,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setSessionPrompt,
         automationDraft,
         setAutomationDraft,
-        automationEditId,
         automationRequestedByRoute,
     } = useNewSessionPromptAutomationState({
         prompt,
         dataId,
         automationParam,
-        automationEnabledParam,
-        automationNameParam,
-        automationDescriptionParam,
-        automationScheduleKindParam,
-        automationEveryMinutesParam,
-        automationCronExprParam,
-        automationTimezoneParam,
-        automationEditIdParam,
         automationFeatureEnabled,
         persistedDraftEntryIntent: scopedPersistedDraft?.entryIntent,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
     });
-    const eventAutomationComposer = usePluginEventAutomationComposer({
-        machineId: selectedMachineId,
-        serverId: targetServerId,
-        projectionPhase: daemonMergedProjection.phase,
-        projectionInputs: daemonMergedProjection.inputs,
-        initialEditSeed: eventAutomationEditSeed,
-        initialExistingSessionServerId: eventAutomationExistingSessionServerId,
-        initialExistingSessionTarget: eventAutomationInitialTarget,
-    });
-    const eventEditAuthoringSeed = React.useMemo(() => {
-        if (eventAutomationEditSeed?.target.kind !== 'newSession') return null;
-        return buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
-            spawn: eventAutomationEditSeed.target.spawn,
-            prompt: eventAutomationEditSeed.prompt,
-            displayText: eventAutomationEditSeed.prompt,
-            agentTargetCatalog: eventAuthoringAgentTargetCatalog,
-        });
-    }, [eventAuthoringAgentTargetCatalog, eventAutomationEditSeed]);
     const [isCreatingLocally, setIsCreating] = React.useState(false);
     const actionOperationReconciliationCallbacksRef = React.useRef<Readonly<{
         disableDraftPersistence: () => void;
@@ -1167,7 +1150,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftScope,
         promptStore,
         persistedAttachments: scopedPersistedDraft?.composerAttachments ?? [],
-        seededAttachmentRequests: tempSessionData?.pluginNewSessionSeed?.attachments ?? [],
         composerAttachmentEntriesById,
         composerPluginProjection: {
             machineId: selectedMachineId,
@@ -1175,12 +1157,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             phase: daemonMergedProjection.phase,
             inputs: daemonMergedProjection.inputs,
         },
-        // Editing an Event Automation reopens this composer on its stored
-        // prompt. Its stored references are seeded with it so a save the user
-        // made without touching them rewrites what it read instead of silently
-        // dropping the pick; removing the token still drops the reference
-        // through the incumbent admission rule.
-        initialStructuredInputReferences: eventAutomationEditSeed?.mentions,
         scopeKey: draftScope ? serverAccountScopeKeySuffix(draftScope) : null,
         canSubmitRef: newSessionComposerCanSubmitRef,
         isSubmitting: isCreating,
@@ -1189,10 +1165,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const newSessionComposerReferenceSearchIsCurrent = newSessionComposerDocument.isReferenceSearchCurrent;
     const newSessionComposerReferenceHostRef = React.useRef<ComposerReferenceSearchHost | null>(null);
     const newSessionComposerReferenceHost = React.useMemo<ComposerReferenceSearchHost | null>(() => {
-        const projection = daemonMergedProjection.inputs?.pluginProjectionV2 ?? null;
+        const projection = currentProjectionInputs?.pluginProjectionV2 ?? null;
         if (
-            daemonMergedProjection.phase !== 'ready'
-            || selectedMachineId === null
+            selectedMachineId === null
             || projection === null
         ) {
             return null;
@@ -1210,8 +1185,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         };
         return host;
     }, [
-        daemonMergedProjection.inputs?.pluginProjectionV2,
-        daemonMergedProjection.phase,
+        currentProjectionInputs?.pluginProjectionV2,
         newSessionComposerReferenceSearchIsCurrent,
         selectedMachineId,
         targetServerId,
@@ -1494,7 +1468,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         agentLabel,
         agentOptionState,
         settings,
-        pluginProjectionV2: daemonMergedProjection.inputs?.pluginProjectionV2,
+        pluginProjectionV2: currentProjectionInputs?.pluginProjectionV2 ?? null,
     });
 
     const clearProfileRouteParam = React.useCallback(() => {
@@ -1593,6 +1567,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setEngineSelectionForBackendTarget,
         selectedMachineId,
         capabilityServerId,
+        projectionCurrent,
         selectedPath,
         settings,
         favoriteModelSelections,
@@ -1625,13 +1600,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
         automationFeatureEnabled,
         selectedMachineId,
         targetServerId,
+        executionTarget,
+        organizationPlacement: organizationPlacementState.placement,
         selectedMachine,
         selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
         promptStore,
         staticAgentId,
-        backendTarget,
+        backendTarget: operationalBackendTarget,
+        agentTarget: canonicalAgentTarget,
         transcriptStorage,
         useProfiles,
         selectedProfileId,
@@ -1650,7 +1628,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             : null,
         acpSessionModeId,
         sessionConfigOptionOverrides,
-        automationEditId,
         automationRequestedByRoute,
         selectedSecretId,
         selectedSecretIdByProfileIdByEnvVarName,
@@ -1661,22 +1638,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftId,
         launchUserAttemptId,
     });
-    const eventEditAuthoringDraft = React.useMemo(() => {
-        if (eventEditAuthoringSeed?.kind !== 'available') return null;
-        // Name, description, and enabled are ordinary composer-owned metadata;
-        // all session execution facts remain the exact direct-detail seed.
-        return {
-            ...eventEditAuthoringSeed.draft,
-            automation: currentAuthoringDraft.automation,
-        };
-    }, [currentAuthoringDraft.automation, eventEditAuthoringSeed]);
-    const effectiveCurrentAuthoringDraft = eventAutomationEditSeed?.target.kind === 'newSession'
-        ? eventEditAuthoringDraft
-        : currentAuthoringDraft;
-    const directEventEditReady = eventAutomationEditSeed !== null
-        && eventAutomationComposer.editTarget !== null
-        && eventAutomationComposer.editTarget.automationId === automationEditId
-        && eventAutomationComposer.createDraft !== null;
+    const effectiveCurrentAuthoringDraft = currentAuthoringDraft;
     const onLaunchUserAttemptIdChange = React.useCallback((nextUserAttemptId: string | null) => {
         const normalized = typeof nextUserAttemptId === 'string' && nextUserAttemptId.trim().length > 0
             ? nextUserAttemptId.trim()
@@ -1698,13 +1660,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const launchIntentSignature = React.useMemo(() => JSON.stringify({
         draft: effectiveCurrentAuthoringDraft,
         composerDocumentRevision: newSessionComposerDocument.revision,
-        eventAutomationRevision: eventAutomationComposer.revision,
         machineId: selectedMachineId,
         sourceContext: sourceContextState.sourceContext,
         targetServerId: targetServerId ?? null,
     }), [
         effectiveCurrentAuthoringDraft,
-        eventAutomationComposer.revision,
         newSessionComposerDocument.revision,
         selectedMachineId,
         sourceContextState.sourceContext,
@@ -1716,9 +1676,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         previousLaunchIntentSignatureRef.current = launchIntentSignature;
         if (launchUserAttemptId) onLaunchUserAttemptIdChange(null);
     }, [launchIntentSignature, launchUserAttemptId, onLaunchUserAttemptIdChange]);
-    const spawnBackendTarget = React.useMemo(() => {
-        return selectedBackendEntry?.backendTarget ?? backendTarget;
-    }, [backendTarget, selectedBackendEntry?.backendTarget]);
+    const spawnBackendTarget = operationalBackendTarget;
 
     const {
         handleCreateSession,
@@ -1754,19 +1712,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
         preflightModelsTargetKey,
         promptStore,
         setSessionPrompt,
-        automationEditId,
-        eventAutomationDraft: automationFeatureEnabled
-            ? eventAutomationComposer.createDraft
-            : null,
-        eventAutomationEdit: eventAutomationEditSeed
-            ? eventAutomationComposer.editTarget
-            : null,
-        eventAutomationTargetKind: eventAutomationComposer.targetKind,
-        resolveEventAutomationTarget: eventAutomationComposer.resolveExecutionTarget,
-        eventAutomationExecutionPermissionMode: eventAutomationComposer.executionPermissionMode,
         resumeSessionId,
         agentNewSessionOptions,
         currentAuthoringDraft: effectiveCurrentAuthoringDraft,
+        automationsEnabled: automationFeatureEnabled,
+        onAutomationDraftChange: setAutomationDraft,
         mcpSelection,
         windowsRemoteSessionLaunchModeOverride,
         machineEnvPresence,
@@ -1777,7 +1727,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedMachineCapabilities,
         targetServerId,
         allowedTargetServerIds,
-        daemonMergedProjectionInputs: daemonMergedProjection.inputs,
+        daemonMergedProjectionInputs: currentProjectionInputs,
         resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
         capabilityServerId,
         draftScope,
@@ -1790,34 +1740,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         sourceContext: sourceContextState.sourceContext,
     });
 
-    // An Event selection has no schedule fallback: until its canonical
-    // composer can produce a current strict V3 draft, submitting would route
-    // the retained automation metadata into the legacy schedule writer.
-    const eventAutomationModeReady = eventAutomationComposer.mode !== 'event'
-        || (
-            automationFeatureEnabled
-            && eventAutomationComposer.createDraft !== null
-            && (
-                eventAutomationComposer.targetKind === 'newSession'
-                || (
-                    eventAutomationComposer.targetKind === 'executionRun'
-                        ? selectedMachineId !== null
-                        : eventAutomationComposer.existingSessionAvailability?.kind === 'ready'
-                )
-            )
-        );
-    const eventTargetNeedsNewSessionInputs = eventAutomationComposer.mode !== 'event'
-        || eventAutomationComposer.targetKind === 'newSession';
-    const canCreate = (eventTargetNeedsNewSessionInputs
-        ? canCreateFromAuthoring
-        : isAutomationSettingsDraftValid(effectiveAutomationDraft))
+    const canCreate = canCreateFromAuthoring
+        && organizationPlacementState.valid
         && !confirmExperimentalProviderModel.pending
-        && eventAutomationModeReady
         // V1 requires the source Session and the target to share a server. Block
         // submission rather than silently dropping the continuation recipe; the
         // user can switch back or remove the chip.
-        && !sourceContextState.serverMismatch
-        && (!eventAutomationEditSeed || (automationFeatureEnabled && directEventEditReady));
+        && !sourceContextState.serverMismatch;
     newSessionComposerCanSubmitRef.current = canCreate;
     React.useEffect(() => {
         notifyComposerPresentationTargetChanged(newSessionComposerDocument.ref);
@@ -1834,13 +1763,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         automationDraft,
         effectiveAutomationDraft,
         setAutomationDraft,
-        eventComposer: automationFeatureEnabled && (
-            !automationEditId || eventAutomationComposer.isEditingEvent
-        )
-            ? eventAutomationComposer
-            : null,
         repoScmSnapshot,
         checkoutChipModel,
+        organizationPlacementActionChips: organizationPlacementState.actionChips,
         checkoutPickerOpen,
         setCheckoutPickerOpen,
         checkoutCreationDraft,
@@ -1855,7 +1780,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         promptStore,
         setSessionPrompt,
         handleCreateSession,
-        backendTarget,
+        backendTarget: operationalBackendTarget,
         agentType: selectedUiAgentType,
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,

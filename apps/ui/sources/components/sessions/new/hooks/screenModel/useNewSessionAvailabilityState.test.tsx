@@ -104,7 +104,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [
                 {
@@ -164,7 +163,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -207,7 +205,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -261,7 +258,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -300,7 +296,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [
                 {
@@ -334,6 +329,98 @@ describe('useNewSessionAvailabilityState', () => {
         }));
     });
 
+    it('resolves an installed Agent dependency from the selected machine projection', async () => {
+        vi.resetModules();
+
+        const {
+            clearProjectedAgentUiBehaviorDescriptors,
+            publishProjectedAgentUiBehaviorDescriptors,
+        } = await import('@/agents/registry/agentUiBehaviorProjection');
+        const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+        const machine: Machine = {
+            id: 'machine-1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+
+        clearProjectedAgentUiBehaviorDescriptors();
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: machine.id,
+            descriptorsByAgentId: {
+                'acme.reviewer': {
+                    newSession: { relevantInstallableDepKeys: ['acme.cli'] },
+                },
+            },
+        });
+
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: machine.id,
+            selectedMachine: machine,
+            capabilityServerId: 'server-1',
+            externalSessionsFeatureEnabled: false,
+            settings: {} as any,
+            staticAgentId: null,
+            runtimeCarrierAgentId: 'acme.reviewer',
+            resumeSessionId: null,
+            backendNewSessionOptionStateByTargetKey: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [machine],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings: vi.fn(),
+            allProfiles: [],
+            pluginProjectionV2: {
+                familiesById: {
+                    managedDependencies: {
+                        entriesById: {
+                            'acme.cli': {
+                                id: 'acme.cli',
+                                pluginId: 'acme.tools',
+                                key: 'acme.cli',
+                                capabilityId: 'dep.acme.cli',
+                                sourceKind: 'npm',
+                                display: {
+                                    name: 'Acme CLI',
+                                    subtitle: 'Tools for Acme workspaces',
+                                },
+                                description: 'Install the Acme command-line tools.',
+                                ui: {
+                                    iconName: 'terminal',
+                                    setupUrl: 'https://docs.acme.test/setup',
+                                },
+                                defaultPolicy: {
+                                    autoInstallWhenNeeded: false,
+                                    autoUpdateMode: 'manual',
+                                },
+                                experimental: false,
+                            },
+                        },
+                    },
+                },
+            } as any,
+        } as any));
+
+        expect(hook.getCurrent().wizardInstallableDeps).toHaveLength(1);
+        expect(hook.getCurrent().wizardInstallableDeps[0]?.entry).toEqual(expect.objectContaining({
+            key: 'acme.cli',
+            capabilityId: 'dep.acme.cli',
+            title: 'Acme CLI',
+            subtitle: 'Tools for Acme workspaces',
+            setupUrl: 'https://docs.acme.test/setup',
+        }));
+
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
     it('keeps temporary CLI banner dismissals across hook remounts (same app session)', async () => {
         vi.resetModules();
 
@@ -362,7 +449,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -393,7 +479,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -435,7 +520,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -463,7 +547,6 @@ describe('useNewSessionAvailabilityState', () => {
             settings: {} as any,
             agentType: 'claude' as any,
             resumeSessionId: null,
-            enabledAgentIds: ['claude', 'codex'] as any,
             backendNewSessionOptionStateByTargetKey: {},
             resolvedBackendEntries: [],
             selectedBackendEntry: null,
@@ -524,7 +607,6 @@ describe('useNewSessionAvailabilityState', () => {
                 staticAgentId: null,
                 runtimeCarrierAgentId: 'acme.reviewer',
                 resumeSessionId: null,
-                enabledAgentIds: [] as any,
                 backendNewSessionOptionStateByTargetKey: {},
                 resolvedBackendEntries: [],
                 selectedBackendEntry: null,

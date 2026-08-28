@@ -360,6 +360,48 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         expect(secondOpenCalls).toBe(1);
     });
 
+    it('invalidates the cached header identity when the Session Agent changes', () => {
+        const createInput = (agentId: 'codex' | 'claude') => {
+            const session = createSessionFixture({
+                id: 'agent-identity-cache-session',
+                metadata: {
+                    agentId,
+                    path: '/tmp/project',
+                    host: 'test-host',
+                },
+            });
+            return {
+                isDataReady: true,
+                session,
+                sessionId: session.id,
+                sessionInfoHref: '/session/agent-identity-cache-session/info',
+                sessionRunsHref: '/session/agent-identity-cache-session/runs',
+                sessionAutomationsHref: '/session/agent-identity-cache-session/automations',
+                paneScopeId: 'pane-1',
+                windowWidth: 800,
+                sessionAutomationsEnabledCount: 0,
+                sessionExecutionRunsSupported: false,
+                showAutomations: false,
+                shouldShowSubagentsButton: false,
+                subagentActiveCount: 0,
+                navigateWithBlurOnWeb: (action: () => void) => action(),
+                handleHeaderExtraItemSelect: () => false,
+                router: { push: () => {}, navigate: () => {} },
+                actionIconColor: '#000',
+                headerTintColor: '#000',
+                statusErrorColor: '#f00',
+                externalSessionRuntime: null,
+            } as const;
+        };
+
+        const codex = resolveSessionViewHeaderProps(createInput('codex'));
+        const claude = resolveSessionViewHeaderProps(createInput('claude'));
+
+        expect(codex.agentId).toBe('codex');
+        expect(claude.agentId).toBe('claude');
+        expect(claude).not.toBe(codex);
+    });
+
     it('uses the layout-v1 owner compatibility view for the private workspace subtitle', () => {
         const session = createSessionFixture({
             id: 'layout-v1-session',

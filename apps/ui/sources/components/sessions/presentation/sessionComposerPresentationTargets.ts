@@ -778,13 +778,18 @@ function resolveAttachments(input: Readonly<{
             const matchingIdentityIndexes = attachments.flatMap((attachment, attachmentIndex) => (
                 equalContributionIdentity(attachment.attachment, authority.identity) ? [attachmentIndex] : []
             ));
-            const existingIndex = authority.cardinality === 'one'
+            const sameKeyIndex = attachments.findIndex((attachment) => (
+                equalContributionIdentity(attachment.attachment, authority.identity) && attachment.key === operation.value.key
+            ));
+            const replacementIndex = authority.cardinality === 'one'
                 ? (matchingIdentityIndexes[0] ?? -1)
-                : attachments.findIndex((attachment) => (
-                    equalContributionIdentity(attachment.attachment, authority.identity) && attachment.key === operation.value.key
-                ));
-            const existing = existingIndex >= 0 ? attachments[existingIndex]! : null;
-            if (!existing && attachments.length >= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1) {
+                : sameKeyIndex;
+            // `(attachment contribution, key)` is the immutable draft identity.
+            // Cardinality-one chooses the list slot to replace, but a different
+            // key is still remove-plus-add: it must not inherit the superseded
+            // record's host identity, staged content, or availability.
+            const sameIdentity = sameKeyIndex >= 0 ? attachments[sameKeyIndex]! : null;
+            if (replacementIndex < 0 && attachments.length >= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1) {
                 return {
                     ok: false,
                     result: {
@@ -795,13 +800,13 @@ function resolveAttachments(input: Readonly<{
                     },
                 };
             }
-            const generatedId = existing?.instanceId ?? input.target.createAttachmentInstanceId?.();
+            const generatedId = sameIdentity?.instanceId ?? input.target.createAttachmentInstanceId?.();
             if (!generatedId || !ComposerInstanceIdSchema.safeParse(generatedId).success) {
                 return { ok: false, result: invalidOperation(operationIndex, 'attachment_instance_id_unavailable') };
             }
             // A contentless upsert changes the attachment value only. Stage
             // custody is removed only by an explicit replacement or removal.
-            const content = operation.content ?? existing?.content;
+            const content = operation.content ?? sameIdentity?.content;
             const next: ComposerAttachmentViewV1 = {
                 v: 1,
                 instanceId: generatedId,
@@ -812,11 +817,11 @@ function resolveAttachments(input: Readonly<{
                     ...operation.value.presentation,
                     typeLabel: authority.typeLabel,
                 },
-                availability: existing?.availability ?? { status: 'ready' },
+                availability: sameIdentity?.availability ?? { status: 'ready' },
                 ...(content === undefined ? {} : { content }),
             };
-            if (existingIndex >= 0) {
-                attachments[existingIndex] = next;
+            if (replacementIndex >= 0) {
+                attachments[replacementIndex] = next;
                 if (authority.cardinality === 'one') {
                     for (let index = matchingIdentityIndexes.length - 1; index >= 1; index -= 1) {
                         attachments.splice(matchingIdentityIndexes[index]!, 1);
@@ -870,28 +875,43 @@ function composerStagedMediaHandleKey(handle: ComposerContentHandleV1): string {
 }
 
 function readReleasedComposerStagedMediaHandles(input: Readonly<{
+    composer: ComposerRefV1;
     previous: readonly ComposerAttachmentViewV1[];
     next: readonly ComposerAttachmentViewV1[];
-}>): readonly ComposerContentHandleV1[] {
+}>): readonly Readonly<{
+    handle: ComposerContentHandleV1;
+    claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+}>[] {
     const retained = new Set(input.next.flatMap((attachment) => (
         attachment.content?.kind === 'stagedMedia'
             ? [composerStagedMediaHandleKey(attachment.content.handle)]
             : []
     )));
-    const released = new Map<string, ComposerContentHandleV1>();
+    const released = new Map<string, Readonly<{
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>>();
     for (const attachment of input.previous) {
         if (attachment.content?.kind !== 'stagedMedia') continue;
         const key = composerStagedMediaHandleKey(attachment.content.handle);
-        if (!retained.has(key)) released.set(key, attachment.content.handle);
+        if (!retained.has(key)) {
+            released.set(key, {
+                handle: attachment.content.handle,
+                claimant: { composer: input.composer, attachmentInstanceId: attachment.instanceId },
+            });
+        }
     }
     return [...released.values()];
 }
 
-function releaseComposerStagedMedia(handle: ComposerContentHandleV1): void {
+function releaseComposerStagedMedia(
+    handle: ComposerContentHandleV1,
+    claimant?: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>,
+): void {
     // The carrier owns idempotence and bounded retention; the UI creates no
     // retry/cache state. Callers use this only after a committed discard or to
     // retire a late unattached pick.
-    void releaseComposerContent(handle).catch(() => undefined);
+    void releaseComposerContent(handle, claimant ? { claimant } : undefined).catch(() => undefined);
 }
 
 /**
@@ -958,11 +978,12 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
         },
     });
     if (committed.status !== 'applied') return committed;
-    for (const handle of readReleasedComposerStagedMediaHandles({
+    for (const released of readReleasedComposerStagedMediaHandles({
+        composer: request.ref,
         previous: snapshot.attachments,
         next: attachments.attachments,
     })) {
-        releaseComposerStagedMedia(handle);
+        releaseComposerStagedMedia(released.handle, released.claimant);
     }
     if (target.commitDocumentEmitsChange !== true) emit(request.ref);
     return {

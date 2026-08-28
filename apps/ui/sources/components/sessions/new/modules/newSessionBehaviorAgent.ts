@@ -12,10 +12,10 @@ import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
  * chip rendering and spawn all read one declaration through this one answer.
  */
 export function resolveNewSessionBehaviorAgentId(params: Readonly<{
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     staticAgentId?: AgentId | null;
     agentType?: string | null;
-}>): AgentId | null {
+}>): string | null {
     const runtimeCarrierAgentId = typeof params.runtimeCarrierAgentId === 'string'
         ? params.runtimeCarrierAgentId.trim()
         : '';

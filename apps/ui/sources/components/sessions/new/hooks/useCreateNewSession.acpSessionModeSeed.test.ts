@@ -215,6 +215,24 @@ async function setupHarness(options?: Readonly<{
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
   vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: machineSpawnNewSessionSpy }));
   vi.doMock('@/sync/ops/actions/sessionSpawnNewAction', () => ({
+    buildManualSessionCreationKey: (userAttemptId: string) => `manual:${userAttemptId}`,
+    executeManualSessionSpawnNewAction: async (input: any, context: unknown, params: any) => ({
+      status: 'executed',
+      action: await executeSessionSpawnNewActionSpy(input, context),
+      custody: {
+        v: 3,
+        scope: params.scope,
+        machineId: input.executionTarget.machineId,
+        targetFingerprint: 'test-fingerprint',
+        userAttemptId: params.userAttemptId,
+        nonce: params.seedNonce,
+        submissionState: 'submitted',
+        createdSessionId: null,
+        firstTurnLocalId: `spawn-first-turn:${params.seedNonce}`,
+        attachmentMessageLocalId: `spawn-attachment:${params.seedNonce}`,
+      },
+    }),
+    completeManualSessionSpawnNewActionCustody: async () => true,
     executeSessionSpawnNewAction: (input: unknown, context: unknown) =>
       executeSessionSpawnNewActionSpy(input, context),
     resolveSessionSpawnNewActionFailureMessageKey: () => 'newSession.actionMethodUnavailable',
@@ -227,7 +245,11 @@ async function setupHarness(options?: Readonly<{
     storeTempData: vi.fn(() => 'temp-data-key'),
   }));
 
-  const { useCreateNewSession } = await import('./useCreateNewSession');
+  const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
+  const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
+    ...params,
+    draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
+  });
   return {
     useCreateNewSession,
     publishModeSpy,
@@ -366,8 +388,10 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(executeSessionSpawnNewActionSpy.mock.calls[0]?.[1]).toEqual({
       surface: 'ui',
-      actionRequestId: (executeSessionSpawnNewActionSpy.mock.calls[0]?.[0] as { creationKey: string }).creationKey,
+      actionRequestId: expect.any(String),
     });
+    expect((executeSessionSpawnNewActionSpy.mock.calls[0]?.[0] as { creationKey: string }).creationKey)
+      .toBe(`manual:${String((executeSessionSpawnNewActionSpy.mock.calls[0]?.[1] as { actionRequestId: string }).actionRequestId)}`);
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
@@ -1064,7 +1088,11 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       settings: { codexBackendMode?: string };
       updatedAt?: number;
     }) => ({
-      codexBackendMode: settings.codexBackendMode,
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: settings.codexBackendMode },
+      },
       sessionConfigOptionOverrides: {
         v: 1,
         updatedAt: updatedAt ?? 0,

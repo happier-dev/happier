@@ -33,9 +33,9 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
         const persistenceGeneration = params.draftPersistenceGenerationRef.current;
         const draftBackendTargetRouteParams = buildBackendTargetRouteParams({
             agentType: draft.agentType,
-            backendTarget: draft.backendTarget,
+            backendTarget: draft.agentTarget,
             backendTargetKey: undefined,
-            fallbackTarget: draft.backendTarget ?? null,
+            fallbackTarget: draft.agentTarget ?? null,
         });
 
         params.router.push({

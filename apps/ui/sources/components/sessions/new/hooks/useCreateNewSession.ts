@@ -5,7 +5,6 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import { readLegacyScheduleAutomationDefinition } from '@/sync/domains/automations/automationLegacyScheduleDefinition';
 import {
     isAutomationTemplateEncryptionMaterialUnavailableError,
 } from '@/sync/domains/automations/automationTemplateAvailability';
@@ -36,32 +35,26 @@ import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabil
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { getModelOptionsForAgentType, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import {
-    ConnectedServiceBindingsV1Schema,
-    automationRunExecutionTargetDeliversComposerReferencesV1,
     mentionRefV1SurvivesRenderedTokenAlone,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
-    type ExecutionRunDetachedStartRequestV1,
+    type PersistedBackendTargetRefV2,
     type ProviderErrorV1,
-    type SessionServerStartSpawnDraftV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1, MentionRefV1 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
-import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
+import { buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
+import { materializeNewSessionAutomationEditorDraft } from '@/sync/domains/automations/automationDraft';
+import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import {
-    buildAutomationScheduleFromDraft,
-    normalizeAutomationDescription,
-    normalizeAutomationName,
-    validateAutomationTemplateTarget,
-} from '@/sync/domains/automations/automationValidation';
 import {
     classifyLaunchRetryFailure,
     promptDaemonUnavailableRetry,
@@ -74,7 +67,7 @@ import { createNewSessionActionOperationOrigin } from '@/components/sessions/new
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
+import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import {
     buildNewSessionLaunchScopeKey,
     normalizeLaunchScopePart,
@@ -89,27 +82,14 @@ import {
 } from '@/sync/domains/messages/outgoingUserMessage';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import {
-    buildAutomationTemplateFromSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
     buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
     buildSessionSpawnNewInputV2FromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
-import {
-    buildPluginEventAutomationDetachedExecutionRunRequest,
-    type PluginEventAutomationCreateDraft,
-    type PluginEventAutomationEditTarget,
-} from '@/components/automations/editor/pluginEventAutomationDraft';
-import {
-    submitPluginEventAutomation,
-} from '@/components/automations/editor/pluginEventAutomationSubmit';
-import { confirmPluginEventAutomationSubmission } from '@/components/automations/editor/pluginEventAutomationSubmissionConfirmation';
-import type {
-    PluginEventAutomationResolvedTarget,
-    PluginEventAutomationTargetKind,
-} from '@/components/automations/editor/pluginEventAutomationTarget';
 import { isAutomationApiErrorCode } from '@/sync/api/automations/apiAutomations';
 import {
+    adoptNewSessionLaunchAttemptCustody,
     createNewSessionLaunchAttempt,
     isNewSessionLaunchAttemptInScope,
     markNewSessionLaunchAttemptComplete,
@@ -127,9 +107,12 @@ import {
     publishSessionModelsSeedToMetadata,
 } from '@/sync/domains/models/sessionModelsSeed';
 import {
-    executeSessionSpawnNewAction,
+    buildManualSessionCreationKey,
+    completeManualSessionSpawnNewActionCustody,
+    executeManualSessionSpawnNewAction,
     resolveSessionSpawnNewActionFailureMessageKey,
     resolveSessionSpawnNewResultFailureMessageKey,
+    type ManualSessionSpawnNewActionCustody,
 } from '@/sync/ops/actions/sessionSpawnNewAction';
 import {
     captureNewSessionDraftLaunchCurrentness,
@@ -220,11 +203,13 @@ type ProviderLaunchErrorScopeParams = Readonly<{
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
     agentType: string;
-    backendTarget?: BackendTargetRefV2;
+    backendTarget?: PersistedBackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     useProfiles: boolean;
     selectedProfileId: string | null;
     authoringDraft?: SessionAuthoringDraft | null;
+    automationsEnabled?: boolean;
+    onAutomationDraftChange?: (next: NonNullable<SessionAuthoringDraft['automation']>) => void;
     modelMode: ModelMode;
 }>;
 
@@ -263,8 +248,8 @@ function buildProviderLaunchErrorScopeKey(
     resolvedTargetServerId?: string,
 ): string {
     const modelRef = params.authoringDraft?.modelSelection?.ref ?? null;
-    const backendTarget = params.spawnBackendTarget
-        ?? params.backendTarget
+    const backendTarget = params.backendTarget
+        ?? params.spawnBackendTarget
         ?? { kind: 'backend' as const, backendId: params.agentType };
     return JSON.stringify([
         normalizeLaunchScopePart(params.selectedMachineId),
@@ -321,8 +306,8 @@ export function useCreateNewSession(params: Readonly<{
      * the composer renders this Agent's declared options under, so the spawn
      * envelope is built from the declaration the user actually saw.
      */
-    runtimeCarrierAgentId?: AgentId | null;
-    backendTarget?: BackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
+    backendTarget?: PersistedBackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
     executionRunsEnabled?: boolean;
@@ -343,18 +328,6 @@ export function useCreateNewSession(params: Readonly<{
     agentNewSessionOptions?: Record<string, unknown> | null;
     authoringDraft?: SessionAuthoringDraft | null;
     authoringCommitPending?: boolean;
-    automationEditId?: string | null;
-    eventAutomationDraft?: PluginEventAutomationCreateDraft | null;
-    eventAutomationEdit?: PluginEventAutomationEditTarget | null;
-    eventAutomationTargetKind?: PluginEventAutomationTargetKind | null;
-    resolveEventAutomationTarget?: (input: Readonly<{
-        newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
-        executionRun?: Readonly<{
-            machineId: string | null;
-            request: ExecutionRunDetachedStartRequestV1 | null;
-        }> | null;
-    }>) => PluginEventAutomationResolvedTarget | null;
-    eventAutomationExecutionPermissionMode?: 'no_tools' | 'read_only';
     mcpSelection?: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
 
@@ -367,6 +340,15 @@ export function useCreateNewSession(params: Readonly<{
     selectedMachineCapabilities: any;
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
+    /**
+     * Authoritative-only projection inputs for spawn-target qualification. The
+     * New Session screen model passes null unless the selected machine's
+     * projection phase is `ready`, so a generation that is loading, errored,
+     * retired, or not yet fetched can never qualify a non-bundled target here
+     * and the spawn fails closed instead of launching a stale qualified Agent.
+     * Callers that hand the machine's retained inputs straight through re-open
+     * that bypass.
+     */
     daemonMergedProjectionInputs?: Pick<
         DaemonMergedProjectionInputs,
         'mergedBackendProjectionById' | 'mergedProviderProjectionById'
@@ -467,18 +449,12 @@ export function useCreateNewSession(params: Readonly<{
         const effectiveSelectedPath = (typeof requestedPath === 'string'
             ? requestedPath
             : current.selectedPath).trim();
-        const eventAutomationDraft = current.eventAutomationDraft ?? null;
-        const eventAutomationEdit = current.eventAutomationEdit ?? null;
-        const eventTargetKind = current.eventAutomationTargetKind ?? 'newSession';
-        const hasEventAutomationSubmission = eventAutomationDraft !== null || eventAutomationEdit !== null;
-        const eventTargetDoesNotRequireNewSessionInputs = hasEventAutomationSubmission
-            && eventTargetKind !== 'newSession';
-        if (!eventTargetDoesNotRequireNewSessionInputs && !selectedMachineId) {
+        if (!selectedMachineId) {
             Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
             reportAfterCreatedSettlement({ status: 'rejected' });
             return;
         }
-        if (!eventTargetDoesNotRequireNewSessionInputs && effectiveSelectedPath.length === 0) {
+        if (effectiveSelectedPath.length === 0) {
             Modal.alert(t('common.error'), t('newSession.noPathSelected'));
             reportAfterCreatedSettlement({ status: 'rejected' });
             return;
@@ -539,6 +515,42 @@ export function useCreateNewSession(params: Readonly<{
             const isLaunchScopeStillActive = (): boolean => (
                 mountedRef.current && isLaunchScopeStillCurrent()
             );
+            const captureExactTurnCurrentness = (
+                automation: NonNullable<SessionAuthoringDraft['automation']>,
+            ): (() => boolean) | null => {
+                const accountLifetime = captureActiveServerAccountScopeLifetime();
+                const exactDefinitions = automation.triggers.flatMap((trigger) => (
+                    trigger.definition.kind === 'sessionLifecycle'
+                    && trigger.definition.scope.kind === 'exactTurn'
+                        ? [trigger.definition]
+                        : []
+                ));
+                const authorities = exactDefinitions.flatMap((definition) => {
+                    const sourceSessionId = definition.scope.sourceSessionId;
+                    const authority = captureSessionAutomationAuthority({
+                        session: storage.getState().sessions[sourceSessionId] ?? null,
+                        routeSessionId: sourceSessionId,
+                        routeServerId: resolvedTargetServerId,
+                        activeServerId: getActiveServerSnapshot().serverId,
+                        automationsEnabled: current.automationsEnabled === true,
+                        accountLifetime,
+                        readCurrent: () => ({
+                            session: storage.getState().sessions[sourceSessionId] ?? null,
+                            routeSessionId: sourceSessionId,
+                            routeServerId: resolvedTargetServerId,
+                            activeServerId: getActiveServerSnapshot().serverId,
+                            automationsEnabled: latestParamsRef.current.automationsEnabled === true,
+                        }),
+                    });
+                    return authority ? [{ authority, sourceSessionId, sourceTurnId: definition.scope.sourceTurnId }] : [];
+                });
+                if (authorities.length !== exactDefinitions.length) return null;
+                return () => isLaunchScopeStillActive() && authorities.every((entry) => (
+                    entry.authority.isCurrent()
+                    && readExactActiveParentTurn(storage.getState().sessions[entry.sourceSessionId])?.sourceTurnId
+                        === entry.sourceTurnId
+                ));
+            };
 
             const sessionPrompt = opts?.inputTextOverride ?? current.promptStore.getPrompt();
             const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
@@ -572,38 +584,15 @@ export function useCreateNewSession(params: Readonly<{
              * whose semantics it cannot persist. Attachments have no Automation
              * owner at all.
              *
-             * References are different per writer, and the difference is a real
-             * delivery fact rather than a policy choice. The strict V3 execution
-             * recipe stores `AutomationRunTemplateV1.mentions` — the same
-             * identity-only `MentionRefV1` list an interactive send persists —
-             * and its existing-Session dispatch hands them to the canonical
-             * Session sender, so that writer keeps every reference the user
-             * picked. The new-Session and execution-Run dispatches take a bare
-             * instruction string, and the legacy V2 template envelope stores the
-             * rendered prompt program alone; there a reference whose identity
-             * that program cannot express would become a look-alike token, so
-             * those, and only those, are refused. A `@docs/README.md` file
-             * mention IS such text and stays allowed on every route.
-             *
-             * `automationRunExecutionTargetDeliversComposerReferencesV1` is the
-             * Protocol materializer's own answer, so this refusal cannot drift
-             * from what dispatch actually delivers, and every branch still fails
-             * closed through this one function.
+             * The plural New Session recipe target takes a rendered instruction
+             * string. A reference whose identity cannot survive that string must
+             * fail closed; ordinary file mentions remain representable text.
              */
             const unpersistableComposerReferenceForRenderedPromptOnly = opts?.composerReferences
                 ?.find((reference) => !mentionRefV1SurvivesRenderedTokenAlone(reference))
                 ?? null;
-            const eventTargetDeliversComposerReferences =
-                automationRunExecutionTargetDeliversComposerReferencesV1(eventTargetKind);
-            const eventTargetComposerReferences = eventTargetDeliversComposerReferences
-                ? opts?.composerReferences ?? []
-                : [];
-            const rejectUnsupportedComposerSemanticsForAutomation = (writer: Readonly<{
-                persistsComposerReferences: boolean;
-            }>): boolean => {
-                const unpersistableComposerReference = writer.persistsComposerReferences
-                    ? null
-                    : unpersistableComposerReferenceForRenderedPromptOnly;
+            const rejectUnsupportedComposerSemanticsForAutomation = (): boolean => {
+                const unpersistableComposerReference = unpersistableComposerReferenceForRenderedPromptOnly;
                 if (opts?.hasComposerAttachments !== true && !unpersistableComposerReference) {
                     return false;
                 }
@@ -617,114 +606,6 @@ export function useCreateNewSession(params: Readonly<{
                 return true;
             };
 
-            if (hasEventAutomationSubmission && eventTargetKind !== 'newSession') {
-                if (rejectUnsupportedComposerSemanticsForAutomation({
-                    persistsComposerReferences: eventTargetDeliversComposerReferences,
-                })) {
-                    return;
-                }
-                if (!eventAutomationDraft || !current.resolveEventAutomationTarget) {
-                    Modal.alert(t('common.error'), eventAutomationEdit
-                        ? t('automations.edit.updateFailed')
-                        : t('newSession.failedToStart'));
-                    current.setIsCreating(false);
-                    return;
-                }
-                if (eventTargetKind === 'executionRun' && !selectedMachineId) {
-                    Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
-                    current.setIsCreating(false);
-                    return;
-                }
-                const eventAuthoringDraft = current.authoringDraft ?? null;
-                // Detached Event execution is not a session launcher. It can
-                // consume only the strict backend and service selections the
-                // authoring draft already owns; legacy launcher inputs would
-                // make a second target-normalization path.
-                const eventBackendTarget = eventAuthoringDraft?.backendTarget
-                    ?? current.backendTarget
-                    ?? null;
-                const eventConnectedServicesResult = eventAuthoringDraft?.connectedServices == null
-                    ? null
-                    : ConnectedServiceBindingsV1Schema.safeParse(eventAuthoringDraft.connectedServices);
-                if (eventConnectedServicesResult && !eventConnectedServicesResult.success) {
-                    Modal.alert(t('common.error'), t('newSession.failedToStart'));
-                    current.setIsCreating(false);
-                    return;
-                }
-                const eventConnectedServices = eventConnectedServicesResult?.success
-                    ? eventConnectedServicesResult.data
-                    : null;
-                const eventSubmission = await submitPluginEventAutomation({
-                    draft: eventAutomationDraft,
-                    editTarget: eventAutomationEdit,
-                    automationEditId: current.automationEditId,
-                    metadata: eventAuthoringDraft?.automation
-                        ? {
-                            name: eventAuthoringDraft.automation.name,
-                            description: eventAuthoringDraft.automation.description,
-                            enabled: eventAuthoringDraft.automation.enabled,
-                        }
-                        : null,
-                    prompt: sessionPrompt.trim(),
-                    // The strict recipe writer persists reference identity
-                    // beside the rendered program, so the picked references
-                    // travel with the Automation instead of surviving only
-                    // as look-alike prompt text. Only a target whose dispatch
-                    // delivers them is given them: storing a reference the
-                    // materializer drops would be persisted dead state.
-                    ...(eventTargetComposerReferences.length > 0
-                        ? { mentions: eventTargetComposerReferences }
-                        : {}),
-                    targetKind: eventTargetKind,
-                    executionTargetServerId: resolvedTargetServerId,
-                    buildNewSessionSpawn: () => null,
-                    buildExecutionRun: () => {
-                        if (eventTargetKind !== 'executionRun' || !selectedMachineId) return null;
-                        return {
-                            machineId: selectedMachineId,
-                            request: buildPluginEventAutomationDetachedExecutionRunRequest({
-                                backendTarget: eventBackendTarget,
-                                permissionMode: current.eventAutomationExecutionPermissionMode ?? 'read_only',
-                                modelSelection: eventAuthoringDraft?.modelSelection ?? null,
-                                sessionConfigOptionOverrides: eventAuthoringDraft?.sessionConfigOptionOverrides ?? null,
-                                connectedServices: eventConnectedServices,
-                                profileId: eventAuthoringDraft?.profileId ?? null,
-                            }),
-                        };
-                    },
-                    resolveTarget: current.resolveEventAutomationTarget,
-                    confirmSubmission: confirmPluginEventAutomationSubmission,
-                    isCurrent: isLaunchScopeStillActive,
-                });
-                if (eventSubmission.kind === 'cancelled') {
-                    current.setIsCreating(false);
-                    return;
-                }
-                if (eventSubmission.kind === 'unavailable') {
-                    if (eventSubmission.reason === 'account') {
-                        Modal.alert(
-                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle'),
-                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableBody'),
-                        );
-                    } else {
-                        Modal.alert(t('common.error'), eventAutomationEdit
-                            ? t('automations.edit.updateFailed')
-                            : t('newSession.failedToStart'));
-                    }
-                    current.setIsCreating(false);
-                    return;
-                }
-                current.disableDraftPersistence?.();
-                await clearCompletedDraft();
-                reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
-                current.router.replace((eventSubmission.kind === 'updated'
-                    ? `/automations/${eventSubmission.automationId}`
-                    : '/automations') as any);
-                return;
-            }
-
-            // Non-session Event arms return above. Every remaining legacy
-            // schedule or session-start path still has one exact machine.
             if (!selectedMachineId) {
                 Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
                 reportAfterCreatedSettlement({ status: 'rejected' });
@@ -739,11 +620,6 @@ export function useCreateNewSession(params: Readonly<{
                 )),
             ].slice(0, 10);
             const profilesActive = current.useProfiles;
-            const compatibilityAgentId = resolveNewSessionCompatAgentType({
-                backendTarget: current.backendTarget ?? null,
-                persistedAgentId: current.settings.lastUsedAgent,
-                selectedBuiltInAgentId: staticAgentId,
-            });
             const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
             };
@@ -758,15 +634,19 @@ export function useCreateNewSession(params: Readonly<{
             }
             applySettings(settingsUpdate);
 
-            const backendTarget: BackendTargetRefV2 = current.backendTarget ?? {
+            const selectedBackendTarget: PersistedBackendTargetRefV2 = current.backendTarget ?? {
                 kind: 'backend',
                 backendId: staticAgentId ?? current.agentType,
             };
+            const backendTarget: BackendTargetRefV2 = resolveNewSessionOperationalBackendTarget({
+                backendTarget: selectedBackendTarget,
+                runtimeCarrierAgentId: current.runtimeCarrierAgentId,
+            });
             let environmentVariables = undefined;
             if (profilesActive && current.selectedProfileId) {
                 const selectedProfile = current.profileMap.get(current.selectedProfileId) || getBuiltInProfile(current.selectedProfileId);
                 if (selectedProfile) {
-                    if (!isProfileCompatibleWithBackendTarget(selectedProfile, backendTarget)) {
+                    if (!isProfileCompatibleWithBackendTarget(selectedProfile, selectedBackendTarget)) {
                         Modal.alert(t('common.error'), t('newSession.aiBackendNotCompatibleWithSelectedProfile'));
                         current.setIsCreating(false);
                         return;
@@ -893,6 +773,11 @@ export function useCreateNewSession(params: Readonly<{
                 current.modelMode !== 'default'
                     ? current.modelMode
                     : undefined;
+            const canonicalSpawnBackendTarget = current.spawnBackendTarget ?? backendTarget;
+            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
+                backendTarget: canonicalSpawnBackendTarget,
+                daemonMergedProjectionInputs: current.daemonMergedProjectionInputs,
+            });
             const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
             const hasCanonicalModelSelection = current.authoringDraft != null
                 && Object.prototype.hasOwnProperty.call(current.authoringDraft, 'modelSelection');
@@ -903,7 +788,9 @@ export function useCreateNewSession(params: Readonly<{
                         v: 1 as const,
                         updatedAt: spawnModelUpdatedAt ?? spawnPermissionModeUpdatedAt,
                         ref: {
-                            agentTargetKey: resolveBackendTargetKeyV2(backendTarget),
+                            agentTargetKey: agentTarget
+                                ? resolveBackendTargetKeyV2(agentTarget)
+                                : resolveBackendTargetKeyV2(canonicalSpawnBackendTarget),
                             providerConnectionId: null,
                             modelId: spawnModelId,
                         },
@@ -930,12 +817,16 @@ export function useCreateNewSession(params: Readonly<{
                 })
                 : {};
             const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({
+                executionTarget: selectedMachineId ? {
+                    serverId: resolvedTargetServerId,
+                    machineId: selectedMachineId,
+                } : null,
                 directory: effectiveSelectedPath,
                 checkoutCreationDraft: current.checkoutCreationDraft ?? null,
+                organizationPlacement: current.authoringDraft?.organizationPlacement ?? { folderId: null, tagIds: [] },
                 prompt: normalizedSessionPrompt,
                 displayText: normalizedSessionPrompt,
-                agentId: compatibilityAgentId,
-                backendTarget,
+                agentTarget,
                 transcriptStorage: current.transcriptStorage ?? null,
                 profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
                 environmentVariables: environmentVariables ?? null,
@@ -949,9 +840,7 @@ export function useCreateNewSession(params: Readonly<{
                 windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: windowsTerminalWindowName || null,
-                codexBackendMode: typeof spawnSessionExtras.codexBackendMode === 'string'
-                    ? spawnSessionExtras.codexBackendMode as CodexBackendMode
-                    : null,
+                runtimeDescriptorV1: spawnSessionExtras.runtimeDescriptorV1 ?? null,
                 acpSessionModeId: normalizedAcpModeId || null,
                 sessionConfigOptionOverrides:
                     spawnSessionExtras.sessionConfigOptionOverrides
@@ -960,180 +849,41 @@ export function useCreateNewSession(params: Readonly<{
                 automation: current.authoringDraft?.automation ?? null,
             });
             const activeAutomationDraft = authoringDraft.automation ?? null;
-            if (eventAutomationDraft || eventAutomationEdit) {
-                if (rejectUnsupportedComposerSemanticsForAutomation({
-                    persistsComposerReferences: eventTargetDeliversComposerReferences,
-                })) {
+            if (activeAutomationDraft !== null) {
+                if (rejectUnsupportedComposerSemanticsForAutomation()) {
                     return;
                 }
-                if (!eventAutomationDraft || !current.resolveEventAutomationTarget || eventTargetKind !== 'newSession') {
-                    Modal.alert(t('common.error'), eventAutomationEdit
-                        ? t('automations.edit.updateFailed')
-                        : t('newSession.failedToStart'));
+                if (!agentTarget || !selectedMachineId) {
+                    Modal.alert(t('common.error'), t('newSession.failedToStart'));
                     current.setIsCreating(false);
                     return;
                 }
-                const eventAuthoringDraft = eventAutomationEdit
-                    ? current.authoringDraft ?? null
-                    : authoringDraft;
-                if (!eventAuthoringDraft) {
-                    Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
+                const isAutomationAuthoringCurrent = captureExactTurnCurrentness(activeAutomationDraft);
+                if (!isAutomationAuthoringCurrent) {
+                    Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
                     current.setIsCreating(false);
                     return;
                 }
-                const eventBackendTarget = eventAutomationEdit
-                    ? eventAuthoringDraft.backendTarget
-                    : current.spawnBackendTarget ?? backendTarget;
-                const eventPermissionMode = eventAutomationEdit
-                    ? parsePermissionIntentAlias(eventAuthoringDraft.permissionMode ?? '')
-                    : spawnPermissionMode;
-                const eventPermissionModeUpdatedAt = eventAutomationEdit
-                    ? eventAuthoringDraft.permissionModeUpdatedAt
-                    : spawnPermissionModeUpdatedAt;
-                const eventSubmission = await submitPluginEventAutomation({
-                    draft: eventAutomationDraft,
-                    editTarget: eventAutomationEdit,
-                    automationEditId: current.automationEditId,
-                    metadata: activeAutomationDraft
-                        ? {
-                            name: activeAutomationDraft.name,
-                            description: activeAutomationDraft.description,
-                            enabled: activeAutomationDraft.enabled,
-                        }
-                        : null,
-                    prompt: normalizedSessionPrompt,
-                    // The strict recipe writer persists reference identity
-                    // beside the rendered program, so the picked references
-                    // travel with the Automation instead of surviving only
-                    // as look-alike prompt text. Only a target whose dispatch
-                    // delivers them is given them: storing a reference the
-                    // materializer drops would be persisted dead state.
-                    ...(eventTargetComposerReferences.length > 0
-                        ? { mentions: eventTargetComposerReferences }
-                        : {}),
-                    targetKind: eventTargetKind,
-                    executionTargetServerId: resolvedTargetServerId,
-                    buildNewSessionSpawn: (currentSpawn) => {
-                        if (!selectedMachineId || !eventPermissionMode || eventPermissionModeUpdatedAt === null) {
-                            return null;
-                        }
-                        const agentTarget = eventBackendTarget
-                            ? resolveAgentExecutionTargetForBackendTarget({
-                                backendTarget: eventBackendTarget,
-                                daemonMergedProjectionInputs: current.daemonMergedProjectionInputs,
-                            })
-                            : null;
-                        if (!agentTarget) return null;
-                        try {
-                            return buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
-                                draft: {
-                                    ...eventAuthoringDraft,
-                                    prompt: normalizedSessionPrompt,
-                                    displayText: normalizedSessionPrompt,
-                                },
-                                executionTarget: currentSpawn?.executionTarget ?? {
-                                    serverId: resolvedTargetServerId,
-                                    machineId: selectedMachineId,
-                                },
-                                ...(currentSpawn?.organizationPlacement
-                                    ? { organizationPlacement: currentSpawn.organizationPlacement }
-                                    : {}),
-                                agentTarget,
-                                permissionMode: eventPermissionMode,
-                                configurationUpdatedAtMs: eventPermissionModeUpdatedAt,
-                            });
-                        } catch {
-                            return null;
-                        }
-                    },
-                    buildExecutionRun: () => null,
-                    resolveTarget: current.resolveEventAutomationTarget,
-                    confirmSubmission: confirmPluginEventAutomationSubmission,
-                    isCurrent: isLaunchScopeStillActive,
+                const spawn = buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
+                    draft: { ...authoringDraft, ...spawnSessionExtras },
+                    permissionMode: spawnPermissionMode,
+                    configurationUpdatedAtMs: spawnPermissionModeUpdatedAt,
                 });
-                if (eventSubmission.kind === 'cancelled') {
-                    current.setIsCreating(false);
-                    return;
-                }
-                if (eventSubmission.kind === 'unavailable') {
-                    if (eventSubmission.reason === 'account') {
-                        Modal.alert(
-                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle'),
-                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableBody'),
-                        );
-                    } else {
-                        Modal.alert(t('common.error'), eventAutomationEdit
-                            ? t('automations.edit.updateFailed')
-                            : t('newSession.failedToStart'));
-                    }
-                    current.setIsCreating(false);
-                    return;
-                }
-                current.disableDraftPersistence?.();
-                await clearCompletedDraft();
-                reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
-                current.router.replace((eventSubmission.kind === 'updated'
-                    ? `/automations/${eventSubmission.automationId}`
-                    : '/automations') as any);
-                return;
-            }
-
-            if (activeAutomationDraft?.enabled === true) {
-                if (rejectUnsupportedComposerSemanticsForAutomation({ persistsComposerReferences: false })) {
-                    return;
-                }
-                const schedule = buildAutomationScheduleFromDraft(activeAutomationDraft);
-                const template = buildAutomationTemplateFromSessionAuthoringDraft({
-                    ...authoringDraft,
-                    ...spawnSessionExtras,
-                });
-                validateAutomationTemplateTarget({
-                    targetType: 'new_session',
-                    template,
-                });
-                const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
+                const recipe = await buildAutomationRecipeFromSessionAuthoring({
                     credentials: sync.getCredentials(),
-                    template,
-                    ...(sync.encryption
-                        ? {
-                            encryptRaw: (value) => sync.encryption!.encryptAutomationTemplateRaw(value),
-                        }
-                        : {}),
+                    templateVersion: 1,
+                    prompt: normalizedSessionPrompt,
+                    target: { kind: 'newSession', spawn },
+                    ...(sync.encryption ? {
+                        encryptRaw: (value) => sync.encryption!.encryptAutomationTemplateRaw(value),
+                    } : {}),
+                    isCurrent: isAutomationAuthoringCurrent,
                 });
-
-                const normalizedAutomationInput = {
-                    enabled: true,
-                    name: normalizeAutomationName(activeAutomationDraft.name),
-                    description: normalizeAutomationDescription(activeAutomationDraft.description),
-                    schedule,
-                    templateCiphertext,
-                };
-                const automationEditId = typeof current.automationEditId === 'string'
-                    ? current.automationEditId.trim()
-                    : '';
-
-                if (automationEditId.length > 0) {
-                    const definition = await sync.refreshAutomationDefinitionDetail(automationEditId);
-                    const legacyAutomation = readLegacyScheduleAutomationDefinition(definition);
-                    if (legacyAutomation?.id !== automationEditId) {
-                        Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
-                        current.setIsCreating(false);
-                        return;
-                    }
-                    await sync.updateAutomation(automationEditId, normalizedAutomationInput);
-                    current.disableDraftPersistence?.();
-                    await clearCompletedDraft();
-                    await sync.refreshAutomations();
-                    reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
-                    current.router.replace(`/automations/${automationEditId}` as any);
-                    return;
-                }
-
-                await sync.createAutomation({
-                    ...normalizedAutomationInput,
-                    targetType: 'new_session',
+                await sync.saveAutomationEditorDraft(materializeNewSessionAutomationEditorDraft({
+                    draft: activeAutomationDraft,
+                    executionRecipe: recipe,
                     assignments: [{ machineId: selectedMachineId, enabled: true, priority: 100 }],
-                });
+                }), { isCurrent: isAutomationAuthoringCurrent });
                 current.disableDraftPersistence?.();
                 await clearCompletedDraft();
                 await sync.refreshAutomations();
@@ -1146,16 +896,19 @@ export function useCreateNewSession(params: Readonly<{
                 Object.keys(spawnSessionExtras.sessionConfigOptionOverrides?.overrides ?? {}),
             );
             const legacyOnlySpawnExtras = Object.keys(spawnSessionExtras).filter(
-                (key) => key !== 'sessionConfigOptionOverrides' && !strictV2ConfigurationOptionKeys.has(key),
+                (key) => key !== 'runtimeDescriptorV1'
+                    && key !== 'sessionConfigOptionOverrides'
+                    && !strictV2ConfigurationOptionKeys.has(key),
             );
             const hasLegacyOnlyEnvironment = Object.keys(environmentVariables ?? {}).length > 0;
             if (
                 hasLegacyOnlyEnvironment
                 || legacyOnlySpawnExtras.length > 0
             ) {
-                // Environment overrides and Agent-specific extras have no
-                // strict-V2 owner yet. Park them rather than silently dropping
-                // one or falling back to the private machine-spawn path.
+                // Environment overrides and noncanonical Agent-specific extras
+                // have no strict-V2 owner. The canonical runtime descriptor and
+                // config-option overrides above do, and continue through the
+                // host-owned Session Action path.
                 Modal.alert(t('common.error'), t('newSession.failedToStart'));
                 current.setIsCreating(false);
                 return;
@@ -1184,6 +937,7 @@ export function useCreateNewSession(params: Readonly<{
             }
             publishLaunchAttempt(launchAttempt);
             let createdSessionId = launchAttempt.createdSessionId;
+            let manualActionCustody: ManualSessionSpawnNewActionCustody | null = null;
             let initialInputLocalId: string | null = null;
             let initialMessageText = '';
             let initialInputWasNotAccepted = false;
@@ -1200,10 +954,6 @@ export function useCreateNewSession(params: Readonly<{
             if (shouldSpawnForNewSessionLaunchAttempt(launchAttempt)) {
                 launchAttempt = markNewSessionLaunchAttemptSpawning(launchAttempt);
                 publishLaunchAttempt(launchAttempt);
-                const agentTarget = resolveAgentExecutionTargetForBackendTarget({
-                    backendTarget: current.spawnBackendTarget ?? backendTarget,
-                    daemonMergedProjectionInputs: current.daemonMergedProjectionInputs,
-                });
                 if (!agentTarget) {
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: 'spawning',
@@ -1218,13 +968,7 @@ export function useCreateNewSession(params: Readonly<{
 
                 const spawnInput = buildSessionSpawnNewInputV2FromAuthoringDraft({
                         draft: authoringDraft,
-                        creationKey: launchAttempt.attemptId,
-                        executionTarget: {
-                            serverId: resolvedTargetServerId,
-                            machineId: selectedMachineId,
-                        },
-                        organizationPlacement: { folderId: null, tagIds: [] },
-                        agentTarget,
+                        creationKey: buildManualSessionCreationKey(launchAttempt.attemptId),
                         permissionMode: spawnPermissionMode,
                         configurationUpdatedAtMs: spawnPermissionModeUpdatedAt,
                         initialMessage: initialMessageText || null,
@@ -1240,10 +984,40 @@ export function useCreateNewSession(params: Readonly<{
                 });
                 const actionResult = await (async () => {
                     try {
-                        return await executeSessionSpawnNewAction(spawnInput, {
+                        if (!current.draftScope) {
+                            throw new Error('Manual Session launch custody requires an active Account scope');
+                        }
+                        const execution = await executeManualSessionSpawnNewAction(spawnInput, {
                             surface: 'ui',
                             actionRequestId: launchAttempt.attemptId,
+                        }, {
+                            scope: {
+                                serverId: resolvedTargetServerId,
+                                accountId: current.draftScope.accountId,
+                            },
+                            machineHomeDir: typeof current.selectedMachine?.metadata?.homeDir === 'string'
+                                ? current.selectedMachine.metadata.homeDir
+                                : '',
+                            userAttemptId: launchAttempt.attemptId,
+                            seedNonce: launchAttempt.spawnNonce,
                         });
+                        if (execution.status === 'custody_unavailable') {
+                            throw new Error(
+                                execution.reason === 'corrupt'
+                                    ? 'Saved launch recovery state is corrupt. No Session was started.'
+                                    : 'This client cannot safely coordinate Session launch recovery. No Session was started.',
+                            );
+                        }
+                        manualActionCustody = execution.custody;
+                        launchAttempt = adoptNewSessionLaunchAttemptCustody(launchAttempt, {
+                            userAttemptId: execution.custody.userAttemptId,
+                            spawnNonce: execution.custody.nonce,
+                            createdSessionId: execution.custody.createdSessionId,
+                            firstTurnLocalId: execution.custody.firstTurnLocalId,
+                            attachmentMessageLocalId: execution.custody.attachmentMessageLocalId,
+                        });
+                        publishLaunchAttempt(launchAttempt);
+                        return execution.action;
                     } catch (error) {
                         const draftAccountId = current.draftScope?.accountId.trim() ?? '';
                         const canonicalOperation = draftAccountId
@@ -1342,7 +1116,7 @@ export function useCreateNewSession(params: Readonly<{
                     current.setIsCreating(false);
                     return;
                 }
-                const spawnedBackendTargetKey = resolveBackendTargetKeyV2(current.spawnBackendTarget ?? backendTarget);
+                const spawnedBackendTargetKey = resolveBackendTargetKeyV2(selectedBackendTarget);
                 const modelPolicyAgentId = current.staticAgentId ?? current.agentType;
                 const modelsSeed = buildSessionModelsSeedRequest({
                     agentId: modelPolicyAgentId,
@@ -1512,7 +1286,7 @@ export function useCreateNewSession(params: Readonly<{
                             resolved: resolvedInitialMessage,
                             sessionId: createdSessionId,
                             agentId: current.agentType,
-                            backendTarget: current.backendTarget ?? null,
+                            backendTarget,
                             permissionMode: current.permissionMode,
                             actionExecutor,
                             previousMessage: sessionPrompt,
@@ -1664,6 +1438,10 @@ export function useCreateNewSession(params: Readonly<{
                         throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
                     }
                 }
+                if (manualActionCustody) {
+                    await completeManualSessionSpawnNewActionCustody(manualActionCustody);
+                    manualActionCustody = null;
+                }
                 publishLaunchAttempt(null);
                 if (!opts?.deferAcceptedDraftClearToDocument) {
                     if (mountedRef.current) {
@@ -1704,6 +1482,55 @@ export function useCreateNewSession(params: Readonly<{
             }
             if (isAutomationApiErrorCode(error, 'automation_template_version_conflict')) {
                 Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
+                latestParamsRef.current.setIsCreating(false);
+                return;
+            }
+            if (
+                isAutomationApiErrorCode(error, 'sourceTurnNotCurrent')
+                || isAutomationApiErrorCode(error, 'sourceTurnNotInProgress')
+                || isAutomationApiErrorCode(error, 'sourceTurnUnavailable')
+                || isAutomationApiErrorCode(error, 'sourceSessionUnavailable')
+                || (error instanceof Error && error.message === 'Automation authoring authority changed')
+            ) {
+                const latest = latestParamsRef.current;
+                const automation = latest.authoringDraft?.automation ?? null;
+                let canReplace = automation !== null;
+                let changed = false;
+                const replacement = automation ? {
+                    ...automation,
+                    triggers: automation.triggers.map((trigger) => {
+                        const definition = trigger.definition;
+                        if (definition.kind !== 'sessionLifecycle' || definition.scope.kind !== 'exactTurn') return trigger;
+                        const exact = readExactActiveParentTurn(storage.getState().sessions[definition.scope.sourceSessionId]);
+                        if (!exact) {
+                            canReplace = false;
+                            return trigger;
+                        }
+                        if (exact.sourceTurnId === definition.scope.sourceTurnId) return trigger;
+                        changed = true;
+                        return {
+                            ...trigger,
+                            definition: {
+                                ...definition,
+                                scope: { ...definition.scope, sourceTurnId: exact.sourceTurnId },
+                            },
+                        };
+                    }),
+                } : null;
+                const shouldReplace = canReplace && changed && replacement && latest.onAutomationDraftChange
+                    ? await Modal.confirm(
+                        t('automations.exactTurn.staleTitle'),
+                        t('automations.exactTurn.staleBody'),
+                        {
+                            cancelText: t('common.cancel'),
+                            confirmText: t('automations.exactTurn.useCurrentTurn'),
+                        },
+                    )
+                    : false;
+                if (shouldReplace && replacement) latest.onAutomationDraftChange?.(replacement);
+                else if (!changed || !canReplace) {
+                    Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
+                }
                 latestParamsRef.current.setIsCreating(false);
                 return;
             }

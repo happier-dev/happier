@@ -449,7 +449,7 @@ describe('useExternalSessionTakeover', () => {
     });
 
     expect(refreshNow).toHaveBeenCalledTimes(1);
-    expect(refreshNow).toHaveBeenCalledWith({ takeoverReadiness: 'fresh' });
+    expect(refreshNow).toHaveBeenCalledWith();
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: false,
       canTakeOverPersist: true,
@@ -520,8 +520,8 @@ describe('useExternalSessionTakeover', () => {
     });
 
     expect(refreshNow).toHaveBeenCalledTimes(2);
-    expect(refreshNow).toHaveBeenNthCalledWith(1, { takeoverReadiness: 'fresh' });
-    expect(refreshNow).toHaveBeenNthCalledWith(2, { takeoverReadiness: 'fresh' });
+    expect(refreshNow).toHaveBeenNthCalledWith(1);
+    expect(refreshNow).toHaveBeenNthCalledWith(2);
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenNthCalledWith(1, {
       canTakeOverDirect: false,
       canTakeOverPersist: false,

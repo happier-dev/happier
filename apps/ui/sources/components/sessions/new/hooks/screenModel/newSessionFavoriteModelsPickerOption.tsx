@@ -49,6 +49,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
+    projectionCurrent: boolean;
     selectedPath: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
@@ -110,6 +111,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
                 selectedConfigOverrides={params.selectedConfigOverrides}
                 selectedMachineId={params.selectedMachineId}
                 capabilityServerId={params.capabilityServerId}
+                projectionCurrent={params.projectionCurrent}
                 cwd={params.selectedPath}
                 settings={params.settings}
                 refreshProbe={params.refreshProbe ?? null}

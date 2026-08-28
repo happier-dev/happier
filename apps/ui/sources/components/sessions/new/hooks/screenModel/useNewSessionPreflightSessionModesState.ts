@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
@@ -34,7 +34,7 @@ import {
 
 export function useNewSessionPreflightSessionModesState(params: Readonly<{
     backendTarget: BackendTargetRefV2;
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -63,7 +63,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const backendTarget = params.backendTarget;
 
-    const agentType = React.useMemo<AgentId | null>(() => {
+    const agentType = React.useMemo<string | null>(() => {
         if (backendTarget.configuredBackendId) {
             return params.runtimeCarrierAgentId ?? null;
         }
@@ -116,7 +116,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const supportsPreflightModeProbe = React.useMemo(() => {
         if (!agentType) return false;
-        const core = getAgentCore(agentType);
+        const core = isBundledAgentId(agentType) ? getAgentCore(agentType) : null;
         // `sessionModes` is a bundled-only declaration, so an installed Agent
         // has no core to name an ACP mode kind. Treating that absence as a veto
         // is what makes the session-mode probe structurally unreachable for

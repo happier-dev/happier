@@ -4,8 +4,6 @@ import { View } from 'react-native';
 import type { ActionId, BackendTargetRefV2, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
 
-import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
-import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
 import { useNewSessionCheckoutActionChip } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutActionChip';
 import { useNewSessionAgentInputExtraActionChips } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputExtraActionChips';
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
@@ -78,9 +76,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     automationFeatureEnabled: boolean;
     automationDraft: NewSessionAutomationDraft;
-    effectiveAutomationDraft: AutomationSettingsValue;
+    effectiveAutomationDraft: NewSessionAutomationDraft;
     setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
-    eventComposer?: PluginEventAutomationComposerModel | null;
     repoScmSnapshot: ScmWorkingSnapshot | null;
     checkoutChipModel: NewSessionCheckoutChipModel;
     checkoutPickerOpen: boolean;
@@ -101,12 +98,13 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     agentType: string;
     staticAgentId: AgentId | null;
     /** The Agent that will run the Session; see the chips hook. */
-    runtimeCarrierAgentId: AgentId | null;
+    runtimeCarrierAgentId: string | null;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
     /** One-shot unresolved placement offered by a host-seeded New Session draft. */
     seededPlacementActionChip?: AgentInputExtraActionChip | null;
+    organizationPlacementActionChips?: readonly AgentInputExtraActionChip[];
     showAutomationActionChips: boolean;
     showServerPickerChip: boolean;
     targetServerId: string | null;
@@ -170,7 +168,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         params.theme.colors.state.danger.foreground,
     ]);
 
-    const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
+    const handleAutomationSettingsChange = React.useCallback((next: NewSessionAutomationDraft) => {
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
     }, [params.setAutomationDraft]);
 
@@ -245,8 +243,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         automationDraft: params.effectiveAutomationDraft,
         automationLabel: getAutomationChipLabel(params.automationDraft),
         onAutomationChange: handleAutomationSettingsChange,
-        eventComposer: params.eventComposer,
         checkoutActionChip,
+        organizationPlacementActionChips: params.organizationPlacementActionChips,
         showServerPickerChip: params.showServerPickerChip,
         targetServerId: params.targetServerId,
         targetServerName: params.targetServerName,

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 
 type UseCreateNewSessionParams = Parameters<typeof useCreateNewSession>[0];
 type UseCreateNewSessionResult = ReturnType<typeof useCreateNewSession>;
@@ -40,12 +41,16 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
         options?: Parameters<UseCreateNewSessionResult['handleCreateSession']>[0],
     ) => {
         const selectedMachineId = createSessionParams.selectedMachineId;
-        const staticAgentId = createSessionParams.staticAgentId
-            ?? (isBundledAgentId(createSessionParams.agentType) ? createSessionParams.agentType : null);
-        if (selectedMachineId && staticAgentId) {
+        const behaviorAgentId = resolveNewSessionBehaviorAgentId({
+            runtimeCarrierAgentId: createSessionParams.runtimeCarrierAgentId,
+            staticAgentId: createSessionParams.staticAgentId
+                ?? (isBundledAgentId(createSessionParams.agentType) ? createSessionParams.agentType : null),
+            agentType: createSessionParams.agentType,
+        });
+        if (selectedMachineId && behaviorAgentId) {
             try {
                 await ensureAgentInstallablesBackground({
-                    agentId: staticAgentId,
+                    agentId: behaviorAgentId,
                     machineId: selectedMachineId,
                     serverId: capabilityServerId,
                     settings: createSessionParams.settings,
@@ -60,6 +65,7 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
         capabilityServerId,
         createSession.handleCreateSession,
         createSessionParams.agentType,
+        createSessionParams.runtimeCarrierAgentId,
         createSessionParams.staticAgentId,
         createSessionParams.resumeSessionId,
         createSessionParams.selectedMachineId,

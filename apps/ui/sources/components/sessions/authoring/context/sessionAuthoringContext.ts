@@ -5,10 +5,8 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import type { SessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/sessionAuthoringSnapshot';
 
-export type NewSessionAuthoringSubmissionMode = 'launch' | 'createAutomation' | 'editAutomation';
-export type NewSessionSubmitAccessibilityLabelKey =
-    | 'automations.create.createButtonTitle'
-    | 'automations.edit.saveAutomationLabel';
+export type NewSessionAuthoringSubmissionMode = 'launch' | 'createAutomation';
+export type NewSessionSubmitAccessibilityLabelKey = 'automations.create.createButtonTitle';
 
 export type NewSessionAuthoringContext = Readonly<{
     kind: 'newSession';

@@ -241,6 +241,7 @@ import {
     buildStructuredInputMetaOverrides,
     createStructuredInputMentionFromSuggestion,
     reconcileStructuredInputMentionsWithText,
+    reconcileStructuredInputMentionsWithTextChange,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
 import {
@@ -1337,7 +1338,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const liveTextStatusRef = React.useRef(liveTextStatus);
     const hasText = liveTextStatus.hasText;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
-    const dictation = useVoiceDictation(props.sessionId);
+    // Dictation edits this exact composer, so it consumes the same edit authority as
+    // the text input. A submit-only lock deliberately remains editable; read-only and
+    // edit+submit locks do not. Retained Session editors keep their draft tree mounted
+    // while hidden. Dictation is live
+    // capture, not draft state: feed the existing presentation fact into its one controller so
+    // hiding this retained composer cancels and releases the canonical capture admission.
+    const composerInputEditLocked = props.composerInputLock?.mode === 'editAndSubmit';
+    const dictationEditable = !props.disabled && !composerInputEditLocked;
+    const dictation = useVoiceDictation(
+        props.sessionId,
+        props.surfacePresented !== false,
+        dictationEditable,
+    );
+    const dictationComposerAuthorityRef = React.useRef({
+        editable: dictationEditable,
+        sessionId: props.sessionId ?? null,
+    });
+    dictationComposerAuthorityRef.current = {
+        editable: dictationEditable,
+        sessionId: props.sessionId ?? null,
+    };
     const [fileDragActive, setFileDragActive] = React.useState(false);
     const handleFilesDroppedToComposer = React.useCallback((event: any) => {
         const onAttachmentsAdded = props.onAttachmentsAdded;
@@ -1481,7 +1502,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const onChangeTextRef = React.useRef(props.onChangeText);
     const deferredParentTextSyncRef = React.useRef<AgentInputPendingParentTextSync | null>(null);
     const deferredParentTextSyncTimerRef = React.useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-    const composerInputEditLocked = props.composerInputLock?.mode === 'editAndSubmit';
     const composerInputSubmitLocked = props.composerInputLock !== null && props.composerInputLock !== undefined;
     const sendActionDisabled = Boolean(
         props.disabled || props.isSendDisabled || props.isSending || composerInputSubmitLocked,
@@ -1720,12 +1740,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             historyAppliedInputStateRef.current = null;
             messageHistory.pause(newState.text);
         }
-        // SB-7 — one reconciler for every text change, live edit or programmatic swap alike.
-        // It used to be two, because maintaining a mention's `[start, end)` needed the selection
-        // an edit replaced to resolve the changed span. A mention is now kept by whether the text
-        // still contains its token, which needs neither the previous text nor the selection.
-        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithText({
-            text: newState.text,
+        // Live edits know the exact replaced selection, which disambiguates equal token text.
+        // Programmatic swaps below use the bounded diff-based sibling.
+        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithTextChange({
+            previousText,
+            nextText: newState.text,
+            previousSelection: previousState.selection,
             mentions: current,
         }));
         if (newState.text !== previousText && !isProgrammaticHistoryApply) {
@@ -1743,9 +1763,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [hasRetainedHistorySession, messageHistory, props.inputPersistence, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
 
     const handleDictationPress = React.useCallback(async () => {
+        const admittedSessionId = props.sessionId ?? null;
+        if (!admittedSessionId || !dictationComposerAuthorityRef.current.editable) return;
         try {
             const result = await dictation.toggle();
             if (result.kind !== 'completed') return;
+            const currentAuthority = dictationComposerAuthorityRef.current;
+            if (
+                !currentAuthority.editable
+                || currentAuthority.sessionId !== admittedSessionId
+            ) {
+                return;
+            }
             if (!result.text) {
                 Modal.alert(t('voiceAssistant.dictationNoSpeech'));
                 return;
@@ -1770,7 +1799,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
             Modal.alert(t('common.error'), t('errors.dictationFailed'));
         }
-    }, [dictation.toggle]);
+    }, [dictation.toggle, props.sessionId]);
 
     React.useEffect(() => {
         if (!dictation.failure) return;
@@ -1827,7 +1856,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : null);
     const fieldAccessory = props.fieldAccessory
         ?? (ownsFieldDictation
-            ? <AgentInputDictationButton status={dictationStatus} onPress={handleDictationPress} />
+            ? <AgentInputDictationButton
+                disabled={!dictationEditable}
+                status={dictationStatus}
+                onPress={handleDictationPress}
+            />
             : null);
 
     React.useEffect(() => {
@@ -1858,7 +1891,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             selection: nextSelection,
         };
         updateStructuredInputMentions((currentMentions) => reconcileStructuredInputMentionsWithText({
-            text: props.value,
+            previousText: current.text,
+            nextText: props.value,
             mentions: currentMentions,
         }));
         setHasAutocompleteTextInteraction(false);
@@ -1888,7 +1922,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const nextState = { text: props.value, selection: nextSelection };
         historyAppliedInputStateRef.current = { state: nextState };
         updateStructuredInputMentions((currentMentions) => reconcileStructuredInputMentionsWithText({
-            text: props.value,
+            previousText: liveInputText,
+            nextText: props.value,
             mentions: currentMentions,
         }));
         inputStateRef.current = nextState;
@@ -2054,13 +2089,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             );
             applyResolvedSelection(result);
 
-            const mention = createStructuredInputMentionFromSuggestion({ suggestion });
+            const insertionStart = activeWordForSelection?.offset ?? currentInputState.selection.start;
+            const mention = createStructuredInputMentionFromSuggestion({ suggestion, start: insertionStart });
             if (mention) {
                 updateStructuredInputMentions((current) => [
-                    // Re-picking the same candidate inserts the same token, so it replaces
-                    // rather than accumulating. A mention whose token the new text no longer
-                    // carries is dropped by the reconciler on the resulting state change.
-                    ...current.filter((existing) => existing.tokenText !== mention.tokenText),
+                    ...current.filter((existing) => existing.start !== mention.start || existing.end !== mention.end),
                     mention,
                 ]);
             }

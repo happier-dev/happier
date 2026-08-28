@@ -32,6 +32,48 @@ vi.mock('@/components/sessions/agentInput/sessionActions/buildNewSessionActionSh
 }));
 
 describe('useNewSessionAgentInputExtraActionChips', () => {
+    it('places organization controls after checkout and before Automation controls', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+        const chip = (key: string): AgentInputExtraActionChip => ({ key, render: () => null });
+
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'claude',
+                agentOptionState: null,
+                setAgentOptionState: vi.fn(),
+                selectedMachineId: 'machine-a',
+                showAutomationActionChips: true,
+                automationDraft: { enabled: false, name: '', description: '', triggers: [] },
+                automationLabel: 'Automate',
+                onAutomationChange: vi.fn(),
+                checkoutActionChip: chip('checkout'),
+                organizationPlacementActionChips: [chip('organization-folder'), chip('organization-tags')],
+                showServerPickerChip: false,
+                targetServerId: null,
+                targetServerName: 'Server A',
+                externalSessionsFeatureEnabled: false,
+                supportsDirectTranscriptStorage: false,
+                transcriptStorage: 'persisted',
+                onTranscriptStorageChange: vi.fn(),
+                selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null,
+                windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(),
+                onActionShortcutPress: vi.fn(),
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+        expect(chips.map((item) => item.key)).toEqual([
+            'checkout',
+            'organization-folder',
+            'organization-tags',
+            'new-session-automate',
+        ]);
+    });
+
     it('creates the automation chip as a shared content popover instead of a collapsed toggle action', async () => {
         const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
 
@@ -48,10 +90,14 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                     enabled: false,
                     name: '',
                     description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 60,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
+                    triggers: [{
+                        clientId: 'schedule-hourly',
+                        definition: {
+                            kind: 'schedule',
+                            enabled: true,
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                        },
+                    }],
                 },
                 automationLabel: 'Automate',
                 onAutomationChange: vi.fn(),
@@ -100,10 +146,14 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                     enabled: false,
                     name: '',
                     description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 60,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
+                    triggers: [{
+                        clientId: 'schedule-hourly',
+                        definition: {
+                            kind: 'schedule',
+                            enabled: true,
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                        },
+                    }],
                 },
                 automationLabel: 'Automate',
                 onAutomationChange: vi.fn(),
@@ -160,10 +210,14 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                     enabled: false,
                     name: '',
                     description: '',
-                    scheduleKind: 'interval',
-                    everyMinutes: 60,
-                    cronExpr: '0 * * * *',
-                    timezone: null,
+                    triggers: [{
+                        clientId: 'schedule-hourly',
+                        definition: {
+                            kind: 'schedule',
+                            enabled: true,
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                        },
+                    }],
                 },
                 automationLabel: 'Automate',
                 onAutomationChange: vi.fn(),

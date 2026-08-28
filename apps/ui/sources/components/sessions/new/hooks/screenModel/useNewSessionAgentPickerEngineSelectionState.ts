@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -19,7 +19,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
@@ -32,12 +32,12 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     rememberEngineSelectionsEnabled?: boolean;
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
     rememberedEngineSelectionServerId?: string | null;
-    onRememberEngineSelection?: (backendTarget: BackendTargetRefV2, selection: {
+    onRememberEngineSelection?: (backendTarget: PersistedBackendTargetRefV2, selection: {
         modelSelection: SessionModelSelectionV1 | null;
         acpSessionModeId: string | null;
         sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     }) => void;
-    onExplicitBackendTargetSelection?: (backendTarget: BackendTargetRefV2) => void;
+    onExplicitBackendTargetSelection?: (backendTarget: PersistedBackendTargetRefV2) => void;
 }>;
 
 function areConfigOverridesEqual(

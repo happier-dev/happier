@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type {
     AcpConfigOptionOverridesV1,
-    BackendTargetRefV2,
+    PersistedBackendTargetRefV2,
     SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
@@ -37,7 +37,7 @@ type DeferredRememberedEngineSelectionParams = Readonly<{
 }>;
 
 type DeferredRememberedEngineSelectionRequest = Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     selection: RememberedEngineSelectionInput;
 }>;
 
@@ -92,7 +92,7 @@ function shouldCommitRememberedEngineSelection(params: DeferredRememberedEngineS
 
 export function useDeferredRememberedEngineSelection(
     params: DeferredRememberedEngineSelectionParams,
-): (backendTarget: BackendTargetRefV2, selection: RememberedEngineSelectionInput) => void {
+): (backendTarget: PersistedBackendTargetRefV2, selection: RememberedEngineSelectionInput) => void {
     const latestParamsRef = React.useRef(params);
     latestParamsRef.current = params;
     const pendingSnapshotRef = React.useRef<DeferredRememberedEngineSelectionSnapshot | null>(null);
@@ -128,7 +128,7 @@ export function useDeferredRememberedEngineSelection(
     }, []);
 
     const rememberEngineSelection = React.useCallback((
-        backendTarget: BackendTargetRefV2,
+        backendTarget: PersistedBackendTargetRefV2,
         selection: RememberedEngineSelectionInput,
     ) => {
         const latest = latestParamsRef.current;

@@ -4,15 +4,14 @@ import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    buildBackendTargetKey,
     buildBackendTargetKeyV2,
-    convertBackendTargetRefV2ToV1,
     type EffectiveActionInputField,
+    type PersistedBackendTargetRefV2,
     getActionSpec,
     resolveEffectiveActionInputFields,
 } from '@happier-dev/protocol';
 
-import { buildResumeSessionExtrasFromUiState, isBundledAgentId } from '@/agents/catalog/catalog';
+import { buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -39,7 +38,10 @@ import { resumeSession } from '@/sync/ops/sessions';
 import { t } from '@/text';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
-import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
+import {
+    resolveExecutionRunLauncherBackendChoices,
+    type ExecutionRunLauncherBackendChoice,
+} from './resolveExecutionRunLauncherBackendChoices';
 import { extractExecutionRunProfilesFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
 import {
     doesExecutionRunProfileMatchSelectedBackends,
@@ -51,7 +53,10 @@ import { toExecutionRunActionPermissionMode } from '@/sync/domains/actions/execu
 import { normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+    resolveSessionActionDefaultBackend,
+    resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { ActionInputFields, getValueAtPath, setValueAtTopLevelPatch, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 
@@ -61,6 +66,19 @@ import {
     type ExecutionRunIntent,
 } from './executionRunLauncherModel';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { resolveExecutionRunPermissionAgentId } from './resolveExecutionRunPermissionAgentId';
+
+export function resolveInitialExecutionRunBackendTargetKey(
+    initialTarget: PersistedBackendTargetRefV2 | null,
+    choices: readonly ExecutionRunLauncherBackendChoice[],
+): string | null {
+    if (!initialTarget) return null;
+    const canonicalTargetKey = buildBackendTargetKeyV2(initialTarget);
+    return choices.find((choice) => (
+        choice.disabled !== true
+        && buildBackendTargetKeyV2(choice.backendTarget) === canonicalTargetKey
+    ))?.targetKey ?? null;
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -174,7 +192,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     );
     const [intent, setIntent] = React.useState<ExecutionRunIntent>(initialIntent);
     const initialBackendTarget = React.useMemo(
-        () => sessionActionDefaultBackend?.backendTarget ?? null,
+        () => resolveSessionActionDefaultTarget(sessionActionDefaultBackend),
         [sessionActionDefaultBackend],
     );
     const initialDefaultBackendId = sessionActionDefaultBackend?.defaultBackendId ?? null;
@@ -193,7 +211,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         return resolveExecutionRunLauncherBackendChoices({
             enabledAgentIds,
             executionRunsBackends,
-            acpCatalogSettingsV1: (settings as any)?.acpCatalogSettingsV1 ?? { v: 2, backends: [] },
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
             intent,
             mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
             mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
@@ -221,9 +239,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     );
 
     const initialBackendTargetKey = React.useMemo(() => {
-        if (!initialBackendTarget) return null;
-        const targetKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(initialBackendTarget) as any);
-        return backendChoices.some((choice) => choice.targetKey === targetKey && choice.disabled !== true) ? targetKey : null;
+        return resolveInitialExecutionRunBackendTargetKey(initialBackendTarget, backendChoices);
     }, [backendChoices, initialBackendTarget]);
 
     const buildSeedInput = React.useCallback((nextIntent: ExecutionRunIntent, previousInput?: Record<string, unknown> | null) => {
@@ -294,20 +310,22 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     );
 
     const permissionModeOptions = React.useMemo(() => {
-        const rawAgentType = selectedBackendChoices[0] && isBundledAgentId(selectedBackendChoices[0].backendId)
-            ? selectedBackendChoices[0].backendId
-            : sessionActionDefaultBackend?.defaultBackendId
+        const rawAgentType = resolveExecutionRunPermissionAgentId({
+            selectedBackendChoices,
+            // Released Session/default metadata remains a compatibility read
+            // only when no concrete backend choice is selected.
+            fallbackAgentId: sessionActionDefaultBackend?.defaultAgentId
             ?? (session as any)?.metadata?.agent
-            ?? enabledAgentIds[0]
-            ?? null;
-        if (typeof rawAgentType !== 'string') {
+            ?? null,
+        });
+        if (!rawAgentType) {
             return [];
         }
         return getPermissionModeOptionsForAgentType(rawAgentType as any).map((option) => ({
             ...option,
             value: toExecutionRunActionPermissionMode(option.value),
         }));
-    }, [enabledAgentIds, selectedBackendChoices, session, sessionActionDefaultBackend]);
+    }, [selectedBackendChoices, session, sessionActionDefaultBackend]);
     const selectedPermissionMode = React.useMemo(() => {
         const value = getValueAtPath(actionInput, 'permissionMode');
         return typeof value === 'string' ? value : '';
@@ -477,10 +495,12 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
                 }
 
                 const permissionOverride = getPermissionModeOverrideForSpawn(session);
+                const sessionActionDefaultTarget = resolveSessionActionDefaultTarget(sessionActionDefaultBackend);
                 const modelOverride = sessionActionDefaultBackend
+                    && sessionActionDefaultTarget
                     ? getModelOverrideForSpawn(
                         session,
-                        buildBackendTargetKeyV2(sessionActionDefaultBackend.backendTarget),
+                        buildBackendTargetKeyV2(sessionActionDefaultTarget),
                     )
                     : null;
                 const base = buildResumeSessionBaseOptionsFromSession({

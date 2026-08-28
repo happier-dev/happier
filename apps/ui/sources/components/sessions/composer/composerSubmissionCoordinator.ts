@@ -84,6 +84,27 @@ export type ComposerSubmissionFieldCurrentness = Readonly<{
     reconciledReferences: readonly ComposerMentionRef[];
 }>;
 
+function hasCanonicalComposerReferenceRanges(
+    text: string,
+    references: readonly ComposerMentionRef[],
+): boolean {
+    let boundary = 0;
+    for (const reference of references) {
+        if (
+            !Number.isInteger(reference.start)
+            || !Number.isInteger(reference.end)
+            || reference.start < boundary
+            || reference.end <= reference.start
+            || reference.end > text.length
+            || text.slice(reference.start, reference.end) !== reference.token
+        ) {
+            return false;
+        }
+        boundary = reference.end;
+    }
+    return true;
+}
+
 /**
  * Detach exactly the semantic fields that canonical admission consumes. The
  * document owner may keep evolving after this point; its later bytes must not
@@ -91,6 +112,7 @@ export type ComposerSubmissionFieldCurrentness = Readonly<{
  */
 export function captureComposerSubmissionSnapshot(snapshot: ComposerSnapshotV1 | null): ComposerSubmissionSnapshot | null {
     if (!snapshot) return null;
+    if (!hasCanonicalComposerReferenceRanges(snapshot.text, snapshot.references)) return null;
     return structuredClone({
         ref: snapshot.ref,
         revision: snapshot.revision,

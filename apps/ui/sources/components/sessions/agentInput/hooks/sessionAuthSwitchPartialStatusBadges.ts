@@ -1,7 +1,11 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import {
+    resolveConnectedServiceDisplayName,
+    resolveQualifiedConnectedServiceRegistryDisplayName,
+} from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import type {
     SessionConnectedServiceAuthSwitchResult,
@@ -9,6 +13,7 @@ import type {
 } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol';
 
 type PartialAuthSwitchServiceStatus = Extract<
     SessionConnectedServiceAuthSwitchServiceResult['status'],
@@ -114,9 +119,32 @@ function resolvePartialAuthSwitchServiceStatusLabelKey(
     return 'connectedServices.authSwitch.status.partialApplicationServiceNotApplied';
 }
 
+/**
+ * Service titles for partial hot-apply badges. Daemon-produced service ids are
+ * canonical qualified keys resolved against the applied descriptor projection
+ * (public title, neutral fallback for an unknown service); a released bundled
+ * scalar id keeps the generated built-in compatibility display.
+ */
+function resolveBadgeServiceTitle(params: Readonly<{
+    serviceId: string;
+    resolveServiceTitle?: (serviceId: string) => string;
+}>): string {
+    if (params.resolveServiceTitle) return params.resolveServiceTitle(params.serviceId);
+    const qualifiedService = parseQualifiedPluginContributionKey(params.serviceId);
+    if (qualifiedService) {
+        return resolveQualifiedConnectedServiceRegistryDisplayName(
+            getConnectedServiceRegistrySnapshot(),
+            qualifiedService,
+            t,
+        );
+    }
+    return resolveConnectedServiceDisplayName(params.serviceId as ConnectedServiceId, t);
+}
+
 export function buildPartialAuthSwitchApplicationStatusBadges(
     notice: PartialAuthSwitchApplicationNotice | null,
     onReconcile?: () => void,
+    resolveServiceTitle?: (serviceId: string) => string,
 ): ReadonlyArray<AgentInputStatusBadge> {
     if (!notice) return [];
     // The badge is the actionable reconcile surface (session-scope mirror of the
@@ -137,7 +165,10 @@ export function buildPartialAuthSwitchApplicationStatusBadges(
         const serviceIdToken = toTestIdSafeValue(serviceNotice.serviceId);
         const statusToken = serviceNotice.status.replace(/_/g, '-');
         const labelKey = resolvePartialAuthSwitchServiceStatusLabelKey(serviceNotice.status);
-        const serviceName = resolveConnectedServiceDisplayName(serviceNotice.serviceId as ConnectedServiceId, t);
+        const serviceName = resolveBadgeServiceTitle({
+            serviceId: serviceNotice.serviceId,
+            resolveServiceTitle,
+        });
         const label = t(labelKey, { service: serviceName });
         return {
             key: `connected-services-auth-switch-service-${serviceIdToken}-${statusToken}`,

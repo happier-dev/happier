@@ -22,7 +22,11 @@ describe('sessionConfigurationSeed', () => {
                     backendTarget: { kind: 'backend', backendId: 'codex' },
                     profileId: 'profile-1',
                     transcriptStorage: 'direct',
-                    codexBackendMode: 'appServer',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'appServer' },
+                    },
                     mcpSelection: {
                         v: 1,
                         managedServersEnabled: false,
@@ -71,7 +75,11 @@ describe('sessionConfigurationSeed', () => {
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
             modelMode: 'gpt-5',
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: {
                 v: 1,

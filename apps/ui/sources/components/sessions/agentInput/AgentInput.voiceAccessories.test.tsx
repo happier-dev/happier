@@ -24,6 +24,10 @@ const dictationState = vi.hoisted(() => ({
     status: 'idle' as 'idle' | 'starting' | 'listening' | 'transcribing',
     toggle: vi.fn(),
     dismissFailure: vi.fn(),
+    presentedCalls: [] as boolean[],
+    editableCalls: [] as boolean[],
+    setTextAndSelection: vi.fn(),
+    focus: vi.fn(),
 }));
 // The real `voice` setting, so `useVoiceAttemptControl` walks the real provider
 // registry rather than being mocked out. `null` is "Voice not configured", which is
@@ -116,12 +120,20 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 }));
 
 vi.mock('@/voice/dictation/useVoiceDictation', () => ({
-    useVoiceDictation: () => ({
-        status: dictationState.status,
-        failure: null,
-        toggle: dictationState.toggle,
-        dismissFailure: dictationState.dismissFailure,
-    }),
+    useVoiceDictation: (
+        _sessionId: string | undefined,
+        isPresented = true,
+        isEditable = true,
+    ) => {
+        dictationState.presentedCalls.push(isPresented);
+        dictationState.editableCalls.push(isEditable);
+        return ({
+            status: dictationState.status,
+            failure: null,
+            toggle: dictationState.toggle,
+            dismissFailure: dictationState.dismissFailure,
+        });
+    },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -162,8 +174,8 @@ vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
     MultiTextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
         React.useImperativeHandle(ref, () => ({
-            setTextAndSelection: () => {},
-            focus: () => {},
+            setTextAndSelection: dictationState.setTextAndSelection,
+            focus: dictationState.focus,
             blur: () => {},
         }));
         return React.createElement('MultiTextInput', props, null);
@@ -371,6 +383,7 @@ describe('AgentInput voice accessory slots', () => {
     afterEach(() => {
         platformState.os = 'web';
         dictationState.status = 'idle';
+        dictationState.presentedCalls.length = 0;
         vi.clearAllMocks();
     });
 
@@ -734,6 +747,7 @@ describe('AgentInput mounts the Voice composer', () => {
     afterEach(() => {
         platformState.os = 'web';
         dictationState.status = 'idle';
+        dictationState.editableCalls.length = 0;
         voiceSettingState.current = null;
         vi.clearAllMocks();
     });
@@ -777,6 +791,63 @@ describe('AgentInput mounts the Voice composer', () => {
         await screen.pressByTestIdAsync(DICTATION_TEST_ID);
         expect(dictationState.toggle).toHaveBeenCalledTimes(1);
 
+        await screen.unmount();
+    });
+
+    it.each([
+        ['read-only', { disabled: true }],
+        ['edit-and-submit lock', { composerInputLock: { mode: 'editAndSubmit', reasons: ['Held by action'] } }],
+    ])('uses the composer edit authority to disable Dictation for %s', async (_label, overrides) => {
+        voiceSettingState.current = READY_VOICE_SETTING;
+
+        const screen = await renderSessionComposer(overrides);
+        const mic = screen.findByTestId(DICTATION_TEST_ID);
+
+        expect(dictationState.editableCalls.at(-1)).toBe(false);
+        expect(mic?.props.disabled).toBe(true);
+        expect(mic?.props.accessibilityState).toMatchObject({ disabled: true });
+        await screen.unmount();
+    });
+
+    it('does not insert a stale transcript after the composer becomes locked, or replay it after unlock', async () => {
+        voiceSettingState.current = READY_VOICE_SETTING;
+        let resolveToggle!: (result: { kind: 'completed'; text: string }) => void;
+        dictationState.toggle.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveToggle = resolve;
+        }));
+
+        const screen = await renderSessionComposer();
+        const pendingPress = screen.findByTestId(DICTATION_TEST_ID)!.props.onPress();
+
+        await screen.update(await sessionComposerScene({
+            composerInputLock: { mode: 'editAndSubmit', reasons: ['Held by action'] },
+        }));
+        expect(dictationState.editableCalls.at(-1)).toBe(false);
+
+        await act(async () => {
+            resolveToggle({ kind: 'completed', text: 'stale words' });
+            await pendingPress;
+        });
+        expect(dictationState.setTextAndSelection).not.toHaveBeenCalled();
+
+        await screen.update(await sessionComposerScene());
+        expect(dictationState.editableCalls.at(-1)).toBe(true);
+        expect(dictationState.setTextAndSelection).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it('still inserts a completed transcript while the same composer remains editable', async () => {
+        voiceSettingState.current = READY_VOICE_SETTING;
+        dictationState.toggle.mockResolvedValueOnce({ kind: 'completed', text: 'fresh words' });
+
+        const screen = await renderSessionComposer();
+        await screen.pressByTestIdAsync(DICTATION_TEST_ID);
+
+        expect(dictationState.setTextAndSelection).toHaveBeenCalledWith(
+            'fresh words',
+            { start: 11, end: 11 },
+        );
+        expect(dictationState.focus).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 
@@ -849,10 +920,12 @@ describe('AgentInput mounts the Voice composer', () => {
         // Voice runtime. Hidden composers must leave no Voice subscription/leaf behind.
         expect(screen.findByTestId(PLANET_TEST_ID)).toBeNull();
         expect(activations()).toEqual([false, true, false]);
+        expect(dictationState.presentedCalls.at(-1)).toBe(false);
 
         await screen.update(await sessionComposerScene({ surfacePresented: true }, true));
         expect(screen.findByTestId(PLANET_TEST_ID)).not.toBeNull();
         expect(activations()).toEqual([false, true, false, true]);
+        expect(dictationState.presentedCalls.at(-1)).toBe(true);
 
         await screen.unmount();
     });

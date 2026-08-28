@@ -82,8 +82,8 @@ describe('newSessionAgentSelection', () => {
     it('marks multi-cli profiles as available when at least one supported agent remains selectable', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [
-                { backendTarget: { kind: 'backend', backendId: 'claude' }, backendTargetKey: 'backend:claude', builtInAgentId: 'claude', kind: 'builtInAgent' },
-                { backendTarget: { kind: 'backend', backendId: 'codex' }, backendTargetKey: 'backend:codex', builtInAgentId: 'codex', kind: 'builtInAgent' },
+                { backendTarget: { kind: 'backend', backendId: 'claude' }, backendTargetKey: 'backend:claude', builtInAgentId: 'claude', agentId: 'claude', kind: 'builtInAgent' },
+                { backendTarget: { kind: 'backend', backendId: 'codex' }, backendTargetKey: 'backend:codex', builtInAgentId: 'codex', agentId: 'codex', kind: 'builtInAgent' },
             ],
             detectionTimestamp: 1,
             availabilityById: { claude: false, codex: false },
@@ -98,6 +98,7 @@ describe('newSessionAgentSelection', () => {
                     backendTarget: { kind: 'backend', backendId: 'codex' },
                     backendTargetKey: 'backend:codex',
                     builtInAgentId: 'codex',
+                    agentId: 'codex',
                     kind: 'builtInAgent',
                 },
             ],
@@ -115,6 +116,7 @@ describe('newSessionAgentSelection', () => {
             backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' } as const,
             backendTargetKey: 'backend:review-bot:configured:review-bot',
             builtInAgentId: null,
+            agentId: 'review-bot',
             kind: 'configuredBackend' as const,
         };
         expect(isBackendEntrySelectableForNewSession({
@@ -131,11 +133,44 @@ describe('newSessionAgentSelection', () => {
         })).toEqual([entry]);
     });
 
+    it('applies the operational installed Agent declaration to plugin backend availability', () => {
+        const entry = {
+            backendTarget: { kind: 'backend', backendId: 'acme.review' } as const,
+            backendTargetKey: 'backend:acme.review',
+            builtInAgentId: null,
+            agentId: 'acme.review/assistant',
+            kind: 'pluginBackend' as const,
+        };
+
+        expect(isBackendEntrySelectableForNewSession({
+            entry,
+            detectionTimestamp: 1,
+            availabilityById: { 'acme.review/assistant': false },
+            installableDepKeyCountByAgentId: { 'acme.review/assistant': 0 },
+            selectableWithoutCliByAgentId: { 'acme.review/assistant': false },
+        })).toBe(false);
+        expect(isBackendEntrySelectableForNewSession({
+            entry,
+            detectionTimestamp: 1,
+            availabilityById: { 'acme.review/assistant': false },
+            installableDepKeyCountByAgentId: { 'acme.review/assistant': 1 },
+            selectableWithoutCliByAgentId: { 'acme.review/assistant': false },
+        })).toBe(true);
+        expect(isBackendEntrySelectableForNewSession({
+            entry,
+            detectionTimestamp: 1,
+            availabilityById: { 'acme.review/assistant': false },
+            installableDepKeyCountByAgentId: { 'acme.review/assistant': 0 },
+            selectableWithoutCliByAgentId: { 'acme.review/assistant': true },
+        })).toBe(true);
+    });
+
     it('excludes backend entries that explicitly do not support session runtime', () => {
         const entry = {
             backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' } as const,
             backendTargetKey: 'backend:review-bot:configured:review-bot',
             builtInAgentId: null,
+            agentId: 'review-bot',
             kind: 'configuredBackend' as const,
             capabilities: {
                 session: { supported: false },
@@ -164,6 +199,7 @@ describe('newSessionAgentSelection', () => {
                     backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
                     backendTargetKey: 'backend:review-bot:configured:review-bot',
                     builtInAgentId: null,
+                    agentId: 'review-bot',
                     kind: 'configuredBackend',
                 },
             ],
@@ -180,12 +216,14 @@ describe('newSessionAgentSelection', () => {
                     backendTarget: { kind: 'backend', backendId: 'claude' },
                     backendTargetKey: 'backend:claude',
                     builtInAgentId: 'claude',
+                    agentId: 'claude',
                     kind: 'builtInAgent',
                 },
                 {
                     backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
                     backendTargetKey: 'backend:review-bot:configured:review-bot',
                     builtInAgentId: null,
+                    agentId: 'review-bot',
                     kind: 'configuredBackend',
                 },
             ],

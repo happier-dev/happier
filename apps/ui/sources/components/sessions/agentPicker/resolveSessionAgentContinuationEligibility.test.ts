@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit';
 
 import { readRuntimeCapabilitiesForSession } from '@happier-dev/agents';
 
@@ -18,6 +19,7 @@ function builtInEntry(
     overrides: Partial<ResolvedBackendCatalogEntry> = {},
 ): ResolvedBackendCatalogEntry {
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
         backendTarget: { kind: 'backend', backendId },
         backendTargetKey: `backend:${backendId}`,
         kind: 'builtInAgent',
@@ -28,6 +30,7 @@ function builtInEntry(
         iconAgentId: backendId as ResolvedBackendCatalogEntry['iconAgentId'],
         title: backendId,
         subtitle: null,
+        cliAuthBackgroundCheckSafe: false,
         ...overrides,
     };
 }

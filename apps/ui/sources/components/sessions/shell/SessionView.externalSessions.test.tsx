@@ -2760,6 +2760,8 @@ describe('SessionView (direct sessions)', () => {
       agentInput.props.onStructuredInputMentionsChange?.([{
         kind: 'skill',
         tokenText: 'continue',
+        start: 0,
+        end: 8,
         name: 'continue',
       }]);
     });
@@ -2809,6 +2811,8 @@ describe('SessionView (direct sessions)', () => {
     expect(readCanonicalDraftMentions()).toEqual([{
       kind: 'skill',
       tokenText: 'continue',
+      start: 0,
+      end: 8,
       name: 'continue',
     }]);
 
@@ -2965,6 +2969,8 @@ describe('SessionView (direct sessions)', () => {
       agentInput.props.onStructuredInputMentionsChange?.([{
         kind: 'skill',
         tokenText: 'draft',
+        start: 0,
+        end: 5,
         name: 'draft',
       }]);
     });
@@ -2984,6 +2990,8 @@ describe('SessionView (direct sessions)', () => {
     expect(readCanonicalDraftMentions()).toEqual([{
       kind: 'skill',
       tokenText: 'draft',
+      start: 0,
+      end: 5,
       name: 'draft',
     }]);
 
@@ -2996,6 +3004,8 @@ describe('SessionView (direct sessions)', () => {
     const mention = {
       kind: 'skill' as const,
       tokenText: '$restored',
+      start: 20,
+      end: 29,
       name: 'restored',
     };
     let rejectSubmit!: (error: Error) => void;
@@ -3003,6 +3013,7 @@ describe('SessionView (direct sessions)', () => {
     useCanonicalDraftScope();
     clearCanonicalSessionDraft();
     writeCanonicalSessionDraft({
+      text: 'restore this prompt $restored',
       recipient,
       executionRunDelivery: 'interrupt',
       mentions: [mention],
@@ -3031,7 +3042,7 @@ describe('SessionView (direct sessions)', () => {
       const screen = await renderSessionView();
       let agentInput = findAgentInput(screen);
       await act(async () => {
-        agentInput.props.onChangeText('restore this prompt');
+        agentInput.props.onChangeText('restore this prompt $restored');
       });
 
       let sendPromise: Promise<void> | undefined;
@@ -3051,7 +3062,7 @@ describe('SessionView (direct sessions)', () => {
       await settleExternalSessionView();
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('restore this prompt');
+      expect(agentInput.props.value).toBe('restore this prompt $restored');
       expect(readCanonicalDraftRecipient()).toEqual(recipient);
       expect(readCanonicalDraftDelivery()).toBe('interrupt');
       expect(readCanonicalDraftMentions()).toEqual([mention]);
@@ -3070,11 +3081,15 @@ describe('SessionView (direct sessions)', () => {
     const oldMention = {
       kind: 'skill' as const,
       tokenText: '$old',
+      start: 8,
+      end: 12,
       name: 'old',
     };
     const newMention = {
       kind: 'skill' as const,
       tokenText: '$new',
+      start: 8,
+      end: 12,
       name: 'new',
     };
     let rejectSubmit!: (error: Error) => void;
@@ -3082,6 +3097,7 @@ describe('SessionView (direct sessions)', () => {
     useCanonicalDraftScope();
     clearCanonicalSessionDraft();
     writeCanonicalSessionDraft({
+      text: 'send to $old target',
       recipient: oldRecipient,
       executionRunDelivery: 'interrupt',
       mentions: [oldMention],
@@ -3110,7 +3126,7 @@ describe('SessionView (direct sessions)', () => {
       const screen = await renderSessionView();
       let agentInput = findAgentInput(screen);
       await act(async () => {
-        agentInput.props.onChangeText('send to old target');
+        agentInput.props.onChangeText('send to $old target');
       });
 
       let sendPromise: Promise<void> | undefined;

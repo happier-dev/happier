@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { buildAcpConfigOptionOverridesV1, type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
@@ -39,7 +39,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     getBackendEntryUnavailabilityReason?: (entry: ResolvedBackendCatalogEntry) => NewSessionProfileAvailabilityReason | null;
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     selectedBackendTargetKey: string;
-    setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV2>>;
+    setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     modelMode: ModelMode;
     modelSelection?: SessionModelSelectionV1 | null;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
@@ -50,6 +50,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     setEngineSelectionForBackendTarget?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['setEngineSelectionForBackendTarget'];
     selectedMachineId: string | null;
     capabilityServerId: string;
+    projectionCurrent: boolean;
     selectedPath: string | null;
     settings: Settings;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
@@ -194,6 +195,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectEngineSelection,
         selectedMachineId: params.selectedMachineId,
         capabilityServerId: params.capabilityServerId,
+        projectionCurrent: params.projectionCurrent,
         selectedPath: params.selectedPath,
         selectedBackendTargetKey,
         selectedModelId: String(params.modelMode),
@@ -222,6 +224,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.modelMode,
         params.modelSelection,
         params.profileMap,
+        params.projectionCurrent,
         params.refreshProbe,
         params.resolvedBackendEntries,
         params.selectedMachineId,

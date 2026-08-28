@@ -120,9 +120,11 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
                 encryptRaw: vi.fn(async (value: unknown) => value),
                 encryptAutomationTemplateRaw: vi.fn(async (value: unknown) => value),
             },
-            createAutomation: vi.fn(async (input: { templateCiphertext: string }) => {
+            saveAutomationEditorDraft: vi.fn(async (input: {
+                executionRecipe: { template: { t: string; v?: Record<string, unknown> } };
+            }) => {
                 if (configuredBackendHarnessModuleState.createdAutomationTemplate) {
-                    configuredBackendHarnessModuleState.createdAutomationTemplate.value = JSON.parse(input.templateCiphertext) as Record<string, unknown>;
+                    configuredBackendHarnessModuleState.createdAutomationTemplate.value = input.executionRecipe.template.v ?? null;
                 }
                 return {};
             }),
@@ -227,12 +229,6 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     vi.doMock('@/sync/domains/input/slashCommands/expandPromptTemplateInvocation', () => ({
         expandPromptTemplateInvocation: vi.fn(async () => 'expanded template'),
     }));
-    vi.doMock('@/sync/domains/automations/automationValidation', () => ({
-        buildAutomationScheduleFromDraft: vi.fn(() => ({ kind: 'interval' })),
-        normalizeAutomationDescription: vi.fn((value: string) => value),
-        normalizeAutomationName: vi.fn((value: string) => value),
-        validateAutomationTemplateTarget: vi.fn(),
-    }));
     vi.doMock('@/utils/timing/time', () => ({
         delay: vi.fn(async () => {}),
     }));
@@ -263,17 +259,26 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
             buildResumeCapabilityOptionsFromUiState: vi.fn(() => ({})),
         };
     });
-    vi.doMock('@/sync/ops', () => ({
-        machineSpawnNewSession: vi.fn(async (opts: SpawnPayloadCapture) => {
-            if (configuredBackendHarnessModuleState.captured) {
-                configuredBackendHarnessModuleState.captured.value = opts;
-            }
-            return configuredBackendHarnessModuleState.spawnSuccess
-                ? { type: 'success', sessionId: 'session-created' }
-                : { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
-        }),
-    }));
+    vi.doMock('@/sync/ops', () => ({}));
     vi.doMock('@/sync/ops/actions/sessionSpawnNewAction', () => ({
+        buildManualSessionCreationKey: (userAttemptId: string) => `manual:${userAttemptId}`,
+        executeManualSessionSpawnNewAction: async (input: any, context: unknown, params: any) => ({
+            status: 'executed',
+            action: await executeSessionSpawnNewActionMock(input, context),
+            custody: {
+                v: 3,
+                scope: params.scope,
+                machineId: input.executionTarget.machineId,
+                targetFingerprint: 'test-fingerprint',
+                userAttemptId: params.userAttemptId,
+                nonce: params.seedNonce,
+                submissionState: 'submitted',
+                createdSessionId: null,
+                firstTurnLocalId: `spawn-first-turn:${params.seedNonce}`,
+                attachmentMessageLocalId: `spawn-attachment:${params.seedNonce}`,
+            },
+        }),
+        completeManualSessionSpawnNewActionCustody: async () => true,
         executeSessionSpawnNewAction: executeSessionSpawnNewActionMock,
         resolveSessionSpawnNewActionFailureMessageKey: () => 'newSession.failedToStart',
         resolveSessionSpawnNewResultFailureMessageKey: () => 'newSession.failedToStart',
@@ -282,7 +287,11 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
         followUpSpawnedSessionWithServerScope: vi.fn(async () => configuredBackendHarnessModuleState.followUpPending),
     }));
 
-    const { useCreateNewSession } = await import('./useCreateNewSession');
+    const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
+    const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
+        ...params,
+        draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
+    });
     return {
         useCreateNewSession,
         captured,
@@ -680,13 +689,23 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     acpSessionModeId: null,
                     sessionConfigOptionOverrides: null,
                     automation: {
+                        pendingAutomationId: 'automation-configured-backend',
                         enabled: true,
                         name: 'Nightly',
                         description: '',
-                        scheduleKind: 'interval',
-                        everyMinutes: 60,
-                        cronExpr: '0 * * * *',
-                        timezone: null,
+                        triggers: [{
+                            clientId: 'trigger-configured-backend',
+                            definition: {
+                                kind: 'schedule',
+                                enabled: true,
+                                schedule: {
+                                    kind: 'interval',
+                                    everyMs: 60 * 60_000,
+                                    scheduleExpr: null,
+                                    timezone: null,
+                                },
+                            },
+                        }],
                     },
                 }),
             } as any);
@@ -966,13 +985,16 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
-    it('writes codex backend mode into automation templates without the experimental shadow flag', async () => {
+    it('writes the canonical Codex runtime descriptor into automation templates', async () => {
         const { useCreateNewSession, createdAutomationTemplate } = await setupHarness();
 
         const { buildSpawnSessionExtrasFromUiState } = await import('@/agents/catalog/catalog');
         (buildSpawnSessionExtrasFromUiState as any).mockReturnValue({
-            codexBackendMode: 'appServer',
-            experimentalCodexAcp: false,
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -1038,13 +1060,23 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     acpSessionModeId: null,
                     sessionConfigOptionOverrides: null,
                     automation: {
+                        pendingAutomationId: 'automation-codex-runtime',
                         enabled: true,
                         name: 'Nightly',
                         description: '',
-                        scheduleKind: 'interval',
-                        everyMinutes: 60,
-                        cronExpr: '0 * * * *',
-                        timezone: null,
+                        triggers: [{
+                            clientId: 'trigger-codex-runtime',
+                            definition: {
+                                kind: 'schedule',
+                                enabled: true,
+                                schedule: {
+                                    kind: 'interval',
+                                    everyMs: 60 * 60_000,
+                                    scheduleExpr: null,
+                                    timezone: null,
+                                },
+                            },
+                        }],
                     },
                 }),
             } as any);
@@ -1060,8 +1092,13 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
             backendTarget: { kind: 'backend', backendId: 'codex' },
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         }));
+        expect(createdAutomationTemplate.value).not.toHaveProperty('codexBackendMode');
         expect(createdAutomationTemplate.value).not.toHaveProperty('experimentalCodexAcp');
     });
 });

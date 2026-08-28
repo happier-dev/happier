@@ -151,6 +151,7 @@ type UseInSessionAgentPickerControlsParams = Readonly<{
     source: SessionAgentContinuationSourceState;
     /** Where continuation support is inspected, and how long an answer holds. */
     machine: SessionAgentContinuationMachineTarget;
+    projectionCurrent: boolean;
     /**
      * What a target Agent's own model, mode and configuration detail needs to
      * resolve. Engine and model are one decision, so a target row shows the same
@@ -875,6 +876,11 @@ export function useInSessionAgentPickerControls(
         );
         return buildSessionAgentPickerOptions({
             entries: targetEntries,
+            identityScope: {
+                machineId: params.detail.machineId,
+                serverId: params.detail.capabilityServerId,
+                current: params.projectionCurrent,
+            },
             favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
             resolvePresentation: (entry) => {
                 const eligibility = eligibilityByTargetKey.get(entry.backendTargetKey);

@@ -68,10 +68,12 @@ export function useTranscriptRootRollbackActions(params: Readonly<{
         () => readSessionRollbackRangesV1((stableSessionMetadata as Record<string, unknown> | null | undefined) ?? null),
         [sessionMetadataSignature, stableSessionMetadata],
     );
-    const rollbackActionsInputSignature = React.useMemo(
-        () => buildRollbackActionsInputSignature({ messageIdsOldestFirst, messagesById }),
-        [messageIdsOldestFirst, messagesById],
-    );
+    // The transcript store mutates these containers in place and uses a separate revision to
+    // trigger this root render. Recompute the content signature instead of memoizing by identity.
+    const rollbackActionsInputSignature = buildRollbackActionsInputSignature({
+        messageIdsOldestFirst,
+        messagesById,
+    });
     const turnChangeSetsCacheRef = React.useRef<Readonly<{
         sourceMessages: readonly TurnChangeToolMessage[];
         turnChangeSets: ReturnType<typeof deriveTurnChangeSetsFromMessages>;

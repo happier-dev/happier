@@ -6,7 +6,6 @@ import {
     getNewSessionAgentInputExtraActionChips,
 } from '@/agents/catalog/catalog';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createAutomationToggleActionChip } from '@/components/sessions/agentInput/definitions/createAutomationToggleActionChip';
 import { createServerActionChip } from '@/components/sessions/agentInput/definitions/createServerActionChip';
@@ -27,7 +26,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
      * `staticAgentId` answers `null` for every one of them; the operational
      * identity is what the descriptor owner is keyed by.
      */
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     /** @deprecated Direct callers without a projected backend entry are bundled-only. */
     agentId?: AgentId;
     agentOptionState?: Record<string, unknown> | null;
@@ -44,8 +43,8 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     automationLabel: string;
     onAutomationChange: (next: NewSessionAutomationDraft) => void;
-    eventComposer?: PluginEventAutomationComposerModel | null;
     checkoutActionChip?: AgentInputExtraActionChip | null;
+    organizationPlacementActionChips?: readonly AgentInputExtraActionChip[];
     showServerPickerChip: boolean;
     targetServerId: string | null;
     targetServerName: string;
@@ -88,9 +87,10 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
             label: params.automationLabel,
             value: params.automationDraft,
             onChange: params.onAutomationChange,
-            eventComposer: params.eventComposer,
+            machineId: params.selectedMachineId,
+            targetServerId: params.targetServerId,
         });
-    }, [params.automationDraft, params.automationLabel, params.eventComposer, params.onAutomationChange]);
+    }, [params.automationDraft, params.automationLabel, params.onAutomationChange, params.selectedMachineId, params.targetServerId]);
 
     const storageActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.externalSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;
@@ -119,11 +119,12 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         if (params.connectedServicesAuthChip) {
             chips.push(params.connectedServicesAuthChip);
         }
-        if (params.showAutomationActionChips) {
-            chips.push(automationActionChip);
-        }
         if (params.checkoutActionChip) {
             chips.push(params.checkoutActionChip);
+        }
+        chips.push(...(params.organizationPlacementActionChips ?? []));
+        if (params.showAutomationActionChips) {
+            chips.push(automationActionChip);
         }
         if (params.seededPlacementActionChip) {
             chips.push(params.seededPlacementActionChip);
@@ -156,6 +157,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.checkoutActionChip,
         params.connectedServicesAuthChip,
         params.mcpChip,
+        params.organizationPlacementActionChips,
         params.seededPlacementActionChip,
         params.onActionShortcutPress,
         params.selectedMachineId,

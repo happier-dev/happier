@@ -1,7 +1,4 @@
-import {
-    readNormalizedRuntimeDescriptor,
-    resolveSessionArtifactPathFromMetadata,
-} from '@happier-dev/agents';
+import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -38,20 +35,36 @@ function normalizeString(value: unknown): string | null {
     return trimmed || null;
 }
 
+function normalizeAbsolutePath(value: unknown): string | null {
+    const normalized = normalizeString(value);
+    if (!normalized) return null;
+    if (normalized.startsWith('/') || normalized.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(normalized)) {
+        return normalized;
+    }
+    return null;
+}
+
 export function resolveProviderSessionIdForDebug(params: Readonly<{
     metadata: SessionDebugMetadata;
     vendorResumeIdField?: string | null;
 }>): string | null {
     const metadata = asRecord(params.metadata);
     const field = normalizeString(params.vendorResumeIdField);
-    return normalizeString(readNormalizedRuntimeDescriptor(params.metadata)?.providerSessionId)
+    const nativeIdentity = AgentNativeResumeIdentityV1Schema.safeParse(metadata?.nativeResumeIdentityV1);
+    return (nativeIdentity.success ? nativeIdentity.data.vendorResumeId : null)
         ?? (field ? normalizeString(metadata?.[field]) : null);
 }
 
 export function resolveProviderSessionArtifactPath(metadata: SessionDebugMetadata): string | null {
     const record = asRecord(metadata);
-    return normalizeString(record?.claudeTranscriptPath)
-        ?? resolveSessionArtifactPathFromMetadata(metadata);
+    const claudeTranscriptPath = normalizeString(record?.claudeTranscriptPath);
+    if (claudeTranscriptPath) return claudeTranscriptPath;
+
+    // Agent-owned current descriptors stay opaque to this generic debug view.
+    // A malformed or current canonical carrier must not silently fall through
+    // to a stale provider-specific field.
+    if (record && Object.prototype.hasOwnProperty.call(record, 'runtimeDescriptorV1')) return null;
+    return normalizeAbsolutePath(record?.piSessionFile);
 }
 
 export function buildSessionDebugInformation(params: Readonly<{

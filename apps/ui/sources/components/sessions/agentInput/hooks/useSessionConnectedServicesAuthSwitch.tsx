@@ -1,13 +1,17 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import { readSessionMetadataConnectedServiceBindings, type AgentCore, type ConnectedServiceId } from '@happier-dev/agents';
 import type {
+    ConnectedAccountServiceKey,
     ConnectedServiceBindingSelectionV1,
     ConnectedServiceBindingsV1,
     ConnectedServiceUxDiagnosticV1,
+    PluginProjectedAgentConnectedAccountPurposeV2,
 } from '@happier-dev/protocol';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import {
+    ConnectedAccountServiceKeySchema,
+    parseQualifiedPluginContributionKey,
+} from '@happier-dev/protocol';
 
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -22,16 +26,17 @@ import {
 } from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
-import {
-    buildConnectedServiceAccountGroupOptionsByServiceId,
-    buildConnectedServiceProfileOptionsByServiceId,
-    resolveAgentSupportedConnectedServiceIds,
-} from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedServicesAuthLabel } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
+import {
+    buildQualifiedConnectedAccountGroupOptionsByServiceId,
+    buildQualifiedConnectedAccountProfileOptionsByServiceId,
+    resolveProjectedConnectedAccountServiceKeys,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import {
     setSessionConnectedServiceAuthBinding,
     type SessionConnectedServiceAuthSwitchErrorCode,
@@ -55,8 +60,6 @@ import {
 type SessionConnectedServicesAuthSwitchDisabledReason =
     | 'active_turn'
     | 'read_only';
-
-type ConnectedServicesAgentCore = Pick<AgentCore, 'id' | 'connectedServices'> | null;
 
 export type SessionConnectedServicesAuthSwitchResult = Readonly<{
     connectedServicesAuthChip: AgentInputExtraActionChip | null;
@@ -94,7 +97,7 @@ type ProviderSessionUnavailableDiagnosticActionState = Readonly<{
 }> | null;
 
 type SetBindingForServiceOptions = Readonly<{
-    rematerializeServiceId?: ConnectedServiceId;
+    rematerializeServiceId?: ConnectedAccountServiceKey;
     /** The user already confirmed this exact Retry/Revert action. */
     skipConfirm?: boolean;
     /**
@@ -142,15 +145,15 @@ function presentAuthSwitchDiagnosticAlert(params: Readonly<{
 function resolveDiagnosticConnectedServiceId(params: Readonly<{
     diagnostic?: ConnectedServiceUxDiagnosticV1 | null;
     fallbackServiceId: string;
-}>): ConnectedServiceId | undefined {
+}>): ConnectedAccountServiceKey | undefined {
     const candidates = [
         params.diagnostic?.serviceId,
         params.fallbackServiceId,
     ];
     for (const candidate of candidates) {
         if (typeof candidate !== 'string' || !candidate.trim()) continue;
-        const parsed = ConnectedServiceIdSchema.safeParse(candidate.trim());
-        if (parsed.success) return parsed.data as ConnectedServiceId;
+        const parsed = ConnectedAccountServiceKeySchema.safeParse(candidate.trim());
+        if (parsed.success) return parsed.data;
     }
     return undefined;
 }
@@ -266,51 +269,6 @@ type SessionConnectedServicesAuthSwitchRetryState = Readonly<{
 
 const RESTART_TIMEOUT_RECONCILIATION_BUDGET_MS = 30_000;
 
-function readRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-}
-
-function readBinding(value: unknown): ConnectedServicesServiceBinding | null {
-    const raw = readRecord(value);
-    if (!raw) return null;
-    if (raw.source === 'native') return { source: 'native' };
-    if (raw.source !== 'connected') return null;
-
-    const profileId = typeof raw.profileId === 'string' && raw.profileId.trim()
-        ? raw.profileId.trim()
-        : undefined;
-    const groupId = typeof raw.groupId === 'string' && raw.groupId.trim()
-        ? raw.groupId.trim()
-        : undefined;
-    if (raw.selection === 'group' && groupId) {
-        return { source: 'connected', selection: 'group', groupId, ...(profileId ? { profileId } : {}) };
-    }
-    if (profileId) return { source: 'connected', selection: 'profile', profileId };
-    return null;
-}
-
-function readConnectedServicesBindingsFromMetadata(
-    metadata: unknown,
-    agentId: string,
-): Readonly<Record<string, ConnectedServicesServiceBinding | undefined>> {
-    const rawMetadata = readRecord(metadata);
-    const connectedServices = readRecord(rawMetadata?.connectedServices);
-    const bindings = readRecord(connectedServices?.bindingsByServiceId);
-    if (!bindings) {
-        if (rawMetadata && Object.prototype.hasOwnProperty.call(rawMetadata, 'connectedServices')) return {};
-        return readSessionMetadataConnectedServiceBindings(metadata, agentId);
-    }
-
-    const out: Record<string, ConnectedServicesServiceBinding | undefined> = {};
-    for (const [serviceId, value] of Object.entries(bindings)) {
-        const binding = readBinding(value);
-        if (binding) out[serviceId] = binding;
-    }
-    return out;
-}
-
 function areServiceBindingsEqual(
     left: ConnectedServicesServiceBinding | undefined,
     right: ConnectedServicesServiceBinding | undefined,
@@ -350,6 +308,12 @@ function arePendingRestartBindingsApplied(
     return true;
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
 function readErrorTokens(value: unknown): ReadonlyArray<string> {
     const tokens: string[] = [];
     if (typeof value === 'string') tokens.push(value);
@@ -369,7 +333,7 @@ function isNonTerminalRestartTimeoutError(value: unknown): boolean {
 }
 
 function buildSessionSwitchPayload(params: Readonly<{
-    supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+    supportedServiceIds: ReadonlyArray<ConnectedAccountServiceKey>;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
 }>): ConnectedServiceBindingsV1 {
     const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV1> = {};
@@ -411,64 +375,12 @@ function buildExpectedGroupGenerationByServiceId(params: Readonly<{
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function resolveSwitchTransition(input: Readonly<{
-    current: ConnectedServicesServiceBinding | undefined;
-    next: ConnectedServicesServiceBinding;
-}>):
-    | 'native_to_connected'
-    | 'connected_to_native'
-    | 'connected_to_connected'
-    | 'same_connected_group'
-    | null {
-    if (areServiceBindingsEqual(input.current, input.next)) return null;
-    const currentSource = input.current?.source ?? 'native';
-    const nextSource = input.next.source;
-    if (currentSource === 'native' && nextSource === 'connected') return 'native_to_connected';
-    if (currentSource === 'connected' && nextSource === 'native') return 'connected_to_native';
-    if (currentSource === 'connected' && nextSource === 'connected') {
-        if (
-            input.current?.selection === 'group'
-            && input.next.selection === 'group'
-            && input.current.groupId
-            && input.current.groupId === input.next.groupId
-        ) {
-            return 'same_connected_group';
-        }
-        return 'connected_to_connected';
-    }
-    return null;
-}
-
-function agentSupportsSessionAuthSwitchTransition(input: Readonly<{
-    agentCore: ConnectedServicesAgentCore;
-    agentId: string | null | undefined;
-    serviceId: string;
-    current: ConnectedServicesServiceBinding | undefined;
-    next: ConnectedServicesServiceBinding;
-}>): boolean {
-    const switchCapability = input.agentCore?.connectedServices?.sessionAuthSwitch;
-    if (!switchCapability?.continuityMode) return false;
-    const transition = resolveSwitchTransition({
-        current: input.current,
-        next: input.next,
-    });
-    if (!transition) return true;
-    const supportedTransitions = switchCapability.supportedTransitions;
-    if (!supportedTransitions || supportedTransitions.includes(transition)) return true;
-
-    const stateSharingRequired = switchCapability.providerStateSharingRequired;
-    if (!stateSharingRequired?.supportedTransitions.includes(transition)) return false;
-    const serviceIds = stateSharingRequired.serviceIds;
-    if (serviceIds && !serviceIds.includes(input.serviceId as ConnectedServiceId)) return false;
-    return true;
-}
-
 export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     sessionId: string;
     agentId: string | null | undefined;
     machineId: string | null | undefined;
     serverId?: string | null;
-    agentCore: ConnectedServicesAgentCore;
+    connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     sessionMetadata: unknown;
     settings: {
         connectedServicesProfileLabelByKey: Record<string, string | undefined>;
@@ -498,36 +410,31 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     const [providerSessionDiagnosticActionState, setProviderSessionDiagnosticActionState] =
         React.useState<ProviderSessionUnavailableDiagnosticActionState>(null);
 
-    const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => (
-        resolveAgentSupportedConnectedServiceIds({
-            agentCore: params.agentCore ?? {},
-        })
-    ), [params.agentCore]);
+    const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedAccountServiceKey>>(
+        () => resolveProjectedConnectedAccountServiceKeys(params.connectedAccounts),
+        [params.connectedAccounts],
+    );
 
     const profileOptionsByServiceId = React.useMemo(() => (
-        buildConnectedServiceProfileOptionsByServiceId({
-            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-            agentCore: params.agentCore,
-            supportedConnectedServiceIds,
+        buildQualifiedConnectedAccountProfileOptionsByServiceId({
+            accounts: accountProfile?.connectedAccountsV4 ?? [],
+            supportedServiceIds: supportedConnectedServiceIds,
             labelsByKey: params.settings.connectedServicesProfileLabelByKey,
         })
-    ), [
-        accountProfile,
-        params.agentCore,
-        params.settings.connectedServicesProfileLabelByKey,
-        supportedConnectedServiceIds,
-    ]);
+    ), [accountProfile?.connectedAccountsV4, params.settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
 
     const groupOptionsByServiceId = React.useMemo(() => (
-        buildConnectedServiceAccountGroupOptionsByServiceId({
-            accountGroupsFeatureEnabled,
-            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-            supportedConnectedServiceIds,
+        buildQualifiedConnectedAccountGroupOptionsByServiceId({
+            groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+            supportedServiceIds: supportedConnectedServiceIds,
         })
-    ), [accountGroupsFeatureEnabled, accountProfile, supportedConnectedServiceIds]);
+    ), [accountProfile?.connectedAccountGroupsV4, supportedConnectedServiceIds]);
 
-    const metadataBindingsByServiceId = React.useMemo(() => (
-        readConnectedServicesBindingsFromMetadata(params.sessionMetadata, params.agentId ?? '')
+    const metadataBindingsByServiceId = React.useMemo<Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>>(() => (
+        readSessionConnectedServiceBindings({
+            metadata: params.sessionMetadata,
+            agentId: params.agentId ?? '',
+        })?.bindingsByServiceId ?? {}
     ), [params.agentId, params.sessionMetadata]);
     const [optimisticBindingsByServiceId, setOptimisticBindingsByServiceId] = React.useState(metadataBindingsByServiceId);
     const lastMetadataBindingsByServiceIdRef = React.useRef(metadataBindingsByServiceId);
@@ -557,13 +464,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         const forceReapply = options?.forceReapply ?? false;
         if (!machineId || !agentId) return;
         if (!forceReapply && !rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
-        if (!forceReapply && !agentSupportsSessionAuthSwitchTransition({
-            agentCore: params.agentCore,
-            agentId: params.agentId,
-            serviceId,
-            current: optimisticBindingsByServiceId[serviceId],
-            next: binding,
-        })) return;
         void (async () => {
             if (!options?.skipConfirm && params.sessionActive !== false) {
                 const confirmed = await Modal.confirm(
@@ -767,7 +667,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
         params.agentId,
-        params.agentCore,
         params.machineId,
         params.serverId,
         params.sessionId,
@@ -816,19 +715,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         const changesBinding = !areServiceBindingsEqual(optimisticBindingsByServiceId[optionParams.serviceId], optionParams.binding);
         if (!changesBinding) return {};
         if (!params.machineId) return { disabled: true };
-        if (!agentSupportsSessionAuthSwitchTransition({
-            agentCore: params.agentCore,
-            agentId: params.agentId,
-            serviceId: optionParams.serviceId,
-            current: optimisticBindingsByServiceId[optionParams.serviceId],
-            next: optionParams.binding,
-        })) return { disabled: true };
         if (params.switchingDisabledReason) return { disabled: true };
         return {};
     }, [
         optimisticBindingsByServiceId,
-        params.agentCore,
-        params.agentId,
         params.machineId,
         params.switchingDisabledReason,
     ]);
@@ -863,6 +753,14 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         supportedConnectedServiceIds,
     ]);
 
+    /** Qualified service-title resolver: public applied descriptor title, neutral fallback for unknown services. */
+    const resolveServiceTitle = React.useCallback((serviceId: string) => {
+        const service = parseQualifiedPluginContributionKey(serviceId);
+        return service
+            ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServicesRegistry, service, t)
+            : t('connectedServices.fallbackName');
+    }, [connectedServicesRegistry]);
+
     const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (supportedConnectedServiceIds.length === 0) return null;
         const label = resolveConnectedServicesAuthLabel({
@@ -872,7 +770,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             accountGroupOptionsByServiceId: groupOptionsByServiceId,
             accountGroupsEnabled: accountGroupsFeatureEnabled,
             defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
-            resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t),
+            resolveServiceTitle,
             nativeLabel: t('connectedServices.authChip.nativeLabel'),
             formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
         });
@@ -897,6 +795,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.settings.connectedServicesDefaultProfileByServiceId,
         popoverContent,
         profileOptionsByServiceId,
+        resolveServiceTitle,
         supportedConnectedServiceIds,
     ]);
 
@@ -1041,7 +940,11 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     tone: 'warning',
                     emphasis: 'prominent',
                 }]
-                : buildPartialAuthSwitchApplicationStatusBadges(partialApplicationNotice, handlePartialApplicationReconcile);
+                : buildPartialAuthSwitchApplicationStatusBadges(
+                    partialApplicationNotice,
+                    handlePartialApplicationReconcile,
+                    resolveServiceTitle,
+                );
     }, [
         actionableState,
         handlePartialApplicationReconcile,

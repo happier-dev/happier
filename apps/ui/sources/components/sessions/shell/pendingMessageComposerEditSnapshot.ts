@@ -30,11 +30,6 @@ export type PendingMessageComposerSemanticDraftSnapshot = Readonly<{
     [FieldId in SessionDraftValueFieldId]: SessionDraftValueByFieldId[FieldId] | undefined;
 }>;
 
-/** Process-local compare tokens from the canonical session-draft store. */
-export type PendingMessageComposerSemanticDraftMutationRevisions = Readonly<{
-    [FieldId in SessionDraftValueFieldId]: number;
-}>;
-
 /**
  * The mounted Pending row has a document of its own. It is intentionally not
  * a second persisted draft store: the incumbent presentation registry owns
@@ -319,17 +314,10 @@ export function readPendingMessageComposerSemanticDraftFieldsToRestore(
     previous: PendingMessageComposerSemanticDraftSnapshot,
     current: PendingMessageComposerSemanticDraftSnapshot,
     fieldIds: readonly SessionDraftValueFieldId[],
-    expectedCurrentMutationRevisions?: PendingMessageComposerSemanticDraftMutationRevisions,
-    currentMutationRevisions?: PendingMessageComposerSemanticDraftMutationRevisions,
     loaded?: PendingMessageComposerSemanticDraftSnapshot,
 ): readonly SessionDraftValueFieldId[] {
     return fieldIds.filter((fieldId) => (
         typeof previous[fieldId] !== 'undefined'
-        && (
-            !expectedCurrentMutationRevisions
-            || !currentMutationRevisions
-            || expectedCurrentMutationRevisions[fieldId] === currentMutationRevisions[fieldId]
-        )
         && (
             typeof current[fieldId] === 'undefined'
             || (

@@ -176,7 +176,11 @@ afterEach(() => {
 
 describe('useNewSessionComposerDocument', () => {
     it('mints every author-shaped seed into the canonical mounted composer snapshot', async () => {
-        writeNewSessionComposerAttachmentSeeds('draft-seeded', [{
+        const draftScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        writeNewSessionComposerAttachmentSeeds({ scope: draftScope, draftId: 'draft-seeded' }, [{
             pluginId: 'acme.issues',
             attachmentLocalId: 'issue',
             value: { key: '42', value: { issueId: 42 }, presentation: { label: 'Issue #42' } },
@@ -188,6 +192,7 @@ describe('useNewSessionComposerDocument', () => {
 
         const hook = await renderHook(() => useNewSessionComposerDocument({
             draftId: 'draft-seeded',
+            draftScope,
             promptStore: createNewSessionPromptStore(''),
             persistedAttachments: [],
             composerAttachmentEntriesById: entriesById(issueAttachmentCatalogEntry),
@@ -213,7 +218,7 @@ describe('useNewSessionComposerDocument', () => {
             }),
         ]));
         expect(new Set(attachments.map((attachment) => attachment.instanceId)).size).toBe(2);
-        expect(readNewSessionComposerAttachmentSeeds('draft-seeded')).toEqual([]);
+        expect(readNewSessionComposerAttachmentSeeds({ scope: draftScope, draftId: 'draft-seeded' })).toEqual([]);
 
         await hook.unmount();
     });

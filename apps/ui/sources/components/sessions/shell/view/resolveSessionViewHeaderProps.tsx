@@ -187,6 +187,7 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.subtitle ?? '',
         input.subtitleEllipsizeMode ?? '',
         input.avatarId ?? '',
+        input.agentId ?? '',
         input.sessionInfoHref,
         input.sessionRunsHref,
         input.sessionAutomationsHref,

@@ -105,10 +105,12 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
             mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
             discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds,
         }).flatMap((entry) => {
-            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
-                backendTarget: entry.backendTarget,
-                daemonMergedProjectionInputs: daemonMergedProjection.inputs,
-            });
+            const agentTarget = entry.backendTarget.kind === 'agent'
+                ? entry.backendTarget
+                : resolveAgentExecutionTargetForBackendTarget({
+                    backendTarget: entry.backendTarget,
+                    daemonMergedProjectionInputs: daemonMergedProjection.inputs,
+                });
             return agentTarget ? [{
                 backendTargetKey: entry.backendTargetKey,
                 agentId: entry.agentId,
@@ -184,7 +186,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
                 windowsRemoteSessionLaunchMode: null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: null,
-                codexBackendMode: null,
+                runtimeDescriptorV1: null,
                 acpSessionModeId: null,
                 sessionConfigOptionOverrides: null,
                 automation: null,

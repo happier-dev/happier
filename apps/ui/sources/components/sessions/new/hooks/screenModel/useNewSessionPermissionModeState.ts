@@ -10,7 +10,7 @@ import {
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 
 type PersistedAuthoringDraftLike = Readonly<{
     permissionMode?: string | null;
@@ -22,7 +22,7 @@ type TempAuthoringDraftLike = Readonly<{
 
 export function useNewSessionPermissionModeState(params: Readonly<{
     agentType: string;
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     selectedProfileId: string | null;

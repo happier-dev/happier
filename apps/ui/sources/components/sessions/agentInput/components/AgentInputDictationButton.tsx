@@ -27,6 +27,7 @@ import type { VoiceDictationSnapshot } from '@/voice/dictation/VoiceDictationCon
  * promise; it has to be a frame.
  */
 export function AgentInputDictationButton(props: Readonly<{
+    disabled?: boolean;
     status: VoiceDictationSnapshot['status'];
     onPress: () => void;
 }>) {
@@ -45,8 +46,8 @@ export function AgentInputDictationButton(props: Readonly<{
                         : t('voiceAssistant.startDictation')
             }
             accessibilityRole="button"
-            accessibilityState={{ busy: transcribing }}
-            disabled={transcribing}
+            accessibilityState={{ busy: transcribing, disabled: props.disabled === true }}
+            disabled={props.disabled === true || transcribing}
             testID="agent-input-dictation"
             onPress={props.onPress}
             // Fills the slot regardless of the padding the slot uses to place the

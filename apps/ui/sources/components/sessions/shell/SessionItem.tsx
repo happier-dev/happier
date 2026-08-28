@@ -28,7 +28,6 @@ import {
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
 } from '@/components/ui/text/webStartEllipsisTextStyles';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import {
     getAgentCore,
     } from '@/agents/catalog/catalog';
@@ -118,6 +117,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { ExternalSessionRuntimePresentation } from '../presentation/externalSessionRuntimePresentation';
 import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
+import { SessionAgentCatalogIdentityIcon } from '../presentation/SessionAgentCatalogIdentityIcon';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -1721,10 +1721,12 @@ const SessionItemContent = React.memo(
                                 hasUnreadMessages={false}
                             />
                         ) : (
-                            <AgentIcon
+                            <SessionAgentCatalogIdentityIcon
                                 agentId={agentLogoId}
-                                size={agentLogoSize}
+                                machineId={resolvedSessionMetadata?.machineId ?? null}
+                                serverId={serverId ?? null}
                                 color={sessionTitleColor}
+                                size={agentLogoSize}
                                 testID={`session-list-agent-logo-${resolvedSession.id}`}
                             />
                         )}

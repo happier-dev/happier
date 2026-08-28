@@ -142,6 +142,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
             const preview = deriveSessionSubagentActivityPreview({
                 subagent,
                 reducerState,
+                session,
             });
             if (preview) {
                 previews.set(subagent.id, preview);
@@ -155,7 +156,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
             if (fallback) previews.set(subagent.id, fallback);
         }
         return previews;
-    }, [previewSidechainIdsSet, reducerState, sidechainHydration.bySidechainId, subagents]);
+    }, [previewSidechainIdsSet, reducerState, session, sidechainHydration.bySidechainId, subagents]);
     // Read off the merged status rather than derived a second time here. `waiting` IS the pending
     // prompt, resolved once at the roster owner — which also means a row the publisher has already
     // reported terminal cannot show a badge inviting a person to answer a prompt that is over.

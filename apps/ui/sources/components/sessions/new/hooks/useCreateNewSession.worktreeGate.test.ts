@@ -80,11 +80,11 @@ const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn(async (se
         agentState: null,
     } as Session;
 }));
-type MachineSpawnNewSessionResult =
+type SessionSpawnNewActionBoundaryOutcome =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; errorCode: string; errorMessage?: string; errorDetail?: unknown };
 
-const machineSpawnNewSessionMock = vi.hoisted(() => vi.fn(async (_input?: unknown): Promise<MachineSpawnNewSessionResult> => ({
+const sessionSpawnNewActionBoundaryMock = vi.hoisted(() => vi.fn(async (_input?: unknown): Promise<SessionSpawnNewActionBoundaryOutcome> => ({
     type: 'success',
     sessionId: 'session-created',
 })));
@@ -139,9 +139,56 @@ installNewSessionScreenModelCommonModuleMocks({
 });
 
 vi.mock('@/sync/ops', () => ({
-    machineSpawnNewSession: machineSpawnNewSessionMock,
     machineBash: machineBashMock,
 }));
+
+vi.mock('@/sync/ops/actions/sessionSpawnNewAction', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/ops/actions/sessionSpawnNewAction')>(
+        '@/sync/ops/actions/sessionSpawnNewAction',
+    );
+    return {
+        ...actual,
+        executeManualSessionSpawnNewAction: async (input: any, _context: unknown, params: any) => {
+            const outcome = await sessionSpawnNewActionBoundaryMock(input);
+            const custody = {
+                v: 3 as const,
+                scope: params.scope,
+                machineId: input.executionTarget.machineId,
+                targetFingerprint: 'worktree-test-fingerprint',
+                userAttemptId: params.userAttemptId,
+                nonce: params.seedNonce,
+                submissionState: 'submitted' as const,
+                createdSessionId: outcome.type === 'success' ? outcome.sessionId : null,
+                firstTurnLocalId: `spawn-first-turn:${params.seedNonce}`,
+                attachmentMessageLocalId: `spawn-attachment:${params.seedNonce}`,
+            };
+            return {
+                status: 'executed' as const,
+                action: {
+                    ok: true as const,
+                    result: outcome.type === 'success'
+                        ? {
+                            type: 'success' as const,
+                            disposition: 'created' as const,
+                            sessionId: outcome.sessionId,
+                            executionTarget: input.executionTarget,
+                            organizationPlacement: input.organizationPlacement ?? { folderId: null, tagIds: [] },
+                            initialInput: input.initialInput
+                                ? { status: 'accepted' as const, localId: `input-${outcome.sessionId}` }
+                                : { status: 'notRequested' as const },
+                        }
+                        : {
+                            type: 'error' as const,
+                            code: 'spawn_failed' as const,
+                            retryable: false,
+                        },
+                },
+                custody,
+            };
+        },
+        completeManualSessionSpawnNewActionCustody: async () => true,
+    };
+});
 
 vi.mock('@/components/sessions/new/modules/materializeNewSessionCheckout', () => ({
     materializeNewSessionCheckout: (params: unknown) => materializeNewSessionCheckoutMock(params),
@@ -196,7 +243,6 @@ vi.mock('@/sync/sync', () => ({
         ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
         refreshMachines: vi.fn(async () => {}),
         sendMessage: vi.fn(async () => {}),
-        createAutomation: vi.fn(async () => ({})),
         publishSessionAcpSessionModeOverrideToMetadata: vi.fn(async () => {}),
     },
 }));
@@ -360,7 +406,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
-        expect(machineSpawnNewSessionMock).not.toHaveBeenCalled();
+        expect(sessionSpawnNewActionBoundaryMock).not.toHaveBeenCalled();
         expect(setIsCreating).not.toHaveBeenCalled();
     });
 
@@ -378,7 +424,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 providerError,
             },
         } as const;
-        machineSpawnNewSessionMock
+        sessionSpawnNewActionBoundaryMock
             .mockResolvedValueOnce(spawnRefusal)
             .mockResolvedValueOnce(spawnRefusal)
             .mockImplementationOnce(async () => {
@@ -546,7 +592,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             checkoutCreationDraft: undefined,
             serverId: 'server-a',
         }));
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo',
             machineId: 'machine-1',
         }));
@@ -757,9 +803,9 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         expect(materializeNewSessionCheckoutMock).toHaveBeenCalledTimes(1);
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
     });
 
     it('uses the canonical repository root returned by worktree creation when the selected path is a nested subdirectory', async () => {
@@ -820,7 +866,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo/.dev/worktree/feature/auth/packages/app',
         }));
     });
@@ -880,10 +926,10 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledTimes(1);
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledTimes(1);
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
         expect(machineBashMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
@@ -896,7 +942,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
-        machineSpawnNewSessionMock.mockImplementationOnce(async () => ({
+        sessionSpawnNewActionBoundaryMock.mockImplementationOnce(async () => ({
             type: 'error',
             errorCode: 'unexpected',
             errorMessage: 'spawn failed',
@@ -963,7 +1009,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
-        machineSpawnNewSessionMock.mockImplementationOnce(async () => ({
+        sessionSpawnNewActionBoundaryMock.mockImplementationOnce(async () => ({
             type: 'error',
             errorCode: 'unexpected',
             errorMessage: 'spawn failed',
@@ -1016,9 +1062,9 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
         expect(machineBashMock).toHaveBeenCalledWith(
             'machine-1',
             { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
@@ -1079,10 +1125,10 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledTimes(1);
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
-        expect(machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledTimes(1);
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
+        expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
         expect(machineBashMock).not.toHaveBeenCalled();
     });
 
@@ -1091,7 +1137,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
-        machineSpawnNewSessionMock.mockImplementationOnce(async () => ({
+        sessionSpawnNewActionBoundaryMock.mockImplementationOnce(async () => ({
             type: 'requestToApproveDirectoryCreation',
             directory: '/tmp/worktree',
         } as any));
@@ -1157,7 +1203,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
-        machineSpawnNewSessionMock.mockImplementationOnce(async () => ({
+        sessionSpawnNewActionBoundaryMock.mockImplementationOnce(async () => ({
             type: 'error',
             errorCode: 'unexpected',
             errorMessage: 'spawn failed',
@@ -1225,7 +1271,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const typecheck = useCreateNewSession;
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-        machineSpawnNewSessionMock.mockRejectedValueOnce(new Error('spawn exploded'));
+        sessionSpawnNewActionBoundaryMock.mockRejectedValueOnce(new Error('spawn exploded'));
 
         const params = {
             launchIntentSignature: 'test-launch-intent',
@@ -1358,11 +1404,11 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo',
             machineId: 'machine-1',
         }));
-        const spawnedOptions = machineSpawnNewSessionMock.mock.calls.at(0)?.[0] as
+        const spawnedOptions = sessionSpawnNewActionBoundaryMock.mock.calls.at(0)?.[0] as
             | {
                 workspaceId?: string;
                 workspaceLocationId?: string;

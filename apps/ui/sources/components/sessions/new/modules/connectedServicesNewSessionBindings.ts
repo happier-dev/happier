@@ -17,7 +17,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getLegacyConnectedServiceRegistryEntry, resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 function resolveUnsupportedProfileSubtitleKey(serviceId: ConnectedServiceId):
   | 'connectedServices.defaultAuth.warning.connected_service_unsupported'
@@ -52,7 +52,8 @@ function buildConnectedServiceProfileOptionsByServiceId(
 }
 
 export function buildConnectedServicesBindingsPayload(params: Readonly<{
-  supportedConnectedServiceIds: ReadonlyArray<ConnectedServiceId>;
+  /** Qualified keys on current callers; released bundled scalar ids are translated through the generated built-in mapping. */
+  supportedConnectedServiceIds: ReadonlyArray<string>;
   connectedServiceProfileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
   connectedServiceAccountGroupOptionsByServiceId?: ConnectedServicesAccountGroupOptionsByServiceId;
   connectedServicesBindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
@@ -64,16 +65,26 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
   const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV1> = {};
   let connectedCount = 0;
 
-  for (const serviceId of params.supportedConnectedServiceIds) {
-    const options = params.connectedServiceProfileOptionsByServiceId[serviceId] ?? [];
-    const binding = params.connectedServicesBindingsByServiceId[serviceId];
+  for (const requestedServiceId of params.supportedConnectedServiceIds) {
+    // The wire contract carries canonical qualified keys only. Resolve every
+    // declared service through the provenance-named legacy ingress and drop
+    // anything unknown — never emit a bare local id.
+    const serviceId = resolveQualifiedConnectedAccountServiceKey(requestedServiceId);
+    if (!serviceId) continue;
+    const options = params.connectedServiceProfileOptionsByServiceId[serviceId]
+      ?? params.connectedServiceProfileOptionsByServiceId[requestedServiceId]
+      ?? [];
+    const binding = params.connectedServicesBindingsByServiceId[serviceId]
+      ?? params.connectedServicesBindingsByServiceId[requestedServiceId];
     const resolution = resolveConnectedServiceSessionSelection({
       serviceId,
       binding: binding ?? { source: 'native' },
       availability: {
         kind: 'known',
         profileOptions: options,
-        groupOptions: params.connectedServiceAccountGroupOptionsByServiceId?.[serviceId] ?? [],
+        groupOptions: params.connectedServiceAccountGroupOptionsByServiceId?.[serviceId]
+          ?? params.connectedServiceAccountGroupOptionsByServiceId?.[requestedServiceId]
+          ?? [],
         accountGroupsEnabled: params.accountGroupsFeatureEnabled !== false,
       },
       defaultProfileByServiceId: params.defaultProfileByServiceId,

@@ -8,7 +8,7 @@ import {
     type ProviderBoundModelRef,
 } from '@happier-dev/protocol';
 
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
@@ -69,6 +69,7 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputContentPopover', 
 
 const { NewSessionModelSelectionContent } = await import('./NewSessionModelSelectionContent');
 const CODEX_BACKEND_ENTRY: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'codex' }),
     backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     backendTargetKey: 'backend:codex',
     kind: 'builtInAgent',
@@ -79,6 +80,7 @@ const CODEX_BACKEND_ENTRY: ResolvedBackendCatalogEntry = {
     iconAgentId: 'codex',
     title: 'Codex',
     subtitle: 'Codex',
+    cliAuthBackgroundCheckSafe: false,
 };
 
 function requirePickerProps(): CapturedPickerProps {

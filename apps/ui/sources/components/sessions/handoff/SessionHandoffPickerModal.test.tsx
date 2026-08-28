@@ -204,6 +204,8 @@ describe('SessionHandoffPickerModal', () => {
             },
         ];
         settingsState.favoriteMachines = [];
+        settingsState.favoriteDirectories = [];
+        settingsState.recentMachinePaths = [];
         settingsState.sessionHandoffDefaultsV1 = {
             v: 1,
             workspaceTransferEnabled: true,
@@ -277,7 +279,7 @@ describe('SessionHandoffPickerModal', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
-    it('lets the user choose an existing directory on the target machine', async () => {
+    it('reuses the editable recent-path picker and opens its browser only on Browse', async () => {
         const onResolve = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
         let chrome: CustomModalChromeConfig | null = null;
@@ -285,7 +287,14 @@ describe('SessionHandoffPickerModal', () => {
             chrome = next;
         });
 
-        const { tree } = await renderScreen(<SessionHandoffPickerModal
+        machineListByServerIdState.server_a[0]!.metadata.homeDir = '/home/target';
+        allMachinesState[0]!.metadata.homeDir = '/home/target';
+        settingsState.recentMachinePaths = [{
+            machineId: 'machine_target',
+            path: '/home/target/recent-project',
+        }];
+
+        const screen = await renderScreen(<SessionHandoffPickerModal
             onClose={vi.fn()}
             setChrome={setChrome}
             onResolve={onResolve}
@@ -295,24 +304,30 @@ describe('SessionHandoffPickerModal', () => {
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
                 id: 'machine_target',
                 active: true,
                 activeAt: Date.now(),
-                metadata: { displayName: 'Target machine', host: 'target.local' },
+                metadata: {
+                    displayName: 'Target machine',
+                    host: 'target.local',
+                    homeDir: '/home/target',
+                },
             });
         });
-        await act(async () => {
-            invokeTestInstanceHandler(tree.findByProps({ testID: 'session-handoff-target-path' }), 'onPress');
-        });
 
-        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith({
+        expect(screen.findByTestId('path-selection-list:header:input')).not.toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:recent:/home/target/recent-project')).not.toBeNull();
+        await act(async () => {
+            screen.changeTextByTestId('path-selection-list:header:input', '/home/target/pasted-project');
+        });
+        openMachinePathBrowserModalMock.mockResolvedValueOnce('/home/target/browser-project');
+        await screen.pressByTestIdAsync('path-selection-list:open-tree-browser');
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_target',
             serverId: 'server_a',
-            initialPath: undefined,
-            selectionMode: 'directory',
-            title: 'machine.launchNewSessionInDirectory',
-        });
+            initialPath: '/home/target/pasted-project',
+        }));
 
         const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         await act(async () => {
@@ -320,7 +335,7 @@ describe('SessionHandoffPickerModal', () => {
         });
         expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({
             targetMachineId: 'machine_target',
-            targetPath: '/home/leeroy.guest/.happier-stack/workspace/0.3',
+            targetPath: '/home/target/browser-project',
         }));
     });
 
@@ -747,7 +762,10 @@ describe('SessionHandoffPickerModal', () => {
             directModeMenu!.props.onSelect('keep_direct');
         });
 
-        const globInput = tree.findByType('TextInput' as any);
+        const globInput = tree.findAllByType('TextInput' as any).find((node: any) => node.props.value === 'dist/**');
+        if (!globInput) {
+            throw new Error('expected the ignored-glob input');
+        }
         expect(globInput.props.editable).toBe(false);
         await act(async () => {
             globInput.props.onChangeText('dist/**, .env.local');
@@ -761,7 +779,7 @@ describe('SessionHandoffPickerModal', () => {
         expect(strategyMenuAfterAttempt?.props.selectedId).toBe('transfer_snapshot');
         expect(conflictMenuAfterAttempt?.props.selectedId).toBe('create_sibling_copy');
         expect(ignoredMenuAfterAttempt?.props.selectedId).toBe('include_selected');
-        expect(tree.findByType('TextInput' as any).props.value).toBe('dist/**');
+        expect(tree.findAllByType('TextInput' as any).find((node: any) => node.props.value === 'dist/**')).toBeTruthy();
 
         const footer = requireCardChrome(chrome).footer;
         const startButton = findElementByTestId(footer, 'session-handoff-start');

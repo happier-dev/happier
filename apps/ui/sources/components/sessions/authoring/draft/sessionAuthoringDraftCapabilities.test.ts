@@ -5,12 +5,16 @@ import { resolveExistingSessionAuthoringCapabilities } from './sessionAuthoringD
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/project',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
-    agentId: 'codex',
-    backendTarget: { kind: 'backend', backendId: 'codex' },
+    agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,
@@ -24,7 +28,7 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     terminal: null,
     windowsRemoteSessionLaunchMode: null,
     windowsRemoteSessionConsole: null,
-    experimentalCodexAcp: null,
+    runtimeDescriptorV1: null,
     acpSessionModeId: null,
     existingSessionId: 'session-1',
     sessionEncryptionMode: 'e2ee',

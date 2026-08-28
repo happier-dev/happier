@@ -1,9 +1,20 @@
-import { ConnectedServiceBindingsV1Schema, readBackendTargetRefV2, type BackendTargetRefV2, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
-import { getAgentModelConfig, resolveAgentConfiguredRuntimeKind } from '@happier-dev/agents';
+import {
+    ConnectedServiceBindingsV1Schema,
+    buildQualifiedPluginContributionKey,
+    type BackendTargetRefV2,
+    type ConnectedServiceBindingsV1,
+    type PersistedBackendTargetRefV2,
+} from '@happier-dev/protocol';
+import { getAgentModelConfig } from '@happier-dev/agents';
 
-import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
-import type { Settings } from '@/sync/domains/settings/settings';
+import {
+    resolveCatalogAgentIdForBackendTarget,
+    resolveOperationalBackendTargetForAgentSelection,
+} from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveConfiguredAgentRuntimeKindFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type NewSessionCapabilityProbeContext = Readonly<{
@@ -64,12 +75,44 @@ export function buildNewSessionCapabilityProbeContextKey(probeContext: NewSessio
     });
 }
 
+export function resolveNewSessionOperationalBackendTarget(params: Readonly<{
+    backendTarget: PersistedBackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
+}>): BackendTargetRefV2 {
+    if (params.backendTarget.kind === 'backend') return params.backendTarget;
+    return resolveOperationalBackendTargetForAgentSelection({
+        backendTarget: params.backendTarget,
+        selectedEntry: params.runtimeCarrierAgentId
+            ? { agentId: params.runtimeCarrierAgentId }
+            : null,
+    }) ?? {
+        kind: 'backend',
+        backendId: buildQualifiedPluginContributionKey(params.backendTarget.identity),
+    };
+}
+
+/**
+ * The operational provider identity New Session ACP config-option controls
+ * key by. A configured ACP backend is addressed by its configured backend id
+ * — never the generic backend carrier — matching the canonical `providerId`
+ * in `NewSessionEngineOptionDetail`. Agent-carrier targets resolve through
+ * the operational backend-target owner, so the identity follows the runtime
+ * carrier the catalog resolved.
+ */
+export function resolveNewSessionOperationalProviderId(params: Readonly<{
+    backendTarget: PersistedBackendTargetRefV2;
+    runtimeCarrierAgentId?: string | null;
+}>): string {
+    const operationalBackendTarget = resolveNewSessionOperationalBackendTarget(params);
+    return operationalBackendTarget.configuredBackendId ?? operationalBackendTarget.backendId;
+}
+
 export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     settings: Settings;
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
 }>): NewSessionCapabilityProbeContext | null {
-    const backendTarget = readBackendTargetRefV2(params.backendTarget);
+    const backendTarget = resolveNewSessionOperationalBackendTarget(params);
     const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
         ? params.runtimeCarrierAgentId
         : (resolveCatalogAgentIdForBackendTarget(backendTarget)
@@ -77,41 +120,49 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     if (!agentId) {
         return null;
     }
-    const runtimeKind = resolveAgentConfiguredRuntimeKind({
+    const runtimeKind = resolveConfiguredAgentRuntimeKindFromUiBehavior({
         agentId,
-        accountSettings: params.settings as unknown as Record<string, unknown>,
+        settings: settingsParse(params.settings),
     });
     if (!runtimeKind) return null;
 
     return getOrCreateProbeContext({
         key: `runtime:${runtimeKind}`,
         cacheKeySuffixParts: [runtimeKind],
-        capabilityParams: { runtimeKindOverride: runtimeKind },
+        capabilityParams: {},
     });
 }
 
 export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
-    backendTarget: BackendTargetRefV2;
+    backendTarget: PersistedBackendTargetRefV2;
     settings: Settings;
-    runtimeCarrierAgentId?: AgentId | null;
+    runtimeCarrierAgentId?: string | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     connectedServicesCacheIdentity?: string | null;
 }>): NewSessionCapabilityProbeContext | null {
     const shared = resolveNewSessionCapabilityProbeContext(params);
-    const backendTarget = readBackendTargetRefV2(params.backendTarget);
+    const backendTarget = resolveNewSessionOperationalBackendTarget(params);
     const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
         ? params.runtimeCarrierAgentId
         : (resolveCatalogAgentIdForBackendTarget(backendTarget)
             ?? (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
     const observation = (agentId ? getAgentModelConfig(agentId)?.nativeCatalogObservation : null) ?? null;
-    const bindings = ConnectedServiceBindingsV1Schema.safeParse(params.connectedServices);
-    const selection = observation && bindings.success
-        ? bindings.data.bindingsByServiceId[observation.connectedServiceId]
+    // Released bundled model-config author facts still name their observed
+    // Connected service by the bundled scalar id. Canonical bindings are keyed
+    // by qualified service keys, so the observation translates through the one
+    // provenance-named legacy ingress before any binding lookup or probe cache
+    // identity is derived. Unknown ids fail closed (no model-only probe).
+    const observationServiceKey = observation
+        ? resolveQualifiedConnectedAccountServiceKey(observation.connectedServiceId)
         : null;
-    if (!observation || selection?.source !== 'connected') return shared;
+    const bindings = ConnectedServiceBindingsV1Schema.safeParse(params.connectedServices);
+    const selection = observationServiceKey && bindings.success
+        ? bindings.data.bindingsByServiceId[observationServiceKey]
+        : null;
+    if (!observation || !observationServiceKey || selection?.source !== 'connected') return shared;
     const selectedIdentity = selection.selection === 'group'
-        ? `${observation.connectedServiceId}:group:${selection.groupId}`
-        : `${observation.connectedServiceId}:profile:${selection.profileId}`;
+        ? `${observationServiceKey}:group:${selection.groupId}`
+        : `${observationServiceKey}:profile:${selection.profileId}`;
     const cacheKeySuffixParts = [
         ...(shared?.cacheKeySuffixParts ?? []),
         selectedIdentity,

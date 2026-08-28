@@ -38,6 +38,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
     selectedMachineId: string | null;
     capabilityServerId: string;
+    projectionCurrent: boolean;
     selectedPath: string | null;
     selectedBackendTargetKey: string;
     selectedModelId: string;
@@ -120,6 +121,7 @@ export function buildNewSessionAgentPickerOptions(
             selectedConfigOverrides: params.selectedConfigOverrides,
             selectedMachineId: params.selectedMachineId,
             capabilityServerId: params.capabilityServerId,
+            projectionCurrent: params.projectionCurrent,
             selectedPath: params.selectedPath,
             settings: params.settings,
             refreshProbe: params.refreshProbe,
@@ -134,6 +136,11 @@ export function buildNewSessionAgentPickerOptions(
     return {
         agentPickerOptions: buildSessionAgentPickerOptions({
             entries: sessionCapableBackendEntries,
+            identityScope: {
+                machineId: params.selectedMachineId,
+                serverId: params.capabilityServerId,
+                current: params.projectionCurrent,
+            },
             favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
             leadingOptions: favoriteOption ? [favoriteOption] : [],
             resolvePresentation: (entry) => {

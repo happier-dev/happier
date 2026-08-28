@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import type { ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { TranscriptListOrientation } from '@/components/sessions/transcript/listOrientation';
@@ -54,6 +55,7 @@ import {
 import { t } from '@/text';
 import { presentExternalSessionOperationActionError } from '@/components/sessions/external/progress/externalSessionOperationActionErrorPresentation';
 import { PluginTranscriptActivityCard } from '@/components/sessions/transcript/PluginTranscriptActivityCard';
+import { matchesExternalSessionOperationPresentation } from '@/sync/runtime/external/externalSessionOperationPresentationIdentity';
 
 type Ref<T> = { current: T };
 
@@ -63,7 +65,13 @@ type ToolCallsGroupExpansionRequest = Readonly<{
     toolMessageIds: readonly string[];
 }>;
 
-type ExternalSessionOperationFocusTransitionKind = 'dismiss' | 'check_again';
+type ExternalSessionOperationFocusTransitionKind =
+    | 'dismiss'
+    | 'check_again'
+    | 'resume'
+    | 'retry'
+    | 'cancel'
+    | 'discard';
 
 export type TranscriptItemRendererDeps = Readonly<{
     buildRowShellSignature: (item: ChatTranscriptListItem) => TranscriptItemHeightValiditySignature;
@@ -152,6 +160,15 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             sessionId,
         };
     }, [sessionId]);
+    const clearExternalSessionOperationFocusTransition = React.useCallback((
+        itemId: string,
+        kind: ExternalSessionOperationFocusTransitionKind,
+    ) => {
+        const pending = pendingExternalSessionOperationFocusTransitionRef.current;
+        if (pending?.sessionId === sessionId && pending.itemId === itemId && pending.kind === kind) {
+            pendingExternalSessionOperationFocusTransitionRef.current = null;
+        }
+    }, [sessionId]);
     React.useLayoutEffect(() => {
         const transition = pendingExternalSessionOperationFocusTransitionRef.current;
         if (transition === null) return;
@@ -161,10 +178,14 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         }
         const currentItem = listData.find((item) => item.id === transition.itemId) ?? null;
         const cardRetired = currentItem === null || currentItem.kind !== 'external-session-operation';
-        const checkAgainReplaced = transition.kind === 'check_again'
+        const cardReplaced = transition.kind !== 'dismiss'
             && currentItem?.kind === 'external-session-operation'
-            && currentItem.progress !== null;
-        if (!cardRetired && !checkAgainReplaced) return;
+            && (
+                transition.kind === 'check_again'
+                    ? currentItem.progress !== null
+                    : currentItem.progress === null
+            );
+        if (!cardRetired && !cardReplaced) return;
         pendingExternalSessionOperationFocusTransitionRef.current = null;
         returnFocusToTranscriptViewport();
     }, [listData, returnFocusToTranscriptViewport, sessionId]);
@@ -195,8 +216,21 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             | typeof machineExternalSessionOperationCancel
             | typeof machineExternalSessionOperationDiscard,
         actionRef: ExternalSessionOperationActionRef,
+        focusTransition: Readonly<{
+            itemId: string;
+            kind: Exclude<ExternalSessionOperationFocusTransitionKind, 'dismiss' | 'check_again'>;
+            presentation: ExternalSessionOperationSharedPresentationV1;
+        }>,
     ) => {
+        armExternalSessionOperationFocusTransition(
+            focusTransition.itemId,
+            focusTransition.kind,
+        );
         if (!operationMachineId) {
+            clearExternalSessionOperationFocusTransition(
+                focusTransition.itemId,
+                focusTransition.kind,
+            );
             Modal.alert(
                 t('common.error'),
                 t('chatFooter.externalSessionStatusUnavailable'),
@@ -210,6 +244,10 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                 ...actionRef,
             }, sessionServerId ? { serverId: sessionServerId } : undefined);
             if (!result.ok) {
+                clearExternalSessionOperationFocusTransition(
+                    focusTransition.itemId,
+                    focusTransition.kind,
+                );
                 Modal.alert(
                     t('common.error'),
                     t(presentExternalSessionOperationActionError(result.error.code)),
@@ -217,20 +255,39 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                 return;
             }
             if (result.progress.operationId !== actionRef.operationId) {
+                clearExternalSessionOperationFocusTransition(
+                    focusTransition.itemId,
+                    focusTransition.kind,
+                );
                 Modal.alert(
                     t('common.error'),
                     t('externalSessions.operationActionErrorUnavailable'),
                 );
                 return;
             }
+            if (matchesExternalSessionOperationPresentation(
+                result.progress,
+                focusTransition.presentation,
+            )) {
+                clearExternalSessionOperationFocusTransition(
+                    focusTransition.itemId,
+                    focusTransition.kind,
+                );
+            }
             onExternalSessionOperationActionResult(result.progress);
         } catch {
+            clearExternalSessionOperationFocusTransition(
+                focusTransition.itemId,
+                focusTransition.kind,
+            );
             Modal.alert(
                 t('common.error'),
                 t('externalSessions.operationActionErrorUnavailable'),
             );
         }
     }, [
+        armExternalSessionOperationFocusTransition,
+        clearExternalSessionOperationFocusTransition,
         onExternalSessionOperationActionResult,
         operationMachineId,
         sessionId,
@@ -356,6 +413,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                                 await invokeExternalSessionOperationAction(
                                     machineExternalSessionOperationResume,
                                     actionRef,
+                                    { itemId: item.id, kind: 'resume', presentation: item.presentation },
                                 )
                                 : undefined}
                             onRetry={operationRowCapabilities.canInvokeOwnerActions
@@ -363,6 +421,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                                 await invokeExternalSessionOperationAction(
                                     machineExternalSessionOperationRetry,
                                     actionRef,
+                                    { itemId: item.id, kind: 'retry', presentation: item.presentation },
                                 )
                                 : undefined}
                             onCancel={operationRowCapabilities.canInvokeOwnerActions
@@ -370,6 +429,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                                 await invokeExternalSessionOperationAction(
                                     machineExternalSessionOperationCancel,
                                     actionRef,
+                                    { itemId: item.id, kind: 'cancel', presentation: item.presentation },
                                 )
                                 : undefined}
                             onDiscard={operationRowCapabilities.canInvokeOwnerActions
@@ -377,6 +437,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                                 await invokeExternalSessionOperationAction(
                                     machineExternalSessionOperationDiscard,
                                     actionRef,
+                                    { itemId: item.id, kind: 'discard', presentation: item.presentation },
                                 )
                                 : undefined}
                         />

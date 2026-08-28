@@ -1,17 +1,14 @@
 import * as React from 'react';
 
-import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type {
     AgentInputChipPickerOption,
     AgentInputChipPickerOptionRailAction,
 } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { Icon } from '@/components/ui/icons/Icon';
 import { sortItemsByFavoriteTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 
-const AGENT_PICKER_ICON_SIZE = 12;
-const AGENT_PICKER_FALLBACK_ICON_SIZE = 14;
+const AGENT_PICKER_ICON_SIZE = 14;
 
 /**
  * How one Agent row reads: an optional explanation plus whether it can be applied.
@@ -55,21 +52,27 @@ type BuildSessionAgentPickerOptionsParams = Readonly<{
     favoriteBackendTargetKeys?: ReadonlyArray<string>;
     /** Rows that precede the Agent catalog, such as the favorite-models view. */
     leadingOptions?: ReadonlyArray<AgentInputChipPickerOption>;
+    identityScope: Readonly<{
+        machineId: string | null;
+        serverId: string | null;
+        current: boolean;
+    }>;
     resolvePresentation: (entry: ResolvedBackendCatalogEntry) => SessionAgentPickerOptionPresentation;
     resolveRailAction?: (context: SessionAgentPickerOptionContext) => AgentInputChipPickerOptionRailAction | undefined;
     resolveBehavior: (context: SessionAgentPickerOptionContext) => SessionAgentPickerOptionBehavior;
 }>;
 
-export function resolveSessionAgentPickerOptionIcon(entry: ResolvedBackendCatalogEntry): React.ReactNode {
-    const displayAgentId = entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId;
-    if (!displayAgentId) {
-        return <Icon name="stack-simple" size={AGENT_PICKER_FALLBACK_ICON_SIZE} />;
-    }
+export function resolveSessionAgentPickerOptionIcon(
+    entry: ResolvedBackendCatalogEntry,
+    identityScope: BuildSessionAgentPickerOptionsParams['identityScope'],
+): React.ReactNode {
     return (
-        <AgentIcon
-            agentId={displayAgentId}
+        <AgentCatalogIdentityIcon
+            entry={entry.agentCatalogEntry}
+            machineId={identityScope.machineId}
+            serverId={identityScope.serverId}
+            current={identityScope.current}
             size={AGENT_PICKER_ICON_SIZE}
-            style={{ transform: [{ scale: getAgentPickerIconScale(displayAgentId) }] }}
         />
     );
 }
@@ -107,7 +110,7 @@ export function buildSessionAgentPickerOptions(
         const option: AgentInputChipPickerOption = {
             id: entry.backendTargetKey,
             label: entry.title,
-            icon: resolveSessionAgentPickerOptionIcon(entry),
+            icon: resolveSessionAgentPickerOptionIcon(entry, params.identityScope),
             subtitle: presentation.subtitle,
             accessibilityLabel: presentation.accessibilityLabel,
             disabled: presentation.disabled,

@@ -33,10 +33,9 @@ import {
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
 import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
-import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
 import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     selectPluginPermissionPendingRequests,
 } from '@/sync/domains/plugins/permissions/store';
@@ -192,11 +191,10 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
-    const reviewCommentsExecutor = React.useMemo(() => createReviewCommentsHttpActionExecutor(), []);
-    const pluginPermissionGrantExecutor = React.useMemo(() => createPluginPermissionGrantHttpActionExecutor(), []);
+    const frontDoorActionExecutor = React.useMemo(() => createFrontDoorUiActionExecutor(), []);
     const pluginPermissionGrantActions = React.useMemo(
-        () => createPluginPermissionGrantActions({ execute: pluginPermissionGrantExecutor }),
-        [pluginPermissionGrantExecutor],
+        () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }),
+        [frontDoorActionExecutor],
     );
     const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope | null>(() => {
         if (!project?.id) return null;
@@ -471,7 +469,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 <ReviewCommentsSessionSurface
                     projectId={project.id}
                     sessionId={props.sessionId}
-                    execute={reviewCommentsExecutor}
+                    execute={frontDoorActionExecutor}
                     directWriteGrants={directWriteGrants}
                     pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
                     onGrantDirectWrite={pluginPermissionGrants.grant}

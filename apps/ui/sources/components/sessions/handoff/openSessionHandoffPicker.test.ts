@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const showMock = vi.hoisted(() => vi.fn<(config: unknown) => string>());
 const hideMock = vi.hoisted(() => vi.fn<(id: string) => void>());
-const pickerModuleGate = vi.hoisted(() => ({
-    block: false,
-    release: null as (() => void) | null,
-}));
+const sessionHandoffPickerModalStub = vi.hoisted(() => () => null);
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -17,23 +14,14 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-vi.mock('./SessionHandoffPickerModal', async () => {
-    if (pickerModuleGate.block) {
-        await new Promise<void>((resolve) => {
-            pickerModuleGate.release = resolve;
-        });
-    }
-    return {
-        SessionHandoffPickerModal: () => null,
-    };
-});
+vi.mock('./SessionHandoffPickerModal', () => ({
+    SessionHandoffPickerModal: sessionHandoffPickerModalStub,
+}));
 
 describe('openSessionHandoffPicker', () => {
     beforeEach(() => {
         showMock.mockReset();
         hideMock.mockReset();
-        pickerModuleGate.block = false;
-        pickerModuleGate.release = null;
         showMock.mockImplementation((config: any) => {
             config.props.onResolve(null);
             return 'modal_1';
@@ -41,13 +29,16 @@ describe('openSessionHandoffPicker', () => {
     });
 
     afterEach(() => {
-        pickerModuleGate.release?.();
         vi.clearAllMocks();
         vi.resetModules();
     });
 
-    it('shows the modal shell before the picker module finishes loading', async () => {
-        pickerModuleGate.block = true;
+    it('mounts the concrete picker body immediately instead of a Suspense loading shell', async () => {
+        let capturedConfig: any = null;
+        showMock.mockImplementation((config: any) => {
+            capturedConfig = config;
+            return 'modal_1';
+        });
         const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
 
         const promise = openSessionHandoffPicker({
@@ -56,12 +47,13 @@ describe('openSessionHandoffPicker', () => {
             serverId: 'server_a',
         });
 
-        await Promise.resolve();
-        try {
-            expect(showMock).toHaveBeenCalledTimes(1);
-        } finally {
-            pickerModuleGate.release?.();
-        }
+        await vi.waitFor(() => {
+            expect(capturedConfig).not.toBeNull();
+        });
+        const entry = capturedConfig.component(capturedConfig.props);
+        expect(entry.type).toBe(sessionHandoffPickerModalStub);
+
+        capturedConfig.props.onResolve(null);
         await expect(promise).resolves.toBeNull();
     });
 

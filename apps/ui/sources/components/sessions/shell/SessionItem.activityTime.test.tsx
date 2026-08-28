@@ -116,6 +116,11 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: any) => React.createElement('AgentIcon', props),
 }));
 
+vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
+    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
+        React.createElement('SessionAgentCatalogIdentityIcon', props),
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: (flavor: string | null | undefined) => flavor === 'claude' ? 'claude' : null,
@@ -710,12 +715,51 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findAllByType('Avatar' as any)).toHaveLength(0);
-        expect(screen.findByType('AgentIcon' as any)?.props).toMatchObject({
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props).toMatchObject({
             agentId: 'claude',
             size: 14,
+            serverId: 'server_a',
             testID: 'session-list-agent-logo-sess_agent_logo_narrow',
         });
         expect(findRowContentStyle(screen, 'sess_agent_logo_narrow').marginLeft).toBe(8);
+    });
+
+    it('keeps an external Agent identity and its exact Session scope in agent-logo mode', async () => {
+        sessionListIdentityDisplay = 'agentLogo';
+        const SessionItem = await importSessionItem();
+        const session = {
+            ...createSession('sess_external_agent_logo'),
+            metadataLayoutVersion: 1,
+            metadata: {
+                v: 1,
+                agentPresentation: { agentId: 'acme.plugin/ultracode' },
+            },
+            ownerMetadataView: { machineId: 'machine_external' },
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_external"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        expect(screen.findAllByType('AgentIcon' as any)).toHaveLength(0);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props).toMatchObject({
+            agentId: 'acme.plugin/ultracode',
+            machineId: 'machine_external',
+            serverId: 'server_external',
+            size: 14,
+            testID: 'session-list-agent-logo-sess_external_agent_logo',
+        });
     });
 
     it('passes the resolved title color to agent logos for active rows without attention', async () => {
@@ -751,7 +795,7 @@ describe('SessionItem activity time', () => {
         const explicitTitleColorStyle = titleStyleEntries[titleStyleEntries.length - 1] as { color?: unknown } | undefined;
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
         expect(explicitTitleColorStyle).toMatchObject({ color: titleStyle.color });
-        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(explicitTitleColorStyle?.color);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(explicitTitleColorStyle?.color);
     });
 
     it('can use the active title color for all active connected session rows', async () => {
@@ -785,7 +829,7 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         expect(titleStyle.color).toBe(lightTheme.colors.text.primary);
-        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(titleStyle.color);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
     });
 
     it('can keep working rows secondary when only attention rows use active color', async () => {
@@ -819,7 +863,7 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
-        expect(screen.findByType('AgentIcon' as any)?.props.color).toBe(titleStyle.color);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
     });
 
     it('hides the session list identity slot across row densities when identity display is none', async () => {
@@ -841,6 +885,7 @@ describe('SessionItem activity time', () => {
         );
         expect(detailed.findAllByType('Avatar' as any)).toHaveLength(0);
         expect(detailed.findAllByType('AgentIcon' as any)).toHaveLength(0);
+        expect(detailed.findAllByType('SessionAgentCatalogIdentityIcon' as any)).toHaveLength(0);
 
         standardCleanup();
 
@@ -860,6 +905,7 @@ describe('SessionItem activity time', () => {
         );
         expect(narrow.findAllByType('Avatar' as any)).toHaveLength(0);
         expect(narrow.findAllByType('AgentIcon' as any)).toHaveLength(0);
+        expect(narrow.findAllByType('SessionAgentCatalogIdentityIcon' as any)).toHaveLength(0);
         expect(findRowContentStyle(narrow, 'sess_identity_none_narrow').marginLeft).toBe(0);
     });
 

@@ -11,15 +11,22 @@ import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plu
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 import { useProfile } from '@/sync/store/hooks';
-import type { ConnectedServiceId } from '@happier-dev/agents';
+import type { AgentCore, ConnectedServiceId } from '@happier-dev/agents';
 import {
+  buildQualifiedPluginContributionKey,
+  parseQualifiedPluginContributionKey,
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceBindingsV1,
   type ConnectedServicesDefaultAuthByAgentIdV1,
+  type PluginProjectedAgentConnectedAccountPurposeV2,
 } from '@happier-dev/protocol';
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import {
+  resolveConnectedServiceDisplayName,
+  resolveQualifiedConnectedServiceRegistryDisplayName,
+} from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import {
   resolveConnectedServicesAuthLabel,
   resolveConnectedServicesAuthWarningTranslationKey,
@@ -29,11 +36,15 @@ import {
   CONNECTED_SERVICES_BINDINGS_KEY,
   type ConnectedServicesServiceBinding,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
-  buildConnectedServiceProfileOptionsByServiceId,
-  buildConnectedServiceAccountGroupOptionsByServiceId,
+  applyAgentKindRestrictionsToQualifiedProfileOptions,
+  buildQualifiedConnectedAccountGroupOptionsByServiceId,
+  buildQualifiedConnectedAccountProfileOptionsByServiceId,
+  resolveProjectedConnectedAccountServiceKeys,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import {
   buildConnectedServicesBindingsPayload,
-  resolveAgentSupportedConnectedServiceIds,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
@@ -87,7 +98,14 @@ function createServiceBindingsSignature(bindings: Readonly<Record<string, Connec
 }
 
 export function useNewSessionConnectedServices(params: Readonly<{
-  agentCore: any;
+  /** Bundled Agent core when the selection targets a bundled Agent; null for installed external Agents. */
+  agentCore: Pick<AgentCore, 'id' | 'connectedServices'> | null;
+  /**
+   * Exact Connected Account declarations from the authoritative machine Agent
+   * catalog projection. Supported services are the canonical qualified keys of
+   * these declarations — never a bundled scalar enum.
+   */
+  connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
   agentOptionState: Record<string, unknown> | null;
   settings: {
     connectedServicesProfileLabelByKey: Record<string, string | undefined>;
@@ -98,7 +116,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
   router: { push: (path: any) => void };
   setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
 }>): NewSessionConnectedServicesResult {
-  const { agentCore, agentOptionState, settings, targetServerId, router, setAgentOptionStateForCurrentAgent } = params;
+  const { agentCore, connectedAccounts, agentOptionState, settings, targetServerId, router, setAgentOptionStateForCurrentAgent } = params;
   const accountProfile = useProfile();
   const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
   const connectedServicesFeatureScope = React.useMemo<FeatureDecisionScopeParams | undefined>(() => {
@@ -108,28 +126,27 @@ export function useNewSessionConnectedServices(params: Readonly<{
   }, [targetServerId]);
   const accountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', connectedServicesFeatureScope);
 
-  const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
-    return resolveAgentSupportedConnectedServiceIds({
-      agentCore,
-    });
-  }, [agentCore]);
+  const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedAccountServiceKey>>(() => (
+    resolveProjectedConnectedAccountServiceKeys(connectedAccounts)
+  ), [connectedAccounts]);
 
-  const connectedServiceProfileOptionsByServiceId = React.useMemo(() => {
-    return buildConnectedServiceProfileOptionsByServiceId({
-      accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+  const connectedServiceProfileOptionsByServiceId = React.useMemo(() => (
+    applyAgentKindRestrictionsToQualifiedProfileOptions({
+      optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+        accounts: accountProfile?.connectedAccountsV4 ?? [],
+        supportedServiceIds: supportedConnectedServiceIds,
+        labelsByKey: settings.connectedServicesProfileLabelByKey,
+      }),
       agentCore,
-      supportedConnectedServiceIds,
-      labelsByKey: settings.connectedServicesProfileLabelByKey,
-    });
-  }, [accountProfile, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+    })
+  ), [accountProfile?.connectedAccountsV4, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
 
-  const connectedServiceAccountGroupOptionsByServiceId = React.useMemo(() => {
-    return buildConnectedServiceAccountGroupOptionsByServiceId({
-      accountGroupsFeatureEnabled,
-      accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-      supportedConnectedServiceIds,
-    });
-  }, [accountGroupsFeatureEnabled, accountProfile, supportedConnectedServiceIds]);
+  const connectedServiceAccountGroupOptionsByServiceId = React.useMemo(() => (
+    buildQualifiedConnectedAccountGroupOptionsByServiceId({
+      groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+      supportedServiceIds: supportedConnectedServiceIds,
+    })
+  ), [accountProfile?.connectedAccountGroupsV4, supportedConnectedServiceIds]);
 
   const connectedServicesBindingsByServiceId = React.useMemo(() => {
     const explicitBindings = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({ agentOptionState });
@@ -182,28 +199,47 @@ export function useNewSessionConnectedServices(params: Readonly<{
 
   const connectedServicesModelProbeCacheIdentity = React.useMemo(() => {
     if (!connectedServicesBindingsPayload || !accountProfile) return null;
-    const revisions = accountProfile.connectedServiceCredentialRevisionsV1 ?? [];
+    const accountsV4 = accountProfile.connectedAccountsV4 ?? [];
+    const groupsV4 = accountProfile.connectedAccountGroupsV4 ?? [];
+    const legacyRevisions = accountProfile.connectedServiceCredentialRevisionsV1 ?? [];
     return JSON.stringify(Object.entries(connectedServicesBindingsPayload.bindingsByServiceId)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([serviceId, binding]) => {
         if (binding.source !== 'connected') return [serviceId, 'native'];
-        const serviceProjection = accountProfile.connectedServicesV2.find((candidate) => candidate.serviceId === serviceId);
+        const serviceAccounts = accountsV4.filter((account) => (
+          buildQualifiedPluginContributionKey(account.ref.service) === serviceId
+        ));
         const group = binding.selection === 'group'
-          ? serviceProjection?.groups.find((candidate) => candidate.groupId === binding.groupId)
-          : null;
-        const activeProfileId = binding.selection === 'profile' ? binding.profileId : group?.activeProfileId ?? null;
+          ? groupsV4.find((candidate) => (
+            buildQualifiedPluginContributionKey(candidate.ref.service) === serviceId
+            && candidate.ref.groupId === binding.groupId
+          ))
+          : undefined;
+        const activeProfileId = binding.selection === 'profile'
+          ? binding.profileId
+          : group?.activeConnectedAccountId ?? null;
         const profile = activeProfileId
-          ? serviceProjection?.profiles.find((candidate) => candidate.profileId === activeProfileId)
+          ? serviceAccounts.find((candidate) => candidate.ref.accountId === activeProfileId)
+          : undefined;
+        // Credential revisions remain a released scalar-keyed projection;
+        // resolve bundled services through the generated built-in mapping.
+        // External plugin services contribute their V4 revision facts instead.
+        const payloadIdentity = parseQualifiedPluginContributionKey(serviceId);
+        const legacyServiceId = payloadIdentity
+          ? getQualifiedConnectedServiceRegistryEntry(payloadIdentity)?.legacyServiceId ?? null
           : null;
-        const revision = activeProfileId
-          ? revisions.find((candidate) => candidate.serviceId === serviceId && candidate.profileId === activeProfileId)?.credentialRevision ?? null
-          : null;
+        const revision = activeProfileId && legacyServiceId
+          ? legacyRevisions.find((candidate) => (
+            candidate.serviceId === legacyServiceId
+            && candidate.profileId === activeProfileId
+          ))?.credentialRevision ?? null
+          : profile?.credentialRevision ?? null;
         return [
           serviceId,
           binding.selection,
           binding.selection === 'group' ? binding.groupId : binding.profileId,
           activeProfileId,
-          profile?.providerAccountId ?? null,
+          profile?.providerIdentity?.accountId ?? null,
           revision,
           group?.generation ?? null,
         ];
@@ -221,6 +257,14 @@ export function useNewSessionConnectedServices(params: Readonly<{
     });
   }, [setAgentOptionStateForCurrentAgent]);
 
+  /** Public applied-descriptor title; neutral fallback for an unknown service. */
+  const resolveServiceTitle = React.useCallback((serviceId: string) => {
+    const service = parseQualifiedPluginContributionKey(serviceId);
+    return service
+      ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServicesRegistry, service, t)
+      : resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t);
+  }, [connectedServicesRegistry]);
+
   const authLabel = React.useMemo(() => resolveConnectedServicesAuthLabel({
     supportedServiceIds: supportedConnectedServiceIds,
     bindingsByServiceId: optimisticBindingsByServiceId,
@@ -228,7 +272,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     accountGroupOptionsByServiceId: connectedServiceAccountGroupOptionsByServiceId,
     accountGroupsEnabled: accountGroupsFeatureEnabled,
     defaultProfileIdByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t),
+    resolveServiceTitle,
     nativeLabel: t('connectedServices.authChip.nativeLabel'),
     formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
   }), [
@@ -236,6 +280,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedServiceAccountGroupOptionsByServiceId,
     connectedServiceProfileOptionsByServiceId,
     optimisticBindingsByServiceId,
+    resolveServiceTitle,
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
   ]);

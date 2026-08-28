@@ -8,6 +8,8 @@ import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 installAgentInputCommonModuleMocks();
 
+let detailPaneRenderCount = 0;
+
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
@@ -25,11 +27,13 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('./AgentInputChipPickerDetailPane', () => ({
-    AgentInputChipPickerDetailPane: (props: any) =>
-        React.createElement('AgentInputChipPickerDetailPane', {
+    AgentInputChipPickerDetailPane: (props: any) => {
+        detailPaneRenderCount += 1;
+        return React.createElement('AgentInputChipPickerDetailPane', {
             ...props,
             testID: 'agent-input-chip-picker.detail-pane',
-        }, null),
+        }, null);
+    },
 }));
 
 vi.mock('./AgentInputChipPickerOptionSelector', () => ({
@@ -53,6 +57,35 @@ vi.mock('./AgentInputChipPickerOptionSelector', () => ({
 }));
 
 describe('AgentInputChipPickerPanel', () => {
+    it('reconciles an external selection change without a passive follow-up render', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const options = [
+            { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+            { id: 'two', label: 'Two', detailDescription: 'Feature checkout' } as any,
+        ];
+        detailPaneRenderCount = 0;
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={options}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+        const rendersAfterMount = detailPaneRenderCount;
+
+        await screen.update(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[...options]}
+            selectedOptionId="two"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('two');
+        expect(detailPaneRenderCount).toBe(rendersAfterMount + 1);
+    });
+
     it('does not render inner scroll views in simple mode', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
 

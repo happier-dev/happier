@@ -112,7 +112,7 @@ type HookValue = Readonly<{
   externalAgent: unknown;
   sessionServerId: string | null;
   status: unknown;
-  refreshNow: (options?: Readonly<{ takeoverReadiness?: 'fresh' }>) => Promise<unknown>;
+  refreshNow: () => Promise<unknown>;
 }>;
 
 function createDeferred<T>() {
@@ -649,12 +649,12 @@ describe('useExternalSessionRuntime', () => {
     machineExternalSessionStatusGetSpy.mockClear();
 
     await act(async () => {
-      await harness.getCurrent().refreshNow({ takeoverReadiness: 'fresh' });
+      await harness.getCurrent().refreshNow();
     });
 
     expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
     expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ takeoverReadiness: 'fresh' }),
+      expect.not.objectContaining({ takeoverReadiness: expect.anything() }),
       { serverId: 'server-owned' },
     );
     await harness.unmount();
