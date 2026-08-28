@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { applyStackCacheEnv, ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
+import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
 import { applyServerMigrations } from './utils/server/server_migrations.mjs';
 import { resolvePrismaClientImportForDbProvider } from './utils/server/prisma_client_import.mjs';
@@ -650,14 +650,8 @@ async function ensureEmbeddedMigrationsApplied({ serverComponentName, serverDir,
   }
   env.HAPPIER_DB_PROVIDER = provider;
 
-  // Migration step:
-  // - pglite: spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma
-  // - sqlite: runs migrate:sqlite:deploy against prisma/sqlite/schema.prisma
-  //
-  // Both are idempotent and safe to re-run when the light DB is not held open.
   const envWithCache = await applyStackCacheEnv(env);
-  const migrateScript = provider === 'sqlite' ? 'migrate:sqlite:deploy' : 'migrate:light:deploy';
-  await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: envWithCache, quiet });
+  await applyServerMigrations({ serverDir, env: envWithCache, dbProvider: provider, quiet });
   return { dataDir, filesDir, dbDir };
 }
 

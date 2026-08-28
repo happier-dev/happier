@@ -9,7 +9,7 @@ import { ensureServerSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
 import { writeWorkspacePackageBuildOwnerProxy } from '../../testkit/core/workspace_package_build_owner.mjs';
 
-test('ensureServerSchemaReady runs migrate:sqlite:deploy by default when not best-effort', async (t) => {
+test('ensureServerSchemaReady runs the canonical migration dispatcher by default when not best-effort', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-migrate-',
     socketPort: 54322,
@@ -19,7 +19,7 @@ test('ensureServerSchemaReady runs migrate:sqlite:deploy by default when not bes
   assert.equal(res.ok, true);
   assert.equal(res.migrated, true);
   assert.equal(res.accountCount, 0);
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to be invoked (${markerPath})`);
 });
 
 async function writeJson(path, value) {
@@ -45,6 +45,13 @@ export class PrismaClient {
 }
 `,
   });
+  const sqliteClientDir = join(serverDir, 'generated', 'sqlite-client');
+  await mkdir(sqliteClientDir, { recursive: true });
+  await writeFile(
+    join(sqliteClientDir, 'index.js'),
+    'export class PrismaClient { constructor() { this.account = { count: async () => 0 }; } async $disconnect() {} }\n',
+    'utf-8',
+  );
 }
 
 test('ensureServerSchemaReady builds source server internal workspace deps before migration', async (t) => {
@@ -104,7 +111,7 @@ test('ensureServerSchemaReady builds source server internal workspace deps befor
       "  printf '%s\\n' 'export declare const ok: boolean;' > \"$out/firstPartyRuntime/index.d.ts\"",
       '  exit 0',
       'fi',
-      'if [[ "${1:-}" == "run" && "${2:-}" == "migrate:sqlite:deploy" ]]; then',
+      'if [[ "${1:-}" == "run" && "${2:-}" == "migrate:deploy" ]]; then',
       `  test -f ${JSON.stringify(join(cliCommonDir, 'dist', 'firstPartyRuntime', 'index.js'))}`,
       `  printf '%s\\n' 'migrated' > ${JSON.stringify(markerPath)}`,
       '  exit 0',
@@ -119,6 +126,6 @@ test('ensureServerSchemaReady builds source server internal workspace deps befor
   const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
 
   assert.equal(res.ok, true);
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to run after workspace deps build`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to run after workspace deps build`);
   assert.equal(existsSync(join(cliCommonDir, 'dist', 'firstPartyRuntime', 'index.js')), true);
 });

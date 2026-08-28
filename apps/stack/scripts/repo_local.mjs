@@ -350,6 +350,12 @@ async function main() {
 	      if (dbTransition.reason === 'missing_mysql_database_url') {
 	        throw new Error('[repo-local] mysql requires an explicit DATABASE_URL');
 	      }
+	      if (dbTransition.reason === 'missing_postgres_database_url') {
+	        throw new Error('[repo-local] postgres requires an explicit DATABASE_URL with the light preset');
+	      }
+	      if (dbTransition.reason === 'invalid_postgres_database_url') {
+	        throw new Error('[repo-local] postgres DATABASE_URL must use postgres:// or postgresql://');
+	      }
 	      throw new Error(`[repo-local] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
 	    }
 	    effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT = serverComponent;

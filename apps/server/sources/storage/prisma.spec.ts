@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { RelationshipStatus, db, getDbProviderFromEnv, isPrismaErrorCode } from "./prisma";
+import {
+    RelationshipStatus,
+    db,
+    getDbProviderFromEnv,
+    isPrismaErrorCode,
+    requireDbProviderFromEnv,
+} from "./prisma";
 
 function parseEnumValues(schemaText: string, enumName: string): string[] {
     const block = schemaText.match(new RegExp(`enum\\s+${enumName}\\s*\\{([\\s\\S]*?)\\}`, "m"));
@@ -78,5 +84,11 @@ describe("storage/prisma", () => {
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "mysql" }, "postgres")).toBe("mysql");
         expect(getDbProviderFromEnv({ HAPPIER_DB_PROVIDER: " sqlite " }, "postgres")).toBe("sqlite");
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "nope" }, "postgres")).toBe("postgres");
+    });
+
+    it("can require an explicitly configured DB provider", () => {
+        expect(requireDbProviderFromEnv({}, "sqlite")).toBe("sqlite");
+        expect(requireDbProviderFromEnv({ HAPPIER_DB_PROVIDER: "postgresql" }, "sqlite")).toBe("postgres");
+        expect(() => requireDbProviderFromEnv({ HAPPY_DB_PROVIDER: "postgress" }, "sqlite")).toThrow(/Unsupported/);
     });
 });

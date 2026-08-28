@@ -1,4 +1,4 @@
-import { getDbProviderFromEnv } from "../sources/storage/prisma";
+import { requireDbProviderFromEnv } from "../sources/storage/prisma";
 
 type LightMigrateMode = "always" | "skip";
 
@@ -17,7 +17,7 @@ function resolveMigrateMode(env: NodeJS.ProcessEnv): LightMigrateMode {
 }
 
 export function buildLightDevPlan(env: NodeJS.ProcessEnv): LightDevPlan {
-    const provider = getDbProviderFromEnv(env, "sqlite");
+    const provider = requireDbProviderFromEnv(env, "sqlite");
     const migrateMode = resolveMigrateMode(env);
     const shouldRunMigrateDeploy = migrateMode === "always";
 
@@ -25,13 +25,7 @@ export function buildLightDevPlan(env: NodeJS.ProcessEnv): LightDevPlan {
         provider,
         migrateMode,
         migrateDeployArgs: shouldRunMigrateDeploy
-            ? provider === "postgres"
-                ? ["prisma", "migrate", "deploy"]
-                : ["-s", provider === "mysql"
-                    ? "migrate:mysql:deploy"
-                    : provider === "sqlite"
-                        ? "migrate:sqlite:deploy"
-                        : "migrate:light:deploy"]
+            ? ["-s", "migrate:deploy"]
             : null,
         shouldRunMigrateDeploy,
         startLightArgs: ["-s", "start:light"],

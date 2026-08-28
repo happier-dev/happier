@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ensureServerSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
 
-test('ensureServerSchemaReady bestEffort=true skips migrate:sqlite:deploy by default', async (t) => {
+test('ensureServerSchemaReady bestEffort=true skips the canonical migration dispatcher by default', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-best-effort-',
     socketPort: 54323,
@@ -17,7 +17,7 @@ test('ensureServerSchemaReady bestEffort=true skips migrate:sqlite:deploy by def
   assert.equal(res.ok, true);
   assert.equal(res.migrated, false);
   assert.equal(res.accountCount, 0);
-  assert.equal(existsSync(markerPath), false, `expected bestEffort to skip migrate:sqlite:deploy (${markerPath})`);
+  assert.equal(existsSync(markerPath), false, `expected bestEffort to skip migrate:deploy (${markerPath})`);
 });
 
 test('ensureServerSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fallback', async (t) => {
@@ -48,7 +48,7 @@ test('ensureServerSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fallback
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
   assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false, 'schema readiness must not pollute the env reused by dev reloads');
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to be invoked (${markerPath})`);
 });
 
 test('ensureServerSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR when HAPPIER value is empty', async (t) => {
@@ -77,5 +77,5 @@ test('ensureServerSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR when HAP
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
   assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false, 'schema readiness must not pollute the env reused by dev reloads');
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to be invoked (${markerPath})`);
 });

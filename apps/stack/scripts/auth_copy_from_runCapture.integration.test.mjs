@@ -694,7 +694,7 @@ test('hstack stack auth copy-from reads source light sqlite db from the source s
       HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
       HAPPIER_DB_PROVIDER: 'sqlite',
     };
-    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy'], {
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:deploy'], {
       npmExecPath: env.npm_execpath,
     });
     const res = spawnSync(invocation.command, invocation.args, {
@@ -867,7 +867,7 @@ test('hstack stack auth copy-from does not require source sqlite migrations when
       HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
       HAPPIER_DB_PROVIDER: 'sqlite',
     };
-    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy'], {
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:deploy'], {
       npmExecPath: env.npm_execpath,
     });
     const res = spawnSync(invocation.command, invocation.args, {

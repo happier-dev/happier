@@ -45,7 +45,7 @@ async function writeServerScriptsPackageJson(dir, scripts) {
   await writeJson(join(dir, 'package.json'), { scripts });
 }
 
-test('resolveServer*Script uses light scripts when unified light flavor is detected', async () => {
+test('resolveServer*Script uses dedicated light preset scripts when available', async () => {
   await withServerDir(async (dir) => {
     await writeServerScriptsPackageJson(dir, {
       'start:light': 'node x',
@@ -58,7 +58,7 @@ test('resolveServer*Script uses light scripts when unified light flavor is detec
   });
 });
 
-test('resolveServer*Script falls back to legacy scripts for non-unified happier-server-light', async () => {
+test('resolveServer*Script falls back to legacy scripts when dedicated light preset scripts are absent', async () => {
   await withServerDir(async (dir) => {
     await writeServerScriptsPackageJson(dir, { start: 'node start', dev: 'node dev' });
     assert.equal(resolveServerDevScript({ serverComponentName: 'happier-server-light', serverDir: dir, prismaPush: true }), 'dev');
@@ -90,5 +90,18 @@ test('resolvePrismaClientImportForDbProvider returns generated provider clients 
     const spec = resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'sqlite' });
     assert.ok(spec.startsWith('file:'));
     assert.ok(spec.endsWith('/generated/sqlite-client/index.js'));
+  });
+});
+
+test('resolvePrismaClientImportForDbProvider fails closed when a provider-specific client is absent', async () => {
+  await withServerDir(async (dir) => {
+    assert.throws(
+      () => resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'sqlite' }),
+      /Missing generated Prisma client for sqlite/,
+    );
+    assert.throws(
+      () => resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'unknown' }),
+      /Unsupported database provider/,
+    );
   });
 });

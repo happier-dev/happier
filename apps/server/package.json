@@ -27,6 +27,7 @@
     "test:server:db-contract": "yarn -s test:db-contract",
     "migrate": "dotenv -e .env.dev -- prisma migrate dev",
     "migrate:reset": "dotenv -e .env.dev -- prisma migrate reset",
+    "migrate:deploy": "tsx --tsconfig ./tsconfig.json ./scripts/migrate.deploy.ts",
     "migrate:light:deploy": "tsx --tsconfig ./tsconfig.json ./scripts/migrate.light.deploy.ts",
     "migrate:sqlite:deploy": "tsx --tsconfig ./tsconfig.json ./scripts/migrate.sqlite.deploy.ts",
     "migrate:mysql:deploy": "yarn -s schema:sync --quiet && prisma migrate deploy --schema prisma/mysql/schema.prisma",

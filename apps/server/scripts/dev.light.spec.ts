@@ -90,7 +90,7 @@ describe('dev.light.ts', () => {
         expect(result.stdout).toContain('{"happierStackTransition":"migration_started"}');
         expect(result.stdout).toContain('{"happierStackTransition":"migration_completed"}');
         const lines = await readLogLines(logPath);
-        expect(lines).toEqual(['YARN -s migrate:sqlite:deploy', 'YARN -s start:light']);
+        expect(lines).toEqual(['YARN -s migrate:deploy', 'YARN -s start:light']);
     });
 
     it('does not let a previous local run authorize skipping migrations', async () => {
@@ -104,7 +104,7 @@ describe('dev.light.ts', () => {
         expect(second.status).toBe(0);
 
         const lines = await readLogLines(logPath);
-        expect(lines).toEqual(['YARN -s migrate:sqlite:deploy', 'YARN -s start:light']);
+        expect(lines).toEqual(['YARN -s migrate:deploy', 'YARN -s start:light']);
     }, 60_000);
 
     it('skips light migrate only when the Stack planner explicitly admits skip', async () => {

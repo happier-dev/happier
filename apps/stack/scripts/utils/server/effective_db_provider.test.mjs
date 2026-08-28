@@ -208,6 +208,22 @@ test('provider transition rejects invalid values and fails closed for MySQL with
     }),
     { ok: false, reason: 'missing_mysql_database_url', provider: 'mysql' },
   );
+  assert.deepEqual(
+    resolveEffectiveDbProviderTransition({
+      previousServerComponentName: 'happier-server',
+      nextServerComponentName: 'happier-server',
+      env: { HAPPIER_DB_PROVIDER: 'mysql', DATABASE_URL: 'postgresql://wrong/db' },
+    }),
+    { ok: false, reason: 'invalid_mysql_database_url', provider: 'mysql' },
+  );
+  assert.deepEqual(
+    resolveEffectiveDbProviderTransition({
+      previousServerComponentName: 'happier-server',
+      nextServerComponentName: 'happier-server-light',
+      env: { HAPPIER_DB_PROVIDER: 'postgres' },
+    }),
+    { ok: false, reason: 'missing_postgres_database_url', provider: 'postgres' },
+  );
 });
 
 test('provider transition preserves compatible provider-owned URLs across preset switches', () => {

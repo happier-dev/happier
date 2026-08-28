@@ -316,6 +316,12 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
     if (dbTransition.reason === 'missing_mysql_database_url') {
       throw new Error('[setup] mysql requires an explicit DATABASE_URL');
     }
+    if (dbTransition.reason === 'missing_postgres_database_url') {
+      throw new Error('[setup] postgres requires an explicit DATABASE_URL with the light preset');
+    }
+    if (dbTransition.reason === 'invalid_postgres_database_url') {
+      throw new Error('[setup] postgres DATABASE_URL must use postgres:// or postgresql://');
+    }
     throw new Error(`[setup] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
   }
   const updates = [

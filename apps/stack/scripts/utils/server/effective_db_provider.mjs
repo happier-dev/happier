@@ -68,6 +68,17 @@ export function resolveEffectiveDbProviderTransition({
     return { ok: false, reason: 'missing_mysql_database_url', provider: 'mysql' };
   }
   const databaseAuthority = resolveDbProviderDatabaseUrl({ provider: effective.provider, databaseUrl });
+  if (effective.provider === 'mysql' && !databaseAuthority.databaseUrl) {
+    return { ok: false, reason: 'invalid_mysql_database_url', provider: 'mysql' };
+  }
+  if (effective.provider === 'postgres' && nextServerComponentName === 'happier-server-light') {
+    if (!databaseUrl) {
+      return { ok: false, reason: 'missing_postgres_database_url', provider: 'postgres' };
+    }
+    if (!databaseAuthority.databaseUrl) {
+      return { ok: false, reason: 'invalid_postgres_database_url', provider: 'postgres' };
+    }
+  }
   return {
     ok: true,
     provider: effective.provider,
@@ -94,6 +105,16 @@ export function resolveDbProviderDatabaseUrl({ provider, databaseUrl } = {}) {
     databaseUrl: compatibleDatabaseUrl ? normalizedDatabaseUrl : null,
     removeDatabaseUrl: Boolean(normalizedDatabaseUrl) && !compatibleDatabaseUrl,
   };
+}
+
+export function isCanonicalManagedPostgresAuthority({ databaseUrl, env = {} } = {}) {
+  const pgPort = Number(String(env.HAPPIER_STACK_PG_PORT ?? '').trim());
+  const pgUser = String(env.HAPPIER_STACK_PG_USER ?? '').trim();
+  const pgPassword = String(env.HAPPIER_STACK_PG_PASSWORD ?? '').trim();
+  const pgDb = String(env.HAPPIER_STACK_PG_DATABASE ?? '').trim();
+  if (!Number.isInteger(pgPort) || pgPort < 1 || pgPort > 65535 || !pgUser || !pgPassword || !pgDb) return false;
+  const canonicalUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+  return String(databaseUrl ?? '').trim() === canonicalUrl;
 }
 
 export function applyEffectiveDbProviderEnv({ serverComponentName, env = {}, targetEnv = env } = {}) {

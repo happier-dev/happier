@@ -33,6 +33,12 @@ async function writeFlavor({ rootDir, flavor }) {
     if (transition.reason === 'missing_mysql_database_url') {
       throw new Error('[server-flavor] mysql requires an explicit DATABASE_URL');
     }
+    if (transition.reason === 'missing_postgres_database_url') {
+      throw new Error('[server-flavor] postgres requires an explicit DATABASE_URL with the light preset');
+    }
+    if (transition.reason === 'invalid_postgres_database_url') {
+      throw new Error('[server-flavor] postgres DATABASE_URL must use postgres:// or postgresql://');
+    }
     throw new Error(`[server-flavor] invalid DB provider for ${flavor}: ${transition.input ?? transition.reason}`);
   }
   const dbProvider = transition.provider;

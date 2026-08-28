@@ -56,6 +56,13 @@ export class PrismaClient {
   for (const pkg of packages) {
     await writeEsmPkg({ dir: pkg.path, name: pkg.name, body: pkg.body });
   }
+  const sqliteClientDir = join(serverDir, 'generated', 'sqlite-client');
+  await mkdir(sqliteClientDir, { recursive: true });
+  await writeFile(
+    join(sqliteClientDir, 'index.js'),
+    'export class PrismaClient { constructor() { this.account = { count: async () => 0 }; } async $disconnect() {} }\n',
+    'utf-8',
+  );
 }
 
 async function writeYarnVersionShim(binDir) {

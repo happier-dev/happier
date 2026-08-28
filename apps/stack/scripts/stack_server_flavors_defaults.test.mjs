@@ -119,6 +119,25 @@ test('hstack stack new server flavor defaults and explicit full flavor pin coher
         assert.doesNotMatch(contents, /^HAPPIER_STACK_PG_/m);
       },
     },
+    {
+      name: 'full preset with pglite',
+      stackName: 'exp-flavors-full-pglite',
+      args: [
+        '--server=happier-server',
+        '--db-provider=pglite',
+        '--no-copy-auth',
+        '--json',
+      ],
+      assertEnv(contents) {
+        assert.match(contents, /^HAPPIER_STACK_SERVER_COMPONENT=happier-server$/m);
+        assert.match(contents, /^HAPPIER_DB_PROVIDER=pglite$/m);
+        assert.match(contents, /^HAPPIER_STACK_MANAGED_INFRA=1$/m);
+        assert.match(contents, /^HAPPIER_SERVER_LIGHT_DATA_DIR=/m);
+        assert.match(contents, /^HAPPIER_SERVER_LIGHT_DB_DIR=/m);
+        assert.doesNotMatch(contents, /^DATABASE_URL=/m);
+        assert.doesNotMatch(contents, /^HAPPIER_STACK_PG_/m);
+      },
+    },
   ];
 
   for (const testCase of cases) {

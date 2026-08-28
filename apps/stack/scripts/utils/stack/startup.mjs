@@ -26,7 +26,7 @@ function firstNonEmptyEnv(...values) {
   return '';
 }
 
-async function probeAccountCount({ serverComponentName, serverDir, env, dbProvider = 'sqlite' }) {
+async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
   const runEnv = dbProvider === 'sqlite'
     ? resolveSqliteDatabaseUrlEnvForProbe(env)
     : env;
@@ -188,7 +188,6 @@ export async function probeExistingAccountCountForServerComponent({
       targetEnv: { ...env },
     });
     const accountCount = await probeAccountCount({
-      serverComponentName,
       serverDir,
       env,
       dbProvider,
@@ -281,7 +280,7 @@ export async function ensureServerSchemaReady({ serverComponentName, serverDir, 
   }
 
   try {
-    const accountCount = await probeAccountCount({ serverComponentName, serverDir, env: runEnv, dbProvider });
+    const accountCount = await probeAccountCount({ serverDir, env: runEnv, dbProvider });
     return { ok: true, migrated: !bestEffort, accountCount };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

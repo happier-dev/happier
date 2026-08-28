@@ -14,7 +14,7 @@ async function writeFakeYarn(params: Readonly<{ dir: string; logPath: string }>)
 set -e
 echo "YARN $@" >> "${params.logPath}"
 echo "ENV DATABASE_URL=$DATABASE_URL SQLITE_AUTO=$HAPPIER_SQLITE_AUTO_MIGRATE SQLITE_MIGRATIONS_DIR=$HAPPIER_SQLITE_MIGRATIONS_DIR" >> "${params.logPath}"
-if echo "$*" | grep -q "prisma migrate deploy"; then
+if echo "$*" | grep -q "migrate:deploy"; then
   echo "migrated"
   exit 0
 fi
@@ -112,7 +112,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/schema.prisma');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 
@@ -132,7 +132,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/mysql/schema.prisma');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
   });
 
   it('runs the canonical SQLite deploy command before source-backed server startup', async () => {
@@ -155,8 +155,7 @@ describe('run-server.sh', () => {
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
     expect(yarnLines).toHaveLength(2);
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:sqlite:deploy');
-    expect(yarnLines[0]).not.toContain('prisma migrate deploy');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
     expect(lines.join('\n')).toContain('ENV DATABASE_URL= SQLITE_AUTO=1');
     expect(lines.join('\n')).toContain('SQLITE_AUTO=1');
     expect(lines.join('\n')).toContain(`SQLITE_MIGRATIONS_DIR=${resolve(__dirname, '../prisma/sqlite/migrations')}`);
