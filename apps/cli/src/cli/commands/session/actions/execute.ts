@@ -8,7 +8,7 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
-import { getActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
+import { ExternalActionRequestIdV1Schema, getActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import {
   normalizeActionExecuteResult,
@@ -61,8 +61,8 @@ export async function cmdSessionActionsExecute(
     startIndex: 2,
     valueFlags: ['--input-json', '--action-request-id'],
   });
-  const actionRequestId = (readFlagValue(argv, '--action-request-id') ?? '').trim();
-  if (actionRequestId && (actionRequestId.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(actionRequestId))) {
+  const actionRequestId = readFlagValue(argv, '--action-request-id') ?? '';
+  if (actionRequestId && !ExternalActionRequestIdV1Schema.safeParse(actionRequestId).success) {
     throw new Error('Invalid --action-request-id.');
   }
   const effectiveActionRequestId = actionRequestId || (actionId === 'session.spawn_new' ? randomUUID() : '');

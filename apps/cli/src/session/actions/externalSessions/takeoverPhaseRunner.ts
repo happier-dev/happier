@@ -22,9 +22,6 @@ import {
 import {
   inspectExternalSessionDestructiveQuiescence,
 } from '@/api/session/external/takeover/inspectExternalSessionDestructiveQuiescence';
-import type {
-  resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
-} from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import {
   resolveExternalTakeoverSpawnOptions,
   spawnResolvedExternalTakeoverSession,
@@ -81,6 +78,8 @@ import {
 import {
   resolveExternalSessionSourceKeyOwner,
 } from '@/session/external/resolveExternalSessionSourceKeyOwner';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
 
 export {
   assertExternalSessionPersistedTakeoverSourceContinuity,
@@ -149,22 +148,13 @@ export type PreparedExternalSessionExternalLinkedTakeoverSource = Readonly<{
   quiescenceIdentity: string;
   permitsAdmission: boolean;
   hostedOwnerSessionId: string | null;
+  externalLinkedTakeoverWriterSafety:
+    PluginAgentExternalLinkedTakeoverWriterSafetyV1;
 }>;
 
 type ExternalLinkedTakeoverPhaseRunnerDependencies = Readonly<{
   activeServerDir: string;
   operationExclusion: ExternalSessionOperationExclusion;
-  /**
-   * Keyed by the record's durable `{pluginId, localId}` Agent identity, not by
-   * a host routing id: the record is the only Agent evidence this runner has,
-   * and only the registry can project that identity onto the routing id the
-   * execution surface is stored under.
-   */
-  resolveWriterSafety(
-    agent: Parameters<
-      typeof resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity
-    >[0],
-  ): Promise<PluginAgentExternalLinkedTakeoverWriterSafetyV1>;
   loadCurrent(
     record: ExternalLinkedTakeoverRecord,
   ): Promise<PreparedExternalSessionExternalLinkedTakeoverSource>;
@@ -308,6 +298,8 @@ export async function loadCurrentExternalSessionExternalLinkedTakeoverSource(
       quiescence.status === 'verified_running'
         ? quiescence.ownerMarker?.happySessionId ?? null
         : null,
+    externalLinkedTakeoverWriterSafety:
+      linked.externalLinkedTakeoverWriterSafety ?? 'unsupported',
   };
 }
 
@@ -610,16 +602,6 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       );
     }
 
-    const writerSafety = await dependencies.resolveWriterSafety(
-      record.request.source.qualifiedIdentity.agent,
-    ).catch(() => 'unsupported' as const);
-    if (writerSafety !== 'native_prevention') {
-      return operationFailure(
-        'not_allowed',
-        'External-linked takeover is unsupported for this Agent writer-safety contract.',
-      );
-    }
-
     let prepared: PreparedExternalSessionExternalLinkedTakeoverSource;
     try {
       prepared = await dependencies.loadCurrent(record);
@@ -630,6 +612,14 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       return operationFailure(
         'source_unavailable',
         'External-linked takeover source is unavailable.',
+      );
+    }
+    if (
+      prepared.externalLinkedTakeoverWriterSafety !== 'native_prevention'
+    ) {
+      return operationFailure(
+        'not_allowed',
+        'External-linked takeover is unsupported for this Agent writer-safety contract.',
       );
     }
     if (record.phase === 'finalizing') {
@@ -729,6 +719,8 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       );
       if (
         !afterSuspension.permitsAdmission
+        || afterSuspension.externalLinkedTakeoverWriterSafety
+          !== 'native_prevention'
         || afterSuspension.pluginGeneration !== prepared.pluginGeneration
         || afterSuspension.quiescenceIdentity !== prepared.quiescenceIdentity
       ) {
@@ -790,6 +782,8 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
       );
       if (
         !beforeSpawn.permitsAdmission
+        || beforeSpawn.externalLinkedTakeoverWriterSafety
+          !== 'native_prevention'
         || beforeSpawn.pluginGeneration
           !== record.request.source.contributionGeneration
         || beforeSpawn.pluginGeneration !== afterSuspension.pluginGeneration
@@ -1243,6 +1237,30 @@ async function loadCurrentExternalSessionTakeoverTarget(
     credentials,
     sessionId: request.sessionId,
     machineId: request.source.machineId,
+  }, {
+    admitPersistedSourceBeforeCanonicalization: async (input) => {
+      const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+      try {
+        const service = lease.registry.currentGlobalExternalSessionsTarget
+          ?.resolveCurrent();
+        const sourceKeyOwner = createExternalSessionSourceKeyOwnerFromAgentProjection(
+          lease.registry.contributes,
+          input.agentId,
+          input.source,
+        );
+        const sourceId = sourceKeyOwner?.resolveSourceKey(input.source) ?? null;
+        return service && sourceId
+          ? service.admitPersistedTakeoverSource({
+              agentId: input.agentId,
+              machineId: input.machineId,
+              sourceId,
+              source: input.source,
+            })
+          : null;
+      } finally {
+        await lease.release();
+      }
+    },
   }).catch(() => null);
   if (!loaded) {
     throw new ExternalSessionPersistedTakeoverPreflightError(
@@ -1364,7 +1382,6 @@ export function reconstructPersistedTakeoverTargetFromRetiredMetadata(
     ...(imported.linkData === undefined
       ? {}
       : { linkData: imported.linkData }),
-    codexBackendMode: null,
   };
 }
 

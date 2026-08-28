@@ -43,12 +43,11 @@ export function buildMachineResumeRequest(
     type: 'resume-session' as const,
     sessionId,
     directory: options.directory,
-    backendTarget: options.backendTarget,
+    ...(options.agentTarget ? { agentTarget: options.agentTarget } : {}),
+    ...(options.backendTarget ? { backendTarget: options.backendTarget } : {}),
     ...(spawnNonce ? { spawnNonce } : {}),
     ...(options.resume ? { resume: options.resume } : {}),
     ...(options.runtimeDescriptorV1 ? { runtimeDescriptorV1: options.runtimeDescriptorV1 } : {}),
-    ...(options.backendMode ? { backendMode: options.backendMode } : {}),
-    ...(options.codexBackendMode ? { codexBackendMode: options.codexBackendMode } : {}),
     ...(options.environmentVariables ? { environmentVariables: options.environmentVariables } : {}),
     ...(options.profileId ? { profileId: options.profileId } : {}),
     ...(options.terminal ? { terminal: options.terminal } : {}),
@@ -148,7 +147,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
     ...(typeof params.rawSession.seq === 'number' ? { initialTranscriptAfterSeq: params.rawSession.seq } : {}),
     executionAuthorization,
   });
-  if (!options || options.machineId !== machineId || !options.backendTarget) {
+  if (!options || options.machineId !== machineId || (!options.agentTarget && !options.backendTarget)) {
     return { ok: false, code: 'unsupported', message: 'Inactive session resume identity is incomplete; pending custody was retained' };
   }
 

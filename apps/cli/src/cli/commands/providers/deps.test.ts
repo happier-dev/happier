@@ -120,6 +120,9 @@ function createProviderCliProbeRuntime(initialSnapshot: ActiveAccountSettingsSna
   const runtimeStore: ProviderRuntimeStateStore = {
     path: '/virtual/provider-cli-composition-runtime.json',
     read: vi.fn(async () => runtimeState),
+    updateTransientEndpointHealth: vi.fn(async (transform) => {
+      runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
+    }),
     update: vi.fn(async (transform) => {
       runtimeState = await transform(runtimeState);
       return runtimeState;
@@ -161,6 +164,9 @@ describe('Provider CLI active account snapshot', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-cli-refresh-runtime.json',
       read: vi.fn(async () => runtimeState),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => {
         runtimeState = await transform(runtimeState);
         return runtimeState;

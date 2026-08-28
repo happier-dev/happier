@@ -55,6 +55,7 @@ import {
 import {
   registerMachineExternalSessionsRpcHandlers,
   type ExternalSessionArchivedStateChange,
+  type ExternalSessionDeletedChange,
 } from './rpcHandlers.externalSessions';
 import {
   registerMachineSessionHandoffRpcHandlers,
@@ -130,6 +131,7 @@ import type { TransientSessionMediaReadAllowance } from '@/session/media/readAll
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
+  ConnectedAccountServiceKey,
   ConnectedServiceBindingsV1,
   ExternalSessionOperationSocketCommandV1,
   ExternalSessionOperationSocketResponseV1,
@@ -189,7 +191,9 @@ function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly
   sessionId: string;
   agentId: string;
   bindings: ConnectedServiceBindingsV1;
+  rematerializeServiceId?: ConnectedAccountServiceKey;
   expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
+  accountSettingsVersionHint?: number;
 }> | null {
   const parsed = SessionConnectedServiceAuthSwitchRpcParamsSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
@@ -330,6 +334,9 @@ export type MachineRpcHandlerDeps = Readonly<{
     listener: (
       change: ExternalSessionArchivedStateChange,
     ) => void | Promise<void>,
+  ) => () => void;
+  subscribeSessionDeletedChanges?: (
+    listener: (change: ExternalSessionDeletedChange) => void | Promise<void>,
   ) => () => void;
   subscribeConnectedAccountInvalidations?: (listener: () => void) => () => void;
   getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
@@ -600,6 +607,12 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       ? {
           subscribeSessionArchivedStateChanges:
             params.deps.subscribeSessionArchivedStateChanges,
+        }
+      : {}),
+    ...(params.deps?.subscribeSessionDeletedChanges
+      ? {
+          subscribeSessionDeletedChanges:
+            params.deps.subscribeSessionDeletedChanges,
         }
       : {}),
     ...(params.deps?.currentMachineId && params.deps.externalSessionStatusDemandChannel

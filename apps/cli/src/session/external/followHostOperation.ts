@@ -17,7 +17,7 @@ import type { createExternalSessionObservationDaemonProjection } from '@/api/ses
 import { resolveExternalSessionObservationLinkInput } from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { readStoredCredentials } from '@/persistence';
-import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from '@/session/actions/externalSessions/actionConfiguration';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 import { resolveGenerationBoundExternalSessionFollowSurface } from '@/session/actions/externalSessions/providerOpsResolution';
 
 import { mapPluginExternalTranscriptItem } from './pluginExternalSessionsAdapter';
@@ -89,6 +89,10 @@ function unavailable(code: string): HostExternalTranscriptFollowResult {
     return Object.freeze({ status: 'unavailable', code });
 }
 
+function terminalAdmissionFailure(code: string, message: string): Error {
+    return Object.assign(new Error(message), { code });
+}
+
 function isRequestCurrent(request: ExternalSessionFollowHostOperationRequest): boolean {
     if (request.options.signal?.aborted || request.retirementSignal?.aborted) return false;
     try {
@@ -113,7 +117,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
     machineId: string;
     followLeaseManager: Pick<
         FollowLeaseManager,
-        'attachScoped'
+        'attachScoped' | 'requestTranscriptRefresh'
     >;
     observationProjection: Pick<
         ObservationProjection,
@@ -212,8 +216,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 delivery = next.catch(() => undefined);
                 return next;
             };
-            let cursor = request.options.cursor?.trim() || null;
-            if (!cursor && request.options.initialReplay === true) {
+            const replayInitialTranscript = async (): Promise<string> => {
                 let pageCursor: string | undefined;
                 let fromCursor: string | null = null;
                 const seenCursors = new Set<string>();
@@ -224,7 +227,8 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     items: ReadonlyArray<ReturnType<typeof mapPluginExternalTranscriptItem>>;
                     fetchCursor: string | null;
                 }>> = [];
-                while (!cursor) {
+                let replayTailCursor: string | null = null;
+                while (!replayTailCursor) {
                     if (
                         replayPages >= MAX_INITIAL_REPLAY_PAGES
                         || Date.now() >= (
@@ -232,15 +236,18 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                             ?? Number.POSITIVE_INFINITY
                         )
                     ) {
-                        return unavailable('plugin_external_follow_resync_required');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_resync_required',
+                            'External Session initial replay exceeded its admission boundary',
+                        );
                     }
                     const page = await pageTranscript({
                         source: loaded.session.source,
                         remoteSessionId: loaded.session.remoteSessionId,
                         direction: 'older',
                         ...(pageCursor ? { cursor: pageCursor } : {}),
-                        maxBytes: resolveDefaultMaxBytes(),
-                        maxItems: Math.min(200, resolveDefaultMaxItems()),
+                        maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                        maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
                         ...(request.options.admissionDeadlineAtMs === undefined
                             ? {}
                             : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
@@ -256,17 +263,29 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         replayItems > MAX_INITIAL_REPLAY_ITEMS
                         || replaySerializedBytes > MAX_INITIAL_REPLAY_SERIALIZED_BYTES
                     ) {
-                        return unavailable('plugin_external_follow_resync_required');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_resync_required',
+                            'External Session initial replay exceeded its bounded capacity',
+                        );
                     }
                     if (page.truncated) {
-                        return unavailable('plugin_external_follow_resync_required');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_resync_required',
+                            'External Session initial replay page was incomplete',
+                        );
                     }
                     const nextCursor = page.nextCursor ?? page.tailCursor;
                     if (!nextCursor) {
-                        return unavailable('plugin_external_follow_unavailable');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_unavailable',
+                            'External Session initial replay did not provide a cursor',
+                        );
                     }
                     if (seenCursors.has(nextCursor)) {
-                        return unavailable('plugin_external_follow_cursor_stalled');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_cursor_stalled',
+                            'External Session initial replay cursor stalled',
+                        );
                     }
                     seenCursors.add(nextCursor);
                     replayBatchesNewestFirst.push(Object.freeze({
@@ -274,7 +293,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         fetchCursor: fromCursor,
                     }));
                     if (!page.hasMore || !page.nextCursor) {
-                        cursor = page.tailCursor ?? nextCursor;
+                        replayTailCursor = page.tailCursor ?? nextCursor;
                         break;
                     }
                     fromCursor = page.nextCursor;
@@ -286,10 +305,13 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     const batch = replayBatchesOldestFirst[index]!;
                     const isNewestBatch = index === replayBatchesOldestFirst.length - 1;
                     const emittedNextCursor = isNewestBatch
-                        ? cursor
+                        ? replayTailCursor
                         : batch.fetchCursor;
                     if (!emittedNextCursor) {
-                        return unavailable('plugin_external_follow_resync_required');
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_resync_required',
+                            'External Session initial replay could not account for its cursor',
+                        );
                     }
                     await emit(Object.freeze({
                         kind: 'data',
@@ -300,59 +322,48 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     }));
                     emittedFromCursor = emittedNextCursor;
                     if (Date.now() >= (
-                        request.options.admissionDeadlineAtMs
-                        ?? Number.POSITIVE_INFINITY
-                    )) {
-                        return unavailable('plugin_external_follow_resync_required');
+                            request.options.admissionDeadlineAtMs
+                            ?? Number.POSITIVE_INFINITY
+                        )) {
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_resync_required',
+                            'External Session initial replay exceeded its admission deadline',
+                        );
                     }
                 }
-            }
-            if (!cursor) {
-                const baseline = await pageTranscript({
-                    source: loaded.session.source,
-                    remoteSessionId: loaded.session.remoteSessionId,
-                    direction: 'older',
-                    maxBytes: resolveDefaultMaxBytes(),
-                    maxItems: 1,
-                    ...(request.options.admissionDeadlineAtMs === undefined
-                        ? {}
-                        : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
-                    signal: combinedSignal,
-                });
-                cursor = baseline.tailCursor;
-            }
-            if (
-                !cursor
-                || !isRequestCurrent(request)
-                || Date.now() >= (
-                    request.options.admissionDeadlineAtMs
-                    ?? Number.POSITIVE_INFINITY
-                )
-            ) {
-                return unavailable(
-                    combinedSignal.aborted
-                        ? request.options.signal?.aborted
-                            ? 'plugin_operation_aborted'
-                            : 'plugin_generation_retired'
-                        : 'plugin_external_follow_unavailable',
-                );
-            }
-            const startingCursor = cursor;
+                if (!replayTailCursor) {
+                    throw terminalAdmissionFailure(
+                        'plugin_external_follow_unavailable',
+                        'External Session initial replay did not establish a tail cursor',
+                    );
+                }
+                return replayTailCursor;
+            };
+            let cursor = request.options.cursor?.trim() || null;
+            let startingCursor: string | null = null;
             let scopedLease: Awaited<ReturnType<FollowLeaseManager['attachScoped']>> | null = null;
+            let releasePromise: Promise<void> | null = null;
             let terminated = false;
             const removeTerminationListeners = (): void => {
                 request.options.signal?.removeEventListener('abort', onCallerAbort);
                 request.retirementSignal?.removeEventListener('abort', onRetirement);
             };
             const release = async (): Promise<void> => {
+                if (releasePromise) return await releasePromise;
                 const lease = scopedLease;
                 if (!lease) {
                     removeTerminationListeners();
                     return;
                 }
-                await lease.release();
-                if (scopedLease === lease) scopedLease = null;
-                removeTerminationListeners();
+                const attempt = lease.release();
+                releasePromise = attempt;
+                try {
+                    await attempt;
+                    if (scopedLease === lease) scopedLease = null;
+                    removeTerminationListeners();
+                } finally {
+                    if (releasePromise === attempt) releasePromise = null;
+                }
             };
             const notifyTermination = async (
                 reason: Extract<HostExternalTranscriptFollowEvent, { kind: 'terminated' }>['reason'],
@@ -385,89 +396,148 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             request.options.signal?.addEventListener('abort', onCallerAbort, { once: true });
             request.retirementSignal?.addEventListener('abort', onRetirement, { once: true });
 
-            try {
-                scopedLease = await params.followLeaseManager.attachScoped({
-                    sessionId: request.sessionId,
-                    acceptedTailCursor: cursor,
-                    resource,
-                    acquireFollowLease: async (reacquisitionCursor) =>
-                        await acquireCanonicalExternalSessionFollowLease({
-                            sessionId: request.sessionId,
-                            machineId: params.machineId,
-                            linked: loaded.session,
-                            resource,
-                            observation,
-                            providerOps,
-                            initialCursor: reacquisitionCursor ?? cursor,
-                            maxBytes: resolveDefaultMaxBytes(),
-                            maxItems: Math.min(200, resolveDefaultMaxItems()),
-                            observationProjection: params.observationProjection,
-                            credentials,
-                        }),
-                    requestTranscriptRefresh: async (_acceptedCursor, isManagerCurrent) => {
-                        const isRefreshCurrent = () =>
-                            !terminated
-                            && isRequestCurrent(request)
-                            && isManagerCurrent();
-                        if (!isRefreshCurrent()) return;
-                        const requestedCursor = cursor;
-                        if (!requestedCursor) return;
-                        const result = await readAfterTranscript({
-                            source: loaded.session.source,
-                            remoteSessionId: loaded.session.remoteSessionId,
-                            cursor: requestedCursor,
-                            maxBytes: resolveDefaultMaxBytes(),
-                            maxItems: Math.min(200, resolveDefaultMaxItems()),
-                            signal: combinedSignal,
-                        });
-                        if (!isRefreshCurrent()) return;
-                        if (result.outcome === 'already_current') {
-                            return { outcome: 'already_current' } as const;
-                        }
-                        if (
-                            result.outcome === 'source_replaced'
-                            || result.outcome === 'source_unavailable'
-                            || result.outcome === 'read_failed'
-                        ) {
-                            return { outcome: result.outcome } as const;
-                        }
-                        if (
-                            result.outcome === 'gap_or_cursor_expired'
-                            || result.nextCursor === requestedCursor
-                        ) {
-                            await emit(Object.freeze({
-                                kind: 'resyncRequired',
-                                reason: 'cursorDiscontinuity',
-                                cursor,
-                            }));
-                            return {
-                                outcome: 'resync_required',
-                            } satisfies ExternalSessionFollowRefreshResult;
-                        }
-                        if (!isRefreshCurrent()) return;
-                        await emit(Object.freeze({
-                            kind: 'data',
-                            items: Object.freeze(
-                                result.items.map(mapPluginExternalTranscriptItem),
-                            ),
-                            fromCursor: requestedCursor,
-                            nextCursor: result.nextCursor,
-                        }));
-                        if (!isRefreshCurrent()) return;
-                        cursor = result.nextCursor;
-                        return { outcome: 'advanced' } as const;
-                    },
-                    onSourceReplaced: async () => {
-                        await notifyTermination(
-                            'providerFailure',
-                            'follow_refresh_source_replaced',
-                        );
-                        // The manager just removed this scoped demand as part
-                        // of its source-replacement transition. Do not re-enter
-                        // it from this notification while it owns that turn.
-                        scopedLease = null;
-                    },
+            if (Date.now() >= (
+                request.options.admissionDeadlineAtMs
+                ?? Number.POSITIVE_INFINITY
+            )) {
+                removeTerminationListeners();
+                return unavailable('plugin_external_follow_resync_required');
+            }
+
+            let admissionOpen = true;
+            let pendingAdmissionRefresh = false;
+            const refreshTranscript = async (
+                isManagerCurrent: () => boolean,
+            ): Promise<ExternalSessionFollowRefreshResult | void> => {
+                const isRefreshCurrent = () =>
+                    !terminated
+                    && isRequestCurrent(request)
+                    && isManagerCurrent();
+                if (!isRefreshCurrent()) return;
+                const requestedCursor = cursor;
+                if (!requestedCursor) return;
+                const result = await readAfterTranscript({
+                    source: loaded.session.source,
+                    remoteSessionId: loaded.session.remoteSessionId,
+                    cursor: requestedCursor,
+                    maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                    maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
+                    ...(!admissionOpen
+                        || request.options.admissionDeadlineAtMs === undefined
+                        ? {}
+                        : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
+                    signal: combinedSignal,
                 });
+                if (!isRefreshCurrent()) return;
+                if (result.outcome === 'already_current') {
+                    return { outcome: 'already_current' } as const;
+                }
+                if (
+                    result.outcome === 'source_replaced'
+                    || result.outcome === 'source_unavailable'
+                    || result.outcome === 'read_failed'
+                ) {
+                    return { outcome: result.outcome } as const;
+                }
+                if (
+                    result.outcome === 'gap_or_cursor_expired'
+                    || result.nextCursor === requestedCursor
+                    || result.hasMore === true
+                    || result.diagnostics?.some(
+                        (diagnostic) => diagnostic.severity === 'required',
+                    )
+                ) {
+                    await emit(Object.freeze({
+                        kind: 'resyncRequired',
+                        reason: 'cursorDiscontinuity',
+                        cursor,
+                    }));
+                    return {
+                        outcome: 'resync_required',
+                    } satisfies ExternalSessionFollowRefreshResult;
+                }
+                if (!isRefreshCurrent()) return;
+                await emit(Object.freeze({
+                    kind: 'data',
+                    items: Object.freeze(
+                        result.items.map(mapPluginExternalTranscriptItem),
+                    ),
+                    fromCursor: requestedCursor,
+                    nextCursor: result.nextCursor,
+                }));
+                if (!isRefreshCurrent()) return;
+                cursor = result.nextCursor;
+                return { outcome: 'advanced' } as const;
+            };
+
+            try {
+                try {
+                    scopedLease = await params.followLeaseManager.attachScoped({
+                        sessionId: request.sessionId,
+                        acceptedTailCursor: cursor,
+                        resource,
+                        acquireFollowLease: async (reacquisitionCursor) =>
+                            await acquireCanonicalExternalSessionFollowLease({
+                                sessionId: request.sessionId,
+                                machineId: params.machineId,
+                                linked: loaded.session,
+                                resource,
+                                observation,
+                                providerOps,
+                                initialCursor: reacquisitionCursor ?? cursor,
+                                maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                                maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
+                                ...(request.options.admissionDeadlineAtMs === undefined
+                                    ? {}
+                                    : { deadlineAtMs: request.options.admissionDeadlineAtMs }),
+                                signal: combinedSignal,
+                                observationProjection: params.observationProjection,
+                                credentials,
+                            }),
+                        requestTranscriptRefresh: async (_acceptedCursor, isManagerCurrent) => {
+                            if (admissionOpen) {
+                                pendingAdmissionRefresh = true;
+                                return { outcome: 'already_current' } as const;
+                            }
+                            return await refreshTranscript(isManagerCurrent);
+                        },
+                        onSourceReplaced: async () => {
+                            await notifyTermination(
+                                'providerFailure',
+                                'follow_refresh_source_replaced',
+                            );
+                            // The manager just removed this scoped demand as part
+                            // of its source-replacement transition. Do not re-enter
+                            // it from this notification while it owns that turn.
+                            scopedLease = null;
+                        },
+                    });
+                    cursor = cursor ?? scopedLease.acceptedTailCursor ?? null;
+                    if (!cursor) {
+                        throw terminalAdmissionFailure(
+                            'plugin_external_follow_unavailable',
+                            'External Session live follow did not establish an accepted cursor',
+                        );
+                    }
+                    if (
+                        request.options.initialReplay === true
+                        && !request.options.cursor?.trim()
+                    ) {
+                        cursor = await replayInitialTranscript();
+                    }
+                    startingCursor = cursor;
+                    admissionOpen = false;
+                    if (pendingAdmissionRefresh) {
+                        pendingAdmissionRefresh = false;
+                        await params.followLeaseManager.requestTranscriptRefresh({
+                            sessionId: request.sessionId,
+                            resource,
+                        });
+                    }
+                } finally {
+                    admissionOpen = false;
+                    pendingAdmissionRefresh = false;
+                }
                 // Cancellation can win while the manager is admitting the scoped
                 // lease. `terminate` then has no lease to release yet, so release
                 // the just-acquired lease before returning its terminal result.
@@ -515,7 +585,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
             }
             return Object.freeze({
                 status: 'following',
-                startingCursor,
+                startingCursor: startingCursor!,
                 subscription: Object.freeze({
                     dispose: async () => await terminate('disposed'),
                 }),

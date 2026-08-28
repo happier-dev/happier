@@ -792,7 +792,6 @@ describe('historical import replay', () => {
                     baseUrl: 'http://127.0.0.1:4096',
                     directory: '/workspace',
                 },
-                codexBackendMode: null,
             };
             const phaseModes: Array<'validate' | 'publish'> = [];
             const publishPreparations = vi.fn();

@@ -346,6 +346,7 @@ export async function runSessionHandoffPrepareTargetJob(
           transferRouteCache: getTransferRouteCache(machineTransferChannel),
           transferTimeoutMs,
           invalidateDirectPeerRouteCacheForHandoffMachines,
+          receivedAgentBundlePath: await sourceExportStore.prepareReceivedAgentBundleFilePath(handoffId),
         });
       if (!resolvedAgentBundle) {
         throw new Error('Invalid session handoff provider bundle');

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import { buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@/testkit/runtimeDescriptorFixtures';
 const mocks = vi.hoisted(() => ({
   fetchAccountMachineReplacements: vi.fn(),
 }));

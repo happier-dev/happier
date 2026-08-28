@@ -81,9 +81,6 @@ type InheritedSessionMetadataFieldSet = Readonly<{
   agentModeIntent: boolean;
   configOptionIntentMetadata: boolean;
   configOptionIntentSpawn: boolean;
-  acpSessionModeCatalogMetadata: boolean;
-  acpSessionModelCatalogMetadata: boolean;
-  acpConfigCatalogMetadata: boolean;
   connectedServices: boolean;
   mcpSelectionSpawn: boolean;
   profileIdSpawn: boolean;
@@ -99,9 +96,6 @@ const FORK_INHERITED_METADATA_FIELDS: InheritedSessionMetadataFieldSet = {
   agentModeIntent: true,
   configOptionIntentMetadata: true,
   configOptionIntentSpawn: true,
-  acpSessionModeCatalogMetadata: true,
-  acpSessionModelCatalogMetadata: true,
-  acpConfigCatalogMetadata: true,
   connectedServices: true,
   mcpSelectionSpawn: false,
   profileIdSpawn: false,
@@ -242,11 +236,10 @@ type InheritedCatalogOption = NonNullable<
 /**
  * The ONLY field-by-field reconstruction of an inherited catalog option.
  *
- * Model options (`sessionModelsV1`/`acpSessionModelsV1`) and config options
- * (`sessionConfigOptionsV1`/`acpConfigOptionsV1`) carry the same option shape, and both used to
- * enumerate it separately here. A producer-declared field added to one enumeration and forgotten
- * in the other disappears on fork with no type error and no failing test, so all four carriers
- * share this mapper.
+ * Canonical model/config catalogs and their released legacy ACP reader shapes
+ * carry the same option entries. A producer-declared field added to one
+ * reconstruction and forgotten in the other disappears on fork, so the
+ * canonical writer and compatibility readers share this mapper.
  */
 function cloneCatalogOptionEntry(option: unknown): InheritedCatalogOption | null {
   if (
@@ -457,18 +450,22 @@ function resolveInheritedOverridesFromMetadata(
     );
   }
 
-  const sessionModes = fields.sessionModeCatalogMetadata ? cloneSessionModesState(metadata?.sessionModesV1) : undefined;
+  const sessionModes = fields.sessionModeCatalogMetadata
+    ? cloneSessionModesState(metadata?.sessionModesV1 ?? metadata?.acpSessionModesV1)
+    : undefined;
   if (fields.sessionModeCatalogMetadata && sessionModes) {
     metadataOverrides.sessionModesV1 = sessionModes;
   }
 
-  const sessionModels = fields.sessionModelCatalogMetadata ? cloneSessionModelsState(metadata?.sessionModelsV1) : undefined;
+  const sessionModels = fields.sessionModelCatalogMetadata
+    ? cloneSessionModelsState(metadata?.sessionModelsV1 ?? metadata?.acpSessionModelsV1)
+    : undefined;
   if (fields.sessionModelCatalogMetadata && sessionModels) {
     metadataOverrides.sessionModelsV1 = sessionModels;
   }
 
   const configOptions = fields.sessionConfigCatalogMetadata
-    ? cloneSessionConfigOptionsState(metadata?.sessionConfigOptionsV1)
+    ? cloneSessionConfigOptionsState(metadata?.sessionConfigOptionsV1 ?? metadata?.acpConfigOptionsV1)
     : undefined;
   if (fields.sessionConfigCatalogMetadata && configOptions) {
     metadataOverrides.sessionConfigOptionsV1 = configOptions;
@@ -511,21 +508,6 @@ function resolveInheritedOverridesFromMetadata(
         }),
       );
     }
-  }
-
-  const acpSessionModes = fields.acpSessionModeCatalogMetadata ? cloneSessionModesState(metadata?.acpSessionModesV1) : undefined;
-  if (fields.acpSessionModeCatalogMetadata && acpSessionModes) {
-    metadataOverrides.acpSessionModesV1 = acpSessionModes;
-  }
-
-  const acpSessionModels = fields.acpSessionModelCatalogMetadata ? cloneSessionModelsState(metadata?.acpSessionModelsV1) : undefined;
-  if (fields.acpSessionModelCatalogMetadata && acpSessionModels) {
-    metadataOverrides.acpSessionModelsV1 = acpSessionModels;
-  }
-
-  const acpConfigOptions = fields.acpConfigCatalogMetadata ? cloneSessionConfigOptionsState(metadata?.acpConfigOptionsV1) : undefined;
-  if (fields.acpConfigCatalogMetadata && acpConfigOptions) {
-    metadataOverrides.acpConfigOptionsV1 = acpConfigOptions;
   }
 
   const connectedServices = fields.connectedServices ? resolveInheritedConnectedServices(metadata, agentTarget) : null;

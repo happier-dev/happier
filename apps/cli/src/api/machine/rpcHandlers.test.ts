@@ -12,9 +12,9 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ForkResultV1, ForkSurfaceV1 } from '@happier-dev/agents';
 import { accountSettingsParse, sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import {
-  buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor,
-  buildOpenCodeAgentRuntimeDescriptorV1 as buildOpenCodeAgentRuntimeDescriptor,
-} from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+  buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor,
+  buildTestOpenCodeRuntimeDescriptorV1 as buildOpenCodeAgentRuntimeDescriptor,
+} from '@/testkit/runtimeDescriptorFixtures';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
@@ -660,7 +660,7 @@ describe('registerMachineRpcHandlers', () => {
     }
   }, 10_000);
 
-  it('normalizes legacy experimentalCodexAcp spawn requests onto canonical codexBackendMode', async () => {
+  it('normalizes legacy experimentalCodexAcp spawn requests onto runtimeDescriptorV1', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -690,7 +690,14 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      codexBackendMode: expect.anything(),
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
       experimentalCodexAcp: true,
@@ -1182,7 +1189,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(resumedSpawn?.workspaceCheckoutId).toBeUndefined();
   });
 
-  it('normalizes legacy experimentalCodexAcp resume requests onto canonical codexBackendMode', async () => {
+  it('normalizes legacy experimentalCodexAcp resume requests onto runtimeDescriptorV1', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -1215,14 +1222,21 @@ describe('registerMachineRpcHandlers', () => {
       existingSessionId: 'sess_old',
       directory: '/tmp',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      codexBackendMode: expect.anything(),
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
       experimentalCodexAcp: true,
     }));
   });
 
-  it('passes runtimeDescriptorV1 through resume requests and derives codexBackendMode from canonical providerExtra affinity', async () => {
+  it('passes runtimeDescriptorV1 through resume requests without a Codex-specific shadow', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -1271,7 +1285,6 @@ describe('registerMachineRpcHandlers', () => {
     const spawnArgs = (spawnSession.mock.calls as any[][])[0]?.[0];
     expect(spawnArgs).toMatchObject({
       existingSessionId: 'sess_old',
-      codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'codex',
@@ -1290,6 +1303,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       },
     });
+    expect(spawnArgs).not.toHaveProperty('codexBackendMode');
   });
 
   it('passes configured ACP backend backend targets through when resuming a session', async () => {
@@ -3683,7 +3697,10 @@ describe('registerMachineRpcHandlers', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         approvedNewDirectoryCreation: true,
         resume: 'codex_forked',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: expect.objectContaining({
+          agentId: 'codex',
+          agent: expect.objectContaining({ backendMode: 'acp' }),
+        }),
       }),
     );
 
@@ -4400,7 +4417,10 @@ describe('registerMachineRpcHandlers', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         approvedNewDirectoryCreation: true,
         resume: 'codex_forked',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: expect.objectContaining({
+          agentId: 'codex',
+          agent: expect.objectContaining({ backendMode: 'acp' }),
+        }),
       }),
     );
 
@@ -5240,7 +5260,10 @@ describe('registerMachineRpcHandlers', () => {
       directory: '/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       resume: 'codex-thread-forked',
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: expect.objectContaining({
+        agentId: 'codex',
+        agent: expect.objectContaining({ backendMode: 'appServer' }),
+      }),
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -5382,7 +5405,10 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       resume: 'codex-thread-forked',
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: expect.objectContaining({
+        agentId: 'codex',
+        agent: expect.objectContaining({ backendMode: 'appServer' }),
+      }),
     }));
   });
 
@@ -7013,6 +7039,11 @@ describe('registerMachineRpcHandlers', () => {
       },
     });
 
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_START_V3)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_COMMIT_V3)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_ABORT_V3)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_STATUS_GET_V3)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_START)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_PREPARE_TARGET)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_COMMIT)).toBe(true);

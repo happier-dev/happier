@@ -2,12 +2,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
 const {
+  abandonDeletedSessionOperationsMock,
   repairOperationProgressProjectionsMock,
   repairDiagnosticMock,
 } = vi.hoisted(() => ({
+  abandonDeletedSessionOperationsMock: vi.fn(),
   repairOperationProgressProjectionsMock: vi.fn(),
   repairDiagnosticMock: vi.fn(),
 }));
+
+vi.mock(
+  '@/session/actions/externalSessions/operationRecordStore',
+  async (importOriginal) => {
+    const actual = await importOriginal<
+      typeof import('@/session/actions/externalSessions/operationRecordStore')
+    >();
+    return {
+      ...actual,
+      abandonExternalSessionOperationsForDeletedSession:
+        abandonDeletedSessionOperationsMock,
+    };
+  },
+);
 
 vi.mock(
   '@/session/actions/externalSessions/responseErrors',
@@ -64,6 +80,7 @@ function buildConnectivityState(
 describe('External Session operation projection lifecycle repair', () => {
   beforeEach(() => {
     repairOperationProgressProjectionsMock.mockReset();
+    abandonDeletedSessionOperationsMock.mockReset();
     repairDiagnosticMock.mockReset();
   });
 
@@ -102,5 +119,37 @@ describe('External Session operation projection lifecycle repair', () => {
       expect.any(Error),
     );
     await registration.dispose();
+  });
+
+  it('binds authoritative Session deletion to the existing operation cleanup owner and defers cursor acknowledgement for an active claim', async () => {
+    let listener: ((change: Readonly<{ sessionId: string; cursor: number }>) => Promise<void>) | null = null;
+    abandonDeletedSessionOperationsMock
+      .mockResolvedValueOnce({ deleted: 1, deferred: 0, retained: 0 })
+      .mockResolvedValueOnce({ deleted: 0, deferred: 1, retained: 0 });
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: createRpcHandlerManager() as never,
+      subscribeSessionDeletedChanges: (next) => {
+        listener = async (change) => await next(change);
+        return () => {
+          listener = null;
+        };
+      },
+    });
+
+    await expect(listener!({ sessionId: 'session-deleted', cursor: 12 }))
+      .resolves.toBeUndefined();
+    expect(abandonDeletedSessionOperationsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-deleted',
+        activeServerDir: expect.any(String),
+        withSessionOperationBarrier: expect.any(Function),
+        cleanupPrivateOperation: expect.any(Function),
+      }),
+    );
+    await expect(listener!({ sessionId: 'session-deleted', cursor: 12 }))
+      .rejects.toThrow('external_session_operation_abandonment_claim_active');
+
+    await registration.dispose();
+    expect(listener).toBeNull();
   });
 });

@@ -99,6 +99,8 @@ describe('happier session plan start command', () => {
           'claude',
           '--instructions',
           'Plan.',
+          '--machine-id',
+          'machine-plan',
           '--json',
         ],
         {
@@ -141,6 +143,10 @@ describe('happier session plan start command', () => {
         { defaultSessionId: 'sess-plan-1' },
       );
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
+      expect(createCliActionExecutorFromCredentials).toHaveBeenCalledWith({
+        credentials: expect.objectContaining({ credentialProvenance: 'api_token' }),
+        machineId: 'machine-plan',
+      });
       expect(resolveSessionTarget).toHaveBeenCalledWith('sess-plan');
       expect(createCliActionExecutor).not.toHaveBeenCalled();
       expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
@@ -149,5 +155,16 @@ describe('happier session plan start command', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it.each([
+    ['unknown option', ['plan', 'start', 'sess', '--backends', 'codex', '--instructions', 'Plan.', '--bogus']],
+    ['missing machine value', ['plan', 'start', 'sess', '--backends', 'codex', '--instructions', 'Plan.', '--machine-id', '--json']],
+  ])('rejects %s before credential or Action work', async (_name, argv) => {
+    const { cmdSessionPlanStart } = await import('./start');
+    const readCredentialsFn = vi.fn();
+    await expect(cmdSessionPlanStart(argv, { readCredentialsFn })).rejects.toMatchObject({ code: 'invalid_arguments' });
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
   });
 });

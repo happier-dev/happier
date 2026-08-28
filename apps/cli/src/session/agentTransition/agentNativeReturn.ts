@@ -1,8 +1,10 @@
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
 
 import {
   evaluateVendorResumeEligibility,
   projectCurrentAgentSessionView,
+  readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
   resolveAgentNativeResumeIdentityFromSessionMetadata,
   resolveAgentNativeTranscriptPathFromSessionMetadata,
   type AgentId,
@@ -15,6 +17,7 @@ import {
   readReplaySeedV1FromMetadata,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { resolveAgentNativeSessionLogPathForAgent } from '@/session/handoff/metadata/catalogHooks';
 import {
   createLocalSessionHandoffMetadataStore,
@@ -119,11 +122,28 @@ export function readAgentNativeReturnAccountSettings(): Record<string, unknown> 
   return (getActiveAccountSettingsSnapshot()?.settings as Record<string, unknown> | undefined) ?? null;
 }
 
-/** Does this path name a file this machine can actually open right now? */
-async function isExistingFile(path: string): Promise<boolean> {
-  return await stat(path)
-    .then((entry) => entry.isFile())
-    .catch(() => false);
+/** Host-side containment and existence check for an Agent-proposed path. */
+async function resolveContainedExistingFile(params: Readonly<{
+  path: string;
+  containmentRoot: string;
+}>): Promise<string | null> {
+  try {
+    const [candidatePath, containmentRoot] = await Promise.all([
+      realpath(params.path),
+      realpath(params.containmentRoot),
+    ]);
+    const candidateRelativePath = relative(containmentRoot, candidatePath);
+    if (
+      candidateRelativePath === '..'
+      || candidateRelativePath.startsWith(`..${sep}`)
+      || isAbsolute(candidateRelativePath)
+    ) {
+      return null;
+    }
+    return (await stat(candidatePath)).isFile() ? candidatePath : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -131,27 +151,11 @@ async function isExistingFile(path: string): Promise<boolean> {
  * there — the path the bounded brief hands the target so it can reach history
  * the Happier transcript window could not carry.
  *
- * Two declarations can answer, and the host chooses between them without naming
- * an Agent:
- *
- * 1. **A persisted path.** The catalog-declared session-log slot
- *    (the catalog `resume` log-path key; Claude declares `claudeTranscriptPath`).
- *    The Agent wrote the path into its own metadata, so reading it is the whole
- *    derivation.
- * 2. **A declared derivation.** An Agent that persists no path can still declare
- *    how one is found from the vendor resume id
- *    (`resolveAgentNativeSessionLogPath`; Codex names its rollout file after the
- *    thread id under a date-partitioned sessions root). Without this, Codex —
- *    the source Agent in the switch this feature exists for — handed over no log
- *    at all, because "no proof field" was being read as "no log".
- *
- * The persisted path wins when it is there: it is what that Agent itself
- * recorded for this exact Session, so nothing may re-derive around it. Neither
- * route is trusted on its word — both land on the same existence check, because
- * Agents prune and rotate their logs and a recorded or derived path routinely
- * outlives its file. Printing an unverified path into another Agent's prompt
- * would spend the reader's turn on a file that is not there; the whole value of
- * the pointer is that following it works.
+ * The incumbent persisted-path-first and catalog-derivation routes remain
+ * available while supported Agents migrate atomically to the handoff callback.
+ * When present, that callback interprets the opaque runtime descriptor and
+ * proposes a candidate plus its containment root; the host alone resolves
+ * symlinks, enforces containment, and checks that the result is a file.
  *
  * This is the POINTER, not a resume gate (`AM-24`): a missing log costs the seed
  * one line, never the native resume.
@@ -169,14 +173,45 @@ export async function resolveObservableAgentNativeTranscriptPath(params: Readonl
     params.metadata,
   );
   if (!identity) return null;
-  const candidate = resolveAgentNativeTranscriptPathFromSessionMetadata(
+  const incumbentCandidate = resolveAgentNativeTranscriptPathFromSessionMetadata(
     params.agentId,
     params.metadata,
-  ) ?? await resolveAgentNativeSessionLogPathForAgent(params.agentId, {
-    vendorResumeId: identity.vendorResumeId,
-  }).catch(() => null);
-  if (!candidate) return null;
-  return await isExistingFile(candidate) ? candidate : null;
+  );
+  if (incumbentCandidate) {
+    return await stat(incumbentCandidate)
+      .then((entry) => entry.isFile() ? incumbentCandidate : null)
+      .catch(() => null);
+  }
+  const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(
+    params.metadata,
+  );
+  if (!runtimeDescriptorV1 || runtimeDescriptorV1.agentId !== params.agentId) {
+    const derivedCandidate = await resolveAgentNativeSessionLogPathForAgent(params.agentId, {
+      vendorResumeId: identity.vendorResumeId,
+    }).catch(() => null);
+    return derivedCandidate
+      ? await stat(derivedCandidate).then((entry) => entry.isFile() ? derivedCandidate : null).catch(() => null)
+      : null;
+  }
+  try {
+    const currentRuntime = await getSessionHostBridge()
+      .resolveCurrentExecutionSurfacesForCatalogAgent(params.agentId);
+    const resolveCandidate = currentRuntime?.agentId === params.agentId
+      ? currentRuntime.executionSurfaces.handoff?.resolveNativeTranscriptPathCandidate
+      : null;
+    const candidate = resolveCandidate
+      ? await resolveCandidate({ identity, runtimeDescriptorV1 })
+      : null;
+    if (candidate) return await resolveContainedExistingFile(candidate);
+    const derivedCandidate = await resolveAgentNativeSessionLogPathForAgent(params.agentId, {
+      vendorResumeId: identity.vendorResumeId,
+    }).catch(() => null);
+    return derivedCandidate
+      ? await stat(derivedCandidate).then((entry) => entry.isFile() ? derivedCandidate : null).catch(() => null)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

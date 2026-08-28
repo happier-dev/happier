@@ -12,7 +12,6 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
 import {
     evaluateAgentSessionCapabilitySupport,
-    isBundledAgentId,
     isProviderBoundSessionMetadata,
 } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
@@ -151,18 +150,14 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             )?.open.includes('fork') === true;
         const nativeForkOpenSupported = forkAgentId !== null
             && nativeForkOpenDeclared
-            && (
-                // Only a bundled Agent carries a bundled session-capability
-                // policy; a contributed Agent's declaration is the whole fact.
-                !isBundledAgentId(forkAgentId)
-                || evaluateAgentSessionCapabilitySupport({
-                    agentId: forkAgentId,
-                    capability: forkPoint.type === 'seq'
-                        ? 'sessionFork.fromMessage'
-                        : 'sessionFork.conversation',
-                    metadata: parentMetadata,
-                }) === 'supported'
-            );
+            && evaluateAgentSessionCapabilitySupport({
+                agentId: forkAgentId,
+                capability: forkPoint.type === 'seq'
+                    ? 'sessionFork.fromMessage'
+                    : 'sessionFork.conversation',
+                metadata: parentMetadata,
+                declaredSupport: 'supported',
+            }) === 'supported';
         const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(
             parentMetadata,
             forkBackendResolution.backendTargetV2,

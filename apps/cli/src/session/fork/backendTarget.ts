@@ -3,7 +3,6 @@ import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
-import { configuration } from '@/configuration';
 import type { AccountSettings, BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 import {
   readAcpConfiguredBackendV1FromMetadata,
@@ -12,7 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
-  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins,
+  resolveConfiguredAcpBackendFromAccountSettings,
   type ResolvedConfiguredAcpBackend,
 } from '@/agent/acp/catalog/configured/resolveBackend';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
@@ -112,11 +111,10 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
       };
     }
     const accountSettings = await resolveAvailableAccountSettings({ credentials: params.credentials });
-    const resolvedConfiguredBackend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
-      settings: accountSettings ?? {},
-      backendId: candidateConfiguredBackendId,
-      happyHomeDir: configuration.happyHomeDir,
-    });
+    const resolvedConfiguredBackend = resolveConfiguredAcpBackendFromAccountSettings(
+      accountSettings ?? {},
+      candidateConfiguredBackendId,
+    );
 
     if (metadataConfiguredBackend || resolvedConfiguredBackend) {
       const title = metadataConfiguredBackend?.title ?? resolvedConfiguredBackend?.title ?? candidateConfiguredBackendId;

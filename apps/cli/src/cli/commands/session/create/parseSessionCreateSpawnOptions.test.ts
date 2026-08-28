@@ -69,7 +69,7 @@ describe('parseSessionCreateSpawnOptions', () => {
       directory: '/tmp/project',
       backendTargetKey: 'backend:codex',
       title: 'My title',
-      initialMessage: 'Hello',
+      initialInput: { text: 'Hello' },
       modelId: 'gpt-5',
       providerConnectionId: 'pc_work',
       permissionMode: 'safe-yolo',
@@ -219,7 +219,7 @@ describe('parseSessionCreateSpawnOptions', () => {
       '--',
       '--host=literal-prompt',
     ]).spawnRequest).toMatchObject({
-      initialMessage: '--host=literal-prompt',
+      initialInput: { text: '--host=literal-prompt' },
     });
   });
 
@@ -229,7 +229,7 @@ describe('parseSessionCreateSpawnOptions', () => {
       'Fix the failing test',
       '--agent', 'codex',
     ]).spawnRequest).toMatchObject({
-      initialMessage: 'Fix the failing test',
+      initialInput: { text: 'Fix the failing test' },
       backendTargetKey: 'agent:codex',
     });
   });

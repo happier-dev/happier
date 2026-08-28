@@ -2,7 +2,11 @@ import {
   resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
 import {
+  AgentExecutionTargetV1Schema,
+  SessionCreationCorrespondenceV1Schema,
+  agentRoutingIdAddressesContributionIdentityV1,
   readRuntimeDescriptorV1FromMetadata,
+  resolveLinkedExternalSessionMetadataV1,
 } from '@happier-dev/protocol';
 
 import { PersistedProviderResumeBindingError } from '@/providers/lifecycle/readPersistedResumeSelection';
@@ -71,14 +75,39 @@ function selectCanonicalPersistedDirectory(
  * resolve to no Agent rather than to the first Agent in catalog order.
  */
 function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>): Readonly<{
-  backendTarget: NonNullable<SpawnSessionOptions['backendTarget']>;
+  agentTarget?: NonNullable<SpawnSessionOptions['agentTarget']>;
+  backendTarget?: NonNullable<SpawnSessionOptions['backendTarget']>;
   runtimeDescriptorV1?: SpawnSessionOptions['runtimeDescriptorV1'];
 }> | null {
   const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
-  if (!backendTarget) return null;
-
   const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
   const identity = resolveSessionMetadataAgentIdentity(metadata);
+
+  const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(
+    metadata.sessionCreationCorrespondenceV1,
+  );
+  const linked = resolveLinkedExternalSessionMetadataV1(metadata);
+  const parsedAgentTarget = AgentExecutionTargetV1Schema.safeParse(
+    correspondence.success
+      ? correspondence.data.recipe.agentTarget
+      : linked.ok && linked.linkedSession.qualifiedIdentity
+        ? { kind: 'agent', identity: linked.linkedSession.qualifiedIdentity.agent }
+        : undefined,
+  );
+
+  if (parsedAgentTarget.success) {
+    if (
+      !identity.agentId
+      || !agentRoutingIdAddressesContributionIdentityV1(identity.agentId, parsedAgentTarget.data.identity)
+      || (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== identity.agentId)
+    ) return null;
+    return {
+      agentTarget: parsedAgentTarget.data,
+      ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+    };
+  }
+
+  if (!backendTarget) return null;
 
   if (backendTarget.sourceKind === 'configured') {
     // A configured ACP backend must carry no built-in Agent evidence at all;
@@ -132,7 +161,8 @@ export function buildInactiveSessionResumeSpawnOptions(
         existingSessionId: params.sessionId,
         machineId,
         directory,
-        backendTarget: runtimeIdentity.backendTarget,
+        ...(runtimeIdentity.agentTarget ? { agentTarget: runtimeIdentity.agentTarget } : {}),
+        ...(runtimeIdentity.backendTarget ? { backendTarget: runtimeIdentity.backendTarget } : {}),
         approvedNewDirectoryCreation: true,
         ...(runtimeIdentity.runtimeDescriptorV1 ? { runtimeDescriptorV1: runtimeIdentity.runtimeDescriptorV1 } : {}),
       },

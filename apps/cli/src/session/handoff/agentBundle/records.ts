@@ -1,3 +1,6 @@
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+
 import type { SessionHandoffAgentBundle } from '../types';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
@@ -35,11 +38,56 @@ function readJsonLinesFromBase64(value: unknown): readonly unknown[] {
   return encoded ? parseJsonLines(decodeBase64Utf8(encoded)) : [];
 }
 
-function readGenericJsonLinesAgentBundleRecords(
+function readFileSlice(value: unknown): Readonly<{
+  filePath: string;
+  offsetBytes: number;
+  sizeBytes: number;
+}> | null {
+  const record = asRecord(value);
+  if (
+    record?.t !== 'happier.handoff.file.v1'
+    || typeof record.filePath !== 'string'
+    || !Number.isSafeInteger(record.offsetBytes)
+    || Number(record.offsetBytes) < 0
+    || !Number.isSafeInteger(record.sizeBytes)
+    || Number(record.sizeBytes) < 0
+  ) return null;
+  return {
+    filePath: record.filePath,
+    offsetBytes: Number(record.offsetBytes),
+    sizeBytes: Number(record.sizeBytes),
+  };
+}
+
+async function readJsonLinesFromFile(value: unknown): Promise<readonly unknown[]> {
+  const file = readFileSlice(value);
+  if (!file || file.sizeBytes === 0) return [];
+  const lines = createInterface({
+    input: createReadStream(file.filePath, {
+      start: file.offsetBytes,
+      end: file.offsetBytes + file.sizeBytes - 1,
+    }),
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
+  const records: unknown[] = [];
+  for await (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      records.push(JSON.parse(trimmed) as unknown);
+    } catch {
+      // Provider transcript bundles can include diagnostics or partial lines.
+    }
+  }
+  return records;
+}
+
+async function readGenericJsonLinesAgentBundleRecords(
   agentBundle: Readonly<Record<string, unknown>>,
-): readonly unknown[] {
+): Promise<readonly unknown[]> {
   const records = [
     ...readJsonLinesFromBase64(agentBundle.transcriptBase64),
+    ...await readJsonLinesFromFile(agentBundle.transcriptFile),
   ];
 
   const files = Array.isArray(agentBundle.files) ? agentBundle.files : [];
@@ -47,6 +95,7 @@ function readGenericJsonLinesAgentBundleRecords(
     const fileRecord = asRecord(file);
     if (!fileRecord) continue;
     records.push(...readJsonLinesFromBase64(fileRecord.contentBase64));
+    records.push(...await readJsonLinesFromFile(fileRecord.contentFile));
   }
 
   return records;
@@ -62,5 +111,5 @@ export async function readSessionHandoffAgentBundleRecords(
     ?.extractMediaScannableRecords;
   return extractMediaScannableRecords
     ? await extractMediaScannableRecords({ bundle: agentBundle })
-    : readGenericJsonLinesAgentBundleRecords(agentBundle);
+    : await readGenericJsonLinesAgentBundleRecords(agentBundle);
 }

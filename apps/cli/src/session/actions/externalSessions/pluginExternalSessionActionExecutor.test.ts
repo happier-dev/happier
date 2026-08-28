@@ -199,7 +199,7 @@ describe('plugin External Session action executor', () => {
 
     await executePluginExternalSessionAction({
       actionId: 'sessions.external.status.get',
-      input: { sessionId: 'session-1', takeoverReadiness: 'fresh' },
+      input: { sessionId: 'session-1' },
       credentials,
       pluginId: 'author.example',
       signal,
@@ -216,7 +216,6 @@ describe('plugin External Session action executor', () => {
       method: 'daemon.externalSessions.status.get',
       request: {
         sessionId: 'session-1',
-        takeoverReadiness: 'fresh',
         machineId: 'machine-private',
         agentId: 'codex',
         remoteSessionId: 'remote-private',

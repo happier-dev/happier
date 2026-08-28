@@ -126,6 +126,7 @@ function applyRecoveredRuntimeSnapshot(params: Readonly<{
 }>): SpawnSessionOptions | undefined {
   if (!params.spawnOptions) return undefined;
   return resolveSessionRuntimeSnapshot({
+    resolutionMode: 'retained_live_process',
     incomingOptions: params.spawnOptions,
     persistedMetadata: readRuntimeSnapshotMetadata(params.metadata),
     trackedVendorResumeId: params.vendorResumeId ?? null,

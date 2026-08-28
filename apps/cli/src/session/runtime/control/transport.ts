@@ -72,6 +72,8 @@ type ResponseSchema<T> = Readonly<{
   safeParse(value: unknown): { success: true; data: T } | { success: false };
 }>;
 
+const CONNECTED_SERVICE_AUTH_APPLY_RPC_TIMEOUT_MS = 60_000;
+
 function success<T>(value: T): SessionConnectedServiceAuthTransportResult<T> {
   return { ok: true, value };
 }
@@ -124,6 +126,7 @@ async function callResolvedSessionRpc(params: Readonly<{
   transport: SessionRpcTransport;
   method: string;
   request: unknown;
+  timeoutMs?: number;
 }>): Promise<unknown> {
   return params.transport.mode === 'plain'
     ? await callSessionRpc({
@@ -133,6 +136,7 @@ async function callResolvedSessionRpc(params: Readonly<{
         ctx: params.transport.ctx,
         method: `${params.transport.sessionId}:${params.method}`,
         request: params.request,
+        ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
       })
     : await callSessionRpc({
         token: params.transport.token,
@@ -141,6 +145,7 @@ async function callResolvedSessionRpc(params: Readonly<{
         ctx: params.transport.ctx,
         method: `${params.transport.sessionId}:${params.method}`,
         request: params.request,
+        ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
       });
 }
 
@@ -150,11 +155,13 @@ async function callConnectedServiceAuthSessionRpc<T>(params: Readonly<{
   request: unknown;
   responseSchema: ResponseSchema<T>;
   failureCode: string;
+  timeoutMs?: number;
 }>): Promise<SessionConnectedServiceAuthTransportResult<T>> {
   const rawResponse = await callResolvedSessionRpc({
     transport: params.transport,
     method: params.method,
     request: params.request,
+    ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
   });
   const parsedResponse = params.responseSchema.safeParse(rawResponse);
   if (!parsedResponse.success) {
@@ -223,6 +230,7 @@ export function createSessionConnectedServiceAuthTransport(
         transport: createSessionRpcTransport(params.credentials.token, transport),
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
         request,
+        timeoutMs: CONNECTED_SERVICE_AUTH_APPLY_RPC_TIMEOUT_MS,
         responseSchema: SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
         failureCode: 'connected_service_auth_apply_failed',
       });
@@ -278,6 +286,7 @@ export function createResolvedSessionConnectedServiceAuthTransport(
         transport: params,
         method: SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
         request,
+        timeoutMs: CONNECTED_SERVICE_AUTH_APPLY_RPC_TIMEOUT_MS,
         responseSchema: SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
         failureCode: 'connected_service_auth_apply_failed',
       });

@@ -61,10 +61,11 @@ import {
   SessionCreationCorrespondenceV1Schema,
   SessionOwnerMetadataV1Schema,
   deriveSessionCreationTagV1,
+  buildSessionSpawnInitialInputLocalIdV1,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
-import { buildSessionSpawnInitialInputAdmissionV1 } from './sessionInputAdmissionIdentity';
+import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInputAdmissionIdentity';
 
 describe('createSpawnedSession settlement', () => {
   const credentials: Credentials = {
@@ -121,7 +122,7 @@ describe('createSpawnedSession settlement', () => {
     expect(validateStoredAuthTokenAgainstActiveServer).not.toHaveBeenCalled();
   });
 
-  it('submits the initial input through the Message owner after Session creation settles', async () => {
+  it('hands the structured initial input to the child before spawn settlement and never sends after spawn', async () => {
     const cancellation = new AbortController();
     const machineAdmissionTransport = vi.fn(async () => ({
       status: 'accepted' as const,
@@ -211,39 +212,36 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: null, tagIds: [] },
       initialTitle: 'Atomic first title',
-      initialMessage: 'Inspect this repo',
+      initialInput: { text: 'Inspect this repo' },
       agentSessionStartupInstructionsV1,
-      buildInitialInputAdmission: (sessionId) => buildSessionSpawnInitialInputAdmissionV1({
-        actionCaller: { kind: 'host' },
-        callerSurface: 'cli',
-        sessionId,
-        sessionCreationTag,
+      buildInitialInputHandoff: (localId) => ({
+        ...buildSessionSpawnInitialInputAdmissionForLocalIdV1({
+          actionCaller: { kind: 'host' },
+          callerSurface: 'cli',
+          localId,
+        }),
+        localId,
       }),
       machineAdmissionTransport,
       signal: cancellation.signal,
     });
 
     const spawnRequest = callMachineRpc.mock.calls[0]?.[0]?.request;
-    expect(spawnRequest).not.toHaveProperty('pendingFirstInput');
+    const expectedInitialInputLocalId = buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag });
     expect(spawnRequest).toMatchObject({
       sessionCreationTag,
       sessionCreationCorrespondence,
       initialTitle: 'Atomic first title',
       agentSessionStartupInstructionsV1,
+      pendingFirstInput: {
+        text: 'Inspect this repo',
+        localId: expectedInitialInputLocalId,
+        inputAdmission: expect.any(Object),
+      },
     });
     expect(spawnRequest).not.toHaveProperty('initialPrompt');
     expect(spawnRequest).not.toHaveProperty('initialMessage');
-    expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
-      credentials,
-      idOrPrefix: 'session-created',
-      message: 'Inspect this repo',
-      wait: false,
-      localId: expect.stringMatching(/^plugin-input-v1:/u),
-      requestedAction: { v: 1, kind: 'send_now' },
-      inputAdmission: expect.any(Object),
-      machineAdmissionTransport,
-      signal: cancellation.signal,
-    }));
+    expect(sendSessionMessage).not.toHaveBeenCalled();
     expect(fetchSessionById).toHaveBeenCalledWith({
       token: 'token',
       sessionId: 'session-created',
@@ -370,13 +368,13 @@ describe('createSpawnedSession settlement', () => {
         ),
       }],
     });
-    sendSessionMessage.mockResolvedValue({
+    sendSessionMessage.mockImplementation(async ({ localId }) => ({
       ok: true,
       sessionId: 'session-existing',
-      localId: 'plugin-input-v1:existing',
+      localId,
       waited: false,
-      admissionResult: { status: 'alreadyAccepted', localId: 'plugin-input-v1:existing' },
-    });
+      admissionResult: { status: 'alreadyAccepted', localId },
+    }));
     updateSessionMetadataWithRetry.mockRejectedValue(
       new Error('metadata write unavailable'),
     );
@@ -389,11 +387,10 @@ describe('createSpawnedSession settlement', () => {
       status: 'alreadyAccepted' as const,
       localId: 'plugin-input-v1:existing',
     }));
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-existing',
-      sessionCreationTag,
+      localId: 'fixture-existing',
     });
 
     const result = await createSpawnedSession({
@@ -406,8 +403,8 @@ describe('createSpawnedSession settlement', () => {
       organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
       legacyMetadataLabel: 'predecessor metadata label',
       environmentVariables: { TOKEN: 'rejoin-value-that-must-not-dispatch' },
-      initialMessage: 'Inspect this repo',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Inspect this repo' },
+      buildInitialInputHandoff: () => initialInputAdmission,
       machineAdmissionTransport,
     });
 
@@ -420,7 +417,7 @@ describe('createSpawnedSession settlement', () => {
       },
       initialInput: {
         status: 'alreadyAccepted',
-        localId: 'plugin-input-v1:existing',
+        localId: buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag }),
       },
     });
     expect(spawnDaemonSession).not.toHaveBeenCalled();
@@ -432,7 +429,7 @@ describe('createSpawnedSession settlement', () => {
     });
     expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
       idOrPrefix: 'session-existing',
-      localId: initialInputAdmission.localId,
+      localId: buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag }),
       inputAdmission: initialInputAdmission.inputAdmission,
       requestedAction: { v: 1, kind: 'send_now' },
       machineAdmissionTransport,
@@ -523,11 +520,10 @@ describe('createSpawnedSession settlement', () => {
     fetchAccountEncryptionCurrentness.mockRejectedValue(
       new Error('Account encryption currentness unavailable'),
     );
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-rejoin-currentness-unavailable',
-      sessionCreationTag,
+      localId: 'fixture-currentness-unavailable',
     });
     await expect(createSpawnedSession({
       credentials,
@@ -537,8 +533,8 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationTag,
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: 'folder-created', tagIds: ['tag-created'] },
-      initialMessage: 'Keep the Session settlement',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Keep the Session settlement' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     })).rejects.toMatchObject({
       code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
       details: { spawnNonce: expect.stringMatching(/^session\.spawn_new\.creation:/u) },
@@ -607,11 +603,10 @@ describe('createSpawnedSession settlement', () => {
       folderId: 'folder-current',
       tagIds: ['tag-current'],
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-rejoin-message-transport-failed',
-      sessionCreationTag,
+      localId: 'fixture-message-transport-failed',
     });
     sendSessionMessage.mockRejectedValue(new Error('Session Message transport acknowledgement failed'));
 
@@ -623,15 +618,15 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationTag,
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: 'folder-created', tagIds: ['tag-created'] },
-      initialMessage: 'Keep the Session settlement',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Keep the Session settlement' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     })).resolves.toMatchObject({
       disposition: 'rejoined',
       sessionId: 'session-rejoin-message-transport-failed',
       organizationPlacement: { folderId: 'folder-current', tagIds: ['tag-current'] },
       initialInput: {
         status: 'outcomeUnknown',
-        localId: initialInputAdmission.localId,
+        localId: buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag }),
         code: 'session_input_action_execution_failed',
       },
     });
@@ -694,11 +689,10 @@ describe('createSpawnedSession settlement', () => {
       controller.abort(new Error('caller retired after Session identity was known'));
       throw controller.signal.reason;
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-known-rejoin',
-      sessionCreationTag,
+      localId: 'fixture-known-rejoin',
     });
     sendSessionMessage.mockRejectedValue(
       new Error('initial input must not be submitted after caller cancellation'),
@@ -712,8 +706,8 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationTag,
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: 'folder-created', tagIds: ['tag-created'] },
-      initialMessage: 'This input must remain nested',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'This input must remain nested' },
+      buildInitialInputHandoff: () => initialInputAdmission,
       signal: controller.signal,
     })).resolves.toMatchObject({
       disposition: 'rejoined',
@@ -827,11 +821,10 @@ describe('createSpawnedSession settlement', () => {
         checkout: null,
       },
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-post-settlement-source-conflict',
-      sessionCreationTag,
+      localId: 'fixture-source-conflict',
     });
     callMachineRpc.mockResolvedValue({
       success: true,
@@ -876,8 +869,8 @@ describe('createSpawnedSession settlement', () => {
       backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const },
       sessionCreationTag,
       sessionCreationCorrespondence,
-      initialMessage: 'Never admit this input to another source',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Never admit this input to another source' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     } satisfies CreateSpawnedSessionParams;
 
     await expect(createSpawnedSession({
@@ -1101,11 +1094,10 @@ describe('createSpawnedSession settlement', () => {
       callerCreationNamespace: 'user',
       creationKey: 'creation-direct-currentness-unavailable',
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-direct-currentness-unavailable',
-      sessionCreationTag,
+      localId: 'fixture-direct-currentness',
     });
     callMachineRpc.mockResolvedValue({
       success: true,
@@ -1139,12 +1131,12 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'direct-currentness-unavailable',
-      initialMessage: 'Keep the Session settlement',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Keep the Session settlement' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     })).resolves.toMatchObject({
       disposition: 'created',
       sessionId: 'session-direct-currentness-unavailable',
-      initialInput: { status: 'accepted', localId: initialInputAdmission.localId },
+      initialInput: { status: 'accepted', localId: 'spawn-first-turn:direct-currentness-unavailable' },
     });
     expect(loggerWarn).toHaveBeenCalledWith(
       '[SESSION SPAWN] Known Session Account currentness read failed',
@@ -1152,16 +1144,15 @@ describe('createSpawnedSession settlement', () => {
     );
   });
 
-  it('keeps a directly identified Session successful when Message setup fails', async () => {
+  it('does not perform a second Message setup after a directly identified Session settles', async () => {
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
       creationKey: 'creation-direct-message-setup-failed',
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-direct-message-setup-failed',
-      sessionCreationTag,
+      localId: 'fixture-direct-message',
     });
     callMachineRpc.mockResolvedValue({
       success: true,
@@ -1186,17 +1177,14 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'direct-message-setup-failed',
-      initialMessage: 'Keep the Session settlement',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Keep the Session settlement' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     })).resolves.toMatchObject({
       disposition: 'created',
       sessionId: 'session-direct-message-setup-failed',
-      initialInput: {
-        status: 'outcomeUnknown',
-        localId: initialInputAdmission.localId,
-        code: 'session_input_action_execution_failed',
-      },
+      initialInput: { status: 'accepted', localId: 'spawn-first-turn:direct-message-setup-failed' },
     });
+    expect(sendSessionMessage).not.toHaveBeenCalled();
   });
 
   it('classifies a generic settled-Session visibility failure without hiding it as eventual visibility', async () => {
@@ -1204,11 +1192,10 @@ describe('createSpawnedSession settlement', () => {
       callerCreationNamespace: 'user',
       creationKey: 'creation-direct-visibility-failed',
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-direct-visibility-failed',
-      sessionCreationTag,
+      localId: 'fixture-direct-visibility',
     });
     callMachineRpc.mockResolvedValue({
       success: true,
@@ -1230,12 +1217,12 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'direct-visibility-failed',
-      initialMessage: 'Keep the Session settlement',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'Keep the Session settlement' },
+      buildInitialInputHandoff: () => initialInputAdmission,
     })).resolves.toMatchObject({
       disposition: 'created',
       sessionId: 'session-direct-visibility-failed',
-      initialInput: { status: 'accepted', localId: initialInputAdmission.localId },
+      initialInput: { status: 'accepted', localId: 'spawn-first-turn:direct-visibility-failed' },
     });
     expect(loggerWarn).toHaveBeenCalledWith(
       '[SESSION SPAWN] Settled Session visibility read failed',
@@ -1243,17 +1230,16 @@ describe('createSpawnedSession settlement', () => {
     );
   });
 
-  it('keeps a known direct Session successful when cancellation interrupts visibility before initial input admission', async () => {
+  it('keeps the child-admitted first input settled when cancellation interrupts later visibility', async () => {
     const controller = new AbortController();
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
       creationKey: 'creation-known-visibility-cancelled',
     });
-    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'cli',
-      sessionId: 'session-known-before-visibility',
-      sessionCreationTag,
+      localId: 'fixture-known-visibility',
     });
     callMachineRpc.mockResolvedValue({
       success: true,
@@ -1274,14 +1260,14 @@ describe('createSpawnedSession settlement', () => {
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'known-before-visibility',
-      initialMessage: 'This input must remain nested',
-      buildInitialInputAdmission: () => initialInputAdmission,
+      initialInput: { text: 'This input must remain nested' },
+      buildInitialInputHandoff: () => initialInputAdmission,
       signal: controller.signal,
     })).resolves.toMatchObject({
       disposition: 'created',
       sessionId: 'session-known-before-visibility',
       organizationPlacement: { folderId: null, tagIds: [] },
-      initialInput: { status: 'rejected', code: 'session_input_cancelled' },
+      initialInput: { status: 'accepted', localId: 'spawn-first-turn:known-before-visibility' },
     });
     expect(sendSessionMessage).not.toHaveBeenCalled();
   });

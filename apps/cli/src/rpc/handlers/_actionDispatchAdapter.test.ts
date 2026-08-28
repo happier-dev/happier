@@ -33,6 +33,7 @@ describe('RPC action dispatch adapter', () => {
                     defaultSessionId: 'session-1',
                     serverId: 'server-1',
                     surface: 'rpc',
+                    authority: 'present_user',
                 },
             },
         ]);
@@ -42,7 +43,7 @@ describe('RPC action dispatch adapter', () => {
         expect(buildActionExecutorContextForRpc({
             defaultSessionId: '  ',
             serverId: null,
-        })).toEqual({ surface: 'rpc' });
+        })).toEqual({ surface: 'rpc', authority: 'present_user' });
     });
 
     it('preserves host-only active-turn authority for a local agent dispatch', () => {
@@ -61,8 +62,16 @@ describe('RPC action dispatch adapter', () => {
         })).toEqual({
             defaultSessionId: 'session-1',
             surface: 'agent',
+            authority: 'account_automation',
             callerPermissionMode: 'yolo',
             causalPermissionAuthority,
         });
+    });
+
+    it('does not treat progress-only local context as automation authority', () => {
+        expect(buildActionExecutorContextForRpc({
+            defaultSessionId: 'session-1',
+            localActionContext: { operationProgress: { update: () => undefined } },
+        })).toMatchObject({ surface: 'rpc', authority: 'present_user' });
     });
 });

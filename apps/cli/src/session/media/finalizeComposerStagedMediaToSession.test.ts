@@ -136,12 +136,35 @@ describe('finalizeComposerStagedMediaToSession', () => {
       handle: staged.handle,
       executionTarget,
       owner: attachmentOwner,
+      claimant: {
+        composer: { kind: 'session', sessionId: 'session-1' },
+        attachmentInstanceId: 'attachment-image-1',
+      },
     }]);
     await expect(stageStore.inspectForFinalization({
       handle: staged.handle,
       executionTarget,
       owner: attachmentOwner,
     })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it('refuses the same staged handle when a different Composer attachment already claimed it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-finalize-custody-'));
+    temporaryDirectories.push(root);
+    const { stageStore, draftAttachment } = await createReadyStage(root);
+    await finalizeComposerStagedMediaToSession(finalizationParams({ root, stageStore, draftAttachment }));
+    sessionMediaBridgeSpies.persist.mockClear();
+
+    await expect(finalizeComposerStagedMediaToSession({
+      ...finalizationParams({
+        root,
+        stageStore,
+        draftAttachment: { ...draftAttachment, instanceId: 'attachment-image-2' },
+      }),
+      sessionId: 'session-2',
+      messageLocalId: 'local-2',
+    })).rejects.toMatchObject({ code: 'composer_staged_media_stage_unavailable' });
+    expect(sessionMediaBridgeSpies.persist).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -7,16 +7,6 @@ import {
   readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 
-function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-type ProviderHandoffLaunchHints = Readonly<{
-  resumePlanOptions?: unknown;
-}>;
-
 export type SessionHandoffTypedImportFailureCode =
   | 'target_identity_conflict'
   | 'agent_version_unsupported';
@@ -50,10 +40,13 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
   targetPath: string;
   sessionStorageMode?: 'direct' | 'persisted';
 }>): Promise<ImportedSessionHandoffBundle> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.bundle.agentId)).handoff;
-  if (!providerOps) {
+  const currentRuntime = await getSessionHostBridge()
+    .resolveCurrentExecutionSurfacesForCatalogAgent(params.bundle.agentId);
+  if (!currentRuntime || currentRuntime.agentId !== params.bundle.agentId) {
     throw new Error(`Unsupported handoff provider: ${params.bundle.agentId}`);
   }
+  const providerOps = currentRuntime.executionSurfaces.handoff;
+  if (!providerOps) throw new Error(`Unsupported handoff provider: ${params.bundle.agentId}`);
   let imported;
   try {
     imported = await providerOps.importBundle({
@@ -88,17 +81,21 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
     'handoff.launch.sessionStateUpdates',
   );
   const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadataPatch) ?? undefined;
-  const providerLaunch = imported.value.launch as typeof imported.value.launch & ProviderHandoffLaunchHints;
-  const resumePlanOptions = asRecord(providerLaunch.resumePlanOptions);
+  if (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== params.bundle.agentId) {
+    throw new SessionHandoffTypedImportError({
+      code: 'target_identity_conflict',
+      message: 'Imported runtime descriptor Agent identity does not match the handoff bundle',
+    });
+  }
 
   return {
     remoteSessionId: imported.value.providerSessionId,
     directSource: source,
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     resume: {
-      ...(resumePlanOptions ? resumePlanOptions : {}),
       directory: imported.value.launch.directory ?? params.targetPath,
       agent: params.bundle.agentId as ImportedSessionHandoffBundle['resume']['agent'],
+      agentTarget: currentRuntime.agentTarget,
       resume: imported.value.providerSessionId,
       ...(imported.value.launch.environmentVariables
         ? { environmentVariables: { ...imported.value.launch.environmentVariables } }

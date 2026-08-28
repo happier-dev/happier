@@ -178,7 +178,6 @@ function persistedCurrentSource(): PreparedExternalSessionPersistedTakeoverSourc
       remoteSessionId: 'remote-1',
       linkGeneration: 'link-1',
       source: { kind: 'claudeConfig', projectId: 'project-1' },
-      codexBackendMode: null,
     } as unknown as PreparedExternalSessionPersistedTakeoverSource['linked'],
   };
 }

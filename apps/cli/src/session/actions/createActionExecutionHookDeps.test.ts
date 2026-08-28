@@ -91,4 +91,46 @@ describe('createActionExecutionHookDeps', () => {
     }
     expect(mocks.release).toHaveBeenCalledTimes(2);
   });
+
+  it('preserves the api surface in before and after hook payloads', async () => {
+    const observedSurfaces: string[] = [];
+    mocks.tryAcquireLease.mockReturnValue({
+      registry: {} as never,
+      release: mocks.release,
+    });
+    mocks.intercept.mockImplementation(async (params: Readonly<{ payload: unknown }>) => {
+      const parsed = ActionExecuteBeforeHookPayloadSchema.parse(params.payload);
+      observedSurfaces.push(parsed.invocation.surface);
+      return { status: 'continue', input: parsed.input };
+    });
+    mocks.observe.mockImplementation(async (params: Readonly<{ payload: unknown }>) => {
+      const parsed = ActionExecuteAfterHookPayloadSchema.parse(params.payload);
+      observedSurfaces.push(parsed.invocation.surface);
+    });
+    const deps = createActionExecutionHookDeps();
+    if (!deps.interceptActionExecution || !deps.observeActionExecution) {
+      throw new Error('expected Action hook dependencies');
+    }
+    const context = {
+      surface: 'api' as const,
+      authority: 'account_automation' as const,
+      actionCaller: { kind: 'host' as const },
+    };
+
+    await deps.interceptActionExecution({
+      actionId: 'machines.list',
+      input: {},
+      context,
+      caller: context.actionCaller,
+    });
+    await deps.observeActionExecution({
+      actionId: 'machines.list',
+      input: {},
+      context,
+      caller: context.actionCaller,
+      result: { ok: true, result: { machines: [] } },
+    });
+
+    expect(observedSurfaces).toEqual(['api', 'api']);
+  });
 });

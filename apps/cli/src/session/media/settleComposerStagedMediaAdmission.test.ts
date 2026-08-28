@@ -22,6 +22,10 @@ const releaseIntent = {
   },
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
   owner: { pluginId: 'acme.media', localId: 'image' },
+  claimant: {
+    composer: { kind: 'session' as const, sessionId: 'session-1' },
+    attachmentInstanceId: 'attachment-1',
+  },
 };
 
 const MEDIA_RELATIVE_PATH = '.happier/uploads/messages/msg-1/photo.png';
@@ -37,6 +41,7 @@ function createStageStore(): ComposerMediaStageStore & { release: ReturnType<typ
   const release = vi.fn(async () => ({ success: true as const }));
   return {
     finalizeUpload: vi.fn(),
+    claim: vi.fn(),
     inspectForFinalization: vi.fn(),
     release,
   } as unknown as ComposerMediaStageStore & { release: ReturnType<typeof vi.fn> };

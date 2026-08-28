@@ -8,6 +8,7 @@ import {
     AutomationResultDeliveryResultV1Schema,
     openAutomationConversationReplyContextStoredEnvelopeV1,
     openAutomationRunResultStoredEnvelopeV1,
+    sameAutomationAccountContentIdentityV1,
     sameAutomationAccountCurrentnessWitnessV1,
     sealAutomationReplyHandoffReceiptStoredEnvelopeV1,
     type AccountEncryptionCurrentnessResponse,
@@ -296,7 +297,6 @@ export function registerAutomationReplyHandoffRpcHandler(
                 automationRunId: expectedCorrespondence.runId,
                 resultId: expectedCorrespondence.handoffId,
                 automationId: expectedCorrespondence.automationId,
-                templateVersion: contextContent.templateVersion,
                 resultDelivery: 'finalResult',
             },
             result: resultContent.result,
@@ -355,16 +355,23 @@ export function registerAutomationReplyHandoffRpcHandler(
                         kind: 'automationRun',
                         automationId: expectedCorrespondence.automationId,
                         runId: expectedCorrespondence.runId,
-                        origin: 'conversation',
+                        cause: request.handoff.cause,
                     },
                     signal,
                 },
             });
-            if (!execution.matched || !execution.result.ok) {
+            if (signal.aborted) return unavailable('cancelled');
+            if (!execution.matched) {
                 return unavailable('actionUnavailable');
             }
-            if (signal.aborted) return unavailable('cancelled');
-
+            if (!execution.result.ok) {
+                // `notStarted` is effect-safety evidence, not proof that the
+                // frozen Action contract is absent. Generation retirement,
+                // connected-account binding, and other pre-handler runtime
+                // failures use it and must retry. Only `matched: false` above
+                // proves that this materialization has no such Action.
+                return unavailable('actionExecutionFailed');
+            }
             const actionResult = AutomationResultDeliveryResultV1Schema.safeParse(
                 execution.result.result,
             );
@@ -383,7 +390,10 @@ export function registerAutomationReplyHandoffRpcHandler(
             if (encryptionAfterInvoke.kind === 'unavailable') return unavailable('targetUnavailable');
             if (
                 encryptionAfterInvoke.kind !== 'available'
-                || !sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionAfterInvoke.witness)
+                || !sameAutomationAccountContentIdentityV1(
+                    encryptionAtOpen.witness,
+                    encryptionAfterInvoke.witness,
+                )
             ) {
                 return settled({
                     settlement: { kind: 'retry', retryAfterMs: 0 },
@@ -412,7 +422,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                 receiptEnvelope,
             });
         } catch {
-            return signal.aborted ? unavailable('cancelled') : unavailable('actionUnavailable');
+            return signal.aborted ? unavailable('cancelled') : unavailable('actionExecutionFailed');
         } finally {
             if (lease) {
                 await lease.release();

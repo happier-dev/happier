@@ -86,6 +86,7 @@ describe('executePluginSessionMessageAction', () => {
       },
       {
         surface: 'plugin',
+        authority: 'account_automation',
         actionCaller: {
           kind: 'plugin',
           pluginId: 'acme.channels',

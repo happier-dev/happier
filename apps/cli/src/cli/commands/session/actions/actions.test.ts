@@ -124,6 +124,62 @@ describe('happier session actions (unit)', () => {
     }
   });
 
+  it('uses the Protocol request-id grammar for Session Action correlation ids', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: { id: 'sess-1', metadata: {} },
+      ctx: null,
+      mode: 'plain' as const,
+    });
+    execute.mockResolvedValueOnce({ ok: true, result: { started: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand([
+        'actions',
+        'execute',
+        'sess-1',
+        'review.start',
+        '--input-json',
+        '{"instructions":"Review."}',
+        '--action-request-id',
+        'corrélation-☃',
+        '--json',
+      ], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledWith(
+        'review.start',
+        { instructions: 'Review.', sessionId: 'sess-1' },
+        expect.objectContaining({ actionRequestId: 'corrélation-☃' }),
+      );
+      expect(output.json()).toMatchObject({ ok: true });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects a Session Action request id beyond the Protocol-owned limit before transport resolution', async () => {
+    await expect(handleSessionCommand([
+      'actions',
+      'execute',
+      'sess-1',
+      'review.start',
+      '--action-request-id',
+      'x'.repeat(129),
+    ], {
+      readCredentialsFn: vi.fn(),
+    })).rejects.toThrow('Invalid --action-request-id.');
+
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('lifts nested action failures into a JSON error envelope for actions execute', async () => {
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,

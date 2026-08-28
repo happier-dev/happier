@@ -103,11 +103,20 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
       acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir }),
     ]);
     try {
+      if (typeof registryLease.registry.generation !== 'number') {
+        throw new ProviderCliError(
+          'provider_contribution_unavailable',
+          'The active Provider registry has no generation identity',
+        );
+      }
       const activeSnapshot = readProviderCliActiveSnapshot(accountContext);
       return {
         accountSettings: accountContext.settings as Readonly<Record<string, unknown>>,
         machineId: machine.machineId,
-        registry: resolveProviderContributionRegistryView(registryLease.registry.contributes),
+        registry: resolveProviderContributionRegistryView(
+          registryLease.registry.contributes,
+          registryLease.registry.generation,
+        ),
         activeSnapshot,
       };
     } finally {

@@ -1,6 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import {
   AccountProfileResponseSchema,
+  buildQualifiedPluginContributionKey,
   SessionMcpSelectionV1Schema,
   convertBackendTargetRefV2ToV1,
   readBackendTargetRefV2,
@@ -9,13 +10,7 @@ import {
   type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 import axios from 'axios';
-import { homedir } from 'node:os';
-import {
-  buildConnectedServiceAccountGroupOptionsByServiceId,
-  buildConnectedServiceProfileOptionsByServiceId,
-  getAgentCore,
-  legacyCustomAcpCompat,
-} from '@happier-dev/agents';
+import { connectedServiceProfileKey, legacyCustomAcpCompat } from '@happier-dev/agents';
 
 import { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/resolveAccountSettingsHttpBaseUrl';
 import { readSettings, type StoredCredentials } from '@/persistence';
@@ -24,12 +19,12 @@ import type { ProbedAgentModesResult } from '@/capabilities/probes/agentModesPro
 import type { ProbedAgentConfigOptionsResult } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { getPreferredHostName } from '@/daemon/machine/metadata';
+import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { listServerProfiles } from '@/server/serverProfiles';
 import { projectProfilesListForActions } from '@/settings/profiles/profileListProjection';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
-import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import {
   resolveSessionEncryptionContextFromCredentials,
@@ -419,7 +414,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
     host?: unknown;
     machineId?: unknown;
   }> | null;
-  happyHomeDir?: string;
   accountProfile?: AccountProfile | null;
   probeDeps?: AgentProbeInventoryDeps;
   mcpPreviewDeps?: SpawnMcpPreviewInventoryDeps;
@@ -554,33 +548,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
       };
     },
     machinesList: async (args) => {
-      let settingsMachineId: string | null = null;
-      try {
-        settingsMachineId = normalizeStringValueOrNull((await readSettings()).machineId);
-      } catch {
-        settingsMachineId = null;
-      }
-      let preferredHost: string | null = null;
-      try {
-        preferredHost = normalizeStringValueOrNull(await getPreferredHostName());
-      } catch {
-        preferredHost = null;
-      }
-      const sessionMachineId = await readCurrentSessionValue('machineId');
-      const sessionHost = await readCurrentSessionValue('host');
-      const machineId = settingsMachineId ?? sessionMachineId ?? preferredHost ?? sessionHost ?? null;
-      const host = preferredHost ?? sessionHost ?? null;
-      const items = machineId || host
-        ? [{
-            id: machineId ?? host!,
-            value: machineId ?? host!,
-            label: host ?? machineId!,
-            ...(machineId ? { machineId } : {}),
-            ...(host ? { host } : {}),
-            homeDir: normalizeStringValueOrNull(homedir()),
-            current: true,
-          }]
-        : [];
+      const items = (await listCurrentAccountMachines({ token: params.token })).map((machine) => ({
+        id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
+        active: machine.active, revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,
+      }));
       return {
         items: limitItems(items, (args as { limit?: unknown }).limit),
       };
@@ -613,7 +584,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
         limit: (args as { limit?: unknown }).limit,
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
         accountSettings: await readAccountSettings(),
-        happyHomeDir: params.happyHomeDir,
       }),
     }),
     agentsModelsList: async (args) => {
@@ -733,40 +703,68 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     spawnConnectedServicesList: async (args) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
-      const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(normalizedAgentId);
+      const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(normalizedAgentId);
       if (supportedServiceIds.length === 0) {
         return { ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}), supportedServiceIds: [], items: [] };
       }
       const agentId = normalizedAgentId;
-      // An installed Agent that contributes no bundled core has none here; it
-      // must not borrow another Agent's.
-      const bundledAgentCore = agentId ? getAgentCore(agentId) : null;
       const accountProfile = await readAccountProfile();
       const accountSettings = await readAccountSettings();
-      const connectedServicesV2 = accountProfile?.connectedServicesV2 ?? [];
       const labelsByKey = accountSettings && typeof accountSettings === 'object'
         ? ((accountSettings as any).connectedServicesProfileLabelByKey ?? {})
         : {};
-      const defaultProfileByServiceId = accountSettings && typeof accountSettings === 'object'
-        ? ((accountSettings as any).connectedServicesDefaultProfileByServiceId ?? {})
-        : {};
-      const profileOptionsByServiceId = buildConnectedServiceProfileOptionsByServiceId({
-        accountProfileConnectedServicesV2: connectedServicesV2,
-        agentCore: bundledAgentCore,
-        supportedConnectedServiceIds: supportedServiceIds,
-        labelsByKey,
-      });
-      const groupOptionsByServiceId = buildConnectedServiceAccountGroupOptionsByServiceId({
-        accountGroupsFeatureEnabled: true,
-        accountProfileConnectedServicesV2: connectedServicesV2,
-        supportedConnectedServiceIds: supportedServiceIds,
-      });
+      const supported = new Set<string>(supportedServiceIds);
+      const profileOptionsByServiceId = (accountProfile?.connectedAccountsV4 ?? []).reduce<
+        Record<string, AccountProfile['connectedAccountsV4']>
+      >((byServiceId, account) => {
+        const serviceId = buildQualifiedPluginContributionKey(account.ref.service);
+        if (!supported.has(serviceId)) return byServiceId;
+        (byServiceId[serviceId] ??= []).push(account);
+        return byServiceId;
+      }, {});
+      const normalizedProfileOptionsByServiceId = Object.fromEntries(
+        Object.entries(profileOptionsByServiceId).map(([serviceId, accounts]) => [
+          serviceId,
+          (accounts ?? []).map((account) => ({
+            profileId: account.ref.accountId,
+            status: account.status,
+            kind: account.kind ?? null,
+            providerEmail: account.providerIdentity?.email ?? null,
+            label: labelsByKey[connectedServiceProfileKey({
+              serviceId,
+              profileId: account.ref.accountId,
+            })]
+              ?? account.displayName
+              ?? account.providerIdentity?.email
+              ?? account.ref.accountId,
+          })),
+        ]),
+      );
+      const groupOptionsByServiceId = Object.fromEntries(
+        supportedServiceIds.map((serviceId) => [
+          serviceId,
+          (accountProfile?.connectedAccountGroupsV4 ?? [])
+            .filter((group) => buildQualifiedPluginContributionKey(group.ref.service) === serviceId)
+            .map((group) => ({
+              groupId: group.ref.groupId,
+              label: group.displayName ?? group.ref.groupId,
+              activeProfileId: group.activeConnectedAccountId,
+              memberProfileIds: group.members
+                .filter((member) => member.enabled)
+                .map((member) => member.connectedAccountId),
+              generation: group.generation,
+              enabledMemberCount: group.members.filter((member) => member.enabled).length,
+              autoSwitch: group.policy.autoSwitch,
+              status: group.members.some((member) => member.enabled) ? 'ready' : 'needs_members',
+            })),
+        ]),
+      );
       const defaultBindings = resolveSpawnConnectedServicesDefaults({
         accountSettings,
         agentId,
       });
       const includeUnavailable = (args as { includeUnavailable?: unknown }).includeUnavailable === true;
-      const profileItems = Object.entries(profileOptionsByServiceId).flatMap(([serviceId, options]) => (
+      const profileItems = Object.entries(normalizedProfileOptionsByServiceId).flatMap(([serviceId, options]) => (
         options
           .filter((option) => includeUnavailable || option.status === 'connected')
           .map((option) => ({
@@ -777,7 +775,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       return {
         agentId,
         supportedServiceIds,
-        profileOptionsByServiceId,
+        profileOptionsByServiceId: normalizedProfileOptionsByServiceId,
         groupOptionsByServiceId,
         ...(defaultBindings ? { defaultBindings } : {}),
         items: profileItems,

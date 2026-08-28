@@ -120,8 +120,10 @@ export type HostExternalTranscriptReadResult =
       items: readonly HostExternalTranscriptItem[];
       nextCursor: string;
       boundary: string;
+      hasMore: boolean;
       diagnostics?: readonly Readonly<{
         code: string;
+        severity: 'benign' | 'required';
         count: number;
         positions: readonly number[];
       }>[];

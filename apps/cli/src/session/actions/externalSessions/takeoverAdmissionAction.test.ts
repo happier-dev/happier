@@ -341,7 +341,6 @@ describe('external-session persisted takeover admission action', () => {
       remoteSessionId: initial.request.source.remoteSessionId,
       linkGeneration: initial.request.source.linkGeneration,
       source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
-      codexBackendMode: null,
     } as never;
     try {
       const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
@@ -440,7 +439,6 @@ describe('external-session persisted takeover admission action', () => {
       remoteSessionId: record.request.source.remoteSessionId,
       linkGeneration: record.request.source.linkGeneration,
       source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
-      codexBackendMode: null,
     } as never;
     try {
       await writeExternalSessionOperationRecord(activeServerDir, record);
@@ -455,6 +453,7 @@ describe('external-session persisted takeover admission action', () => {
           pluginGeneration: record.request.source.contributionGeneration,
           quiescenceIdentity: 'verified-source-and-process',
           permitsAdmission: true,
+          externalLinkedTakeoverWriterSafety: 'native_prevention',
           hostedOwnerSessionId: null,
         }),
         nowMs: () => 20,
@@ -478,6 +477,88 @@ describe('external-session persisted takeover admission action', () => {
         bindings: { targetRuntimeAttemptId: 'attempt-a' },
       });
       expect(sendHistoricalCommand).toHaveBeenCalledOnce();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rechecks current native writer prevention immediately before constructing the admission command', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-external-linked-final-writer-safety-',
+    ));
+    const record = externalLinkedAdmissionReadyRecord();
+    const waiter = createPersistedTakeoverAdmissionWaiter();
+    const correlation = {
+      mode: 'external_linked' as const,
+      sessionId: record.request.sessionId,
+      operationId: record.operationId,
+      attemptId: 'attempt-a',
+      publisherPrecondition,
+    };
+    waiter.register({
+      mode: 'external_linked',
+      operationId: record.operationId,
+      attemptId: 'attempt-a',
+    });
+    const linked = {
+      rawSession: {
+        id: record.request.sessionId,
+        metadataVersion: 4,
+        seq: 3,
+        pendingVersion: 2,
+        pendingCount: 0,
+        pendingBlockedCount: 0,
+        currentStorageState: 'machine_only',
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
+        active: true,
+        thinking: false,
+      },
+      metadata: {},
+      sessionPath: '/workspace',
+      agentId: 'example',
+      machineId: record.request.source.machineId,
+      remoteSessionId: record.request.source.remoteSessionId,
+      linkGeneration: record.request.source.linkGeneration,
+      source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
+    } as never;
+    const loadExternalLinkedCurrent = vi.fn()
+      .mockResolvedValueOnce({
+        linked,
+        pluginGeneration: record.request.source.contributionGeneration,
+        quiescenceIdentity: 'verified-source-and-process',
+        permitsAdmission: true,
+        hostedOwnerSessionId: null,
+        externalLinkedTakeoverWriterSafety: 'native_prevention',
+      })
+      .mockResolvedValueOnce({
+        linked,
+        pluginGeneration: record.request.source.contributionGeneration,
+        quiescenceIdentity: 'verified-source-and-process',
+        permitsAdmission: true,
+        hostedOwnerSessionId: null,
+        externalLinkedTakeoverWriterSafety: 'unsupported',
+      });
+    const sendHistoricalCommand = vi.fn();
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record);
+      const owner = createExternalSessionPersistedTakeoverAdmissionOwner({
+        activeServerDir,
+        admissionWaiter: waiter,
+        isFollowSuspended: () => true,
+        suspendFollow: async () => undefined,
+        sendHistoricalCommand,
+        loadExternalLinkedCurrent,
+      });
+
+      await expect(owner.admit(correlation)).rejects.toThrow(
+        'external_linked_takeover_admission_authority_mismatch',
+      );
+      expect(loadExternalLinkedCurrent).toHaveBeenCalledTimes(2);
+      expect(sendHistoricalCommand).not.toHaveBeenCalled();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

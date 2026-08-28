@@ -46,13 +46,4 @@ export type ExternalSessionActionContext = Readonly<{
     transientMediaReadAllowance?: Pick<TransientSessionMediaReadAllowance, 'grantReadFiles'>;
     spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     stopSession?: (sessionId: string) => Promise<boolean>;
-    takeoverReadiness: Readonly<{
-        read: (sessionId: string, linkGeneration: string) => boolean | null;
-        write: (
-            sessionId: string,
-            linkGeneration: string,
-            value: boolean,
-        ) => void;
-        invalidate: (sessionId: string) => void;
-    }>;
 }>;

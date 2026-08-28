@@ -94,6 +94,8 @@ describe('happier session voice-agent start command', () => {
           'Acme Agent',
           '--instructions',
           'Voice.',
+          '--machine-id',
+          'machine-voice',
           '--json',
         ],
         {
@@ -127,6 +129,10 @@ describe('happier session voice-agent start command', () => {
         { defaultSessionId: 'sess-voice-1' },
       );
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
+      expect(createCliActionExecutorFromCredentials).toHaveBeenCalledWith({
+        credentials: expect.objectContaining({ credentialProvenance: 'api_token' }),
+        machineId: 'machine-voice',
+      });
       expect(resolveSessionTarget).toHaveBeenCalledWith('sess-voice');
       expect(createCliActionExecutor).not.toHaveBeenCalled();
       expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
@@ -139,5 +145,16 @@ describe('happier session voice-agent start command', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it.each([
+    ['unknown option', ['voice-agent', 'start', 'sess', '--backends', 'codex', '--instructions', 'Voice.', '--bogus']],
+    ['missing machine value', ['voice-agent', 'start', 'sess', '--backends', 'codex', '--instructions', 'Voice.', '--machine-id', '--json']],
+  ])('rejects %s before credential or Action work', async (_name, argv) => {
+    const { cmdSessionVoiceAgentStart } = await import('./start');
+    const readCredentialsFn = vi.fn();
+    await expect(cmdSessionVoiceAgentStart(argv, { readCredentialsFn })).rejects.toMatchObject({ code: 'invalid_arguments' });
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
   });
 });

@@ -616,6 +616,76 @@ describe('external-session daemon host-operation owner', () => {
         expect(secondDispose).toHaveBeenCalledOnce();
     });
 
+    it('bounds a never-settling listener, retires only that follow, and leaves a sibling live', async () => {
+        vi.useFakeTimers();
+        try {
+            let releaseHeldListener!: () => void;
+            const heldListener = new Promise<void>((resolve) => {
+                releaseHeldListener = resolve;
+            });
+            const firstDispose = vi.fn(async () => undefined);
+            const secondDispose = vi.fn(async () => undefined);
+            const operationListeners: Array<
+                Parameters<ExternalSessionFollowHostOperation['execute']>[0]['listener']
+            > = [];
+            const followExecute = vi.fn(async (request) => {
+                operationListeners.push(request.listener);
+                return Object.freeze({
+                    status: 'following' as const,
+                    startingCursor: 'cursor-1',
+                    subscription: Object.freeze({
+                        dispose: operationListeners.length === 1
+                            ? firstDispose
+                            : secondDispose,
+                    }),
+                });
+            });
+            const owner = createExternalSessionHostOperationOwner();
+            await installOperations(owner, {
+                followOperation: unavailableFollowOperation(followExecute),
+            });
+            const binding = owner.bind(createBindingInput());
+            const first = await binding.executeFollow({
+                ...followRequest(),
+                listener: vi.fn(async () => await heldListener),
+            });
+            const healthyListener = vi.fn(async () => undefined);
+            const second = await binding.executeFollow({
+                ...followRequest(),
+                listener: healthyListener,
+            });
+
+            const heldDelivery = operationListeners[0]!({
+                kind: 'resyncRequired', reason: 'bufferOverflow', cursor: 'cursor-1',
+            });
+            const heldDeliveryAssertion = expect(heldDelivery).rejects.toThrow(
+                'plugin_external_follow_listener_deadline_exceeded',
+            );
+            await vi.advanceTimersByTimeAsync(5_000);
+            await heldDeliveryAssertion;
+            expect(firstDispose).toHaveBeenCalledOnce();
+            expect(secondDispose).not.toHaveBeenCalled();
+
+            await expect(operationListeners[1]!({
+                kind: 'resyncRequired', reason: 'bufferOverflow', cursor: 'cursor-1',
+            })).resolves.toBeUndefined();
+            expect(healthyListener).toHaveBeenCalledOnce();
+
+            releaseHeldListener();
+            await Promise.resolve();
+            expect(firstDispose).toHaveBeenCalledOnce();
+            expect(healthyListener).toHaveBeenCalledOnce();
+
+            if (first.status === 'following') {
+                await expect(first.subscription.dispose()).resolves.toBeUndefined();
+            }
+            if (second.status === 'following') await second.subscription.dispose();
+            expect(secondDispose).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps a late follow acquisition inside the state machine when retirement raced it', async () => {
         // Retirement can settle while acquisition is still in flight: the
         // disposal that ran then had no handle to release. The subscription the
@@ -667,7 +737,43 @@ describe('external-session daemon host-operation owner', () => {
         expect(dispose).toHaveBeenCalledTimes(2);
     });
 
-    it('bounds active follows per bound session and rejects oversized events without retiring siblings', async () => {
+    it('admits more than 64 active follows and cleans or cancels each one independently', async () => {
+        const disposals: Array<ReturnType<typeof vi.fn>> = [];
+        const followExecute: ExternalSessionFollowHostOperation['execute'] =
+            vi.fn(async () => {
+                const dispose = vi.fn(async () => undefined);
+                disposals.push(dispose);
+                return Object.freeze({
+                    status: 'following' as const,
+                    startingCursor: 'cursor-1',
+                    subscription: Object.freeze({ dispose }),
+                });
+            });
+        const owner = createExternalSessionHostOperationOwner();
+        await installOperations(owner, {
+            followOperation: unavailableFollowOperation(followExecute),
+        });
+        const binding = owner.bind(createBindingInput());
+        const cancellation = new AbortController();
+        const follows = [];
+        for (let index = 0; index < 65; index += 1) {
+            follows.push(await binding.executeFollow(
+                followRequest(index === 64 ? cancellation.signal : undefined),
+            ));
+        }
+        expect(follows.every((follow) => follow.status === 'following')).toBe(true);
+        expect(followExecute).toHaveBeenCalledTimes(65);
+
+        cancellation.abort();
+        await vi.waitFor(() => expect(disposals[64]).toHaveBeenCalledOnce());
+        await Promise.all(follows.slice(0, 64).map(async (follow) => {
+            if (follow.status === 'following') await follow.subscription.dispose();
+        }));
+        expect(disposals.every((dispose) => dispose.mock.calls.length === 1))
+            .toBe(true);
+    });
+
+    it('rejects oversized events without retiring sibling follows', async () => {
         const disposals: Array<ReturnType<typeof vi.fn>> = [];
         const operationListeners: Array<
             Parameters<ExternalSessionFollowHostOperation['execute']>[0]['listener']
@@ -688,15 +794,11 @@ describe('external-session daemon host-operation owner', () => {
             followOperation: unavailableFollowOperation(followExecute),
         });
         const binding = owner.bind(createBindingInput());
-        const follows = [];
-        for (let index = 0; index < 64; index += 1) {
-            follows.push(await binding.executeFollow(followRequest()));
-        }
-        await expect(binding.executeFollow(followRequest())).resolves.toEqual({
-            status: 'unavailable',
-            code: 'plugin_external_follow_limit_exceeded',
-        });
-        expect(followExecute).toHaveBeenCalledTimes(64);
+        const follows = await Promise.all([
+            binding.executeFollow(followRequest()),
+            binding.executeFollow(followRequest()),
+        ]);
+        expect(followExecute).toHaveBeenCalledTimes(2);
 
         await expect(operationListeners[0]!({
             kind: 'terminated',

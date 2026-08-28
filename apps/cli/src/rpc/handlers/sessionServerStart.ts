@@ -4,6 +4,7 @@ import {
     sameAutomationAccountCurrentnessWitnessV1,
     SessionServerStartDispatchRequestV1Schema,
     SessionServerStartDispatchResultV1Schema,
+    type AutomationRunCause,
     type AccountEncryptionCurrentnessResponse,
     type AccountScopedCryptoMaterialSnapshotV1,
     type SessionServerStartDispatchResultV1,
@@ -25,7 +26,7 @@ type ExecuteSessionStart = (
             kind: 'automationRun';
             automationId: string;
             runId: string;
-            origin: 'schedule' | 'manual' | 'event' | 'conversation';
+            cause: AutomationRunCause;
         }>;
     }>,
 ) => Promise<SessionServerStartDispatchResultV1>;
@@ -98,7 +99,7 @@ async function resolveCurrentTarget(params: Readonly<{
 }
 
 /**
- * Registers the one closed server-origin Session-start receiver. It verifies
+ * Registers the one closed server-authored Session-start receiver. It verifies
  * exact daemon identity and Account currentness before it opens the
  * mode-correct V2 envelope, then delegates directly to the incumbent local
  * Session owner.
@@ -168,7 +169,7 @@ export function registerSessionServerStartRpcHandler(
                     kind: 'automationRun',
                     automationId: request.start.automationId,
                     runId: request.start.runId,
-                    origin: request.start.origin,
+                    cause: request.start.cause,
                 },
             });
             const parsedResult = SessionServerStartDispatchResultV1Schema.safeParse(result);

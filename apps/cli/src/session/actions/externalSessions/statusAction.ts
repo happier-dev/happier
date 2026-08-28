@@ -74,13 +74,8 @@ export async function executeExternalSessionStatusGetAction(
 ): Promise<ExternalSessionStatusGetResponse> {
     const parsed = ExternalSessionStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionStatusGetResponse;
-    const requiresFreshTakeoverReadiness = parsed.data.takeoverReadiness === 'fresh';
-    if (requiresFreshTakeoverReadiness) {
-        context.takeoverReadiness.invalidate(parsed.data.sessionId);
-    }
     let linked: LoadedLinkedExternalSession | null = null;
-    let cachedTakeoverReadiness: boolean | null = null;
-    let canTakeOverPersist = true;
+    let canTakeOverPersist = false;
     try {
         const credentials = await readStoredCredentials().catch(() => null);
         if (credentials) {
@@ -124,32 +119,13 @@ export async function executeExternalSessionStatusGetAction(
             }
         }
 
-        cachedTakeoverReadiness =
-            !requiresFreshTakeoverReadiness && linked
-                ? context.takeoverReadiness.read(
-                    parsed.data.sessionId,
-                    linked.linkGeneration,
-                )
-                : null;
-        canTakeOverPersist = cachedTakeoverReadiness ?? true;
-        if (cachedTakeoverReadiness === null) {
-            if (!linked) {
-                canTakeOverPersist = false;
-            } else {
-                canTakeOverPersist = await isExternalTakeoverLaunchAvailable(
-                    linked.agentId,
-                );
-            }
-            if (linked) {
-                context.takeoverReadiness.write(
-                    parsed.data.sessionId,
-                    linked.linkGeneration,
-                    canTakeOverPersist,
-                );
-            }
+        if (linked) {
+            canTakeOverPersist = await isExternalTakeoverLaunchAvailable(
+                linked.agentId,
+            );
         }
     } catch {
-        if (cachedTakeoverReadiness === null) canTakeOverPersist = false;
+        canTakeOverPersist = false;
     }
 
     const externalAgent = linked

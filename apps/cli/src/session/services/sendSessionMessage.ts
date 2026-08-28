@@ -93,16 +93,16 @@ export type SendSessionMessageResult =
     }>;
 
 /**
- * The terminal outcome for one already-admitted Session input. The caller owns
- * its output ceiling so this Session service does not acquire an Automation or
- * other consumer-specific result limit.
+ * The terminal outcome for one already-admitted Session input. This Session
+ * service returns the canonical final text and does not invent a
+ * consumer-specific result ceiling.
  */
 export type SessionInputResultV1 =
   | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'final_text'; text: string }>
   | Readonly<{
       kind: 'terminal_no_result';
-      reason: 'missing_final_assistant_text' | 'final_assistant_text_exceeds_utf8_byte_limit';
+      reason: 'missing_final_assistant_text';
     }>
   | Readonly<{ kind: 'failed'; message: string }>
   | Readonly<{ kind: 'cancelled'; message: string }>;
@@ -123,7 +123,6 @@ export type WaitForSessionInputResult =
         | 'unsupported'
         | 'encryption_material_unavailable'
         | 'invalid_local_id'
-        | 'invalid_result_text_utf8_byte_limit'
         | 'result_read_failed';
       candidates?: string[];
     }>;
@@ -133,7 +132,6 @@ export type WaitForSessionInputResultParams = Readonly<{
   idOrPrefix: string;
   localId: string;
   timeoutMs: number;
-  maxResultTextUtf8Bytes: number;
 }>;
 
 type SendSessionMessageParams = Readonly<{
@@ -746,37 +744,17 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: Readonly<{
   return { kind: 'missing' };
 }
 
-function isValidResultTextUtf8ByteLimit(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
-}
-
-function isWithinResultTextUtf8ByteLimit(text: string, maxBytes: number): boolean {
-  return new TextEncoder().encode(text).byteLength <= maxBytes;
-}
-
-function resultFromAssistantTurnOutcome(params: Readonly<{
-  outcome: AssistantTurnOutcome;
-  maxResultTextUtf8Bytes: number;
-}>): SessionInputResultV1 {
-  if (params.outcome.kind === 'missing') {
+function resultFromAssistantTurnOutcome(outcome: AssistantTurnOutcome): SessionInputResultV1 {
+  if (outcome.kind === 'missing') {
     return { kind: 'pending' };
   }
-  if (params.outcome.kind === 'failed' || params.outcome.kind === 'cancelled') {
-    return params.outcome;
+  if (outcome.kind === 'failed' || outcome.kind === 'cancelled') {
+    return outcome;
   }
-  if (!params.outcome.finalAssistantText) {
+  if (!outcome.finalAssistantText) {
     return { kind: 'terminal_no_result', reason: 'missing_final_assistant_text' };
   }
-  if (!isWithinResultTextUtf8ByteLimit(
-    params.outcome.finalAssistantText,
-    params.maxResultTextUtf8Bytes,
-  )) {
-    return {
-      kind: 'terminal_no_result',
-      reason: 'final_assistant_text_exceeds_utf8_byte_limit',
-    };
-  }
-  return { kind: 'final_text', text: params.outcome.finalAssistantText };
+  return { kind: 'final_text', text: outcome.finalAssistantText };
 }
 
 /**
@@ -791,10 +769,6 @@ export async function waitForSessionInputResult(
   if (localId === null) {
     return { ok: false, code: 'invalid_local_id' };
   }
-  if (!isValidResultTextUtf8ByteLimit(params.maxResultTextUtf8Bytes)) {
-    return { ok: false, code: 'invalid_result_text_utf8_byte_limit' };
-  }
-
   const timeoutMs = Number.isFinite(params.timeoutMs)
     ? Math.max(1, Math.trunc(params.timeoutMs))
     : 1;
@@ -852,10 +826,7 @@ export async function waitForSessionInputResult(
       ok: true,
       sessionId: sessionTarget.sessionId,
       localId,
-      result: resultFromAssistantTurnOutcome({
-        outcome,
-        maxResultTextUtf8Bytes: params.maxResultTextUtf8Bytes,
-      }),
+      result: resultFromAssistantTurnOutcome(outcome),
     };
   } catch {
     return { ok: false, code: 'result_read_failed' };

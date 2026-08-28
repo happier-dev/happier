@@ -3570,6 +3570,60 @@ describe('configured external-session source materializer', () => {
     lifecycle.dispose();
   });
 
+  it('allows only one coalesced same-revision retry after a failed rebuild left no active composition', async () => {
+    let revision = 'settings:1';
+    let notifyRevision: ((next: string) => void) | null = null;
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [], nextCursor: null }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const readAccount = vi.fn(async (): Promise<ConfiguredExternalSessionSourceAccountProjection> => {
+      if (readAccount.mock.calls.length === 2) {
+        throw new Error('account rebuild failed');
+      }
+      return { connectedServicesV2: [] };
+    });
+    const resolveProviderOps = vi.fn(async (): Promise<ExternalSessionProviderOps> => ops);
+    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      contributionGenerationId: 'registry:g1',
+      readAccount,
+      readAccountRevision: () => revision,
+      subscribeAccountRevision: (listener) => {
+        notifyRevision = listener;
+        return () => { notifyRevision = null; };
+      },
+      isCurrent: () => true,
+      resolveProviderOps,
+    });
+
+    revision = 'settings:2';
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    await vi.waitFor(() => expect(readAccount).toHaveBeenCalledTimes(2));
+
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    await vi.waitFor(() => expect(readAccount).toHaveBeenCalledTimes(3));
+    await vi.waitFor(async () => {
+      expect((await lifecycle.authorService.capabilities()).list).toEqual({
+        status: 'available',
+      });
+    });
+    await expect(lifecycle.authorService.list()).resolves.toMatchObject({
+      items: [],
+    });
+
+    (notifyRevision as ((next: string) => void) | null)?.(revision);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(readAccount).toHaveBeenCalledTimes(3);
+    expect(resolveProviderOps).toHaveBeenCalledTimes(2);
+    lifecycle.dispose();
+  });
+
   it('finishes initialization on the newest revision and unsubscribes exactly once', async () => {
     let revision = 'settings:1';
     let notifyRevision: ((next: string) => void) | null = null;

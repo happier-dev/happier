@@ -8,7 +8,6 @@ import {
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { resolveProviderCheckpointForFork } from '@/session/fork/resolveProviderCheckpointForFork';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import {
@@ -155,19 +154,12 @@ export async function attemptNativeForkOpen(params: Readonly<{
     }).inherited;
     const runtimeDescriptorV1 =
         readRuntimeDescriptorV1FromMetadata(params.parentMetadata) ?? undefined;
-    const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
     const result = await params.spawnSession({
         directory: params.directory,
         backendTarget: params.forkBackendResolution.backendTargetV2,
         approvedNewDirectoryCreation: true,
         spawnNonce: params.spawnNonce,
         nativeForkSource,
-        ...(runtimeSelection.agentBackendMode
-            ? { backendMode: runtimeSelection.agentBackendMode }
-            : {}),
-        ...(runtimeSelection.codexBackendMode
-            ? { codexBackendMode: runtimeSelection.codexBackendMode }
-            : {}),
         ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         ...inheritedForkOverrides.spawn,
     } satisfies SpawnSessionOptions);

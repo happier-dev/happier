@@ -88,6 +88,8 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
     actionIds?: readonly SessionLifecycleActionId[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
+    mapResponseForMethod?: RegisterActionSpecRpcHandlersParams['mapResponseForMethod'];
+    mapRequestForMethod?: RegisterActionSpecRpcHandlersParams['mapRequestForMethod'];
 }>): void {
     registerActionSpecRpcHandlers({
         rpcHandlerManager: params.rpcHandlerManager,
@@ -95,6 +97,8 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
         actionIds: params.actionIds,
         scopes: params.scopes ?? SESSION_LIFECYCLE_RPC_SCOPES,
         ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
+        ...(params.mapResponseForMethod ? { mapResponseForMethod: params.mapResponseForMethod } : {}),
+        ...(params.mapRequestForMethod ? { mapRequestForMethod: params.mapRequestForMethod } : {}),
     });
 }
 

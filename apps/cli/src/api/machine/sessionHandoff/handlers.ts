@@ -106,6 +106,8 @@ import {
   type SessionHandoffRuntimeConfig,
 } from './runtimeConfig';
 import {
+  projectReleasedSessionHandoffResponseForMethod,
+  projectReleasedSessionHandoffRequestForMethod,
   registerSessionHandoffPredecessorCompatibilityHandlers,
 } from './predecessorCompatibility';
 import {
@@ -716,6 +718,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         }
       : lifecycleExecutor,
     scopes: SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
+    mapResponseForMethod: ({ method, response }) =>
+      projectReleasedSessionHandoffResponseForMethod(method, response),
+    mapRequestForMethod: ({ method, input }) =>
+      projectReleasedSessionHandoffRequestForMethod(method, input),
     ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
   });
 

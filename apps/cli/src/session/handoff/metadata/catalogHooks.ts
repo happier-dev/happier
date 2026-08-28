@@ -1,18 +1,6 @@
 import { AGENTS } from '@/agent/catalog/registry';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
-import type {
-  CatalogAgentId,
-  ProviderRuntimeLocalHandoffMetadataBuilder,
-} from '@/agent/catalog/types';
-
-export function buildRuntimeLocalHandoffMetadataForAgent(
-  agentId: CatalogAgentId | null | undefined,
-  params: Parameters<ProviderRuntimeLocalHandoffMetadataBuilder>[0],
-): ReturnType<ProviderRuntimeLocalHandoffMetadataBuilder> | null {
-  const catalogId = resolveCatalogAgentId(agentId);
-  const entry = catalogId ? AGENTS[catalogId] ?? null : null;
-  return entry?.buildRuntimeLocalHandoffMetadata?.(params) ?? null;
-}
+import type { CatalogAgentId } from '@/agent/catalog/types';
 
 /**
  * Where the Agent named by `agentId` would keep its own log for `vendorResumeId`

@@ -36,7 +36,6 @@ import {
   executeExternalSessionTranscriptReadAfterAction,
   internalErrorResponse,
   mapActionFailureToExternalSessionsError,
-  resolveTakeoverReadinessCacheMs,
   type ExternalSessionActionContext,
 } from '@/session/actions/externalSessions';
 
@@ -51,9 +50,6 @@ import {
   resolveExternalTakeoverSpawnOptions,
   spawnResolvedExternalTakeoverSession,
 } from '@/api/session/external/takeover/resolveExternalTakeoverSpawnOptions';
-import {
-  resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
-} from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
 import { configuration } from '@/configuration';
 import {
   createExternalSessionOperationExclusion,
@@ -94,6 +90,7 @@ import {
 } from '@/session/actions/externalSessions/persistedTakeoverAdmission';
 import type { PersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedTakeoverAdmission';
 import {
+  abandonExternalSessionOperationsForDeletedSession,
   readExternalSessionOperationRecord,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import type { ExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
@@ -141,6 +138,11 @@ import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage
 export type ExternalSessionArchivedStateChange = Readonly<{
   sessionId: string;
   archived: boolean;
+}>;
+
+export type ExternalSessionDeletedChange = Readonly<{
+  sessionId: string;
+  cursor: number;
 }>;
 
 function unsupportedExternalSessionAction(actionId: ActionId): ActionExecuteResult {
@@ -511,6 +513,9 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       change: ExternalSessionArchivedStateChange,
     ) => void | Promise<void>,
   ) => () => void;
+  subscribeSessionDeletedChanges?: (
+    listener: (change: ExternalSessionDeletedChange) => void | Promise<void>,
+  ) => () => void;
 }>): Readonly<{
   pluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /**
@@ -527,12 +532,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   dispose(): Promise<void>;
 }> {
   const { rpcHandlerManager, emitExternalSessionTranscriptUpdate } = params;
-  const takeoverReadinessCacheMs = resolveTakeoverReadinessCacheMs();
-  const takeoverReadinessBySessionId = new Map<string, Readonly<{
-    linkGeneration: string;
-    value: boolean;
-    expiresAtMs: number;
-  }>>();
   const followLeaseManager = createExternalSessionFollowLeaseManager({
     writeFollowStatus: writeExternalSessionFollowStatus,
   });
@@ -797,40 +796,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       return tracked;
     }) ?? (() => {});
 
-  const readCachedTakeoverReadiness = (
-    sessionId: string,
-    linkGeneration: string,
-  ): boolean | null => {
-    if (takeoverReadinessCacheMs <= 0) return null;
-    const cached = takeoverReadinessBySessionId.get(sessionId) ?? null;
-    if (!cached) return null;
-    if (
-      cached.expiresAtMs <= Date.now()
-      || cached.linkGeneration !== linkGeneration
-    ) {
-      takeoverReadinessBySessionId.delete(sessionId);
-      return null;
-    }
-    return cached.value;
-  };
-
-  const writeCachedTakeoverReadiness = (
-    sessionId: string,
-    linkGeneration: string,
-    value: boolean,
-  ): void => {
-    if (takeoverReadinessCacheMs <= 0) return;
-    takeoverReadinessBySessionId.set(sessionId, {
-      linkGeneration,
-      value,
-      expiresAtMs: Date.now() + takeoverReadinessCacheMs,
-    });
-  };
-
-  const invalidateTakeoverReadiness = (sessionId: string): void => {
-    takeoverReadinessBySessionId.delete(sessionId);
-  };
-
   const publishExternalSessionOperationProgressForServer = (
     input: Omit<
       Parameters<typeof publishExternalSessionOperationProgress>[0],
@@ -866,11 +831,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     transientMediaReadAllowance: params.transientMediaReadAllowance,
     spawnSession: params.spawnSession,
     stopSession: params.stopSession,
-    takeoverReadiness: {
-      read: readCachedTakeoverReadiness,
-      write: writeCachedTakeoverReadiness,
-      invalidate: invalidateTakeoverReadiness,
-    },
   };
   const materializeActionExecutor = params.executeExternalSessionHistoricalImportCommand
     ? createDefaultExternalSessionMaterializeActionExecutor({
@@ -883,6 +843,39 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
         }),
     })
     : null;
+  const abandonOperationsForDeletedSession = async (
+    change: ExternalSessionDeletedChange,
+  ): Promise<void> => {
+    const result = await abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir: configuration.activeServerDir,
+      sessionId: change.sessionId,
+      withSessionOperationBarrier:
+        operationExclusion.withPassiveRepairSessionBarrier,
+      cleanupPrivateOperation: async (record) => {
+        if (materializeActionExecutor?.cleanupAbandonedOperation) {
+          await materializeActionExecutor.cleanupAbandonedOperation(
+            record.operationId,
+          );
+          return;
+        }
+        if (
+          record.request.plan === 'materialize'
+          || record.request.targetStorageMode === 'persisted'
+        ) {
+          throw new Error(
+            'external_session_operation_abandonment_cleanup_owner_unavailable',
+          );
+        }
+      },
+    });
+    if (result.deferred > 0) {
+      throw new Error('external_session_operation_abandonment_claim_active');
+    }
+  };
+  const unregisterSessionDeletedChanges =
+    params.subscribeSessionDeletedChanges?.(
+      abandonOperationsForDeletedSession,
+    ) ?? (() => {});
   const takeoverPhaseRunner = materializeActionExecutor
     ? createExternalSessionPersistedTakeoverPhaseRunner({
       importExecutor: materializeActionExecutor,
@@ -946,8 +939,6 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     ? createExternalSessionExternalLinkedTakeoverPhaseRunner({
       activeServerDir: configuration.activeServerDir,
       operationExclusion,
-      resolveWriterSafety:
-        resolveExternalLinkedTakeoverWriterSafetyForAgentIdentity,
       loadCurrent:
         loadCurrentExternalSessionExternalLinkedTakeoverSource,
       followLeaseManager,
@@ -1182,6 +1173,10 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       await runCleanup(
         'session_archived_state_changes',
         unregisterSessionArchivedStateChanges,
+      );
+      await runCleanup(
+        'session_deleted_changes',
+        unregisterSessionDeletedChanges,
       );
       const archivedTransitionResults = await Promise.allSettled(
         [...archiveStateTransitions],

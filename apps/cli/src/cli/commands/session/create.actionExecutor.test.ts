@@ -153,7 +153,7 @@ describe('happier session create (action executor)', () => {
             identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
           },
           title: 'My title',
-          initialMessage: 'Hello',
+          initialInput: { text: 'Hello' },
         },
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );
@@ -336,6 +336,12 @@ describe('happier session create (action executor)', () => {
           text: 'followed message',
         },
       ]);
+      expect(execute).toHaveBeenNthCalledWith(
+        2,
+        'transcript.follow',
+        expect.objectContaining({ sessionId: 'sess-follow', cursor: '0' }),
+        { surface: 'cli', defaultSessionId: null },
+      );
     } finally {
       output.restore();
     }

@@ -107,7 +107,7 @@ describe('resolveProbeBackendContext', () => {
     });
   });
 
-  it('applies an explicit runtime-kind override to account settings before returning them', async () => {
+  it('does not let a probe transport parameter rewrite canonical account settings', async () => {
     mocks.bootstrapAccountSettingsContext.mockResolvedValue({
       settings: { codexBackendMode: 'mcp' },
     });
@@ -121,7 +121,7 @@ describe('resolveProbeBackendContext', () => {
     expect(mocks.bootstrapAccountSettingsContext).toHaveBeenCalledTimes(1);
     expect(context).toMatchObject({
       credentials,
-      accountSettings: { codexBackendMode: 'appServer' },
+      accountSettings: { codexBackendMode: 'mcp' },
     });
   });
 });

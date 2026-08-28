@@ -60,6 +60,25 @@ beforeEach(() => {
 });
 
 describe('resolveObservableAgentNativeTranscriptPath', () => {
+  it('preserves the incumbent persisted Claude transcript path while Claude has no candidate callback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-transcript-claude-'));
+    try {
+      const transcriptPath = join(root, 'claude-session.jsonl');
+      await writeFile(transcriptPath, '{}\n');
+
+      await expect(resolveObservableAgentNativeTranscriptPath({
+        agentId: 'claude',
+        metadata: {
+          claudeSessionId: 'claude-1',
+          claudeTranscriptPath: transcriptPath,
+        },
+      })).resolves.toBe(transcriptPath);
+      expect(resolveCurrentExecutionSurfacesForCatalogAgent).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('uses the current Agent candidate from canonical identity and descriptor, then rejects a symlink escape', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-transcript-root-'));
     const outsideRoot = await mkdtemp(join(tmpdir(), 'happier-native-transcript-outside-'));

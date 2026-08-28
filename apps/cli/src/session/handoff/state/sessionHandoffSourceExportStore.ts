@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, posix, relative, resolve, sep, win32 } from 'node:path';
 
 import { z } from 'zod';
@@ -6,8 +6,7 @@ import { z } from 'zod';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 
 import type { SessionHandoffAgentBundle } from '../types';
-import { parseCanonicalSessionHandoffAgentBundle } from '../agentBundle/parse';
-import { projectSessionHandoffAgentBundleForPredecessor } from '../agentBundle/schema';
+import { writeSessionHandoffAgentBundleArtifact } from '../agentBundle/file';
 import { buildSessionHandoffAgentBundleTransferId } from '../agentBundle/transferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
@@ -76,7 +75,11 @@ function resolveRecordPath(activeServerDir: string, handoffId: string): string {
 }
 
 function resolveAgentBundleFilePath(activeServerDir: string, handoffId: string): string {
-  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'provider-bundle.json');
+  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'agent-bundle.bin');
+}
+
+function resolveReceivedAgentBundleFilePath(activeServerDir: string, handoffId: string): string {
+  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'received-agent-bundle.bin');
 }
 
 function resolveWorkspaceManifestFilePath(activeServerDir: string, handoffId: string): string {
@@ -112,6 +115,12 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
   const activeServerDir = input.activeServerDir;
 
   return {
+    async prepareReceivedAgentBundleFilePath(handoffIdRaw: string): Promise<string> {
+      const handoffId = assertSafeHandoffId(handoffIdRaw);
+      await mkdir(resolveHandoffDirectory(activeServerDir, handoffId), { recursive: true });
+      return resolveReceivedAgentBundleFilePath(activeServerDir, handoffId);
+    },
+
     async load(handoffIdRaw: string): Promise<SessionHandoffSourceExportRecord | null> {
       const handoffId = assertSafeHandoffId(handoffIdRaw);
       const recordPath = resolveRecordPath(activeServerDir, handoffId);
@@ -208,19 +217,14 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       const directory = resolveHandoffDirectory(activeServerDir, handoffId);
       await mkdir(directory, { recursive: true });
       const filePath = resolveAgentBundleFilePath(activeServerDir, handoffId);
-      const normalized = parseCanonicalSessionHandoffAgentBundle(params.agentBundle);
-      await atomicWriteJson(filePath, projectSessionHandoffAgentBundleForPredecessor(normalized));
-      const stats = await stat(filePath);
-      const manifestHash = await resolveTransferPayloadManifestHash({
-        kind: 'file',
+      const artifact = await writeSessionHandoffAgentBundleArtifact({
+        agentBundle: params.agentBundle,
         filePath,
-        sizeBytes: stats.size,
       });
       return {
         transferId: buildSessionHandoffAgentBundleTransferId(handoffId),
         filePath,
-        sizeBytes: stats.size,
-        manifestHash,
+        ...artifact,
       };
     },
 

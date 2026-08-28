@@ -11,8 +11,8 @@ import {
 
 import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
 import { collectTransientSessionMediaReadFiles } from '@/session/media/referencedPaths';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 
-import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
 import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
 import {
@@ -51,8 +51,10 @@ export async function executeExternalSessionTranscriptPageAction(
     }
     const { agentId, remoteSessionId, direction, cursor } = parsed.data;
     const source = validatedSource.source;
-    const maxBytes = parsed.data.maxBytes ?? resolveDefaultMaxBytes();
-    const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
+    const maxBytes = parsed.data.maxBytes
+        ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxSerializedBytes;
+    const maxItems = parsed.data.maxItems
+        ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxItems;
 
     try {
         const providerOps = validatedSource.providerOps;
@@ -153,8 +155,8 @@ export async function executeExternalSessionTranscriptReadAfterAction(
                 source: loaded.session.source,
                 remoteSessionId: loaded.session.remoteSessionId,
                 cursor: request.cursor,
-                maxBytes: resolveDefaultMaxBytes(),
-                maxItems: Math.min(200, resolveDefaultMaxItems()),
+                maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
             });
             const bindingAfterRead = await resolveExternalSessionTranscriptRefreshBinding({
                 sessionId: request.binding.sessionId,
@@ -190,7 +192,13 @@ export async function executeExternalSessionTranscriptReadAfterAction(
             return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
                 v: 1,
                 binding: request.binding,
-                result: res,
+                result: res.outcome === 'advanced'
+                    ? {
+                        ...res,
+                    hasMore: res.hasMore,
+                        ...(res.diagnostics ? { diagnostics: res.diagnostics } : {}),
+                    }
+                    : res,
             });
         } catch {
             return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
@@ -224,8 +232,10 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     const { agentId, remoteSessionId, cursor } = parsed.data;
     const source = validatedSource.source;
 
-    const maxBytes = parsed.data.maxBytes ?? resolveDefaultMaxBytes();
-    const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
+    const maxBytes = parsed.data.maxBytes
+        ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes;
+    const maxItems = parsed.data.maxItems
+        ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems;
 
     try {
         const providerOps = validatedSource.providerOps;

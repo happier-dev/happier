@@ -922,48 +922,6 @@ function createPluginMarketplaceCapability(
     };
 }
 
-async function augmentCliCapabilityWithProviderCliMethods(
-    cap: Capability,
-    agentId: AgentCatalogEntry['id'],
-    dependencies: CliProbeDependencies,
-): Promise<Capability> {
-    if (!cap.descriptor.id.startsWith('cli.')) return cap;
-
-    const existingMethods = cap.descriptor.methods ?? {};
-    const supportsPassiveRealtimeSetup = await resolveCliPassiveRealtimeSetupProbeSupport(agentId);
-    const methods = {
-        ...existingMethods,
-        ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
-        ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
-        ...(existingMethods.probeConfigOptions ? {} : { probeConfigOptions: { title: 'Probe config options' } }),
-        ...(existingMethods.probePassiveRealtimeSetup || !supportsPassiveRealtimeSetup
-            ? {}
-            : { probePassiveRealtimeSetup: { title: 'Probe passive realtime setup' } }),
-        ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
-    };
-
-    const baseInvoke = cap.invoke;
-
-    const invoke: Capability['invoke'] = async ({ method, params, signal }) => {
-        const sharedResult = await invokeCliProbeOrInstallMethod(
-            agentId,
-            method,
-            params,
-            dependencies,
-            signal ? { signal } : {},
-        );
-        if (sharedResult) return sharedResult;
-        if (baseInvoke) return await baseInvoke({ method, params });
-        return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
-    };
-
-    return {
-        ...cap,
-        descriptor: { ...cap.descriptor, methods },
-        invoke,
-    };
-}
-
 export async function createCliCapabilitiesService(dependencies: Readonly<{
     createApiClient?: CliProbeDependencies['createApiClient'];
     readPluginCatalog?: () => Promise<readonly PluginCatalogEntry[]>;
@@ -984,13 +942,8 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     };
 
     const cliCapabilities = await Promise.all(
-        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-            if (entry.getCliCapabilityOverride) {
-                const override = await entry.getCliCapabilityOverride();
-                return await augmentCliCapabilityWithProviderCliMethods(override, entry.id, cliProbeDependencies);
-            }
-            return await createGenericCliCapability(entry.id, cliProbeDependencies);
-        }),
+        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) =>
+            await createGenericCliCapability(entry.id, cliProbeDependencies)),
     );
 
     const explicitCapabilities: Capability[] = [

@@ -6,9 +6,9 @@ import {
   SessionTurnProviderCheckpointV1Schema,
   TurnIdSchema,
   type AcpConfigOptionOverridesV1,
+  type AgentExecutionTargetV1,
   type AgentSessionStartupInstructionsV1,
   type BackendTargetRefV2,
-  type CodexBackendMode,
   type ConnectedServiceMaterializationIdentityV1,
   type RuntimeDescriptorV1,
   type SessionAttachMetadataIdentityPolicy,
@@ -26,6 +26,7 @@ import type {
   HostPrivatePersistedTakeoverAdmission,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
@@ -52,7 +53,7 @@ const NativeForkCwdSchema = z.string().min(1).max(10_000).refine(
 );
 
 export const NativeForkSourceSchema = z.object({
-  sessionId: SessionIdSchema,
+  sessionId: asHostProtocolZod(SessionIdSchema),
   providerSessionId: NativeForkProviderSessionIdSchema,
   cwd: NativeForkCwdSchema,
   target: z.object({
@@ -132,7 +133,15 @@ export interface SpawnSessionOptions {
   /** Mutable presentation state committed inside the fresh Session create transaction. */
   initialTitle?: string;
   /** Ephemeral producer custody promoted by the child after the real session exists. */
-  pendingFirstInput?: { text: string; localId: string };
+  pendingFirstInput?: {
+    text: string;
+    localId: string;
+    meta?: Record<string, unknown>;
+    inputAdmission?: Readonly<{
+      provenance: import('@happier-dev/protocol').SessionMessageProvenanceV1;
+      request: import('@happier-dev/protocol').SessionInputRequestV1;
+    }>;
+  };
   /**
    * Daemon-only, one-shot admission correlation for an explicit persisted takeover.
    *
@@ -149,11 +158,7 @@ export interface SpawnSessionOptions {
    * ephemeral and is never included in persisted respawn/session metadata.
    */
   agentSessionStartupInstructionsV1?: AgentSessionStartupInstructionsV1;
-  /** Legacy ingress compatibility. Prefer the canonical runtime selection fields. */
-  experimentalCodexAcp?: boolean;
-  /** Provider-declared runtime-mode token interpreted by the owning backend. */
-  backendMode?: string;
-  codexBackendMode?: CodexBackendMode;
+  /** Opaque Agent-owned launch/resume facts. Generic host code does not interpret its payload. */
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   /** Existing Happier session id to reconnect to instead of creating a new session. */
   existingSessionId?: string;
@@ -172,6 +177,9 @@ export interface SpawnSessionOptions {
   accountSettingsVersionHint?: number;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   approvedNewDirectoryCreation?: boolean;
+  /** Canonical plugin-qualified Agent execution identity. */
+  agentTarget?: AgentExecutionTargetV1;
+  /** Released backend routing ingress and configured-ACP target only. */
   backendTarget?: BackendTargetRefV2;
   terminal?: TerminalSpawnOptions;
   windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';

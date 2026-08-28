@@ -59,6 +59,7 @@ import {
   type AgentExecutionTargetV1,
   type ActionCaller,
   type ComposerAttachmentInputV1,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
 } from '@happier-dev/protocol';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import {
@@ -100,14 +101,17 @@ import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
-import { admitPluginSessionInputAttachmentsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
+import {
+  admitPluginSessionInputAttachmentsV1,
+  buildPluginSessionInputAttachmentDraftsV1,
+} from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import type { ComposerAttachmentSendPreparationRegistryV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 import { notifyComposerAttachmentsAfterMessageAccepted } from '@/session/composer/notifyComposerAttachmentsAfterMessageAccepted';
 import {
   sendSessionMessage,
 } from '@/session/services/sendSessionMessage';
 import {
-  buildSessionSpawnInitialInputAdmissionV1,
+  buildSessionSpawnInitialInputAdmissionForLocalIdV1,
   buildPluginSessionInputAdmissionV1,
 } from '@/session/services/sessionInputAdmissionIdentity';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
@@ -2275,7 +2279,7 @@ export function createCliActionDeps(params: Readonly<{
       const sourceMachineId = source.sourceMachineId;
       return await callMachineAction({
         machineId: sourceMachineId,
-        method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+        method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
         request: {
           sessionId: transport.sessionId,
           sourceMachineId,
@@ -2348,7 +2352,7 @@ export function createCliActionDeps(params: Readonly<{
       terminal,
       checkoutCreationDraft,
       title,
-      initialMessage,
+      initialInput,
       agentSessionStartupInstructionsV1,
       sessionCreationTag,
       sourceContext,
@@ -2365,6 +2369,9 @@ export function createCliActionDeps(params: Readonly<{
       }
       if (signal?.aborted) {
         return { type: 'error', code: 'cancelled', retryable: true };
+      }
+      if ((initialInput?.attachments?.length ?? 0) > 0 && actionCaller.kind !== 'plugin') {
+        return { type: 'error', code: 'invalid_input', retryable: false };
       }
 
       if (!isCurrentSessionSpawnExecutionTarget(executionTarget)) {
@@ -2644,16 +2651,33 @@ export function createCliActionDeps(params: Readonly<{
             ? { resume: configurationSnapshot.providerSessionResume.providerSessionId }
             : {}),
           ...(title ? { initialTitle: title } : {}),
-          ...(initialMessage ? { initialMessage } : {}),
-          ...(initialMessage
+          ...(initialInput ? { initialInput } : {}),
+          ...(initialInput
             ? {
-                buildInitialInputAdmission: (sessionId: string) =>
-                  buildSessionSpawnInitialInputAdmissionV1({
+                buildInitialInputHandoff: (localId: string) => {
+                  const admission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
                     actionCaller,
                     callerSurface,
-                    sessionId,
-                    sessionCreationTag,
-                  }),
+                    localId,
+                  });
+                  const attachments = initialInput.attachments ?? [];
+                  if (attachments.length === 0 || actionCaller.kind !== 'plugin') {
+                    return admission;
+                  }
+                  return {
+                    ...admission,
+                    meta: {
+                      [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+                        v: 1,
+                        composerAttachments: buildPluginSessionInputAttachmentDraftsV1({
+                          pluginId: actionCaller.pluginId,
+                          messageLocalId: localId,
+                          authored: attachments,
+                        }),
+                      },
+                    },
+                  };
+                },
               }
             : {}),
           ...(params.machineAdmissionTransport

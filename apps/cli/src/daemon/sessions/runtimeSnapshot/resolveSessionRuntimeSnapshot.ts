@@ -47,6 +47,12 @@ export type ResolveSessionRuntimeSnapshotParams = Readonly<{
   trackedSpawnOptions?: SpawnSessionOptions | null;
   persistedVendorResumeId?: string | null;
   trackedVendorResumeId?: string | null;
+  /**
+   * A retained live process already has one active model/binding envelope. Its
+   * persisted model intent is for the next launch and must not rewrite the
+   * identity of the process being adopted.
+   */
+  resolutionMode?: 'ordinary' | 'retained_live_process';
 }>;
 
 export type ResolveSessionRuntimeSnapshotResult = Readonly<{
@@ -84,6 +90,10 @@ function readSessionId(options: SpawnSessionOptions): string | null {
 }
 
 function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): CatalogAgentId | null {
+  const descriptorAgentId = readRuntimeDescriptorV1FromMetadata({
+    runtimeDescriptorV1: options?.runtimeDescriptorV1,
+  })?.agentId;
+  if (descriptorAgentId) return descriptorAgentId;
   const target = options?.backendTarget && typeof options.backendTarget === 'object'
     ? options.backendTarget as Record<string, unknown>
     : null;
@@ -225,7 +235,9 @@ function readModelFromOptions(
 }
 
 function resolveModelTargetKey(params: ResolveSessionRuntimeSnapshotParams): string | null {
-  const target = params.incomingOptions.backendTarget
+  const target = params.incomingOptions.agentTarget
+    ?? params.trackedSpawnOptions?.agentTarget
+    ?? params.incomingOptions.backendTarget
     ?? params.trackedSpawnOptions?.backendTarget
     ?? resolveBackendTargetFromSessionMetadata(params.persistedMetadata);
   return target ? buildBackendTargetKeyV2(target) : null;
@@ -289,6 +301,7 @@ function applySnapshotToSpawnOptions(
   options: SpawnSessionOptions,
   snapshot: SessionRuntimeSnapshot,
   explicitResumeId: string | null,
+  retainedLiveRuntimeOptions?: SpawnSessionOptions | null,
 ): SpawnSessionOptions {
   // The snapshot's spawn options are the DURABLE respawn/resume identity (persisted as tracked
   // spawn options and replayed by crash/auth respawns). One-shot delivery fields from a single
@@ -339,6 +352,20 @@ function applySnapshotToSpawnOptions(
     }
   }
 
+  if (retainedLiveRuntimeOptions) {
+    if (retainedLiveRuntimeOptions.modelSelection) {
+      next.modelSelection = retainedLiveRuntimeOptions.modelSelection;
+    } else {
+      delete next.modelSelection;
+    }
+    if (retainedLiveRuntimeOptions.providerBindingMetadataV1) {
+      next.providerBindingMetadataV1 =
+        retainedLiveRuntimeOptions.providerBindingMetadataV1;
+    } else {
+      delete next.providerBindingMetadataV1;
+    }
+  }
+
   // Observed provider identity remains snapshot evidence. Only a host-authored Resume may enter
   // durable tracked options; otherwise a later refresh could mistake derived evidence for intent.
   if (explicitResumeId) {
@@ -378,6 +405,14 @@ export function resolveSessionRuntimeSnapshot(
 
   const modelTargetKey = resolveModelTargetKey(params);
   const explicitResumeId = chooseExplicitVendorResumeId(params);
+  const retainedLiveRuntimeOptions = params.resolutionMode === 'retained_live_process'
+    ? params.trackedSpawnOptions ?? params.incomingOptions
+    : null;
+  const retainedLiveRuntimeSource = retainedLiveRuntimeOptions
+    ? params.trackedSpawnOptions
+      ? 'tracked'
+      : 'incoming'
+    : null;
   const snapshot: SessionRuntimeSnapshot = {
     sessionId: readSessionId(params.incomingOptions),
     connectedServices: connectedServices?.value ?? null,
@@ -394,16 +429,23 @@ export function resolveSessionRuntimeSnapshot(
       readStringControlFromOptions(params.trackedSpawnOptions, 'agentModeId', 'agentModeUpdatedAt', 'tracked'),
       readStringControlFromOptions(params.incomingOptions, 'agentModeId', 'agentModeUpdatedAt', 'incoming'),
     ]),
-    modelSelection: chooseTimestamped([
-      readModelFromMetadata(params.persistedMetadata, modelTargetKey),
-      readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
-      readModelFromOptions(params.incomingOptions, 'incoming'),
-    ]),
+    modelSelection: retainedLiveRuntimeOptions
+      ? readModelFromOptions(retainedLiveRuntimeOptions, retainedLiveRuntimeSource!)
+      : chooseTimestamped([
+        readModelFromMetadata(params.persistedMetadata, modelTargetKey),
+        readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
+        readModelFromOptions(params.incomingOptions, 'incoming'),
+      ]),
     vendorResumeId: chooseVendorResumeId(params, explicitResumeId),
   };
 
   return {
     snapshot,
-    spawnOptions: applySnapshotToSpawnOptions(params.incomingOptions, snapshot, explicitResumeId),
+    spawnOptions: applySnapshotToSpawnOptions(
+      params.incomingOptions,
+      snapshot,
+      explicitResumeId,
+      retainedLiveRuntimeOptions,
+    ),
   };
 }

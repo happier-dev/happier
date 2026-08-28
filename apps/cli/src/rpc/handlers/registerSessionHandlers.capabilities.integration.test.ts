@@ -333,7 +333,7 @@ describe('registerCommonHandlers capabilities', () => {
         }
     });
 
-    it('detects tool.executionRuns backends from PATH even when requesting only tool.executionRuns', async () => {
+    it('reports declared execution-run backends when requesting only tool.executionRuns', async () => {
         const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-execution-runs-'));
         try {
             const isWindows = process.platform === 'win32';

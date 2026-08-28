@@ -17,7 +17,11 @@ import {
   persistSessionMediaForTranscript,
   type SessionMediaBridgePersistResult,
 } from '@/api/session/client/transcript/sessionMediaBridge';
-import type { ComposerMediaStageInspection, ComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
+import type {
+  ComposerMediaStageClaimant,
+  ComposerMediaStageInspection,
+  ComposerMediaStageStore,
+} from '@/transfers/staging/composerMediaStageStore';
 
 import {
   resolveSessionMediaMimeType,
@@ -54,6 +58,7 @@ export type ComposerStagedMediaReleaseIntent = Readonly<{
   handle: ComposerContentHandleV1;
   executionTarget: SessionExecutionTargetV1;
   owner: PluginContributionIdentityV1;
+  claimant: ComposerMediaStageClaimant;
 }>;
 
 export type ComposerStagedMediaFinalizationResult = Readonly<{
@@ -67,6 +72,7 @@ type ReadyStagedMedia = Readonly<{
   attachment: ComposerAttachmentDraftV1;
   handle: ComposerContentHandleV1;
   inspection: Extract<ComposerMediaStageInspection, { status: 'ready' }>;
+  claimant: ComposerMediaStageClaimant;
 }>;
 
 function fail(code: ComposerStagedMediaFinalizationErrorCode): never {
@@ -145,6 +151,7 @@ function assertSupportedHandle(
 }
 
 async function inspectReadyStagedMedia(params: Readonly<{
+  sessionId: string;
   attachments: readonly ComposerAttachmentDraftV1[];
   executionTarget: SessionExecutionTargetV1;
   stageStore: ComposerMediaStageStore;
@@ -163,10 +170,15 @@ async function inspectReadyStagedMedia(params: Readonly<{
     );
     if (stageIds.has(handle.id)) fail('composer_staged_media_attachment_invalid');
     stageIds.add(handle.id);
+    const claimant: ComposerMediaStageClaimant = {
+      composer: { kind: 'session', sessionId: params.sessionId },
+      attachmentInstanceId: attachment.data.instanceId,
+    };
     const inspection = await params.stageStore.inspectForFinalization({
       handle,
       executionTarget: params.executionTarget,
       owner: attachment.data.attachment,
+      claimant,
     });
     if (inspection.status !== 'ready') fail('composer_staged_media_stage_unavailable');
     if (
@@ -179,7 +191,7 @@ async function inspectReadyStagedMedia(params: Readonly<{
     ) {
       fail('composer_staged_media_stage_unavailable');
     }
-    staged.push({ attachment: attachment.data, handle, inspection });
+    staged.push({ attachment: attachment.data, handle, inspection, claimant });
   }
   return Object.freeze(staged);
 }
@@ -244,6 +256,7 @@ export async function finalizeComposerStagedMediaToSession(params: Readonly<{
   logger?: LoggerLike;
 }>): Promise<ComposerStagedMediaFinalizationResult> {
   const staged = await inspectReadyStagedMedia({
+    sessionId: params.sessionId,
     attachments: params.attachments,
     executionTarget: params.executionTarget,
     stageStore: params.stageStore,
@@ -316,10 +329,11 @@ export async function finalizeComposerStagedMediaToSession(params: Readonly<{
       attachment,
       mediaIdByAttachmentInstanceId.get(attachment.instanceId) ?? null,
     ))),
-    releaseIntents: Object.freeze(staged.map(({ handle, attachment }) => Object.freeze({
+    releaseIntents: Object.freeze(staged.map(({ handle, attachment, claimant }) => Object.freeze({
       handle,
       executionTarget: params.executionTarget,
       owner: attachment.attachment,
+      claimant,
     }))),
     createdWorkspaceRelativePaths: persisted.createdWorkspaceRelativePaths,
   };

@@ -544,7 +544,7 @@ describe('happier session history (action executor)', () => {
     }
   });
 
-  it('keeps provider payloads visible in human --raw output', async () => {
+  it('keeps provider payloads visible in --raw output without appending human prose', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
       result: {
@@ -577,9 +577,9 @@ describe('happier session history (action executor)', () => {
         }),
       });
 
-      expect(output.text()).toContain(ok('History fetched (1 messages)'));
       expect(output.text()).toContain('"raw"');
       expect(output.text()).toContain('"traceId": "trace-1"');
+      expect(output.text()).not.toContain('History fetched');
     } finally {
       output.restore();
     }

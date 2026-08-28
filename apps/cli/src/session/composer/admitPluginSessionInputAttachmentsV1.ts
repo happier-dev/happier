@@ -24,6 +24,32 @@ export type PluginSessionInputAttachmentAdmissionV1 =
   }>;
 
 /**
+ * Builds the canonical draft envelope for a plugin-authored Session input.
+ *
+ * This pure half is also used by the daemon's pending-first-input handoff:
+ * that handoff must be serializable before the child knows its Session id,
+ * while the child's existing input transformer still owns declaration lookup,
+ * prepareForSend and final admission once the real Session is mounted.
+ */
+export function buildPluginSessionInputAttachmentDraftsV1(params: Readonly<{
+  pluginId: string;
+  messageLocalId: string;
+  authored: readonly PluginSessionInputAttachmentV1[];
+}>): readonly ComposerAttachmentDraftV1[] {
+  return params.authored.map((authored, index) => ({
+    v: 1,
+    instanceId: `${params.messageLocalId}#${index}`,
+    attachment: { pluginId: params.pluginId, localId: authored.attachmentLocalId },
+    key: authored.value.key,
+    value: authored.value.value,
+    presentation: {
+      ...authored.value.presentation,
+      typeLabel: authored.value.presentation.label,
+    },
+  }));
+}
+
+/**
  * Turns the attachment drafts a plugin declared on `SessionHandle.send` into
  * the one canonical structured-input envelope a Message may carry.
  *
@@ -48,22 +74,7 @@ export async function admitPluginSessionInputAttachmentsV1(params: Readonly<{
   if (!params.attachments) {
     return { status: 'rejected', code: 'session_input_target_unavailable' };
   }
-  const drafts: ComposerAttachmentDraftV1[] = params.authored.map((authored, index) => ({
-    v: 1,
-    // Derived from the durable input identity, which is itself derived from the
-    // caller and its idempotency key. Retrying an unknown outcome under the same
-    // key therefore rebuilds a byte-identical input instead of a second Message.
-    instanceId: `${params.messageLocalId}#${index}`,
-    attachment: { pluginId: params.pluginId, localId: authored.attachmentLocalId },
-    key: authored.value.key,
-    value: authored.value.value,
-    presentation: {
-      ...authored.value.presentation,
-      // Provisional only: draft admission replaces it with the declared type
-      // label, which is the sole authority for how the attachment is named.
-      typeLabel: authored.value.presentation.label,
-    },
-  }));
+  const drafts = buildPluginSessionInputAttachmentDraftsV1(params);
   try {
     const prepared = await prepareComposerAttachmentDraftsForSendV1({
       attachments: params.attachments,

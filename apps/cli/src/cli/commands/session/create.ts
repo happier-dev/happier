@@ -18,7 +18,7 @@ import {
   resolveSessionWaitTimeoutSeconds,
 } from './wait';
 import { resolveConnectedServicesLaunchAuthWithInventory } from '@/cli/connectedServicesLaunchAuth';
-import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 
 const SESSION_CREATE_USAGE = `Usage: ${SESSION_HELP_LINES.create}`;
 
@@ -38,7 +38,7 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
   const intent = params.parsedOptions.connectedServicesAuthIntent;
   if (!intent || intent.kind === 'default') return params.input;
 
-  const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(params.agentId);
+  const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
   if (supportedServiceIds.length === 0) {
     throw new Error('connected_service_auth_unsupported');
   }
@@ -293,6 +293,7 @@ export async function cmdSessionCreate(
       ...(jsonl ? ['--jsonl'] : []),
     ], {
       ...deps,
+      initialFollowCursor: '0',
       ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return;

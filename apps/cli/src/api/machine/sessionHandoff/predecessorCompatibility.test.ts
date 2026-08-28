@@ -7,12 +7,11 @@ import { z } from 'zod';
 import { vi } from 'vitest';
 
 import {
-  RuntimeDescriptorV1Schema,
-  SessionHandoffPrepareTargetResponseSchema,
   SessionHandoffStartResponseSchema,
 } from '@happier-dev/protocol';
 
 import {
+  projectReleasedSessionHandoffResponseForMethod,
   projectSessionHandoffPrepareTargetResponseForPredecessor,
   projectSessionHandoffResponseForPredecessor,
   projectSessionHandoffStartResponseForPredecessor,
@@ -128,6 +127,10 @@ describe('session handoff predecessor wire compatibility', () => {
       resume: {
         directory: '/repo',
         agent: 'codex',
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
         resume: 'vendor-session-1',
         transcriptStorage: 'persisted',
         approvedNewDirectoryCreation: true,
@@ -140,27 +143,63 @@ describe('session handoff predecessor wire compatibility', () => {
     expect(start).not.toHaveProperty('handoffMetadataV2.agentBundleTransferPublication');
     expect(prepare).not.toHaveProperty('runtimeDescriptorV1');
     expect(prepare).not.toHaveProperty('workspaceReplicationJobId');
+    expect(prepare).not.toHaveProperty('resume.agentTarget');
+    expect(prepare).toHaveProperty('resume.codexBackendMode', 'appServer');
 
     const normalizedStart = SessionHandoffStartResponseSchema.parse(start);
-    const normalizedPrepare = SessionHandoffPrepareTargetResponseSchema.parse({
-      ...prepare,
-      runtimeDescriptorV1: RuntimeDescriptorV1Schema.parse(
-        (prepare as { agentRuntimeDescriptorV1?: unknown }).agentRuntimeDescriptorV1,
-      ),
-    });
     expect(normalizedStart.handoffMetadataV2?.agentBundleTransferPublication?.transferId).toBe(
       'agent-bundle:handoff-1',
     );
-    expect(normalizedPrepare.runtimeDescriptorV1).toMatchObject({
-      agentId: 'codex',
-      agent: {
-        agentExtra: {
-          owner: 'codex',
-          schemaId: 'codex.agentRuntimeDescriptorExtra',
-          v: 1,
+
+    expect(projectReleasedSessionHandoffResponseForMethod(
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET,
+      {
+        handoffId: 'handoff-1',
+        status,
+        resume: {
+          directory: '/repo',
+          agent: 'codex',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          },
+          resume: 'vendor-session-1',
+          transcriptStorage: 'persisted',
+          approvedNewDirectoryCreation: true,
         },
       },
-    });
+    )).not.toHaveProperty('resume.agentTarget');
+    const currentV3 = {
+      handoffId: 'handoff-1',
+      status,
+      resume: {
+        directory: '/repo',
+        agent: 'codex',
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
+        resume: 'vendor-session-1',
+        transcriptStorage: 'persisted',
+        approvedNewDirectoryCreation: true,
+      },
+    };
+    expect(projectReleasedSessionHandoffResponseForMethod(
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
+      currentV3,
+    )).toBe(currentV3);
+    const currentStatusV3 = {
+      handoffId: 'handoff-1',
+      status: {
+        ...status,
+        status: 'awaiting_user_resume',
+        recoveryActions: ['resume_on_target'],
+      },
+    };
+    expect(projectReleasedSessionHandoffResponseForMethod(
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
+      currentStatusV3,
+    )).toBe(currentStatusV3);
 
     expect(PredecessorStatusSchema.parse(
       (projectSessionHandoffResponseForPredecessor('status', {

@@ -80,6 +80,7 @@ export async function executePluginSessionMessageAction(params: Readonly<{
           },
       {
         surface: 'plugin',
+        authority: 'account_automation',
         actionCaller,
         signal: params.signal,
       },

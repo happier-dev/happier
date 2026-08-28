@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
 
@@ -69,9 +69,8 @@ describe('sessionHandoffSourceExportStore', () => {
       expect(providerStats.isFile()).toBe(true);
       expect(provider.sizeBytes).toBe(providerStats.size);
       expect(provider.manifestHash.startsWith('sha256:')).toBe(true);
-      const parsedProvider = JSON.parse(await readFile(provider.filePath, 'utf8'));
-      expect(parsedProvider).toMatchObject({ providerId: 'codex' });
-      expect(parsedProvider).not.toHaveProperty('agentId');
+      const parsedProvider = await readSessionHandoffAgentBundleFile(provider.filePath);
+      expect(parsedProvider).toMatchObject({ agentId: 'codex' });
       await expect(readSessionHandoffAgentBundleFile(provider.filePath)).resolves.toMatchObject({
         agentId: 'codex',
       });
@@ -102,6 +101,72 @@ describe('sessionHandoffSourceExportStore', () => {
     }
   });
 
+  it('persists referenced files as a portable binary artifact', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-binary-'));
+    const sourceDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-source-'));
+    try {
+      const sourcePath = join(sourceDirectory, 'rollout.jsonl');
+      const sourceContents = Buffer.alloc(5 * 1024 * 1024, 0x61);
+      await writeFile(sourcePath, sourceContents);
+
+      const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const persisted = await store.writeAgentBundleFile({
+        handoffId: 'handoff-binary-1',
+        agentBundle: {
+          agentId: 'codex',
+          remoteSessionId: 'remote-session-large',
+          files: [{
+            relativePath: 'sessions/rollout.jsonl',
+            contentFile: {
+              t: 'happier.handoff.file.v1',
+              filePath: sourcePath,
+              offsetBytes: 0,
+              sizeBytes: sourceContents.length,
+            },
+          }],
+        } satisfies SessionHandoffAgentBundle,
+      });
+
+      expect(persisted.sizeBytes).toBeGreaterThan(sourceContents.length);
+      expect(persisted.sizeBytes).toBeLessThan(sourceContents.length + 64 * 1024);
+
+      const artifactFile = await open(persisted.filePath, 'r');
+      try {
+        const magic = Buffer.from('HAPPIER_SESSION_HANDOFF_BUNDLE_V2\n', 'utf8');
+        const prefix = Buffer.alloc(magic.length);
+        await artifactFile.read(prefix, 0, prefix.length, 0);
+        expect(prefix.equals(magic)).toBe(true);
+      } finally {
+        await artifactFile.close();
+      }
+
+      const parsed = await readSessionHandoffAgentBundleFile(persisted.filePath);
+      const contentFile = (parsed.files as Array<{ contentFile?: {
+        filePath: string;
+        offsetBytes: number;
+        sizeBytes: number;
+      } }>)[0]?.contentFile;
+      expect(contentFile).toEqual(expect.objectContaining({
+        filePath: persisted.filePath,
+        sizeBytes: sourceContents.length,
+      }));
+      if (!contentFile) throw new Error('Expected a materialized handoff file');
+
+      const rehydratedFile = await open(contentFile.filePath, 'r');
+      try {
+        const sample = Buffer.alloc(64);
+        const { bytesRead } = await rehydratedFile.read(sample, 0, sample.length, contentFile.offsetBytes);
+        expect(bytesRead).toBe(sample.length);
+        expect(sample.equals(sourceContents.subarray(0, sample.length))).toBe(true);
+      } finally {
+        await rehydratedFile.close();
+      }
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('persists provider-owned bundle fields through the open handoff bundle ABI', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-bundle-shape-'));
     try {
@@ -123,8 +188,8 @@ describe('sessionHandoffSourceExportStore', () => {
         } as unknown as SessionHandoffAgentBundle,
       });
 
-      await expect(readFile(written.filePath, 'utf8').then((raw) => JSON.parse(raw) as unknown)).resolves.toMatchObject({
-        providerId: 'opencode',
+      await expect(readSessionHandoffAgentBundleFile(written.filePath)).resolves.toMatchObject({
+        agentId: 'opencode',
         remoteSessionId: 'remote-session-1',
         providerOwnedField: {
           nested: true,

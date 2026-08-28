@@ -320,10 +320,11 @@ describe('createForkSessionLifecycleActionHandler', () => {
     expect(bridge.resolveExecutionSurfaces).not.toHaveBeenCalled();
   });
 
-  it('routes an external Agent that declares native fork without applying built-in policy', async () => {
+  it('routes an external Agent through the same capability policy using its declaration fallback', async () => {
     mocks.forkAgentId = 'acme.agent';
     mocks.declarationSource = 'runtime';
     mocks.nativeForkOpenModes.push('fork');
+    mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
     mocks.attemptNativeForkOpen.mockResolvedValue({
       ok: true,
       childSessionId: 'child-external-native-open',
@@ -341,7 +342,12 @@ describe('createForkSessionLifecycleActionHandler', () => {
     })).resolves.toEqual({ ok: true, childSessionId: 'child-external-native-open' });
 
     expect(mocks.attemptNativeForkOpen).toHaveBeenCalledTimes(1);
-    expect(mocks.evaluateAgentSessionCapabilitySupport).not.toHaveBeenCalled();
+    expect(mocks.evaluateAgentSessionCapabilitySupport).toHaveBeenCalledWith({
+      agentId: 'acme.agent',
+      capability: 'sessionFork.conversation',
+      metadata: { path: '/tmp/project' },
+      declaredSupport: 'supported',
+    });
     expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
   });
 

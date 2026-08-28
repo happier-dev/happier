@@ -7,7 +7,7 @@ import {
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'
-import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend'
+import { listConfiguredAcpBackendsFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend'
 
 import { isBackendEnabled } from './backendAvailability'
 
@@ -42,11 +42,9 @@ function buildCatalogBackendInventoryItems(
 
 async function buildConfiguredAcpBackendInventoryItems(
   accountSettings: AccountSettings | null,
-  happyHomeDir?: string,
 ): Promise<AgentBackendInventoryItem[]> {
-  const configuredBackends = await listConfiguredAcpBackendsFromAccountSettingsOrPlugins({
+  const configuredBackends = await listConfiguredAcpBackendsFromAccountSettings({
     settings: accountSettings ?? {},
-    happyHomeDir,
   })
 
   return configuredBackends.map((backend) => {
@@ -74,14 +72,12 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
   limit?: unknown;
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
-  happyHomeDir?: string;
 }>): Promise<AgentBackendInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null
   const includeDisabled = params.includeDisabled === true
   const limit = normalizeLimit(params.limit)
   const configuredAcpBackends = await buildConfiguredAcpBackendInventoryItems(
     accountSettings,
-    params.happyHomeDir,
   )
   const items = [
     ...buildCatalogBackendInventoryItems(accountSettings),

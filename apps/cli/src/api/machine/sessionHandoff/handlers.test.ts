@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +29,7 @@ import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime
 import { resolveDefaultScmBackendRegistry } from '../../../scm/scmBackendCatalog';
 import type { ScmBackendRegistry } from '../../../scm/registry';
 import { createSessionHandoffPrepareTargetJobStore } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
@@ -250,6 +251,10 @@ function createWorkspaceReplicationAdapterForTest(
     return {
       directory: params.directory,
       agent: 'claude',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      },
       resume: params.resume,
       transcriptStorage: params.transcriptStorage,
       approvedNewDirectoryCreation: true,
@@ -294,6 +299,10 @@ function createWorkspaceReplicationAdapterForTest(
     return {
       directory: params.directory,
       agent: 'codex',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
       resume: params.resume,
       transcriptStorage: params.transcriptStorage,
       approvedNewDirectoryCreation: true,
@@ -442,6 +451,14 @@ function createWorkspaceReplicationAdapterForTest(
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT)).toBe(true);
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT)).toBe(true);
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3)).toBe(true);
+    expect(registered.has('daemon.sessionHandoff.prepareTarget.resume')).toBe(false);
   });
 
   it('fails closed when the persisted prepare-target job record is missing (resultGet uses job store only)', async () => {
@@ -508,9 +525,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        }),
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -621,7 +638,7 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
       });
 
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(resultGet).toBeDefined();
 
       await expect(resultGet!({ handoffId })).resolves.toEqual({ ok: false, errorCode: 'not_found' });
@@ -699,7 +716,7 @@ function createWorkspaceReplicationAdapterForTest(
 
       registerHandlers({ rpcHandlerManager });
 
-      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT);
+      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3);
       expect(abort).toBeDefined();
 
       await abort!({ handoffId, reason: 'user_abort' });
@@ -736,9 +753,9 @@ function createWorkspaceReplicationAdapterForTest(
 
       registerHandlers({ rpcHandlerManager });
 
-      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(abort).toBeDefined();
       expect(commit).toBeDefined();
       expect(statusGet).toBeDefined();
@@ -812,7 +829,7 @@ function createWorkspaceReplicationAdapterForTest(
       }),
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await start!({
@@ -922,7 +939,7 @@ function createWorkspaceReplicationAdapterForTest(
 	        },
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(start).toBeDefined();
 
       const result = await start!({
@@ -1053,9 +1070,9 @@ function createWorkspaceReplicationAdapterForTest(
 	      },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
     expect(resultGet).toBeDefined();
@@ -1138,7 +1155,7 @@ function createWorkspaceReplicationAdapterForTest(
 
     registerMachineSessionHandoffRpcHandlers(registerParams);
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const result = await start!({
@@ -1284,7 +1301,7 @@ function createWorkspaceReplicationAdapterForTest(
         stopSessionForHandoff: async () => 'already_inactive',
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(start).toBeDefined();
 
       await start!({
@@ -1353,7 +1370,7 @@ function createWorkspaceReplicationAdapterForTest(
       stopSessionForHandoff,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const result = await start!({
@@ -1416,7 +1433,7 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const started = await start!({
@@ -1484,7 +1501,7 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(start!({
@@ -1549,9 +1566,9 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-	    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 	    expect(start).toBeDefined();
-	    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+	    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
 	    expect(statusGet).toBeDefined();
 
 	    let started: any = null;
@@ -1653,7 +1670,7 @@ function createWorkspaceReplicationAdapterForTest(
 		        },
 		      });
 
-			      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+			      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 			      expect(start).toBeDefined();
 
 		      let started: any = null;
@@ -1743,7 +1760,7 @@ function createWorkspaceReplicationAdapterForTest(
 		        },
 		      });
 
-		      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+		      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 		      expect(start).toBeDefined();
 
 		      let started: any = null;
@@ -1833,7 +1850,7 @@ function createWorkspaceReplicationAdapterForTest(
             },
           });
 
-          const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+          const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
           expect(start).toBeDefined();
 
           const started = await start!({
@@ -2001,8 +2018,8 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const targetPrepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const targetStatusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const targetPrepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const targetStatusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(targetPrepare).toBeDefined();
       expect(targetStatusGet).toBeDefined();
 
@@ -2081,7 +2098,7 @@ function createWorkspaceReplicationAdapterForTest(
       stopSessionForHandoff,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(
@@ -2126,7 +2143,7 @@ function createWorkspaceReplicationAdapterForTest(
       stopSessionForHandoff,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const result = await start!({
@@ -2206,11 +2223,11 @@ function createWorkspaceReplicationAdapterForTest(
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
-      const status = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
+      const status = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
 
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
@@ -2296,7 +2313,7 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
         // Restarted daemon doesn't need the source stubs to answer durable status_get.
       });
-      const statusAfterRestart = registeredAfterRestart.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const statusAfterRestart = registeredAfterRestart.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(statusAfterRestart).toBeDefined();
       const fetchedAfterRestart = await statusAfterRestart!({ handoffId });
       expect(fetchedAfterRestart.status.status).toBe('completed');
@@ -2396,9 +2413,9 @@ function createWorkspaceReplicationAdapterForTest(
         savePreparedTargetLocalMetadata: savePreparedTargetLocalMetadata as any,
       } as any);
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -2557,9 +2574,9 @@ function createWorkspaceReplicationAdapterForTest(
         savePreparedTargetLocalMetadata: savePreparedTargetLocalMetadata as any,
       } as any);
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -2680,7 +2697,7 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(start).toBeDefined();
 
       const result = await start!({
@@ -2752,7 +2769,7 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(start).toBeDefined();
 
       const result = await start!({
@@ -2822,11 +2839,11 @@ function createWorkspaceReplicationAdapterForTest(
         }),
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
-      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
+      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -2936,10 +2953,10 @@ function createWorkspaceReplicationAdapterForTest(
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
 
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
@@ -3040,8 +3057,8 @@ function createWorkspaceReplicationAdapterForTest(
 	        }),
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
       expect(start).toBeDefined();
       expect(commit).toBeDefined();
 
@@ -3146,8 +3163,8 @@ function createWorkspaceReplicationAdapterForTest(
         }),
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
       expect(start).toBeDefined();
       expect(commit).toBeDefined();
 
@@ -3224,7 +3241,7 @@ function createWorkspaceReplicationAdapterForTest(
         importSessionBundle,
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
 
       expect(prepare).toBeDefined();
 
@@ -3391,7 +3408,7 @@ function createWorkspaceReplicationAdapterForTest(
         })),
       });
 
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(statusGet).toBeDefined();
 
 	      await expect(statusGet!({ handoffId })).resolves.toMatchObject({
@@ -3495,7 +3512,7 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
       });
 
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(statusGet).toBeDefined();
 
       await expect(statusGet!({ handoffId })).resolves.toMatchObject({
@@ -3604,7 +3621,7 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
       });
 
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(statusGet).toBeDefined();
 
       await expect(statusGet!({ handoffId })).resolves.toMatchObject({
@@ -3681,9 +3698,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        importSessionBundle,
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -3818,7 +3835,7 @@ function createWorkspaceReplicationAdapterForTest(
 	        }),
 	      });
 
-	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 	      expect(start).toBeDefined();
 
 	      const started = await start!({
@@ -3968,9 +3985,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        importSessionBundle,
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
 	      expect(start).toBeDefined();
 	      expect(prepare).toBeDefined();
 	      expect(resultGet).toBeDefined();
@@ -4137,9 +4154,9 @@ function createWorkspaceReplicationAdapterForTest(
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -4288,9 +4305,9 @@ function createWorkspaceReplicationAdapterForTest(
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -4383,9 +4400,9 @@ function createWorkspaceReplicationAdapterForTest(
 	      importSessionBundle,
 	    });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
     expect(start).toBeDefined();
     expect(prepare).toBeDefined();
     expect(resultGet).toBeDefined();
@@ -4431,7 +4448,7 @@ function createWorkspaceReplicationAdapterForTest(
 
     registerMachineSessionHandoffRpcHandlers({ rpcHandlerManager });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(start!({ targetMachineId: 'machine_target' })).resolves.toEqual({
@@ -4457,8 +4474,8 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
 
@@ -4538,7 +4555,7 @@ function createWorkspaceReplicationAdapterForTest(
       }),
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const started = await start!({
@@ -4598,7 +4615,7 @@ function createWorkspaceReplicationAdapterForTest(
       }),
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const started = await start!({
@@ -4663,7 +4680,7 @@ function createWorkspaceReplicationAdapterForTest(
       }),
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     const started = await start!({
@@ -4708,7 +4725,7 @@ function createWorkspaceReplicationAdapterForTest(
       exportSessionBundle,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(
@@ -4762,7 +4779,7 @@ function createWorkspaceReplicationAdapterForTest(
       exportSessionBundle,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(
@@ -4822,7 +4839,7 @@ function createWorkspaceReplicationAdapterForTest(
         exportSessionBundle,
       });
 
-	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 	      expect(start).toBeDefined();
 
 	      await expect(
@@ -4886,7 +4903,7 @@ function createWorkspaceReplicationAdapterForTest(
       exportSessionBundle,
     });
 
-	    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
 	    expect(start).toBeDefined();
 
 	    await expect(
@@ -4995,7 +5012,7 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(start).toBeDefined();
 
       const started = await start!({
@@ -5178,9 +5195,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        machineTransferChannel: channels.target,
 	      });
 
-      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(sourceStart).toBeDefined();
       expect(targetPrepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -5360,7 +5377,7 @@ function createWorkspaceReplicationAdapterForTest(
         machineTransferChannel: channels.source,
       });
 
-      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
       expect(sourceStart).toBeDefined();
 
       const started = await sourceStart!({
@@ -5543,9 +5560,9 @@ function createWorkspaceReplicationAdapterForTest(
         machineTransferChannel: channels.target,
       });
 
-      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(sourceStart).toBeDefined();
       expect(targetPrepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -5791,9 +5808,9 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
       });
 
-      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(sourceStart).toBeDefined();
       expect(targetPrepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -5988,7 +6005,7 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
       expect(prepare).toBeDefined();
 
       const result = await prepare!({
@@ -6129,8 +6146,8 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
 
@@ -6283,9 +6300,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        machineTransferChannel: targetChannel,
 	      });
 
-      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
@@ -6437,9 +6454,9 @@ function createWorkspaceReplicationAdapterForTest(
 	        machineTransferChannel: targetChannel,
 	      });
 
-      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
@@ -6516,8 +6533,8 @@ function createWorkspaceReplicationAdapterForTest(
 	      importSessionBundle,
 	    });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
 
@@ -6589,8 +6606,8 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
 
@@ -6687,9 +6704,9 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
     expect(resultGet).toBeDefined();
@@ -6804,7 +6821,7 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
     expect(prepare).toBeDefined();
 
     const handoffId = 'handoff_invalid_server_routed_workspace_manifest_format';
@@ -6906,7 +6923,7 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-	    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+	    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
 	    expect(statusGet).toBeDefined();
 
 	    // Depending on whether the prepare job completes within the fast-path window, the handler may:
@@ -7005,8 +7022,8 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
     expect(start).toBeDefined();
     expect(prepare).toBeDefined();
 
@@ -7062,7 +7079,7 @@ function createWorkspaceReplicationAdapterForTest(
       'persisted',
     );
 
-	    const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
+	    const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3);
 	    expect(commit).toBeDefined();
 	    await commit!({ handoffId: started.handoffId });
 	    await expect(access(publishedPayloadSource.filePath)).resolves.toBeUndefined();
@@ -7149,9 +7166,9 @@ function createWorkspaceReplicationAdapterForTest(
         machineTransferChannel: transferChannels.target,
       });
 
-      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -7300,9 +7317,9 @@ function createWorkspaceReplicationAdapterForTest(
         } as any,
       });
 
-      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -7405,7 +7422,7 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
     expect(start).toBeDefined();
 
     await expect(start!({
@@ -7459,8 +7476,8 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
 
@@ -7550,8 +7567,8 @@ function createWorkspaceReplicationAdapterForTest(
         },
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
 
@@ -7635,8 +7652,8 @@ function createWorkspaceReplicationAdapterForTest(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
 
@@ -8071,9 +8088,8 @@ function createWorkspaceReplicationAdapterForTest(
 	          const received = await transferPromise;
           expect(received.destinationPath).toEqual(destinationPath);
           expect(received.sizeBytes).toBeGreaterThan(0);
-          const rawAgentBundle = await readFile(received.destinationPath, 'utf8');
-          const parsedAgentBundle = JSON.parse(rawAgentBundle) as { providerId?: unknown };
-          expect(parsedAgentBundle.providerId).toEqual('claude');
+          const parsedAgentBundle = await readSessionHandoffAgentBundleFile(received.destinationPath);
+          expect(parsedAgentBundle.agentId).toEqual('claude');
         } finally {
           await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         }
@@ -8082,4 +8098,96 @@ function createWorkspaceReplicationAdapterForTest(
         await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
 	    }, 60_000);
+
+  it('serves a persisted binary artifact through the server-routed transfer without source file references', async () => {
+    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-binary-'));
+    const sourceDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-source-'));
+    const targetDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-target-'));
+    const handoffId = 'handoff_server_routed_binary';
+    const sourcePath = join(sourceDirectory, 'rollout.jsonl');
+    const sourceContents = Buffer.alloc(5 * 1024 * 1024, 0x62);
+
+    try {
+      await writeFile(sourcePath, sourceContents);
+      const channels = createLoopbackMachineTransferChannels();
+      const registerSourceHandlers = createRegisterHandlers({
+        activeServerDir: sourceActiveServerDir,
+        activeServerId: 'test_server_routed_binary',
+      });
+      registerSourceHandlers({
+        rpcHandlerManager: {
+          registerHandler: () => {},
+        } as any,
+        machineTransferChannel: channels.source,
+      });
+
+      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir: sourceActiveServerDir });
+      const persistedAgentBundle = await sourceExportStore.writeAgentBundleFile({
+        handoffId,
+        agentBundle: {
+          agentId: 'codex',
+          remoteSessionId: 'remote-session-large',
+          files: [{
+            relativePath: 'sessions/rollout.jsonl',
+            contentFile: {
+              t: 'happier.handoff.file.v1',
+              filePath: sourcePath,
+              offsetBytes: 0,
+              sizeBytes: sourceContents.length,
+            },
+          }],
+        },
+      });
+      await sourceExportStore.save({
+        handoffId,
+        sessionId: 'session_test',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        exportedAtMs: Date.now(),
+        workspaceSourceRootPath: '/repo',
+        agentBundle: persistedAgentBundle,
+      });
+
+      const destinationPath = join(targetDirectory, 'agent-bundle.bin');
+      const received = await requestServerRoutedTransferToFile({
+        transferId: buildSessionHandoffAgentBundleTransferId(handoffId),
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: channels.target,
+        destinationPath,
+        timeoutMs: 30_000,
+      });
+
+      expect(received.sizeBytes).toBe(persistedAgentBundle.sizeBytes);
+      expect(received.sizeBytes).toBeGreaterThan(sourceContents.length);
+      expect(received.sizeBytes).toBeLessThan(sourceContents.length + 64 * 1024);
+
+      await rm(sourceDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+
+      const transferredBundle = await readSessionHandoffAgentBundleFile(destinationPath);
+      const contentFile = (transferredBundle.files as Array<{ contentFile?: {
+        filePath: string;
+        offsetBytes: number;
+        sizeBytes: number;
+      } }>)[0]?.contentFile;
+      expect(contentFile).toEqual(expect.objectContaining({
+        filePath: destinationPath,
+        sizeBytes: sourceContents.length,
+      }));
+      if (!contentFile) throw new Error('Expected a materialized handoff file');
+
+      const transferredArtifact = await open(destinationPath, 'r');
+      try {
+        const sample = Buffer.alloc(64);
+        const { bytesRead } = await transferredArtifact.read(sample, 0, sample.length, contentFile.offsetBytes);
+        expect(bytesRead).toBe(sample.length);
+        expect(sample.equals(sourceContents.subarray(0, sample.length))).toBe(true);
+      } finally {
+        await transferredArtifact.close();
+      }
+    } finally {
+      await rm(targetDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await rm(sourceDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  }, 60_000);
 		});

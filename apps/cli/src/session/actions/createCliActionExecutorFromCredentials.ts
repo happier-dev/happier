@@ -9,8 +9,13 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
+import { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import { resolveLiveDaemonExternalActionEndpoint } from '@/daemon/multiDaemon';
-import { readSettings, type StoredCredentials } from '@/persistence';
+import {
+  hasStoredSessionCredentialProvenance,
+  readSettings,
+  type StoredCredentials,
+} from '@/persistence';
 import {
   isFullSessionId,
   resolveSessionIdOrPrefixFromSessionList,
@@ -30,10 +35,12 @@ import {
   type ActionExecutorDeps,
   type RuntimeActionExecute,
 } from '@happier-dev/protocol';
+import { ExternalActionMachineBootstrapListV1Schema } from '@happier-dev/protocol/actions';
 import {
   connect,
   HappierActionError,
   type ActionTarget,
+  type HappierMachine,
   type PublicActionInputById,
 } from '@happier-dev/sdk';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -79,6 +86,23 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
     : null;
+}
+
+function readStoredSessionMachineList(value: unknown): readonly HappierMachine[] {
+  const record = readRecord(value);
+  const items = Array.isArray(record?.items) ? record.items : null;
+  if (!items) throw new Error('invalid_machine_list_result');
+  const parsed = ExternalActionMachineBootstrapListV1Schema.safeParse(items.map((item) => {
+    const row = readRecord(item);
+    return {
+      id: row?.id,
+      active: row?.active,
+      revokedAt: row?.revokedAt,
+      replacedByMachineId: row?.replacedByMachineId,
+    };
+  }));
+  if (!parsed.success) throw new Error('invalid_machine_list_result');
+  return Object.freeze(parsed.data.map((row) => Object.freeze(row)));
 }
 
 function readPatSessionListPage(value: unknown): SessionSelectorListPage {
@@ -383,10 +407,9 @@ async function executePatPublicAction(params: Readonly<{
 
 function shouldUsePatPublicActionTransport(
   credentials: StoredCredentials,
-  context: ActionExecutorContext | undefined,
+  _context: ActionExecutorContext | undefined,
 ): boolean {
-  return credentials.credentialProvenance === 'api_token'
-    && ((context?.surface ?? 'cli') === 'cli' || context?.surface === 'mcp');
+  return credentials.credentialProvenance === 'api_token';
 }
 
 export function createCliActionExecutorFromCredentials(params: Readonly<{
@@ -401,6 +424,10 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   runtimeActionExecute?: RuntimeActionExecute;
   /** Current committed contributed Action declarations for catalog discovery. */
   listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
+  /** Daemon-owned execution bypasses its own authenticated control bridge. */
+  pluginActionExecutionOwner?: 'daemon_control' | 'current_process';
+  /** Root `happier actions` is a signed client of the daemon External Action API. */
+  externalActionClient?: true;
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
   invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
@@ -429,6 +456,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   transcriptFollowLeaseRegistry?: SessionTranscriptFollowLeaseRegistry;
 }>): ReturnType<typeof createCliActionExecutor> & Readonly<{
   bindInvocation(signal: AbortSignal): ReturnType<typeof createCliActionExecutor>;
+  listAccountMachines(signal?: AbortSignal): Promise<readonly HappierMachine[]>;
   resolveSessionTarget(idOrPrefix: string): Promise<CliActionSessionTarget>;
   resolveMachineTarget(): Promise<CliActionMachineTarget>;
 }> {
@@ -453,6 +481,9 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       accountServerActionDeps: createAccountServerActionDeps({ token: credentials.token }),
       token: credentials.token,
       credentials,
+      ...(params.pluginActionExecutionOwner
+        ? { pluginActionExecutionOwner: params.pluginActionExecutionOwner }
+        : {}),
       sessionId: 'cli-global',
       ...(params.readRegisteredPromptAssetAdapters
         ? { readRegisteredPromptAssetAdapters: params.readRegisteredPromptAssetAdapters }
@@ -582,6 +613,17 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
         const [actionId, input, context] = args;
+        if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)) {
+          const parsedActionId = PublicActionIdSchema.safeParse(actionId);
+          if (!parsedActionId.success) return actionFailure('unsupported');
+          const signal = combineInvocationSignals(invocationSignal, context?.signal);
+          return await requestDaemonSignedRootActionExecution({
+            actionId: parsedActionId.data,
+            input,
+            ...(params.machineId ? { targetMachineId: params.machineId } : {}),
+            ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+          }, { ...(signal ? { signal } : {}) });
+        }
         if (shouldUsePatPublicActionTransport(credentials, context)) {
           return await executePatPublicAction({
             actionId,
@@ -625,6 +667,27 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   };
   return Object.freeze({
     ...executor,
+    async listAccountMachines(signal?: AbortSignal) {
+      const credentials = params.readCredentials
+        ? await params.readCredentials().catch(() => null)
+        : params.credentials;
+      if (!credentials) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+      if (!shouldUsePatPublicActionTransport(credentials, { surface: 'cli' })) {
+        const result = await executor.execute(
+          'machines.list',
+          { limit: 200 },
+          { surface: 'cli', ...(signal ? { signal } : {}) },
+        );
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        return readStoredSessionMachineList(result.result);
+      }
+      const client = connect({ endpoint: configuration.apiServerUrl, token: credentials.token });
+      try {
+        return await client.machines.list({ ...(signal ? { signal } : {}) });
+      } finally {
+        await client.close();
+      }
+    },
     resolveSessionTarget,
     async resolveMachineTarget() {
       const credentials = params.readCredentials

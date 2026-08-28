@@ -96,6 +96,10 @@ function buildClaudeResumePlan(params: Readonly<{
         return {
             directory: params.directory,
             agent: 'claude',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            },
             resume: params.resume,
             transcriptStorage: params.transcriptStorage,
             approvedNewDirectoryCreation: true,
@@ -181,8 +185,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -295,8 +299,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -367,8 +371,8 @@ function requireFileTransferPayloadSourcePath(
             directPeerTransfer: legacyOnlyDirectPeerTransfer,
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -437,8 +441,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -507,8 +511,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -616,9 +620,9 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(start).toBeDefined();
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
@@ -764,8 +768,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -918,8 +922,8 @@ function requireFileTransferPayloadSourcePath(
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
@@ -1118,7 +1122,7 @@ function requireFileTransferPayloadSourcePath(
                 },
             });
 
-            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
             expect(prepare).toBeDefined();
 
             const prepared = await prepare!({
@@ -1244,8 +1248,8 @@ function requireFileTransferPayloadSourcePath(
                 },
             });
 
-            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
             expect(prepare).toBeDefined();
             expect(resultGet).toBeDefined();
 
@@ -1386,8 +1390,8 @@ function requireFileTransferPayloadSourcePath(
                 },
             });
 
-            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
             expect(prepare).toBeDefined();
             expect(resultGet).toBeDefined();
 
@@ -1541,8 +1545,8 @@ function requireFileTransferPayloadSourcePath(
                 directPeerTransfer,
             });
 
-            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+            const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
             expect(prepare).toBeDefined();
             expect(resultGet).toBeDefined();
 
@@ -1638,7 +1642,7 @@ function requireFileTransferPayloadSourcePath(
         });
 
     try {
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
       expect(prepare).toBeDefined();
 
             const agentBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_payload:provider-bundle-file';
@@ -1719,8 +1723,8 @@ function requireFileTransferPayloadSourcePath(
     });
 
     try {
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
 
@@ -1823,8 +1827,8 @@ function requireFileTransferPayloadSourcePath(
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
     expect(prepare).toBeDefined();
     expect(resultGet).toBeDefined();
 

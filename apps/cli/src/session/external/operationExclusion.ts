@@ -113,6 +113,17 @@ export type ExternalSessionOperationExclusionOwner =
             | Readonly<{ status: 'active' }>
             | Readonly<{ status: 'executed'; value: TResult }>
         >;
+        /**
+         * Freeze claim admission for the whole Session, including the window
+         * after a claim is acquired but before its first durable record exists.
+         */
+        withPassiveRepairSessionBarrier<TResult>(
+            input: Readonly<{ sessionId: string }>,
+            effect: () => Promise<TResult>,
+        ): Promise<
+            | Readonly<{ status: 'active' }>
+            | Readonly<{ status: 'executed'; value: TResult }>
+        >;
     }>;
 
 export const EXTERNAL_SESSION_OPERATION_CLAIM_LOST_CODE =
@@ -645,6 +656,28 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
             : await inspectOwnerProcess(claim.ownerProcess);
     };
 
+    const readPassiveRepairActiveClaimUnderLock = async (
+        sessionId: string,
+    ): Promise<ExternalSessionOperationClaimRecord | null> => {
+        const paths = resolveClaimPaths(activeServerDir, sessionId);
+        const active = await readClaim(paths.claimFilePath);
+        if (!active) {
+            try {
+                await readFile(paths.claimFilePath, 'utf8');
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                    return null;
+                }
+            }
+            throw new Error(
+                'external_session_operation_repair_claim_unreadable',
+            );
+        }
+        if (active.expiresAtMs <= nowMs()) return null;
+        const ownerLiveness = await inspectClaimOwnerLiveness(active);
+        return ownerLiveness === 'verified_stopped' ? null : active;
+    };
+
     const inspectPassiveRepairClaimUnderLock = async (rawInput: Readonly<{
         sessionId: string;
         operationClaimId: string;
@@ -654,23 +687,8 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
             rawInput.operationClaimId,
             'operationClaimId',
         );
-        const paths = resolveClaimPaths(activeServerDir, sessionId);
-        const active = await readClaim(paths.claimFilePath);
-        if (!active) {
-            try {
-                await readFile(paths.claimFilePath, 'utf8');
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-                    return 'inactive';
-                }
-            }
-            throw new Error(
-                'external_session_operation_repair_claim_unreadable',
-            );
-        }
-        if (active.expiresAtMs <= nowMs()) return 'inactive';
-        const ownerLiveness = await inspectClaimOwnerLiveness(active);
-        if (ownerLiveness === 'verified_stopped') return 'inactive';
+        const active = await readPassiveRepairActiveClaimUnderLock(sessionId);
+        if (!active) return 'inactive';
         if (active.claimId !== operationClaimId) {
             throw new Error(
                 'external_session_operation_repair_claim_conflict',
@@ -752,6 +770,24 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
                     value: await effect(),
                 });
             });
+        },
+        async withPassiveRepairSessionBarrier(rawInput, effect) {
+            const sessionId = readRequiredString(rawInput.sessionId, 'sessionId');
+            const paths = resolveClaimPaths(activeServerDir, sessionId);
+            await mkdir(paths.rootDirectory, { recursive: true, mode: 0o700 });
+            return await withClaimMutationLock(
+                paths.mutationLockPath,
+                claimMutationLockAcquisitionTimeoutMs,
+                async () => {
+                    if (await readPassiveRepairActiveClaimUnderLock(sessionId)) {
+                        return Object.freeze({ status: 'active' as const });
+                    }
+                    return Object.freeze({
+                        status: 'executed' as const,
+                        value: await effect(),
+                    });
+                },
+            );
         },
         async acquire(rawRequest, acquireInput = {}) {
             const request = normalizeRequest(rawRequest);

@@ -237,7 +237,6 @@ async function runRealContributionMaterialization(input: Readonly<{
       remoteSessionId: input.remoteSessionId,
       linkGeneration: 'link-1',
       source: input.source,
-      codexBackendMode: null,
     },
   });
   resolveSurfaceMock.mockResolvedValue({
@@ -442,7 +441,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId,
       linkGeneration: 'link-1',
       source: claudeSource,
-      codexBackendMode: null,
     };
     readCredentialsMock.mockResolvedValue({
       token: 'token',
@@ -680,7 +678,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId,
       linkGeneration: 'link-1',
       source: piSource,
-      codexBackendMode: null,
     };
     readCredentialsMock.mockResolvedValue({
       token: 'token',
@@ -924,7 +921,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId,
       linkGeneration: 'link-1',
       source: ohMyPiSource,
-      codexBackendMode: null,
     };
     readCredentialsMock.mockResolvedValue({
       token: 'token',
@@ -1453,7 +1449,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId: 'remote-empty-final-catch-up',
       linkGeneration: 'link-1',
       source,
-      codexBackendMode: null,
     };
     loadLinkedExternalSessionMock.mockResolvedValue({ ok: true, session: linked });
     const stagingObserver = createExternalSessionOperationPrivateStagingStore({
@@ -1666,7 +1661,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId: 'remote-1',
       linkGeneration: 'link-1',
       source,
-      codexBackendMode: null,
     };
     loadLinkedExternalSessionMock.mockResolvedValue({ ok: true, session: linked });
 
@@ -1873,7 +1867,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId: 'remote-1',
       linkGeneration: 'link-1',
       source,
-      codexBackendMode: null,
     };
     let linkReadCount = 0;
     loadLinkedExternalSessionMock.mockImplementation(async () => {
@@ -2043,7 +2036,6 @@ describe('default external session materialize capture', () => {
         remoteSessionId: 'remote-1',
         linkGeneration: 'link-1',
         source,
-        codexBackendMode: null,
       },
     });
     let malformedAdvanceObserved = false;
@@ -2173,7 +2165,6 @@ describe('default external session materialize capture', () => {
       remoteSessionId: 'remote-1',
       linkGeneration: 'link-1',
       source,
-      codexBackendMode: null,
     };
     loadLinkedExternalSessionMock.mockResolvedValue({ ok: true, session: linked });
 
@@ -2559,7 +2550,6 @@ describe('default external session materialize capture', () => {
         remoteSessionId: 'remote-1',
         linkGeneration: 'link-1',
         source,
-        codexBackendMode: null,
       };
       let serverPriorStableStorage: ExternalSessionPriorStableStorageV1 =
         machineOnlyPriorStableStorage;

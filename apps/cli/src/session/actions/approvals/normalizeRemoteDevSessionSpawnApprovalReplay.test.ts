@@ -89,7 +89,7 @@ describe('remote-dev Session-spawn approval replay normalizer', () => {
             modelId: 'gpt-5',
           },
         },
-        initialMessage: 'Inspect this repository.',
+        initialInput: { text: 'Inspect this repository.' },
         configuration: {
           mode: { value: null, updatedAtMs: 42 },
           model: { value: null, updatedAtMs: 42 },

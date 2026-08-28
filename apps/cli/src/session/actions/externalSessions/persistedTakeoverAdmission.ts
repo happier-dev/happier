@@ -608,6 +608,7 @@ function assertExternalLinkedCurrentAuthority(
   const pendingBlockedCount = readNonnegativeInteger(raw, 'pendingBlockedCount');
   if (
     !current.permitsAdmission
+    || current.externalLinkedTakeoverWriterSafety !== 'native_prevention'
     || current.pluginGeneration !== record.request.source.contributionGeneration
     || current.linked.machineId !== record.request.source.machineId
     || current.linked.remoteSessionId !== record.request.source.remoteSessionId
@@ -994,6 +995,12 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         throw new Error(`external_linked_takeover_admission_prepare_${prepared.code}`);
       }
       const authorityRecord = prepared.record as ExternalLinkedTakeoverAdmissionRecord;
+      const finalCurrent = await loadExternalLinkedCurrent(authorityRecord);
+      const finalAuthority = assertExternalLinkedCurrentAuthority(
+        authorityRecord,
+        finalCurrent,
+        publisherPrecondition,
+      );
       const command: Extract<
         ExternalSessionOperationSocketCommandV1,
         { kind: 'admit_persisted_takeover'; mode: 'external_linked' }
@@ -1009,12 +1016,12 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         expectedRevision: authorityRecord.revision,
         attemptId: input.attemptId,
         publisherPrecondition,
-        expectedSessionMetadataVersion: authority.metadataVersion,
-        expectedSessionSeq: authority.seq,
+        expectedSessionMetadataVersion: finalAuthority.metadataVersion,
+        expectedSessionSeq: finalAuthority.seq,
         expectedPending: {
-          version: authority.pendingVersion,
-          count: authority.pendingCount,
-          blockedCount: authority.pendingBlockedCount,
+          version: finalAuthority.pendingVersion,
+          count: finalAuthority.pendingCount,
+          blockedCount: finalAuthority.pendingBlockedCount,
         },
         expectedPriorStableStorage: authorityRecord.priorStableStorage,
       };

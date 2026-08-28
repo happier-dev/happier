@@ -1,7 +1,10 @@
 import {
+  AgentExecutionTargetV1Schema,
   normalizeSpawnSessionNonceResolution,
+  readRuntimeDescriptorV1,
   SpawnSessionExecutionAuthorizationSchema,
   type ActionExecuteResult,
+  type SessionHandoffPrepareTargetResponse,
   type SessionHandoffStorageMode,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -17,6 +20,7 @@ import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 
 import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
 import { coordinateTrackedSessionHandoff } from './sessionHandoffCoordinator';
+import { buildTrackedSessionHandoffMachineCall } from './trackedSessionHandoffMachineCall';
 
 type SourceContext =
   | Readonly<{ ok: true; sourceMachineId: string; sessionStorageMode: SessionHandoffStorageMode }>
@@ -28,6 +32,7 @@ type MachineCall = (input: Readonly<{
   method: string;
   request: unknown;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }>) => Promise<unknown>;
 
 type CoordinatorDeps = Readonly<{
@@ -54,6 +59,12 @@ type HostCoordinatorInput = Readonly<{
   start: () => Promise<ActionExecuteResult>;
   signal: AbortSignal;
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
+}>;
+
+type PreparedHandoffTarget = SessionHandoffPrepareTargetResponse & Readonly<{
+  resume: NonNullable<SessionHandoffPrepareTargetResponse['resume']> & Readonly<{
+    agentTarget: NonNullable<NonNullable<SessionHandoffPrepareTargetResponse['resume']>['agentTarget']>;
+  }>;
 }>;
 
 function readNonEmptyString(value: unknown): string | null {
@@ -101,6 +112,34 @@ async function waitForTargetCustody(input: Readonly<{
   });
 }
 
+export function buildTrackedSessionHandoffSpawnOptions(params: Readonly<{
+  targetMachineId: string;
+  prepared: PreparedHandoffTarget;
+}>): SpawnSessionOptions {
+  const prepared = params.prepared;
+  const runtimeDescriptorV1 = readRuntimeDescriptorV1(prepared.runtimeDescriptorV1) ?? undefined;
+  if (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== prepared.resume.agent) {
+    throw new Error('Runtime descriptor Agent identity must match handoff resume Agent');
+  }
+  const agentTarget = AgentExecutionTargetV1Schema.parse(prepared.resume.agentTarget);
+  return {
+    machineId: params.targetMachineId,
+    directory: prepared.resume.directory,
+    agentTarget,
+    resume: prepared.resume.resume,
+    attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+    transcriptStorage: prepared.resume.transcriptStorage,
+    executionAuthorization: SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: prepared.handoffId,
+    }),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+    ...(prepared.resume.environmentVariables
+      ? { environmentVariables: prepared.resume.environmentVariables }
+      : {}),
+  };
+}
+
 export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
   const resolveSource = deps.resolveSource ?? resolveSourceContext;
   const callMachine: MachineCall = deps.callMachine ?? (async (input) => await callMachineRpc(input));
@@ -125,7 +164,13 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
     let spawnResult: unknown;
     let spawnNonce: string | null = null;
     const rpc = async (machineId: string, method: string, request: unknown, signal?: AbortSignal) => (
-      await callMachine({ credentials, machineId, method, request, ...(signal ? { signal } : {}) })
+      await callMachine(buildTrackedSessionHandoffMachineCall({
+        credentials,
+        machineId,
+        method,
+        request,
+        ...(signal ? { signal } : {}),
+      }))
     );
 
     return await coordinateTrackedSessionHandoff({
@@ -145,43 +190,28 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       resolveSource: async (id, signal) => await resolveSource(credentials, id, signal),
       prepareTarget: async (request, signal) => await rpc(
         targetMachineId,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
         request,
         signal,
       ),
       getPreparedTargetResult: async (request, signal) => await rpc(
         targetMachineId,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3,
         request,
         signal,
       ),
       getTargetStatus: async (request, signal) => await rpc(
         targetMachineId,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
         request,
         signal,
       ),
       resumeTarget: async ({ sessionId: resumeSessionId, prepared }, signal) => {
         spawnNonce = createStableSpawnNonce('session.handoff.target', { handoffId: prepared.handoffId });
-        const options: SpawnSessionOptions = {
-          machineId: targetMachineId,
-          directory: prepared.resume!.directory,
-          backendTarget: { kind: 'backend', backendId: prepared.resume!.agent },
-          resume: prepared.resume!.resume,
-          attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
-          transcriptStorage: prepared.resume!.transcriptStorage,
-          executionAuthorization: SpawnSessionExecutionAuthorizationSchema.parse({
-            provenance: 'user_request',
-            requestId: prepared.handoffId,
-          }),
-          ...(prepared.runtimeDescriptorV1 ? { runtimeDescriptorV1: prepared.runtimeDescriptorV1 } : {}),
-          ...(prepared.resume!.environmentVariables
-            ? { environmentVariables: prepared.resume!.environmentVariables }
-            : {}),
-          ...(prepared.resume!.codexBackendMode
-            ? { codexBackendMode: prepared.resume!.codexBackendMode }
-            : {}),
-        };
+        const options = buildTrackedSessionHandoffSpawnOptions({
+          targetMachineId,
+          prepared: prepared as PreparedHandoffTarget,
+        });
         spawnResult = await rpc(
           targetMachineId,
           RPC_METHODS.SPAWN_HAPPY_SESSION,
@@ -221,18 +251,18 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       },
       commitTarget: async ({ machineId, ...request }, signal) => await rpc(
         machineId,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
         request,
         signal,
       ),
       cleanupSource: async ({ machineId, ...request }, signal) => await rpc(
         machineId,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
         request,
         signal,
       ),
       abort: async ({ machineId, ...request }) => {
-        return await rpc(machineId, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, request);
+        return await rpc(machineId, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3, request);
       },
       publishOwnerUpdate: hostInput.publishOwnerUpdate,
       ...(deps.wait ? { wait: deps.wait } : {}),

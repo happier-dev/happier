@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 
-import { getAgentCliRuntimeSpec, isBundledAgentId, type BundledAgentId } from '@happier-dev/agents';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -169,14 +168,15 @@ function pluginChangeMessage(result: UserPluginChangeResult): string {
       return result.message ?? `Plugin change failed (${result.code}).`;
     case 'outcomeUnknown':
       return `The daemon may have applied the change for ${result.pluginId}; inspect installed plugin state before retrying.`;
+    case 'dataRemovalPartial':
+      return `Plugin data removal remains partial for ${result.pluginId}; retry the confirmed uninstall command.`;
     case 'committed':
       return `Installed plugin ${result.pluginId}; desired and applied generation ${result.appliedGeneration ?? 'none'}.`;
   }
 }
 
-function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionRegistry, 'agents'>): ProviderStatusRow[] {
+function readInstallableProviderRows(registry: Pick<ResolvedContributionRegistry, 'agents'>): ProviderStatusRow[] {
   return registry.agents
-    .filter((contribution) => contribution.provenance === 'first_party')
     .map((contribution) => {
       const runtimeSpec = readAgentCliRuntimeDescriptor(contribution);
       if (!runtimeSpec) return null;
@@ -192,20 +192,19 @@ function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionR
 }
 
 function printProviderInstallResult(
-  agentId: BundledAgentId,
   result: Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>,
   log: InstallCliDeps['log'],
 ): void {
   if (!result.ok) return;
-  const runtimeSpec = getAgentCliRuntimeSpec(agentId);
+  const title = result.plan.title;
   if (result.alreadyInstalled) {
-    log(`${runtimeSpec.title} is already installed.`);
+    log(`${title} is already installed.`);
   } else if (result.plan.installMode === 'vendor_recipe') {
-    log(`Installed ${runtimeSpec.title}.`);
+    log(`Installed ${title}.`);
   } else if (result.plan.installMode === 'github_release_binary') {
-    log(`Installed ${runtimeSpec.title} via managed release binary.`);
+    log(`Installed ${title} via managed release binary.`);
   } else if (result.plan.installMode === 'managed_package') {
-    log(`Installed ${runtimeSpec.title} via managed package runtime.`);
+    log(`Installed ${title} via managed package runtime.`);
   }
   if (result.logPath) {
     log(`Install log: ${result.logPath}`);
@@ -319,7 +318,7 @@ export async function runInstallCliCommand(
     const mergedRegistry = needsRegistry
       ? await resolveMergedContributionRegistry({ happyHomeDir: resolvePluginStorePaths().happyHomeDir })
       : null;
-    const installableProviderRows = mergedRegistry ? readInstallableBuiltInProviderRows(mergedRegistry) : [];
+    const installableProviderRows = mergedRegistry ? readInstallableProviderRows(mergedRegistry) : [];
     if (subcommand === 'doctor') {
       await deps.runDoctorCommand();
       return;
@@ -340,9 +339,8 @@ export async function runInstallCliCommand(
         deps.log(usage(installableProviderRows));
         return;
       }
-      // `happy install provider` drives the generated bundled CLI install
-      // recipes, which exist only for bundled Agents.
-      if (!isBundledAgentId(agentIdRaw)) {
+      const providerRow = installableProviderRows.find((row) => row.id === agentIdRaw);
+      if (!providerRow) {
         deps.error(chalk.red('Error:'), `Unknown provider id: ${agentIdRaw}`);
         deps.log(usage(installableProviderRows));
         deps.exit(1);
@@ -352,6 +350,7 @@ export async function runInstallCliCommand(
       const flags = parseProviderInstallFlags(context.args.slice(3));
       const result = await deps.invokeAgentCliInstall({
         agentId: agentIdRaw,
+        runtimeSpec: providerRow.runtimeSpec,
         params: flags,
         env: process.env,
         nodePlatform: process.platform,
@@ -371,7 +370,7 @@ export async function runInstallCliCommand(
         }
         return;
       }
-      printProviderInstallResult(agentIdRaw, result, deps.log);
+      printProviderInstallResult(result, deps.log);
       return;
     }
     if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {

@@ -931,7 +931,6 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
           fixture: 'linked-by-auxiliary-plugin',
           scope: SOURCE.scope,
         },
-        codexBackendMode: null,
       } satisfies LoadedLinkedExternalSession;
       const spawnSession = vi.fn(async () => ({
         type: 'success' as const,

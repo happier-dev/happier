@@ -67,7 +67,7 @@ const SOURCE_METADATA: Record<string, unknown> = {
 const EXPECTED_RULE = { optionIds: ['reasoning_effort'], forcedValue: 'xhigh' };
 
 describe('fork/spawn inheritance preserves producer-declared option override rules', () => {
-  it('carries overridesWhenOn through all four inherited catalog carriers on fork', () => {
+  it('carries overridesWhenOn through the canonical inherited catalog carriers on fork', () => {
     const inherited = resolveForkInheritedOverridesFromMetadata(SOURCE_METADATA, claudeTarget);
 
     expect(
@@ -75,15 +75,10 @@ describe('fork/spawn inheritance preserves producer-declared option override rul
         ?.overridesWhenOn,
     ).toEqual(EXPECTED_RULE);
     expect(
-      inherited.metadata.acpSessionModelsV1?.availableModels[0]?.modelOptions?.find((o) => o.id === 'ultracode')
-        ?.overridesWhenOn,
-    ).toEqual(EXPECTED_RULE);
-    expect(
       inherited.metadata.sessionConfigOptionsV1?.configOptions.find((o) => o.id === 'ultracode')?.overridesWhenOn,
     ).toEqual(EXPECTED_RULE);
-    expect(
-      inherited.metadata.acpConfigOptionsV1?.configOptions.find((o) => o.id === 'ultracode')?.overridesWhenOn,
-    ).toEqual(EXPECTED_RULE);
+    expect(inherited.metadata.acpSessionModelsV1).toBeUndefined();
+    expect(inherited.metadata.acpConfigOptionsV1).toBeUndefined();
   });
 
   it('carries overridesWhenOn through the session-agent spawn inheritance path', () => {

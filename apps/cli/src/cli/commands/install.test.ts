@@ -232,6 +232,62 @@ describe('runInstallCliCommand', () => {
           },
           catalogEntry: null,
         },
+        ...[
+          {
+            id: 'codex',
+            title: 'OpenAI Codex CLI',
+            binaryName: 'codex',
+            provenance: 'first_party' as const,
+            managedInstall: {
+              kind: 'github_release_binary' as const,
+              githubRepo: 'openai/codex',
+              binaryName: 'codex',
+            },
+          },
+          {
+            id: 'gemini',
+            title: 'Google Gemini CLI',
+            binaryName: 'gemini',
+            provenance: 'first_party' as const,
+            managedInstall: {
+              kind: 'managed_package' as const,
+              packageName: '@google/gemini-cli',
+              binaryName: 'gemini',
+            },
+          },
+          {
+            id: 'acme-agent',
+            title: 'Acme Agent CLI',
+            binaryName: 'acme-agent',
+            provenance: 'external' as const,
+            managedInstall: {
+              kind: 'managed_package' as const,
+              packageName: '@acme/agent-cli',
+              binaryName: 'acme-agent',
+            },
+          },
+        ].map((agent) => ({
+          id: agent.id,
+          provenance: agent.provenance,
+          source: { kind: agent.provenance === 'external' ? 'package' : 'bundled' },
+          definition: {
+            kindVersion: 1,
+            id: agent.id,
+            ownedBackendIds: [],
+          },
+          runtimeSpec: {
+            kindVersion: 1,
+            id: agent.id,
+            title: agent.title,
+            binaryName: agent.binaryName,
+            sourcePreferenceDefault: 'system-first',
+            managedInstall: agent.managedInstall,
+            manualInstallKind: 'command',
+            manualInstallRecipes: null,
+            acceptsJavaScriptFileOverride: false,
+          },
+          catalogEntry: null,
+        })),
       ],
       runtimeAdaptersByBackendId: new Map(),
       catalogEntriesById: {},
@@ -354,6 +410,7 @@ describe('runInstallCliCommand', () => {
 
     expect(invokeAgentCliInstall).toHaveBeenCalledWith({
       agentId: 'codex',
+      runtimeSpec: expect.objectContaining({ id: 'codex', title: 'OpenAI Codex CLI' }),
       params: { dryRun: true, skipIfInstalled: true },
       env: process.env,
       nodePlatform: process.platform,
@@ -398,6 +455,48 @@ describe('runInstallCliCommand', () => {
         params: { dryRun: false, skipIfInstalled: false },
       }),
     );
+  });
+
+  it('installs an external Agent from its normalized CLI descriptor', async () => {
+    const invokeAgentCliInstall = vi.fn().mockResolvedValue({
+      ok: true,
+      alreadyInstalled: false,
+      logPath: null,
+      plan: {
+        agentId: 'acme-agent',
+        title: 'Acme Agent CLI',
+        binaries: ['acme-agent'],
+        platform: 'linux',
+        docsUrl: null,
+        commands: [],
+        requiresAdmin: false,
+        installMode: 'managed_package',
+        managedInstall: {
+          kind: 'managed_package',
+          packageName: '@acme/agent-cli',
+          binaryName: 'acme-agent',
+        },
+      },
+    });
+    const log = vi.fn();
+
+    await runInstallCliCommand(makeContext(['install', 'provider', 'acme-agent']), {
+      log,
+      error: vi.fn(),
+      exit: vi.fn() as never,
+      runDoctorCommand: vi.fn(),
+      invokeAgentCliInstall,
+    });
+
+    expect(invokeAgentCliInstall).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'acme-agent',
+      runtimeSpec: expect.objectContaining({
+        id: 'acme-agent',
+        title: 'Acme Agent CLI',
+        binaryName: 'acme-agent',
+      }),
+    }));
+    expect(log).toHaveBeenCalledWith('Installed Acme Agent CLI via managed package runtime.');
   });
 
   it('defaults vendor recipe execution for explicit provider installs', async () => {

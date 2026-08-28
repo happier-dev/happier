@@ -24,7 +24,6 @@ const request = {
   input: {
     automationId: 'automation-1',
     bindingId: 'binding-1',
-    templateVersion: 3,
     occurrenceId: 'telegram:update:1',
     occurredAt: 1_700_000_000_000,
   sender: { id: 'sender-1' },

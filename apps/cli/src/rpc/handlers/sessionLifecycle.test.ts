@@ -71,7 +71,7 @@ const SESSION_LIFECYCLE_RPC_CASES = [
     }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_START, 'session.handoff', { sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2', preferredTransportStrategies: ['server_routed_stream'] }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, 'session.handoff.prepare_target', { handoffId: 'handoff-1', sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2' }],
-    [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME, 'session.handoff.prepare_target.resume', { handoffId: 'handoff-1', jobId: 'prepare_handoff-1', expectedRevision: 2, attemptId: 'attempt-1' }],
+    [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3, 'session.handoff.prepare_target.resume', { handoffId: 'handoff-1', jobId: 'prepare_handoff-1', expectedRevision: 2, attemptId: 'attempt-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, 'session.handoff.prepare_target_result.get', { handoffId: 'handoff-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, 'session.handoff.commit', { handoffId: 'handoff-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, 'session.handoff.abort', { handoffId: 'handoff-1' }],

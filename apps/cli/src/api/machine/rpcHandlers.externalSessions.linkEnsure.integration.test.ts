@@ -415,7 +415,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     expect(parsedMeta.data.externalSessionV1.machineId).toBe('machine_1');
   });
 
-  it('persists codex backend affinity when linking a codex direct session', async () => {
+  it('normalizes released Codex backend affinity into plugin-owned link data and a generic descriptor', async () => {
     const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
@@ -450,18 +450,24 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
       rawSession: createdSession,
     });
     const parsedMeta = z.object({
-      codexBackendMode: z.enum(['mcp', 'acp', 'appServer']),
+      runtimeDescriptorV1: z.object({
+        v: z.literal(1),
+        agentId: z.literal('codex'),
+      }).passthrough(),
       externalSessionV1: z.object({
         agentId: z.literal('codex'),
-        codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+        linkData: z.object({
+          codexBackendMode: z.literal('appServer'),
+        }).passthrough(),
       }).passthrough(),
     }).passthrough().safeParse(meta);
     if (!parsedMeta.success) {
       throw new Error('Expected codex direct session metadata payload');
     }
 
-    expect(parsedMeta.data.codexBackendMode).toBe('appServer');
-    expect(parsedMeta.data.externalSessionV1.codexBackendMode).toBe('appServer');
+    expect(parsedMeta.data).not.toHaveProperty('codexBackendMode');
+    expect(parsedMeta.data.externalSessionV1).not.toHaveProperty('codexBackendMode');
+    expect(parsedMeta.data.externalSessionV1.linkData.codexBackendMode).toBe('appServer');
   });
 
   it('returns created=false and the same sessionId on repeat calls', async () => {

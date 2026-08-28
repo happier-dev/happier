@@ -677,7 +677,7 @@ describe('createCliActionDeps hook dispatch', () => {
     });
   });
 
-  it('settles canonical session.spawn_new with exact placement and nested initial input', async () => {
+  it('settles canonical session.spawn_new with exact placement and an atomic structured initial input handoff', async () => {
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'plugin:acme.plugin',
       creationKey: 'create-1',
@@ -694,18 +694,53 @@ describe('createCliActionDeps hook dispatch', () => {
       checkout: null,
     });
     createSpawnedSession.mockImplementation(async (input) => {
-      const initialInputAdmission = input.buildInitialInputAdmission?.('sess-new');
-      expect(initialInputAdmission).toEqual(expect.objectContaining({
-        localId: expect.stringMatching(/^plugin-input-v1:/u),
-        inputAdmission: expect.any(Object),
-      }));
+      const initialInputHandoff = input.buildInitialInputHandoff?.('plugin-input-v1:spawn-transport');
+      expect(initialInputHandoff).toEqual({
+        localId: 'plugin-input-v1:spawn-transport',
+        inputAdmission: {
+          provenance: {
+            v: 1,
+            kind: 'pluginSession',
+            pluginId: 'acme.plugin',
+            contributionLocalId: 'spawn',
+            surface: 'unspecified',
+          },
+          request: {
+            v: 1,
+            producer: 'pluginSession',
+            caller: {
+              kind: 'plugin',
+              pluginId: 'acme.plugin',
+              contributionLocalId: 'spawn',
+            },
+            permission: {},
+          },
+        },
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [{
+              v: 1,
+              instanceId: 'plugin-input-v1:spawn-transport#0',
+              attachment: { pluginId: 'acme.plugin', localId: 'entry' },
+              key: 'forge/items:pull-request:origin:42',
+              value: { v: 1, entryId: '42' },
+              presentation: {
+                label: 'Replace the duplicated normalizer',
+                description: 'example/repository',
+                typeLabel: 'Replace the duplicated normalizer',
+              },
+            }],
+          },
+        },
+      });
       return {
         disposition: 'rejoined',
         sessionId: 'sess-new',
         organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-a', 'tag-b'] },
         initialInput: {
           status: 'alreadyAccepted',
-          localId: initialInputAdmission!.localId,
+          localId: initialInputHandoff!.localId,
         },
         session: { id: 'sess-new' },
       };
@@ -758,7 +793,20 @@ describe('createCliActionDeps hook dispatch', () => {
         TOKEN: 'first-admission-only',
       },
       title: 'Atomic title',
-      initialMessage: 'Inspect the repository',
+      initialInput: {
+        text: 'Inspect the repository',
+        attachments: [{
+          attachmentLocalId: 'entry',
+          value: {
+            key: 'forge/items:pull-request:origin:42',
+            value: { v: 1, entryId: '42' },
+            presentation: {
+              label: 'Replace the duplicated normalizer',
+              description: 'example/repository',
+            },
+          },
+        }],
+      },
       actionRequestId: 'spawn-attempt-1',
       actionCaller: {
         kind: 'plugin',
@@ -793,7 +841,21 @@ describe('createCliActionDeps hook dispatch', () => {
         tagIds: ['tag-a', 'tag-b'],
       },
       initialTitle: 'Atomic title',
-      initialMessage: 'Inspect the repository',
+      initialInput: {
+        text: 'Inspect the repository',
+        attachments: [{
+          attachmentLocalId: 'entry',
+          value: {
+            key: 'forge/items:pull-request:origin:42',
+            value: { v: 1, entryId: '42' },
+            presentation: {
+              label: 'Replace the duplicated normalizer',
+              description: 'example/repository',
+            },
+          },
+        }],
+      },
+      buildInitialInputHandoff: expect.any(Function),
       environmentVariables: {
         TOKEN: 'first-admission-only',
       },
@@ -894,7 +956,7 @@ describe('createCliActionDeps hook dispatch', () => {
         kind: 'automationRun',
         automationId: 'automation-1',
         runId: 'run-1',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
       },
       callerSurface: 'cli',
       signal: controller.signal,
@@ -1564,7 +1626,8 @@ describe('createCliActionDeps hook dispatch', () => {
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       legacyMetadataLabel: 'predecessor metadata label',
       sessionCreationTag: expectedSessionCreationTag,
-      initialMessage: 'Inspect this repository.',
+      initialInput: { text: 'Inspect this repository.' },
+      buildInitialInputHandoff: expect.any(Function),
       sessionCreationCorrespondence: expect.objectContaining({
         sessionCreationTag: expectedSessionCreationTag,
       }),
@@ -1572,6 +1635,7 @@ describe('createCliActionDeps hook dispatch', () => {
     const canonicalCreateRequest = createSpawnedSession.mock.calls[0]?.[0];
     expect(canonicalCreateRequest).not.toHaveProperty('tag');
     expect(canonicalCreateRequest).not.toHaveProperty('creationKey');
+    expect(canonicalCreateRequest).not.toHaveProperty('initialMessage');
     expect(persistedApproval).toMatchObject({
       status: 'executed',
       execution: { ok: true },
@@ -4436,7 +4500,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     expect(callMachineRpc).toHaveBeenCalledWith({
       credentials,
       machineId: 'machine-source',
-      method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+      method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
       signal,
       request: {
         sessionId: 'session-1',

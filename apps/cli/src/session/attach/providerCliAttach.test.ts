@@ -15,6 +15,11 @@ describe('createProviderCliAttachSurface', () => {
                 if (event === 'error') errorHandlers.push(handler as SpawnErrorHandler);
             },
         }));
+        const readFallbackServerBaseUrl = vi.fn(async (
+            input: Readonly<{ sessionId: string }>,
+        ) => input.sessionId === 'happier-session-1'
+            ? 'https://fallback-opencode.example.test'
+            : null);
 
         const surface = createProviderCliAttachSurface<{
             providerSessionId: string;
@@ -22,14 +27,17 @@ describe('createProviderCliAttachSurface', () => {
             baseUrl: string;
         }>({
             agentId: 'opencode',
-            resolveTarget: ({ metadata, fallbackServerBaseUrl }) => ({
-                ok: true,
-                value: {
-                    providerSessionId: String(metadata.providerSessionId),
-                    directory: String(metadata.path),
-                    baseUrl: fallbackServerBaseUrl ?? String(metadata.opencodeServerBaseUrl),
-                },
-            }),
+            resolveTarget: ({ metadata, fallbackServerBaseUrl }) => {
+                const runtimeHandle = metadata.runtimeDescriptorV1?.agent;
+                return {
+                    ok: true,
+                    value: {
+                        providerSessionId: String(runtimeHandle?.providerSessionId),
+                        directory: String(metadata.path),
+                        baseUrl: fallbackServerBaseUrl ?? String(runtimeHandle?.serverBaseUrl),
+                    },
+                };
+            },
             createArgs: (target) => [
                 'attach',
                 target.baseUrl,
@@ -38,7 +46,7 @@ describe('createProviderCliAttachSurface', () => {
                 '--session',
                 target.providerSessionId,
             ],
-            readFallbackServerBaseUrl: async () => 'https://fallback-opencode.example.test',
+            readFallbackServerBaseUrl,
             resolveLaunchSpec: () => ({
                 source: 'managed',
                 resolvedPath: '/managed/opencode',
@@ -51,8 +59,15 @@ describe('createProviderCliAttachSurface', () => {
         const attachPromise = surface.attach({
             sessionId: 'happier-session-1',
             metadata: {
-                providerSessionId: 'oc-session-1',
                 path: '/repo',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'opencode',
+                    agent: {
+                        providerSessionId: 'oc-session-1',
+                        serverBaseUrl: 'https://metadata-opencode.example.test',
+                    },
+                },
             },
         });
 
@@ -75,6 +90,9 @@ describe('createProviderCliAttachSurface', () => {
         );
         expect(errorHandlers).toHaveLength(1);
         expect(exitHandlers).toHaveLength(1);
+        expect(readFallbackServerBaseUrl).toHaveBeenCalledWith({
+            sessionId: 'happier-session-1',
+        });
 
         exitHandlers[0]?.(0, null);
         await expect(attachPromise).resolves.toEqual({

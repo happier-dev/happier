@@ -61,6 +61,7 @@ import {
     type MessageActionReferenceV1,
     type MessageActionResolutionV1,
     PluginMachineExecutionOriginV1Schema,
+    arePluginMachineMaterializationRefsEqual,
     PluginUiResourceBindingCapabilityV1Schema,
     type PluginMachineExecutionOriginV1,
     type PluginProjectionBrandAssetV2,
@@ -68,6 +69,7 @@ import {
     type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
     buildQualifiedPluginContributionKey,
     readPluginSettingSecretCustody,
+    readPluginActionFailureAuthorPayload,
 } from '@happier-dev/protocol';
 import {
     isPluginError,
@@ -110,6 +112,8 @@ import type {
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import {
     listComposerSurfaceDeclarations,
+    projectDaemonEmbeddedPluginUiRenderer,
+    readCurrentAutomationEventSetupReactNativeCrashStateBindings,
     projectDaemonComposerSurfaceCatalog,
     readCurrentComposerReactNativeCrashStateBindings,
 } from '@/plugins/projection/registry/composer';
@@ -852,9 +856,7 @@ async function deriveMountedPluginInvocationCaller(input: Readonly<{
                 && current.machineId === initialMachineContext.machineId
                 && current.machineId === input.request.machineId
                 && current.machineId === materialization.machineId
-                && liveMaterialization.pluginId === materialization.pluginId
-                && liveMaterialization.machineId === materialization.machineId
-                && liveMaterialization.materializationId === materialization.materializationId;
+                && arePluginMachineMaterializationRefsEqual(liveMaterialization, materialization);
         },
     });
 }
@@ -1183,6 +1185,10 @@ async function resolveProjectionHostRuntimeWithCrashState(
                 projection,
             }),
             ...readCurrentComposerReactNativeCrashStateBindings({
+                registry: input.registry,
+                projection,
+            }),
+            ...readCurrentAutomationEventSetupReactNativeCrashStateBindings({
                 registry: input.registry,
                 projection,
             }),
@@ -1865,10 +1871,61 @@ async function resolveProjection(
                 }),
             })
             : undefined;
+        const automationEligibleEvents = (lease.registry.automationEligibleEvents ?? []).map((entry) => {
+            const renderer = entry.event.automation.source.setupSurface;
+            if (!renderer) return entry;
+            const pluginId = entry.event.identity.pluginId;
+            const executionOrigin = pluginExecutionOriginsByPluginId[pluginId];
+            if (!executionOrigin) return Object.freeze({ ...entry, setupSurface: undefined });
+            const rendered = projectDaemonEmbeddedPluginUiRenderer({
+                registry: lease.registry,
+                projection,
+                pluginUiHostRuntime,
+                modelsByRendererKey,
+                contributor: entry.event.identity,
+                immutableGenerationId: entry.event.immutableGenerationId,
+                renderer,
+                crashMount: Object.freeze({
+                    kind: 'automationEventSetupSurface' as const,
+                    contribution: Object.freeze({ ...entry.event.identity }),
+                    immutableGenerationId: entry.event.immutableGenerationId,
+                }),
+            });
+            if (!rendered) return Object.freeze({ ...entry, setupSurface: undefined });
+            try {
+                return Object.freeze({
+                    ...entry,
+                    setupSurface: Object.freeze({
+                        contribution: Object.freeze({ ...entry.event.identity }),
+                        immutableGenerationId: entry.event.immutableGenerationId,
+                        projectionGeneration: projection.generation,
+                        rendererChain: rendered.rendererChain.map((identity) => ({ ...identity })),
+                        selectedRenderer: rendered.selectedRenderer,
+                        executionOrigin: Object.freeze({
+                            serverIdentityId: executionOrigin.serverIdentityId,
+                            materializationRef: Object.freeze({ ...executionOrigin.materializationRef }),
+                        }),
+                        resourceCapability: readTargetedSurfaceResourceCapability(
+                            lease.runtimeRegistry!,
+                            pluginId,
+                        ),
+                        contributorTargetedContributions: readMountedTargetedContributionsProjection({
+                            runtimeRegistry: lease.runtimeRegistry!,
+                            mountedTarget: {
+                                pluginId,
+                                immutableGenerationId: entry.event.immutableGenerationId,
+                            },
+                        }),
+                    }),
+                });
+            } catch {
+                return Object.freeze({ ...entry, setupSurface: undefined });
+            }
+        });
         const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1,
             projection,
-            automationEligibleEvents: lease.registry.automationEligibleEvents ?? [],
+            automationEligibleEvents,
             ...(composerSurfaceCatalog ? { composerSurfaceCatalog } : {}),
             ...(request?.mountedTarget
                 ? {
@@ -3412,15 +3469,23 @@ export function registerDaemonContributionRegistryProjectionHandler(
                         : { ok: false, code: observed.errorCode },
                 );
             }
-            return attempt.result.ok
-                ? DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+            if (attempt.result.ok) {
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
                     ok: true,
                     result: attempt.result.result,
-                })
-                : DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-                    ok: false,
-                    code: attempt.result.errorCode,
                 });
+            }
+            const authorPayload = readPluginActionFailureAuthorPayload(attempt.result.data);
+            return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                ok: false,
+                code: attempt.result.errorCode,
+                ...(attempt.result.retryable === undefined
+                    ? {}
+                    : { retryable: attempt.result.retryable }),
+                ...(authorPayload.remediation === undefined
+                    ? {}
+                    : { remediation: authorPayload.remediation }),
+            });
         } finally {
             if (releaseLease) await lease.release();
         }

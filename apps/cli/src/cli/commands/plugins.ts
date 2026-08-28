@@ -21,9 +21,6 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import { configuration } from '@/configuration';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
-import { preparePluginSecretsDataRemoval } from '@/plugins/runtime/context/secrets';
-import { preparePluginStorageDataRemoval } from '@/plugins/runtime/context/storage';
-import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
   projectPluginCatalogEntrySnapshot,
   type PluginCatalogEntryIntrospectionSnapshot,
@@ -106,7 +103,6 @@ import type {
   PluginChangeRequest,
 } from '@/plugins/daemon/changeContract';
 import {
-  isReservedHappierPluginId,
   PluginIdSchema,
   PluginScaffoldUiModeSchema,
   type MarketplaceIndexItemV1,
@@ -158,9 +154,6 @@ type PluginsCommandDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<MachinePluginInvocationLogReadResult>;
   executeSettingsAdministrationAction?: PluginsSettingsCommandDeps['executeSettingsAdministrationAction'];
-  pluginDataRemoval?: Readonly<{
-    removeDirectory?: (directoryPath: string) => Promise<void>;
-  }>;
   marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>;
 }>;
 
@@ -172,7 +165,6 @@ const defaultPluginsCommandDeps: PluginsCommandDeps = {
   isInteractiveTerminal,
   requestDevelopmentChange: async (request, options) => await requestPluginDevelopmentChange(request, {}, options),
   runPackedPluginTest: runPackedPluginTestOwner,
-  pluginDataRemoval: {},
 };
 
 function usage(): string {
@@ -734,6 +726,17 @@ function describePluginChangeFailure(result: Exclude<UserPluginChangeResult, { k
         message: `The daemon may have applied the change for ${result.pluginId}; inspect installed state before retrying.`,
         details: { pluginId: result.pluginId, ...(result.expectedCandidate ? { expectedCandidate: result.expectedCandidate } : {}) },
       };
+    case 'dataRemovalPartial':
+      return {
+        code: 'plugin_data_removal_partial',
+        message: 'Plugin data removal stopped after a partial daemon-owned change. Retrying the same confirmed command is safe.',
+        details: {
+          pluginId: result.pluginId,
+          causeCode: result.causeCode,
+          completed: result.completed,
+          pending: result.pending,
+        },
+      };
   }
 }
 
@@ -1265,21 +1268,8 @@ function summarizePluginForCommand(entry: PluginCatalogEntry) {
   return projectPluginCatalogEntrySnapshot(entry);
 }
 
-type PluginDataRemovalStep = 'uninstall' | 'daemonStorage' | 'secrets';
-
-function pluginDataRemovalCauseCode(error: unknown): string {
-  if (error && typeof error === 'object') {
-    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
-    if (descriptor && 'value' in descriptor && typeof descriptor.value === 'string') {
-      return descriptor.value;
-    }
-  }
-  return 'plugin_data_removal_step_failed';
-}
-
 async function runPluginsDestructiveUninstallCommand(
   args: readonly string[],
-  deps: PluginsCommandDeps,
   rawPluginId: string,
 ): Promise<void> {
   if (!args.includes('--yes') && !args.includes('-y')) {
@@ -1312,124 +1302,43 @@ async function runPluginsDestructiveUninstallCommand(
   }
   const pluginId = parsedPluginId.data;
   const entry = await readInstalledPluginCatalogEntry({ pluginId });
-  if (entry?.source.kind === 'bundled' || (!entry && isReservedHappierPluginId(pluginId))) {
-    const error = {
-      code: 'plugin_data_removal_ownership_unsupported',
-      message: 'Destructive data removal is unavailable for a bundled or unowned Happier plugin namespace. No data was changed.',
-    };
-    if (wantsJson(args)) {
-      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
-      return;
-    }
-    console.error(errorFrame('Error:', [error.message]));
-    process.exitCode = 1;
-    return;
-  }
-
-  const removalDeps = deps.pluginDataRemoval ?? defaultPluginsCommandDeps.pluginDataRemoval;
-  if (!removalDeps) throw new Error('Plugin data removal dependencies are unavailable');
-  const paths = resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir });
-  let storageRemoval: Awaited<ReturnType<typeof preparePluginStorageDataRemoval>>;
-  let secretsRemoval: Awaited<ReturnType<typeof preparePluginSecretsDataRemoval>>;
-  try {
-    storageRemoval = await preparePluginStorageDataRemoval({
+  const result = await requestUserPluginChange({
+    request: {
+      kind: 'uninstallAndDeleteData',
       pluginId,
-      paths,
-      ...(removalDeps.removeDirectory ? { removeDirectory: removalDeps.removeDirectory } : {}),
-    });
-    secretsRemoval = await preparePluginSecretsDataRemoval({
-      pluginId,
-      paths,
-      ...(removalDeps.removeDirectory ? { removeDirectory: removalDeps.removeDirectory } : {}),
-    });
-  } catch (cause) {
-    const error = {
-      code: 'plugin_data_removal_preflight_failed',
-      causeCode: pluginDataRemovalCauseCode(cause),
-      message: 'Plugin data removal could not validate every owned namespace before mutation. No data was changed.',
-    };
-    if (wantsJson(args)) {
-      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
-      return;
-    }
-    console.error(errorFrame('Error:', [error.message]));
-    process.exitCode = 1;
-    return;
-  }
-
-  const completed: PluginDataRemovalStep[] = [];
-  const remainingSteps = (): readonly PluginDataRemovalStep[] => {
-    const required: PluginDataRemovalStep[] = [
-      'uninstall',
-      'daemonStorage',
-      'secrets',
-    ];
-    return required.filter((step) => !completed.includes(step));
-  };
-  const reportPartial = async (failedStep: PluginDataRemovalStep, cause: unknown): Promise<void> => {
-    const error = {
-      code: 'plugin_data_removal_partial',
-      causeCode: pluginDataRemovalCauseCode(cause),
-      message: `Plugin data removal stopped during ${failedStep}. Completed steps are not rolled back; retrying the same confirmed command is safe.`,
-      completed: Object.freeze([...completed]),
-      pending: Object.freeze([...remainingSteps()]),
-    };
-    if (wantsJson(args)) {
-      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
-      return;
-    }
-    console.error(errorFrame('Error:', [error.message]));
-    process.exitCode = 1;
-  };
-
-  try {
-    const uninstall = await requestUserPluginChange({
-      request: {
-        kind: 'uninstall',
-        pluginId,
-        allowAlreadyAbsent: true,
-        actorEvidence: {
-          kind: 'authenticatedLocalUser',
-          interactionId: randomUUID(),
-          occurredAtMs: Date.now(),
-        },
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: randomUUID(),
+        occurredAtMs: Date.now(),
       },
-      approval: 'none',
-    });
-    if (uninstall.kind !== 'committed') {
-      await reportPartial('uninstall', { code: describePluginChangeFailure(uninstall).code });
-      return;
-    }
-    completed.push('uninstall');
-  } catch (cause) {
-    await reportPartial('uninstall', cause);
+    },
+    approval: 'none',
+  });
+  if (result.kind !== 'committed') {
+    await reportPluginChangeFailure(args, 'plugins_uninstall', result);
     return;
   }
-
-  const destructiveSteps: ReadonlyArray<Readonly<{
-    id: Extract<PluginDataRemovalStep, 'daemonStorage' | 'secrets'>;
-    run: () => Promise<void>;
-  }>> = [
-    { id: 'daemonStorage', run: storageRemoval.removeDaemon },
-    { id: 'secrets', run: secretsRemoval.remove },
-  ];
-  for (const step of destructiveSteps) {
-    try {
-      await step.run();
-      completed.push(step.id);
-    } catch (cause) {
-      await reportPartial(step.id, cause);
+  if (!result.dataRemoval) {
+    const error = {
+      code: 'plugin_data_removal_result_invalid',
+      message: 'The daemon did not return a destructive data-removal result. Inspect installed state before retrying.',
+    };
+    if (wantsJson(args)) {
+      await printJsonEnvelope({ ok: false, kind: 'plugins_uninstall', error }, { exitCode: 1 });
       return;
     }
+    console.error(errorFrame('Error:', [error.message]));
+    process.exitCode = 1;
+    return;
   }
 
   const data = {
     pluginId,
-    alreadyUninstalled: entry === null,
+    alreadyUninstalled: result.dataRemoval.alreadyUninstalled,
     ...(entry ? { plugin: summarizePluginForCommand(entry) } : {}),
     removedData: {
-      daemonStorage: storageRemoval.hadDaemonData,
-      secrets: secretsRemoval.hadSecrets,
+      daemonStorage: result.dataRemoval.removedData.daemonStorage,
+      secrets: result.dataRemoval.removedData.secrets,
     },
   };
   if (wantsJson(args)) {
@@ -1438,12 +1347,12 @@ async function runPluginsDestructiveUninstallCommand(
   }
   const out = createOutputBuilder();
   out.line(ok(`Removed plugin data for ${pluginId}.`));
-  out.line(`  ${dim('Uninstall:')} ${entry ? 'completed' : 'already absent'}`);
+  out.line(`  ${dim('Uninstall:')} ${result.dataRemoval.alreadyUninstalled ? 'already absent' : 'completed'}`);
   out.line(`  ${dim('Data:')} daemon-local and encrypted plugin-secret namespaces processed`);
   console.log(out.render());
 }
 
-async function runPluginsUninstallCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
+async function runPluginsUninstallCommand(args: readonly string[]): Promise<void> {
   const pluginId = String(args[1] ?? '').trim();
   if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') {
     console.log(usage());
@@ -1451,7 +1360,7 @@ async function runPluginsUninstallCommand(args: readonly string[], deps: Plugins
   }
 
   if (args.includes('--delete-data')) {
-    await runPluginsDestructiveUninstallCommand(args, deps, pluginId);
+    await runPluginsDestructiveUninstallCommand(args, pluginId);
     return;
   }
 
@@ -3099,7 +3008,7 @@ export async function handlePluginsCommand(
   }
 
   if (subcommand === 'uninstall') {
-    await runPluginsUninstallCommand(args, deps);
+    await runPluginsUninstallCommand(args);
     return;
   }
 

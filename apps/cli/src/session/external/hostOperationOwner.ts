@@ -10,6 +10,10 @@ import {
     createExternalSessionFollowCleanupCustody,
     isExternalSessionFollowCleanupDeadline,
 } from './followCleanupSettlement';
+import {
+    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+    settleFollowListenerBounded,
+} from './followListenerSettlement';
 import type {
     ExternalSessionFollowHostOperation,
     ExternalSessionFollowHostOperationRequest,
@@ -138,7 +142,6 @@ type OwnerGeneration = {
     retirementPromise: Promise<void> | null;
 };
 
-const MAX_ACTIVE_FOLLOWS_PER_BINDING = 64;
 const MAX_FOLLOW_EVENT_SERIALIZED_BYTES = 1024 * 1024;
 export const EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS = 5_000;
 /**
@@ -407,15 +410,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             'plugin_external_follow_unavailable',
                         );
                     }
-                    if (
-                        bindingFollows.size
-                        >= MAX_ACTIVE_FOLLOWS_PER_BINDING
-                    ) {
-                        return unavailableFollow(
-                            'plugin_external_follow_limit_exceeded',
-                        );
-                    }
-
                     let disposal: Promise<void> | null = null;
                     const cleanupCustody =
                         createExternalSessionFollowCleanupCustody(
@@ -585,7 +579,12 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             }
                             try {
                                 assertFollowEventBounded(event);
-                                await request.listener(event);
+                                await settleFollowListenerBounded(
+                                    Promise.resolve().then(async () =>
+                                        await request.listener(event)),
+                                    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                                    activeSignal,
+                                );
                             } catch (error) {
                                 listenerFailed = true;
                                 if (!explicitDisposePending) {
@@ -673,14 +672,6 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     }
                     if (!isBindingCurrent()) {
                         return unavailableFollow('plugin_generation_retired');
-                    }
-                    if (
-                        bindingFollows.size
-                        >= MAX_ACTIVE_FOLLOWS_PER_BINDING
-                    ) {
-                        return unavailableFollow(
-                            'plugin_external_follow_limit_exceeded',
-                        );
                     }
                     const generation = boundGeneration;
                     const operation =

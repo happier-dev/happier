@@ -84,7 +84,6 @@ type ListSourceSnapshot = {
   items: readonly ListCandidate[];
   offset: number;
   exhausted: boolean;
-  pagesRead: number;
   diagnosticCode?: string;
   seenCursors: Set<string>;
   /**
@@ -99,7 +98,6 @@ type ListSnapshot = { queryKey: string; sources: readonly ListSourceSnapshot[]; 
 type RetainedListSnapshot = Readonly<{ snapshot: ListSnapshot; retainedBytes: number }>;
 const CURSOR_PREFIX = 'plugin_external_sessions_v1_';
 const MAX_CURSOR_SNAPSHOTS = 128;
-const MAX_PROVIDER_PAGES_PER_SOURCE = 100;
 const MAX_CONCURRENT_LIST_HEAD_ACQUISITIONS = 8;
 const LIST_HEAD_ACQUISITION_TIMEOUT_MS = 3_000;
 const MAX_SNAPSHOT_ITEMS = 10_000;
@@ -203,6 +201,7 @@ function projectExternalSessionAttachResult(value: unknown): Readonly<{ sessionI
 
 function projectReadAfterDiagnostics(value: unknown): readonly Readonly<{
   code: string;
+  severity: 'benign' | 'required';
   count: number;
   positions: readonly number[];
 }>[] {
@@ -214,6 +213,7 @@ function projectReadAfterDiagnostics(value: unknown): readonly Readonly<{
       fail('plugin_external_transcript_invalid');
     }
     const code = Reflect.get(candidate, 'code');
+    const severity = Reflect.get(candidate, 'severity');
     const count = Reflect.get(candidate, 'count');
     const positions = Reflect.get(candidate, 'positions');
     if (
@@ -221,6 +221,7 @@ function projectReadAfterDiagnostics(value: unknown): readonly Readonly<{
       || code.length === 0
       || code.length > MAX_READ_AFTER_DIAGNOSTIC_CODE_UNITS
       || code !== code.trim()
+      || (severity !== 'benign' && severity !== 'required')
       || !Number.isSafeInteger(count)
       || (count as number) <= 0
       || !Array.isArray(positions)
@@ -232,6 +233,7 @@ function projectReadAfterDiagnostics(value: unknown): readonly Readonly<{
     }
     return Object.freeze({
       code,
+      severity,
       count: count as number,
       positions: Object.freeze([...(positions as number[])]),
     });
@@ -883,7 +885,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
               items: Object.freeze([]),
               offset: 0,
               exhausted: false,
-              pagesRead: 0,
               seenCursors: new Set<string>(),
               emittedPublicRefKeys: new Set<string>(),
             }))),
@@ -950,9 +951,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         sourceSignal: AbortSignal,
       ): Promise<void> => {
         if (sourceState.exhausted) return;
-        if (sourceState.pagesRead >= MAX_PROVIDER_PAGES_PER_SOURCE) {
-          fail('plugin_external_inventory_capacity_exceeded');
-        }
         const { ops, source } = await providerFor(sourceState.entry, sourceSignal, true);
         const requestedCursor = sourceState.providerCursor;
         const page = params.queryCandidates
@@ -1004,7 +1002,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           throw new MalformedExternalSessionCandidatePageError();
         }
         const nextCursor = page.nextCursor ?? undefined;
-        sourceState.pagesRead += 1;
         const emptyContinuation = page.candidates.length === 0 && nextCursor !== undefined;
         if (nextCursor) {
           retainProviderContinuation(sourceState, requestedCursor, nextCursor);
@@ -1344,6 +1341,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
               projectAuthorExternalTranscriptItem(mapPluginExternalTranscriptItem(item)))),
             nextCursor: readAfter.nextCursor,
             boundary: readAfter.boundary,
+            hasMore: readAfter.hasMore,
             ...(readAfter.diagnostics
               ? { diagnostics: projectReadAfterDiagnostics(readAfter.diagnostics) }
               : {}),

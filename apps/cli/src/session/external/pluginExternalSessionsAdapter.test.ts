@@ -1279,7 +1279,7 @@ describe('createPluginExternalSessionsAdapter', () => {
     });
   });
 
-  it('admits 100 provider pages and rejects acquisition of page 101', async () => {
+  it('preserves a valid provider continuation beyond 100 empty public attempts', async () => {
     let calls = 0;
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
@@ -1288,10 +1288,12 @@ describe('createPluginExternalSessionsAdapter', () => {
         validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
         listCandidates: async () => {
           calls += 1;
-          return {
-            candidates: [{ remoteSessionId: `remote-${calls}`, updatedAtMs: calls }],
-            nextCursor: `provider-${calls}`,
-          };
+          return calls <= 100
+            ? { candidates: [], nextCursor: `provider-${calls}` }
+            : {
+                candidates: [{ remoteSessionId: 'remote-after-empty-pages', updatedAtMs: calls }],
+                nextCursor: null,
+              };
         },
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
@@ -1300,13 +1302,16 @@ describe('createPluginExternalSessionsAdapter', () => {
     let cursor: string | undefined;
     for (let page = 0; page < 100; page += 1) {
       const result = await adapter.authorService.list({ ...(cursor ? { cursor } : {}), limit: 1 });
+      expect(result.items).toEqual([]);
       cursor = requireListCursor(result);
     }
     expect(calls).toBe(100);
-    await expect(adapter.authorService.list({ cursor, limit: 1 })).rejects.toMatchObject({
-      code: 'plugin_external_inventory_capacity_exceeded',
+    await expect(adapter.authorService.list({ cursor, limit: 1 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        ref: expect.objectContaining({ remoteSessionId: 'remote-after-empty-pages' }),
+      })],
     });
-    expect(calls).toBe(100);
+    expect(calls).toBe(101);
   });
 
   it('admits caller limits 50 and 51 while clamping both to one 50-item provider page', async () => {
@@ -2194,6 +2199,7 @@ describe('createPluginExternalSessionsAdapter', () => {
       }],
       nextCursor: 'cursor-2',
       boundary: 'm2',
+      hasMore: false,
     }));
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
@@ -3086,8 +3092,10 @@ describe('createPluginExternalSessionsAdapter', () => {
           }],
           nextCursor: 'cursor-2',
           boundary: 'message-1',
+          hasMore: false,
           diagnostics: [{
             code: 'skipped_record',
+            severity: 'benign',
             count: 1,
             positions: [7],
             path: '/private/transcript.jsonl',
@@ -3135,8 +3143,10 @@ describe('createPluginExternalSessionsAdapter', () => {
       }],
       nextCursor: 'cursor-2',
       boundary: 'message-1',
+      hasMore: false,
       diagnostics: [{
         code: 'skipped_record',
+        severity: 'benign',
         count: 1,
         positions: [7],
       }],

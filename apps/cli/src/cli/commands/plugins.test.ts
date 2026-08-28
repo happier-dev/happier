@@ -3670,113 +3670,84 @@ describe('handlePluginsCommand', () => {
   });
 
   it('requires confirmation, reports partial daemon-storage cleanup precisely, and completes on idempotent retry', async () => {
-    const home = await createTempDir('happier-plugin-delete-data-');
-    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
-    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
-    reloadConfiguration();
-    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-delete-data-source-'));
-    await materializeSamplePluginFixture(sourceRoot);
-
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
     try {
-      await installPluginThroughPresentUserTerminal(sourceRoot);
-
-      const paths = resolvePluginStorePaths({ happyHomeDir: home });
-      const storage = createPluginStorageOwner({ pluginId: SAMPLE_PLUGIN_ID, paths, sessionId: 'session-1' });
-      await storage.daemon.set('settings', { enabled: true });
-      await storage.daemonSession.set('draft', { text: 'remove me' });
-      await mkdir(join(paths.storageDir, SAMPLE_PLUGIN_ID, 'fs'), { recursive: true });
-      await writeFile(join(paths.storageDir, SAMPLE_PLUGIN_ID, 'fs', 'owned.txt'), 'remove me', 'utf8');
-      await createPluginSecretStore({ pluginId: SAMPLE_PLUGIN_ID, paths, secretKey: TEST_PLUGIN_SECRET_KEY }).set('token', 'remove-me');
-      let failSecretsRemoval = true;
-      const deps = {
-        pluginDataRemoval: {
-          removeDirectory: async (directoryPath: string) => {
-            if (failSecretsRemoval && directoryPath.startsWith(paths.secretsDir)) {
-              throw new Error('injected secrets filesystem failure');
-            }
-            await rm(directoryPath, { recursive: true, force: true });
-          },
-        },
-      };
-      const previousExitCode = process.exitCode;
-      process.exitCode = undefined;
+      const unconfirmed = captureConsoleJsonOutput();
       try {
-        const unconfirmed = captureConsoleJsonOutput();
-        try {
-          await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--json'], deps);
-          expect(unconfirmed.json<{ ok: boolean; error?: { code?: string } }>()).toMatchObject({
-            ok: false,
-            error: { code: 'confirmation_required' },
-          });
-        } finally {
-          unconfirmed.restore();
-        }
+        await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--json']);
+        expect(unconfirmed.json<{ ok: boolean; error?: { code?: string } }>()).toMatchObject({
+          ok: false,
+          error: { code: 'confirmation_required' },
+        });
+      } finally {
+        unconfirmed.restore();
+      }
+      expect(daemonBoundary.requestChange).not.toHaveBeenCalled();
 
-        process.exitCode = undefined;
-        const partial = captureConsoleJsonOutput();
-        try {
-          await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--yes', '--json'], deps);
-          expect(partial.json<{ ok: boolean; error?: { code?: string; completed?: readonly string[]; pending?: readonly string[] } }>()).toMatchObject({
-            ok: false,
-            error: {
-              code: 'plugin_data_removal_partial',
-              completed: ['uninstall', 'daemonStorage'],
-              pending: ['secrets'],
-            },
-          });
-        } finally {
-          partial.restore();
-        }
-
-        expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins[SAMPLE_PLUGIN_ID]).toBeUndefined();
-        await expect(access(join(paths.storageDir, SAMPLE_PLUGIN_ID))).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(await createPluginSecretStore({ pluginId: SAMPLE_PLUGIN_ID, paths, secretKey: TEST_PLUGIN_SECRET_KEY }).list()).toEqual([{ name: 'token' }]);
-
-        process.exitCode = undefined;
-        failSecretsRemoval = false;
-        const daemonRequestsBeforeRetry = daemonBoundary.requestChange.mock.calls.length;
-        const retry = captureConsoleJsonOutput();
-        try {
-          await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--yes', '--json'], deps);
-          expect(retry.json<{ ok: boolean; data?: { pluginId?: string; alreadyUninstalled?: boolean } }>()).toMatchObject({
-            ok: true,
-            data: { pluginId: SAMPLE_PLUGIN_ID, alreadyUninstalled: true },
-          });
-        } finally {
-          retry.restore();
-        }
-        expect(daemonBoundary.requestChange).toHaveBeenCalledTimes(daemonRequestsBeforeRetry + 1);
-        expect(await createPluginSecretStore({ pluginId: SAMPLE_PLUGIN_ID, paths, secretKey: TEST_PLUGIN_SECRET_KEY }).list()).toEqual([]);
-        expect(daemonBoundary.requestChange).toHaveBeenCalledWith({
-          kind: 'uninstall',
-          pluginId: SAMPLE_PLUGIN_ID,
-          allowAlreadyAbsent: true,
-          actorEvidence: {
-            kind: 'authenticatedLocalUser',
-            interactionId: expect.any(String),
-            occurredAtMs: expect.any(Number),
+      daemonBoundary.requestChange.mockResolvedValueOnce({
+        kind: 'dataRemovalPartial',
+        pluginId: SAMPLE_PLUGIN_ID,
+        completed: ['uninstall', 'daemonStorage'],
+        pending: ['secrets'],
+        causeCode: 'EIO',
+      });
+      process.exitCode = undefined;
+      const partial = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--yes', '--json']);
+        expect(partial.json<{ ok: boolean; error?: { code?: string; completed?: readonly string[]; pending?: readonly string[] } }>()).toMatchObject({
+          ok: false,
+          error: {
+            code: 'plugin_data_removal_partial',
+            completed: ['uninstall', 'daemonStorage'],
+            pending: ['secrets'],
           },
         });
       } finally {
-        process.exitCode = previousExitCode;
+        partial.restore();
       }
+
+      daemonBoundary.requestChange.mockResolvedValueOnce({
+        kind: 'committed',
+        pluginId: SAMPLE_PLUGIN_ID,
+        desiredGeneration: null,
+        appliedGeneration: null,
+        pendingSurfaces: [],
+        dataRemoval: {
+          alreadyUninstalled: true,
+          removedData: { daemonStorage: false, secrets: true },
+        },
+      });
+      process.exitCode = undefined;
+      const retry = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['uninstall', SAMPLE_PLUGIN_ID, '--delete-data', '--yes', '--json']);
+        expect(retry.json<{ ok: boolean; data?: { pluginId?: string; alreadyUninstalled?: boolean } }>()).toMatchObject({
+          ok: true,
+          data: { pluginId: SAMPLE_PLUGIN_ID, alreadyUninstalled: true },
+        });
+      } finally {
+        retry.restore();
+      }
+      expect(daemonBoundary.requestChange).toHaveBeenLastCalledWith({
+        kind: 'uninstallAndDeleteData',
+        pluginId: SAMPLE_PLUGIN_ID,
+        actorEvidence: {
+          kind: 'authenticatedLocalUser',
+          interactionId: expect.any(String),
+          occurredAtMs: expect.any(Number),
+        },
+      });
     } finally {
-      envScope.restore();
-      reloadConfiguration();
-      await removeTempDir(home);
-      await rm(sourceRoot, { recursive: true, force: true });
+      process.exitCode = previousExitCode;
     }
   });
 
   it('rejects an invalid destructive plugin identity before reading or mutating owned data', async () => {
-    const removeDirectory = vi.fn(async () => undefined);
     const output = captureConsoleJsonOutput();
     try {
-      await handlePluginsCommand(['uninstall', '../sibling.plugin', '--delete-data', '--yes', '--json'], {
-        pluginDataRemoval: {
-          removeDirectory,
-        },
-      });
+      await handlePluginsCommand(['uninstall', '../sibling.plugin', '--delete-data', '--yes', '--json']);
       expect(output.json<{ ok: boolean; error?: { code?: string } }>()).toMatchObject({
         ok: false,
         error: { code: 'plugin_data_removal_identity_invalid' },
@@ -3784,7 +3755,7 @@ describe('handlePluginsCommand', () => {
     } finally {
       output.restore();
     }
-    expect(removeDirectory).not.toHaveBeenCalled();
+    expect(daemonBoundary.requestChange).not.toHaveBeenCalled();
   });
 
   it('reports an unknown daemon uninstall outcome inside the JSON error envelope', async () => {

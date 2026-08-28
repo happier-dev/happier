@@ -39,11 +39,14 @@ function isLocalAttachRequest(request: AttachAvailabilityRequestV1): boolean {
 }
 
 async function readFallbackServerBaseUrl(params: Readonly<{
-    readFallbackServerBaseUrl?: () => Promise<string | null>;
+    sessionId: string;
+    readFallbackServerBaseUrl?: (
+        input: Readonly<{ sessionId: string }>,
+    ) => Promise<string | null>;
 }>): Promise<string | null> {
     if (!params.readFallbackServerBaseUrl) return null;
     try {
-        const value = await params.readFallbackServerBaseUrl();
+        const value = await params.readFallbackServerBaseUrl({ sessionId: params.sessionId });
         return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
     } catch {
         return null;
@@ -52,10 +55,14 @@ async function readFallbackServerBaseUrl(params: Readonly<{
 
 async function resolveTargetWithFallback<TTarget extends object>(params: Readonly<{
     metadata: AttachSessionMetadataV1;
+    sessionId: string;
     resolver: ProviderCliAttachTargetResolver<TTarget>;
-    readFallbackServerBaseUrl?: () => Promise<string | null>;
+    readFallbackServerBaseUrl?: (
+        input: Readonly<{ sessionId: string }>,
+    ) => Promise<string | null>;
 }>): Promise<ProviderCliAttachTargetResult<TTarget>> {
     const fallbackServerBaseUrl = await readFallbackServerBaseUrl({
+        sessionId: params.sessionId,
         readFallbackServerBaseUrl: params.readFallbackServerBaseUrl,
     });
     return params.resolver({
@@ -69,7 +76,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
     resolveTarget: ProviderCliAttachTargetResolver<TTarget>;
     createArgs: (target: TTarget) => readonly string[];
     buildHealthUrl?: (target: TTarget) => string | null;
-    readFallbackServerBaseUrl?: () => Promise<string | null>;
+    readFallbackServerBaseUrl?: (
+        input: Readonly<{ sessionId: string }>,
+    ) => Promise<string | null>;
     resolveLaunchSpec?: (env?: NodeJS.ProcessEnv) => AgentCliLaunchSpec;
     resolveCommandInvocation?: (params: Readonly<{
         command: string;
@@ -87,6 +96,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
         evaluateAvailability: async (request) => {
             const target = await resolveTargetWithFallback({
                 metadata: request.metadata,
+                sessionId: request.sessionId,
                 resolver: params.resolveTarget,
                 readFallbackServerBaseUrl: isLocalAttachRequest(request)
                     ? params.readFallbackServerBaseUrl
@@ -138,9 +148,10 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             }
             return { available: true };
         },
-        attach: async ({ metadata }) => {
+        attach: async ({ metadata, sessionId }) => {
             const target = await resolveTargetWithFallback({
                 metadata,
+                sessionId,
                 resolver: params.resolveTarget,
                 readFallbackServerBaseUrl: params.readFallbackServerBaseUrl,
             });

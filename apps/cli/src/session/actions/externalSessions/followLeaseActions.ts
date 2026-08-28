@@ -27,10 +27,9 @@ import {
     loadPersistedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { readStoredCredentials } from '@/persistence';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 
 import {
-    resolveDefaultMaxBytes,
-    resolveDefaultMaxItems,
     resolveExternalSessionAttachLeaseTtlMs,
 } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
@@ -128,8 +127,8 @@ export async function executeExternalSessionAttachAction(
                     providerOps,
                     initialCursor:
                         reacquisitionCursor ?? parsed.data.acceptedTailCursor ?? null,
-                    maxBytes: resolveDefaultMaxBytes(),
-                    maxItems: Math.min(200, resolveDefaultMaxItems()),
+                    maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                    maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
                     observationProjection: context.observationProjection,
                     credentials,
                 })
@@ -365,8 +364,8 @@ export async function executeExternalSessionFollowPolicySetAction(
                     observation: observation!,
                     providerOps,
                     initialCursor: reacquisitionCursor,
-                    maxBytes: resolveDefaultMaxBytes(),
-                    maxItems: Math.min(200, resolveDefaultMaxItems()),
+                    maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                    maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
                     observationProjection: context.observationProjection,
                     credentials,
                 }),

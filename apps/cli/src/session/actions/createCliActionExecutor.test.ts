@@ -758,6 +758,43 @@ describe('createCliActionExecutor', () => {
     });
   });
 
+  it('forwards daemon-owned catalog meta Actions exactly once from a standalone executor', async () => {
+    requestDaemonPluginActionExecution.mockResolvedValueOnce({
+      matched: true,
+      result: { ok: true, result: { actionSpecs: [] } },
+    });
+    const executor = createPlainExecutor();
+
+    await expect(executor.execute(
+      'action.spec.search',
+      { limit: 10 },
+      { surface: 'cli' },
+    )).resolves.toEqual({ ok: true, result: { actionSpecs: [] } });
+
+    expect(requestDaemonPluginActionExecution).toHaveBeenCalledOnce();
+    expect(requestDaemonPluginActionExecution).toHaveBeenCalledWith({
+      actionId: 'action.spec.search',
+      input: { limit: 10 },
+      surface: 'cli',
+    });
+  });
+
+  it('keeps daemon-owned catalog meta Actions in-process for the daemon executor', async () => {
+    const executor = createPlainExecutor({
+      pluginActionExecutionOwner: 'current_process',
+      listContributedActionDefinitions: () => [],
+    });
+
+    const result = await executor.execute(
+      'action.spec.search',
+      { limit: 10 },
+      { surface: 'api', authority: 'present_user' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(requestDaemonPluginActionExecution).not.toHaveBeenCalled();
+  });
+
   it('includes plugin-contributed ACP backends in execution backend options', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-root-'));
@@ -1630,7 +1667,7 @@ describe('createCliActionExecutor', () => {
           updatedAt: 1710000000000,
           ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
         },
-        initialMessage: 'Hello from CLI action',
+        initialInput: { text: 'Hello from CLI action' },
       }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
@@ -1791,7 +1828,7 @@ describe('createCliActionExecutor', () => {
       'session.spawn_new',
       createSessionSpawnInput({
         agentTarget: SESSION_SPAWN_AGENT_TARGETS.opencode,
-        initialMessage: 'Hello from CLI action',
+        initialInput: { text: 'Hello from CLI action' },
       }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
@@ -1867,7 +1904,7 @@ describe('createCliActionExecutor', () => {
         transcriptStorage: 'persisted',
         terminal: { mode: 'tmux' },
         title: 'Happier Test',
-        initialMessage: 'Hello rich session',
+        initialInput: { text: 'Hello rich session' },
       }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
@@ -1960,7 +1997,7 @@ describe('createCliActionExecutor', () => {
       'session.spawn_new',
       createSessionSpawnInput({
         agentTarget: SESSION_SPAWN_AGENT_TARGETS.opencode,
-        initialMessage: 'Hello from CLI action',
+        initialInput: { text: 'Hello from CLI action' },
       }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
@@ -2011,7 +2048,7 @@ describe('createCliActionExecutor', () => {
           updatedAt: 1710000000000,
           ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
         },
-        initialMessage: 'Hello from CLI action',
+        initialInput: { text: 'Hello from CLI action' },
       }),
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
@@ -2274,7 +2311,7 @@ describe('createCliActionExecutor', () => {
     const result = await executor.execute(
       'session.spawn_new',
       {
-        ...createSessionSpawnInput({ initialMessage: 'Hello' }),
+        ...createSessionSpawnInput({ initialInput: { text: 'Hello' } }),
         host: 'other-host',
       },
       { surface: 'cli', defaultSessionId: 'sess-1' },
@@ -2324,14 +2361,24 @@ describe('createCliActionExecutor', () => {
 
   it('carries an attachment-only plugin send through admission, retry, dispatch resolution, and transcript replay', async () => {
     const attachment = { pluginId: 'happier.triage', localId: 'entry' } as const;
-    const authored: readonly PluginSessionInputAttachmentV1[] = [{
-      attachmentLocalId: attachment.localId,
-      value: {
-        key: 'forge/items:pull-request:origin:42',
-        value: { v: 1, entryId: '42' },
-        presentation: { label: 'Replace the duplicated normalizer', description: 'example/repository' },
+    const authored: readonly PluginSessionInputAttachmentV1[] = [
+      {
+        attachmentLocalId: attachment.localId,
+        value: {
+          key: 'forge/items:pull-request:origin:42',
+          value: { v: 1, entryId: '42' },
+          presentation: { label: 'Replace the duplicated normalizer', description: 'example/repository' },
+        },
       },
-    }];
+      {
+        attachmentLocalId: attachment.localId,
+        value: {
+          key: 'forge/items:issue:origin:43',
+          value: { v: 1, entryId: '43' },
+          presentation: { label: 'Preserve the attachment order', description: 'example/repository' },
+        },
+      },
+    ];
     const prepareForSend = vi.fn<NonNullable<ComposerAttachmentRuntime['prepareForSend']>>(async (request) => ({
       attachments: request.attachments.map((item) => ({
         instanceId: item.instanceId,
@@ -2449,11 +2496,18 @@ describe('createCliActionExecutor', () => {
     expect(afterMessageAccepted).toHaveBeenNthCalledWith(1, {
       sessionId: 'sess-1',
       localId: 'local-1',
-      attachments: [{
-        instanceId: expect.any(String),
-        key: 'forge/items:pull-request:origin:42',
-        value: { v: 1, entryId: '42', qualified: true },
-      }],
+      attachments: [
+        {
+          instanceId: expect.any(String),
+          key: 'forge/items:pull-request:origin:42',
+          value: { v: 1, entryId: '42', qualified: true },
+        },
+        {
+          instanceId: expect.any(String),
+          key: 'forge/items:issue:origin:43',
+          value: { v: 1, entryId: '43', qualified: true },
+        },
+      ],
     }, expect.any(Object));
 
     const firstWrite = sendSessionMessage.mock.calls.at(-2)?.[0];
@@ -2461,7 +2515,7 @@ describe('createCliActionExecutor', () => {
     expect(retryWrite?.localId).toBe(firstWrite?.localId);
     expect(retryWrite?.messageMeta).toEqual(firstWrite?.messageMeta);
     const persisted = readHappierStructuredInputV1FromMeta(firstWrite?.messageMeta);
-    expect(persisted?.composerAttachments).toHaveLength(1);
+    expect(persisted?.composerAttachments).toHaveLength(2);
     await expect(registry.resolveForDispatch({
       attachment,
       request: {
@@ -2474,7 +2528,7 @@ describe('createCliActionExecutor', () => {
         })),
       },
       signal: new AbortController().signal,
-    })).resolves.toMatchObject({ attachments: [{ status: 'ready' }] });
+    })).resolves.toMatchObject({ attachments: [{ status: 'ready' }, { status: 'ready' }] });
     const transcriptModulePath = '../../../../ui/'
       + 'sources/components/sessions/transcript/composerAttachments/messageComposerAttachments';
     const transcriptProjection = await import(transcriptModulePath) as Readonly<{
@@ -2484,11 +2538,18 @@ describe('createCliActionExecutor', () => {
         description: string | null;
       }>[];
     }>;
-    expect(transcriptProjection.resolveMessageComposerAttachments(firstWrite?.messageMeta)).toEqual([expect.objectContaining({
-      typeLabel: 'Triage entry',
-      label: 'Replace the duplicated normalizer',
-      description: 'example/repository',
-    })]);
+    expect(transcriptProjection.resolveMessageComposerAttachments(firstWrite?.messageMeta)).toEqual([
+      expect.objectContaining({
+        typeLabel: 'Triage entry',
+        label: 'Replace the duplicated normalizer',
+        description: 'example/repository',
+      }),
+      expect.objectContaining({
+        typeLabel: 'Triage entry',
+        label: 'Preserve the attachment order',
+        description: 'example/repository',
+      }),
+    ]);
     expect(prepareForSend).toHaveBeenCalledTimes(2);
     expect(resolveForDispatch).toHaveBeenCalledTimes(1);
 

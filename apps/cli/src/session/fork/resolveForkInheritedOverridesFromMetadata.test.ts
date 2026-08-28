@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import { buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@/testkit/runtimeDescriptorFixtures';
 
 import {
   resolveForkInheritedOverridesFromMetadata,
@@ -186,38 +186,6 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
           sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
       },
-      acpSessionModesV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 460,
-        currentModeId: 'build',
-        availableModes: [
-          { id: 'build', name: 'Build' },
-          { id: 'plan', name: 'Plan' },
-        ],
-      },
-      acpSessionModelsV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 461,
-        currentModelId: 'openai/gpt-5.2',
-        availableModels: [
-          { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
-        ],
-      },
-      acpConfigOptionsV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 462,
-        configOptions: [
-          {
-            id: 'approval',
-            name: 'Approval',
-            type: 'string',
-            currentValue: 'never',
-          },
-        ],
-      },
       acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
       acpConfigOptionOverridesV1: {
         v: 1,
@@ -303,38 +271,6 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
           sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
       },
-      acpSessionModesV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 460,
-        currentModeId: 'build',
-        availableModes: [
-          { id: 'build', name: 'Build' },
-          { id: 'plan', name: 'Plan' },
-        ],
-      },
-      acpSessionModelsV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 461,
-        currentModelId: 'openai/gpt-5.2',
-        availableModels: [
-          { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
-        ],
-      },
-      acpConfigOptionsV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 462,
-        configOptions: [
-          {
-            id: 'approval',
-            name: 'Approval',
-            type: 'string',
-            currentValue: 'never',
-          },
-        ],
-      },
       acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
       acpConfigOptionOverridesV1: {
         v: 1,
@@ -349,6 +285,47 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         updatedAt: 464,
       },
     });
+  });
+
+  it('reads legacy ACP catalogs but writes only canonical child metadata', () => {
+    const result = resolveForkInheritedOverridesFromMetadata({
+      acpSessionModelsV1: {
+        v: 1,
+        agentId: 'opencode',
+        updatedAt: 461,
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [{ id: 'openai/gpt-5.2', name: 'GPT-5.2' }],
+      },
+      acpSessionModesV1: {
+        v: 1,
+        agentId: 'opencode',
+        updatedAt: 460,
+        currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }],
+      },
+      acpConfigOptionsV1: {
+        v: 1,
+        agentId: 'opencode',
+        updatedAt: 462,
+        configOptions: [{
+          id: 'approval',
+          name: 'Approval',
+          type: 'string',
+          currentValue: 'never',
+        }],
+      },
+    } as any, codexTarget);
+
+    expect(result.metadata).toMatchObject({
+      sessionModelsV1: { currentModelId: 'openai/gpt-5.2' },
+      sessionModesV1: { currentModeId: 'build' },
+      sessionConfigOptionsV1: {
+        configOptions: [expect.objectContaining({ id: 'approval' })],
+      },
+    });
+    expect(result.metadata).not.toHaveProperty('acpSessionModelsV1');
+    expect(result.metadata).not.toHaveProperty('acpSessionModesV1');
+    expect(result.metadata).not.toHaveProperty('acpConfigOptionsV1');
   });
 
   it('increments the display-title suffix across successive forks', () => {

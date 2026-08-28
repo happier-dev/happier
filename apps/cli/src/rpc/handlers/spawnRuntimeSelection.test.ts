@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from './spawnRuntimeSelection';
+import {
+  readCanonicalSpawnRuntimeSelectionFromCompatIngress,
+} from './spawnRuntimeSelection';
 
 describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
+  it('does not interpret an opaque current Agent descriptor to compare a legacy Codex hint', () => {
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'future-plugin-owned-mode',
+        nested: { preserve: true },
+      },
+    };
+
+    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      agentId: 'codex',
+      codexBackendMode: 'acp',
+      runtimeDescriptorV1,
+    })).toEqual({ runtimeDescriptorV1 });
+  });
+
   it('prefers canonical runtimeDescriptorV1 over the legacy ingress carrier', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       runtimeDescriptorV1: {
@@ -31,11 +50,6 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      codexBackendMode: 'appServer',
-      agentBackendMode: 'appServer',
-      agentRuntimeSelection: {
-        codexBackendMode: 'appServer',
-      },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'codex',
@@ -74,11 +88,6 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      codexBackendMode: 'acp',
-      agentBackendMode: 'acp',
-      agentRuntimeSelection: {
-        codexBackendMode: 'acp',
-      },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'codex',
@@ -94,26 +103,15 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       codexBackendMode: 'mcp',
     })).toEqual({
-      codexBackendMode: 'appServer',
-      agentRuntimeSelection: {
-        codexBackendMode: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
       },
     });
   });
 
-  it('prefers the canonical Codex backendMode over a stale legacy codexBackendMode', () => {
-    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-      backendMode: 'appServer',
-      codexBackendMode: 'acp',
-    })).toEqual({
-      codexBackendMode: 'appServer',
-      agentRuntimeSelection: {
-        codexBackendMode: 'appServer',
-      },
-    });
-  });
-
-  it('projects runtime mode selections from non-Codex provider runtime descriptors', () => {
+  it('carries non-Codex runtime descriptors opaquely without host interpretation', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       runtimeDescriptorV1: {
         v: 1,
@@ -124,10 +122,6 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      agentBackendMode: 'server',
-      agentRuntimeSelection: {
-        opencodeBackendMode: 'server',
-      },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'opencode',
@@ -139,7 +133,7 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
     });
   });
 
-  it('projects Antigravity persisted runtime mode through the generated host owner', () => {
+  it('normalizes predecessor vocabulary without interpreting Agent payloads', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       runtimeDescriptorV1: {
         v: 1,
@@ -160,10 +154,6 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      agentBackendMode: 'sdk',
-      agentRuntimeSelection: {
-        antigravityRuntimeMode: 'sdk',
-      },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'antigravity',
@@ -183,5 +173,16 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     });
+  });
+
+  it('rejects a runtime descriptor that does not match the selected Agent', () => {
+    expect(() => readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      agentId: 'opencode',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {},
+      },
+    })).toThrow(/must match the selected Agent/);
   });
 });

@@ -4,18 +4,10 @@ const { resolveCurrentExecutionSurfacesForCatalogAgent } = vi.hoisted(() => ({
     resolveCurrentExecutionSurfacesForCatalogAgent: vi.fn(),
 }));
 
-const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
-    readAgentCatalogSnapshot: vi.fn(),
-}));
-
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
     getSessionHostBridge: () => ({
         resolveCurrentExecutionSurfacesForCatalogAgent,
     }),
-}));
-
-vi.mock('@/agent/catalog/snapshot', () => ({
-    readAgentCatalogSnapshot,
 }));
 
 import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSessionMetadataFromTrackedSession';
@@ -24,14 +16,6 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
     beforeEach(() => {
         resolveCurrentExecutionSurfacesForCatalogAgent.mockReset();
         resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValue(null);
-        readAgentCatalogSnapshot.mockReturnValue({
-            agentDefinitionsById: new Map(),
-            catalogEntriesById: {
-                claude: { id: 'claude' },
-                opencode: { id: 'opencode' },
-                'acme.agent': { id: 'acme.agent' },
-            },
-        });
     });
 
     it('passes only canonical identity and descriptor facts to the current Agent handoff leaf', async () => {
@@ -59,7 +43,10 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             },
         };
 
-        const buildRuntimeLocalMetadata = vi.fn(async () => ({
+        const buildRuntimeLocalMetadata = vi.fn(async (_params: Readonly<{
+            identity: Readonly<Record<string, unknown>>;
+            runtimeDescriptorV1: Readonly<Record<string, unknown>>;
+        }>) => ({
             externalSessionSource: {
                 kind: 'claudeConfig',
                 configDir: '/descriptor-owned/.claude',
@@ -108,12 +95,13 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         expect(inputMetadata).toHaveProperty('externalSessionOperationPresentationV1');
         expect(result).toEqual(expect.objectContaining({
             runtimeLocalMetadata: expect.objectContaining({
-                claudeSessionId: 'provider-handoff-private-operation',
+                runtimeDescriptorV1: inputMetadata.runtimeDescriptorV1,
                 externalSessionV1: expect.objectContaining({
                     source: {
                         kind: 'claudeConfig',
                         configDir: '/descriptor-owned/.claude',
                     },
+                    runtimeDescriptorV1: inputMetadata.runtimeDescriptorV1,
                 }),
             }),
         }));
@@ -133,6 +121,11 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 path: '/repo-source-current',
                 homeDir: '/Users/target',
                 flavor: 'claude',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    agent: { providerSessionId: 'sess-handoff-direct' },
+                },
                 handoffV1: {
                     v: 1,
                     sourceMachineId: 'machine_source',
@@ -160,12 +153,14 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 }),
             }),
             runtimeLocalMetadata: expect.objectContaining({
-                claudeSessionId: 'sess-handoff-direct',
+                runtimeDescriptorV1: expect.objectContaining({
+                    agentId: 'claude',
+                }),
             }),
         }));
     });
 
-    it('builds configured ACP fallback metadata when webhook metadata is missing', async () => {
+    it('does not masquerade a configured ACP backend as an Agent when webhook metadata is missing', async () => {
         const metadata = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
@@ -173,7 +168,12 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 happySessionId: 'sess_configured_acp_fallback',
                 spawnOptions: {
                     directory: '/repo-acp',
-                    backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'review-bot',
+                        configuredBackendId: 'review-bot',
+                        sourceKind: 'configured',
+                    },
                     environmentVariables: { HOME: '/Users/acp-home' },
                 },
             } as never,
@@ -181,20 +181,7 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             fallbackHomeDir: '/Users/fallback',
         });
 
-        expect(metadata).toEqual(expect.objectContaining({
-            exportMetadata: expect.objectContaining({
-                machineId: 'machine-acp-fallback',
-                path: '/repo-acp',
-                homeDir: '/Users/acp-home',
-                flavor: 'acp:review-bot',
-                acpConfiguredBackendV1: expect.objectContaining({
-                    v: 1,
-                    backendId: 'review-bot',
-                    title: 'review-bot',
-                    updatedAt: expect.any(Number),
-                }),
-            }),
-        }));
+        expect(metadata).toBeNull();
     });
 
     it('uses direct-session runtime identity when webhook metadata has no legacy flavor field', async () => {
@@ -226,7 +213,10 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
 
         expect(metadata).toEqual(expect.objectContaining({
             runtimeLocalMetadata: expect.objectContaining({
-                opencodeSessionId: 'sess-handoff-direct',
+                externalSessionV1: expect.objectContaining({
+                    agentId: 'opencode',
+                    remoteSessionId: 'sess-handoff-direct',
+                }),
             }),
         }));
     });
@@ -254,7 +244,13 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         });
 
         expect(resolveCurrentExecutionSurfacesForCatalogAgent).toHaveBeenCalledWith('acme.agent');
-        expect(metadata).not.toHaveProperty('runtimeLocalMetadata');
+        expect(metadata).toEqual(expect.objectContaining({
+            runtimeLocalMetadata: expect.objectContaining({
+                runtimeDescriptorV1: expect.objectContaining({
+                    agentId: 'acme.agent',
+                }),
+            }),
+        }));
     });
 
     it('does not resolve a configured external runtime identity through an installed Agent handoff leaf', async () => {
@@ -264,6 +260,14 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                 pid: 457,
                 happySessionId: 'sess-configured-identity',
                 vendorResumeId: 'configured-session-457',
+                spawnOptions: {
+                    backendTarget: {
+                        kind: 'backend',
+                        backendId: 'review-bot',
+                        configuredBackendId: 'review-bot',
+                        sourceKind: 'configured',
+                    },
+                },
                 happySessionMetadataFromLocalWebhook: {
                     machineId: 'machine-session-handoff',
                     path: '/repo-configured',

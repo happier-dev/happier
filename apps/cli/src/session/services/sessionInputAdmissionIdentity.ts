@@ -4,7 +4,6 @@ import {
   PluginSessionInputSourceV1Schema,
   SessionInputRequestV1Schema,
   SessionMessageProvenanceV1Schema,
-  buildSessionSpawnInitialInputLocalIdV1,
   readPendingLocalId,
   type ActionPluginCaller,
   type ActionCaller,
@@ -196,16 +195,11 @@ export function buildAgentRuntimeFirstInputAdmissionV1(): Readonly<{
   });
 }
 
-/**
- * Message-owned composition for Session creation's one deterministic initial
- * input. Its identity follows the Session creation tag, while protected
- * attribution retains the authenticated caller supplied by the Action owner.
- */
-export function buildSessionSpawnInitialInputAdmissionV1(params: Readonly<{
+/** Host-private admission for a spawn handoff whose durable local id is already sealed. */
+export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Readonly<{
   actionCaller: ActionCaller;
   callerSurface?: keyof ActionSurfaces | null;
-  sessionId: string;
-  sessionCreationTag: string;
+  localId: string;
 }>): Readonly<{
   localId: string;
   inputAdmission: Readonly<{
@@ -213,10 +207,7 @@ export function buildSessionSpawnInitialInputAdmissionV1(params: Readonly<{
     request: SessionInputRequestV1;
   }>;
 }> {
-  const localId = buildSessionSpawnInitialInputLocalIdV1({
-    sessionId: params.sessionId,
-    sessionCreationTag: params.sessionCreationTag,
-  });
+  const localId = params.localId;
 
   if (params.actionCaller.kind === 'automationRun') {
     return Object.freeze({

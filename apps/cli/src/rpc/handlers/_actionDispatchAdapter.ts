@@ -43,6 +43,7 @@ export function buildActionExecutorContextForRpc(
     const defaultSessionId = normalizeOptionalString(params.defaultSessionId);
     const serverId = normalizeOptionalString(params.serverId);
     const localActionContext = params.localActionContext;
+    const surface = localActionContext?.surface ?? 'rpc';
     const hasLocalCallerPermissionMode = Boolean(
         localActionContext
         && Object.prototype.hasOwnProperty.call(localActionContext, 'callerPermissionMode'),
@@ -62,7 +63,10 @@ export function buildActionExecutorContextForRpc(
         ...(localActionContext?.operationOwnerUpdate
             ? { operationOwnerUpdate: localActionContext.operationOwnerUpdate }
             : {}),
-        surface: localActionContext?.surface ?? 'rpc',
+        surface,
+        authority: surface === 'api' || surface === 'plugin' || surface === 'agent' || surface === 'mcp'
+            ? 'account_automation'
+            : 'present_user',
         ...(hasLocalCallerPermissionMode
             ? { callerPermissionMode: localActionContext?.callerPermissionMode ?? null }
             : {}),

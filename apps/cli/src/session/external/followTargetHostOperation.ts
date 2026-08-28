@@ -1,8 +1,4 @@
-import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol';
-
-import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
 import { fetchAccountProfile } from '@/api/accountProfile';
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
 import {
@@ -32,13 +28,9 @@ type FollowTargetRuntimeContext = Readonly<{
     providerOps: ExternalSessionFollowProviderOps;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
-    release(): Promise<void>;
 }>;
 
 type FollowTargetHostOperationDependencies = Readonly<{
-    acquireRuntimeContext(
-        agentId: string,
-    ): Promise<FollowTargetRuntimeContext | null>;
     readAccount(
         agent: ConfiguredExternalSessionSourceAgentContribution,
         signal: AbortSignal,
@@ -77,60 +69,6 @@ function requestOwnerIsCurrent(
 
 function createDefaultDependencies(): FollowTargetHostOperationDependencies {
     return Object.freeze({
-        async acquireRuntimeContext(rawAgentId) {
-            const parsedAgentId = ExternalSessionsAgentIdSchema.safeParse(rawAgentId);
-            if (!parsedAgentId.success) return null;
-            const registryLease =
-                await acquireAuthoritativePluginRuntimeRegistryLease().catch(
-                    () => null,
-                );
-            if (!registryLease) return null;
-            const runtimeLease = registryLease.registry.agentRuntimesByAgentId.get(
-                parsedAgentId.data,
-            );
-            const agent =
-                registryLease.registry.contributes.agentDefinitionsById.get(
-                    parsedAgentId.data,
-                );
-            if (
-                !runtimeLease?.externalSessions
-                || !runtimeLease.isCurrent()
-                || runtimeLease.retirementSignal.aborted
-                || !agent
-            ) {
-                await registryLease.release();
-                return null;
-            }
-            const executionSurface = createAgentExternalSessionsExecutionSurface(
-                runtimeLease.externalSessions,
-                'unsupported',
-            );
-            if (
-                typeof executionSurface.validateSource !== 'function'
-                || typeof executionSurface.resolveLinkIdentity !== 'function'
-                || typeof executionSurface.pageTranscript !== 'function'
-                || typeof executionSurface.readAfterTranscript !== 'function'
-            ) {
-                await registryLease.release();
-                return null;
-            }
-            const providerOps: ExternalSessionFollowProviderOps = {
-                validateSource: executionSurface.validateSource,
-                pageTranscript: executionSurface.pageTranscript,
-                readAfterTranscript: executionSurface.readAfterTranscript,
-                resolveLinkIdentity: executionSurface.resolveLinkIdentity,
-            };
-            return Object.freeze({
-                pluginId: runtimeLease.pluginId,
-                agentId: runtimeLease.agentId,
-                generationId: runtimeLease.generation,
-                agent,
-                providerOps,
-                retirementSignal: runtimeLease.retirementSignal,
-                isCurrent: runtimeLease.isCurrent,
-                release: async () => await registryLease.release(),
-            });
-        },
         async readAccount(agent, signal) {
             if (!configuredExternalSessionSourcesUseConnectedProfiles([agent])) {
                 return Object.freeze({ connectedServicesV2: [] });
@@ -172,48 +110,36 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
                         : 'plugin_external_follow_identity_mismatch',
                 );
             }
-            if (request.providerOps && !request.agentContribution) {
+            if (!request.providerOps || !request.agentContribution) {
                 return unavailable(
                     'plugin_external_follow_identity_unavailable',
                 );
             }
             const signal = request.signal ?? new AbortController().signal;
+            const runtimeContext: FollowTargetRuntimeContext = Object.freeze({
+                pluginId: request.pluginId,
+                agentId: request.contributionId,
+                generationId: request.generationId,
+                agent: request.agentContribution,
+                providerOps: request.providerOps,
+                retirementSignal: signal,
+                isCurrent: request.isCurrent,
+            });
             const outcome = await invokeBoundedExternalSessionsOperation({
                 signal,
-                // The runtime-context retirement signal is not available until
-                // acquisition completes. The admitted operation joins it before
-                // every context-owned await below.
+                // Exact-generation currentness and lifecycle authority travel
+                // with the request and are checked before every context-owned
+                // await below.
                 retirementSignal: new AbortController().signal,
                 isCurrent: () => requestOwnerIsCurrent(request),
                 ...(request.admissionDeadlineAtMs === undefined
                     ? {}
                     : { deadlineAtMs: request.admissionDeadlineAtMs }),
                 operation: async (admissionSignal, deadlineAtMs) => {
-                    let context: FollowTargetRuntimeContext | null = null;
                     try {
-                        context = request.providerOps && request.agentContribution
-                            ? Object.freeze({
-                                pluginId: request.pluginId,
-                                agentId: request.contributionId,
-                                generationId: request.generationId,
-                                agent: request.agentContribution,
-                                providerOps: request.providerOps,
-                                retirementSignal: signal,
-                                isCurrent: request.isCurrent,
-                                release: async () => undefined,
-                            })
-                            : await dependencies.acquireRuntimeContext(
-                                request.contributionId,
-                            );
                         if (admissionSignal.aborted) {
                             throw admissionSignal.reason;
                         }
-                        if (!context) {
-                            return unavailable(
-                                'plugin_external_follow_identity_unavailable',
-                            );
-                        }
-                        const runtimeContext = context;
                         if (
                             runtimeContext.pluginId !== request.pluginId
                             || runtimeContext.agentId !== request.contributionId
@@ -285,14 +211,10 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
                         return unavailable(
                             request.signal?.aborted
                                 ? 'plugin_operation_aborted'
-                                : context && !requestIsCurrent(request, context)
+                                : !requestIsCurrent(request, runtimeContext)
                                     ? 'plugin_generation_retired'
                                     : 'plugin_external_follow_identity_unavailable',
                         );
-                    } finally {
-                        if (context) {
-                            await context.release().catch(() => undefined);
-                        }
                     }
                 },
             });

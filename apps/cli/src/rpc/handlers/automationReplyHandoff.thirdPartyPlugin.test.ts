@@ -47,6 +47,7 @@ const accountId = 'account-1';
 const machineId = 'machine-1';
 const machineInstallationId = 'installation-1';
 const materializationId = 'materialization-slack-1';
+const immutableGenerationId = 'generation-slack-1';
 
 const correspondence = {
   accountId,
@@ -80,7 +81,6 @@ const plainCurrentness: AccountEncryptionCurrentnessResponse = {
 const admitInput = {
   automationId: correspondence.automationId,
   bindingId: 'binding-1',
-  templateVersion: 3,
   occurrenceId: 'slack:event:1',
   occurredAt: 1_700_000_000_000,
   sender: { id: 'U-123' },
@@ -167,7 +167,6 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       data: {
         items: [{
           automationId: correspondence.automationId,
-          templateVersion: 1,
           label: 'Daily digest',
           execution: { targetType: 'existing_session', enabled: true },
         }],
@@ -181,12 +180,12 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         kind: 'plugin',
         pluginId: BRIDGE_PLUGIN_ID,
         contributionLocalId: BRIDGE_INGRESS_LOCAL_ID,
+        immutableGenerationId,
         materialization: { pluginId: BRIDGE_PLUGIN_ID, machineId, materializationId },
       },
     })).resolves.toEqual({
       items: [{
         automationId: correspondence.automationId,
-        templateVersion: 1,
         label: 'Daily digest',
         execution: { targetType: 'existing_session', enabled: true },
       }],
@@ -200,6 +199,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       'automation.conversation.targets.list'
     ].parse(listBody);
     expect(listRequest.caller.pluginId).toBe(BRIDGE_PLUGIN_ID);
+    expect(listRequest.caller.immutableGenerationId).toBe(immutableGenerationId);
     // The payload carries no owner or machine: the host stamps both.
     expect(listRequest.caller.materialization.machineId).toBe(machineId);
 
@@ -219,6 +219,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         kind: 'plugin',
         pluginId: BRIDGE_PLUGIN_ID,
         contributionLocalId: BRIDGE_INGRESS_LOCAL_ID,
+        immutableGenerationId,
         materialization: { pluginId: BRIDGE_PLUGIN_ID, machineId, materializationId },
       },
     })).resolves.toEqual({ kind: 'admitted', runId: correspondence.runId, checkpointSafe: true });
@@ -245,7 +246,6 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       automationRunId: correspondence.runId,
       resultId: correspondence.handoffId,
       automationId: correspondence.automationId,
-      templateVersion: admitInput.templateVersion,
       resultDelivery: 'finalResult',
     } as const;
     const target = AutomationReplyHandoffTargetV1Schema.parse({
@@ -266,6 +266,11 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         runId: correspondence.runId,
         automationId: correspondence.automationId,
         occurrenceKey: replyContextCorrespondence.occurrenceKey,
+        cause: {
+          kind: 'conversation',
+          occurrenceKey: replyContextCorrespondence.occurrenceKey,
+          occurredAt: 1,
+        },
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         resultEnvelope: sealAutomationRunResultStoredEnvelopeV1({
           mode: 'plain',
@@ -275,7 +280,6 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
           mode: 'plain',
           correspondence: replyContextCorrespondence,
-          templateVersion: admitInput.templateVersion,
           opaqueContext,
         }),
       },
@@ -361,7 +365,6 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       automationRunId: correspondence.runId,
       resultId: correspondence.handoffId,
       automationId: correspondence.automationId,
-      templateVersion: admitInput.templateVersion,
       resultDelivery: 'finalResult',
     } as const;
     const dispatch = AutomationReplyHandoffDispatchRequestV1Schema.parse({
@@ -379,6 +382,11 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         runId: correspondence.runId,
         automationId: correspondence.automationId,
         occurrenceKey: replyContextCorrespondence.occurrenceKey,
+        cause: {
+          kind: 'conversation',
+          occurrenceKey: replyContextCorrespondence.occurrenceKey,
+          occurredAt: 1,
+        },
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         resultEnvelope: sealAutomationRunResultStoredEnvelopeV1({
           mode: 'plain',
@@ -388,7 +396,6 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
         replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
           mode: 'plain',
           correspondence: replyContextCorrespondence,
-          templateVersion: admitInput.templateVersion,
           opaqueContext,
         }),
       },

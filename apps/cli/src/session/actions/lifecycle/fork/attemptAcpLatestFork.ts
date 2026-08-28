@@ -3,7 +3,6 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
@@ -61,9 +60,6 @@ export async function attemptAcpLatestFork(params: Readonly<{
                 'fork.launch.sessionStateUpdates',
             );
             const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
-            const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
-            const agentBackendMode = runtimeSelection.agentBackendMode;
-            const codexBackendMode = runtimeSelection.codexBackendMode;
             const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
                 inherited: params.inheritedForkOverrides,
             }).inherited;
@@ -74,7 +70,6 @@ export async function attemptAcpLatestFork(params: Readonly<{
                 spawnNonce: params.spawnNonce,
                 resume: forkedProviderSessionId,
                 ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-                ...(codexBackendMode ? { codexBackendMode } : {}),
                 ...(forked.launch.environmentVariables ? { environmentVariables: { ...forked.launch.environmentVariables } } : {}),
                 ...inheritedForkOverrides.spawn,
             } satisfies SpawnSessionOptions);
@@ -130,7 +125,6 @@ export async function attemptAcpLatestFork(params: Readonly<{
                             ...(requestId ? { requestId } : {}),
                             agentHint: {
                                 agentId: params.forkBackendResolution.agentHintAgentId,
-                                ...(agentBackendMode ? { backendMode: agentBackendMode } : {}),
                                 providerSessionId: forkedProviderSessionId,
                             },
                         },

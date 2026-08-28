@@ -18,6 +18,7 @@ const {
   importHistoricalSessionTranscript,
   lookupSessionsByTags,
   readSettings,
+  requestDaemonSignedRootActionExecution,
   resolveCurrentAccountMachineTarget,
 } = vi.hoisted(() => ({
   createCliActionExecutor: vi.fn(),
@@ -27,6 +28,7 @@ const {
   importHistoricalSessionTranscript: vi.fn(),
   lookupSessionsByTags: vi.fn(),
   readSettings: vi.fn(),
+  requestDaemonSignedRootActionExecution: vi.fn(),
   resolveCurrentAccountMachineTarget: vi.fn(),
 }));
 
@@ -52,6 +54,10 @@ vi.mock('@/persistence', async (importOriginal) => ({
 
 vi.mock('@/api/machine/resolveCurrentAccountMachineTarget', () => ({
   resolveCurrentAccountMachineTarget,
+}));
+
+vi.mock('@/daemon/controlClient', () => ({
+  requestDaemonSignedRootActionExecution,
 }));
 
 const exactSessionId = 'c123456789012345678901234';
@@ -182,6 +188,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     importHistoricalSessionTranscript.mockReset();
     lookupSessionsByTags.mockReset();
     readSettings.mockReset();
+    requestDaemonSignedRootActionExecution.mockReset();
     resolveCurrentAccountMachineTarget.mockReset();
     readSettings.mockResolvedValue({ machineId: 'machine-selected' });
     const legacySessionRouteUsed = () => Promise.reject(new Error('legacy_session_route_used'));
@@ -227,6 +234,65 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         }),
       }),
     );
+  });
+
+  it('routes only attested stored-session root clients through signed daemon control', async () => {
+    requestDaemonSignedRootActionExecution.mockResolvedValue({
+      ok: true,
+      result: { machines: [] },
+    });
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'signed-daemon-account-token',
+        encryption: null,
+        credentialProvenance: 'stored_session',
+      },
+      machineId: 'machine-local',
+      externalActionClient: true,
+    });
+
+    await expect(executor.execute(
+      'machines.list',
+      { limit: 10 },
+      { surface: 'api', authority: 'account_automation', actionRequestId: 'request-signed' },
+    )).resolves.toEqual({ ok: true, result: { machines: [] } });
+
+    expect(requestDaemonSignedRootActionExecution).toHaveBeenCalledWith({
+      actionId: 'machines.list',
+      input: { limit: 10 },
+      targetMachineId: 'machine-local',
+      actionRequestId: 'request-signed',
+    }, {});
+  });
+
+  it('keeps an API Token on public HTTP even when a caller supplies a non-CLI surface', async () => {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('action.spec.search', {
+      actionSpecs: [],
+    }));
+    installPatActionTransportMock(fetch);
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+      externalActionClient: true,
+    });
+
+    await expect(executor.execute(
+      'action.spec.search',
+      { limit: 10 },
+      { surface: 'api', authority: 'present_user' },
+    )).resolves.toEqual({
+      ok: true,
+      result: { actionSpecs: [] },
+    });
+
+    expect(requestDaemonSignedRootActionExecution).not.toHaveBeenCalled();
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it('passes an exact full Session id directly to the PAT Action route without a lookup request', async () => {

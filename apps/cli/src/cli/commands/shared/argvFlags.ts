@@ -107,3 +107,56 @@ export function readJsonFlagValue(argv: readonly string[], flag: string): unknow
     return null;
   }
 }
+
+export type CommandArgumentPolicy = Readonly<{
+  usage: string;
+  startIndex: number;
+  booleanFlags?: readonly string[];
+  valueFlags?: readonly string[];
+  inlineValueFlags?: readonly string[];
+  allowMissingValueFlags?: readonly string[];
+  maxPositionals?: number;
+}>;
+
+function invalidCommandArguments(usage: string, reason: string): Error & { code: 'invalid_arguments' } {
+  return Object.assign(new Error(`${reason}\n${usage}`), { code: 'invalid_arguments' as const });
+}
+
+export function assertCommandArguments(argv: readonly string[], policy: CommandArgumentPolicy): void {
+  const booleanFlags = new Set(policy.booleanFlags ?? []);
+  const valueFlags = new Set(policy.valueFlags ?? []);
+  const inlineValueFlags = new Set(policy.inlineValueFlags ?? policy.valueFlags ?? []);
+  const allowMissingValueFlags = new Set(policy.allowMissingValueFlags ?? []);
+  let positionalOnly = false;
+  let positionalCount = 0;
+  for (let index = policy.startIndex; index < argv.length; index += 1) {
+    const argument = argv[index] ?? '';
+    if (argument === '--') { positionalOnly = true; continue; }
+    if (positionalOnly || !argument.startsWith('-')) {
+      positionalCount += 1;
+      if (policy.maxPositionals !== undefined && positionalCount > policy.maxPositionals) {
+        throw invalidCommandArguments(policy.usage, `Unexpected argument: ${argument}`);
+      }
+      continue;
+    }
+    if (!argument.startsWith('--')) throw invalidCommandArguments(policy.usage, `Unknown option: ${argument}`);
+    const equalsIndex = argument.indexOf('=');
+    const flag = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument;
+    if (booleanFlags.has(flag)) {
+      if (equalsIndex >= 0) throw invalidCommandArguments(policy.usage, `Option ${flag} does not accept a value.`);
+      continue;
+    }
+    if (!valueFlags.has(flag)) throw invalidCommandArguments(policy.usage, `Unknown option: ${argument}`);
+    if (equalsIndex >= 0) {
+      if (!inlineValueFlags.has(flag)) throw invalidCommandArguments(policy.usage, `Option ${flag} does not accept an inline value.`);
+      if (!argument.slice(equalsIndex + 1).trim()) throw invalidCommandArguments(policy.usage, `Option ${flag} requires a value.`);
+      continue;
+    }
+    const value = argv[index + 1];
+    if (!value || value.startsWith('-')) {
+      if (allowMissingValueFlags.has(flag)) continue;
+      throw invalidCommandArguments(policy.usage, `Option ${flag} requires a value.`);
+    }
+    index += 1;
+  }
+}

@@ -87,6 +87,44 @@ afterEach(async () => {
 });
 
 describe('operation-private External Sessions staging', () => {
+    it('cleans an authoritatively abandoned nonterminal operation only after workspace-media custody is discharged', async () => {
+        const activeServerDir = await createPrivateRoot('happier-staging-abandoned-');
+        const operationId = 'operation-abandoned';
+        const store = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 20, maxBytes: 20_000 },
+            },
+        });
+        const media = [{
+            workingDirectory: '/workspace',
+            candidateWorkspaceRelativePath: '.happier/uploads/uncommitted.png',
+        }];
+        await store.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await store.recordCreatedWorkspaceMedia({ operationId, media });
+
+        await expect(store.cleanupAbandonedOperation({ operationId }))
+            .resolves.toEqual({ status: 'not_ready' });
+        await store.acknowledgeCreatedWorkspaceMediaCleanup({ operationId, media });
+        await expect(store.cleanupAbandonedOperation({ operationId }))
+            .resolves.toEqual({ status: 'completed' });
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 20, maxBytes: 20_000 },
+            },
+        });
+        await expect(restarted.cleanupAbandonedOperation({ operationId }))
+            .resolves.toEqual({ status: 'missing' });
+    });
+
     it('returns the exact persisted capture evidence needed for explicit Resume revalidation', async () => {
         const activeServerDir = await createPrivateRoot('happier-staging-capture-evidence-');
         const store = createExternalSessionOperationPrivateStagingStore({
@@ -720,7 +758,7 @@ describe('operation-private External Sessions staging', () => {
             captureIndex: 0,
             groupId,
             items: prepared,
-        })).resolves.toEqual({ status: 'stored' });
+        })).resolves.toMatchObject({ status: 'stored' });
 
         const restarted = createExternalSessionOperationPrivateStagingStore({ activeServerDir, limits });
         await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
@@ -747,6 +785,220 @@ describe('operation-private External Sessions staging', () => {
         await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
             expect.objectContaining({ groupId, items: staged }),
         ]);
+    });
+
+    it('keeps a crash-durable prepared replay charged and repairs it on the exact operation retry', async () => {
+        const activeServerDir = await createPrivateRoot(
+            'happier-external-staging-prepared-crash-charge-',
+        );
+        const operationId = 'operation-prepared-crash-charge';
+        const groupId = 'prepared-page';
+        const staged = [{ id: 'raw-item' }];
+        const prepared = [{
+            localId: 'history:raw-item',
+            sidechainId: null,
+            messageRole: 'agent',
+            content: { t: 'encrypted', c: 'ciphertext-v1' },
+        }];
+        const rawBytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId,
+            items: staged,
+        }).serializedBytes;
+        const preparedBytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId,
+            items: prepared,
+        }).serializedBytes;
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: rawBytes + preparedBytes },
+            aggregate: { maxItems: 20, maxBytes: rawBytes + preparedBytes },
+        } as const;
+        let failAfterPreparedPayloadOnce = true;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    await writeJsonAtomic(path, value);
+                    if (
+                        failAfterPreparedPayloadOnce
+                        && path.replaceAll('\\', '/').endsWith(
+                            'prepared-000000000000.json',
+                        )
+                    ) {
+                        failAfterPreparedPayloadOnce = false;
+                        throw new Error('simulated crash after prepared payload publication');
+                    }
+                },
+            },
+        });
+        await crashingStore.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await crashingStore.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: staged,
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await crashingStore.completeCapture({ operationId });
+
+        await expect(crashingStore.persistPreparedReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: prepared,
+        })).rejects.toThrow('simulated crash after prepared payload publication');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+        });
+        await restarted.beginOperation({
+            operationId: 'operation-capacity-probe',
+            representation: 'content',
+            capturedSource,
+        });
+        await expect(restarted.appendPageGroup({
+            operationId: 'operation-capacity-probe',
+            captureIndex: 0,
+            groupId: 'capacity-probe-page',
+            items: [{ id: 'must-not-fit' }],
+            sourceRead: { ...sameSourceRead, eof: true },
+        })).resolves.toEqual({
+            status: 'refused',
+            reason: 'aggregate_byte_capacity',
+        });
+
+        await expect(restarted.persistPreparedReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: prepared,
+        })).resolves.toEqual({ status: 'stored' });
+        await expect(readReplayGroups(restarted, operationId)).resolves.toEqual([
+            expect.objectContaining({ groupId, items: staged, preparedItems: prepared }),
+        ]);
+    });
+
+    it('releases a crash-durable prepared replay charge when cleanup clears the prepared row', async () => {
+        const activeServerDir = await createPrivateRoot(
+            'happier-external-staging-prepared-crash-clear-',
+        );
+        const operationId = 'operation-prepared-crash-clear';
+        const groupId = 'prepared-page';
+        const staged = [{ id: 'raw-item' }];
+        const prepared = [{
+            localId: 'history:raw-item',
+            sidechainId: null,
+            messageRole: 'agent',
+            content: { t: 'encrypted', c: 'ciphertext-v1' },
+        }];
+        const probeItems = [{ id: 'capacity-probe', content: 'x'.repeat(1_000) }];
+        const rawBytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId,
+            items: staged,
+        }).serializedBytes;
+        const probeBytes = measureExternalSessionStagingPageGroup({
+            captureIndex: 0,
+            groupId: 'capacity-probe-page',
+            items: probeItems,
+        }).serializedBytes;
+        const limits = {
+            perOperation: { maxItems: 10, maxBytes: rawBytes + probeBytes },
+            aggregate: { maxItems: 20, maxBytes: rawBytes + probeBytes },
+        } as const;
+        let failAfterPreparedRowOnce = true;
+        const crashingStore = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    await writeJsonAtomic(path, value);
+                    if (
+                        failAfterPreparedRowOnce
+                        && /group-\d+\.json$/.test(path.replaceAll('\\', '/'))
+                        && (value as { preparedReplay?: unknown }).preparedReplay
+                    ) {
+                        failAfterPreparedRowOnce = false;
+                        throw new Error('simulated crash after prepared row publication');
+                    }
+                },
+            },
+        });
+        await crashingStore.beginOperation({
+            operationId,
+            representation: 'content',
+            capturedSource,
+        });
+        await crashingStore.appendPageGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: staged,
+            sourceRead: { ...sameSourceRead, eof: true },
+        });
+        await crashingStore.completeCapture({ operationId });
+
+        await expect(crashingStore.persistPreparedReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+            items: prepared,
+        })).rejects.toThrow('simulated crash after prepared row publication');
+
+        let failAfterClearedRowOnce = true;
+        const interruptedClear = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+            persistence: {
+                writeJsonAtomic: async (path, value) => {
+                    await writeJsonAtomic(path, value);
+                    if (
+                        failAfterClearedRowOnce
+                        && /group-\d+\.json$/.test(path.replaceAll('\\', '/'))
+                        && (value as { state?: string; preparedReplay?: unknown }).state
+                            === 'committed'
+                        && !(value as { preparedReplay?: unknown }).preparedReplay
+                    ) {
+                        failAfterClearedRowOnce = false;
+                        throw new Error('simulated crash after cleared row publication');
+                    }
+                },
+            },
+        });
+        await expect(interruptedClear.clearPreparedReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+        })).rejects.toThrow('simulated crash after cleared row publication');
+
+        const restarted = createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits,
+        });
+        await restarted.clearPreparedReplayGroup({
+            operationId,
+            captureIndex: 0,
+            groupId,
+        });
+        await restarted.beginOperation({
+            operationId: 'operation-capacity-probe-after-clear',
+            representation: 'content',
+            capturedSource,
+        });
+        await expect(restarted.appendPageGroup({
+            operationId: 'operation-capacity-probe-after-clear',
+            captureIndex: 0,
+            groupId: 'capacity-probe-page',
+            items: probeItems,
+            sourceRead: { ...sameSourceRead, eof: true },
+        })).resolves.toMatchObject({ status: 'stored' });
     });
 
     it('refuses prepared replay bytes at the same operation capacity ceiling before a server effect', async () => {

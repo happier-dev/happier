@@ -3,7 +3,7 @@ import {
     chmod,
     mkdir,
     open,
-    readdir,
+    opendir,
     rm,
     stat,
     unlink,
@@ -367,12 +367,10 @@ function isCandidateIndexStorageKey(value: string): boolean {
     return /^[a-f0-9]{64}$/u.test(value);
 }
 
-async function readCandidateIndexDirectoryNames(path: string): Promise<readonly string[]> {
+async function* readCandidateIndexDirectoryNames(path: string): AsyncGenerator<string> {
+    let directory: Awaited<ReturnType<typeof opendir>>;
     try {
-        const entries = await readdir(path, { withFileTypes: true });
-        return Object.freeze(entries
-            .filter((entry) => entry.isDirectory() && isCandidateIndexStorageKey(entry.name))
-            .map((entry) => entry.name));
+        directory = await opendir(path);
     } catch (error: unknown) {
         if (
             typeof error === 'object'
@@ -380,9 +378,14 @@ async function readCandidateIndexDirectoryNames(path: string): Promise<readonly 
             && 'code' in error
             && error.code === 'ENOENT'
         ) {
-            return Object.freeze([]);
+            return;
         }
         throw error;
+    }
+    for await (const entry of directory) {
+        if (entry.isDirectory() && isCandidateIndexStorageKey(entry.name)) {
+            yield entry.name;
+        }
     }
 }
 
@@ -406,11 +409,11 @@ export async function reconcileExternalSessionCandidateIndexes(params: Readonly<
         retainedSourceKeysByAgentKey.set(keys.agentKey, retainedSourceKeys);
     }
     const root = candidateIndexRoot(params.activeServerDir);
-    for (const agentKey of await readCandidateIndexDirectoryNames(root)) {
+    for await (const agentKey of readCandidateIndexDirectoryNames(root)) {
         if (params.signal?.aborted) return;
         const retainedSourceKeys = retainedSourceKeysByAgentKey.get(agentKey);
         const agentDirectory = join(root, agentKey);
-        for (const sourceKey of await readCandidateIndexDirectoryNames(agentDirectory)) {
+        for await (const sourceKey of readCandidateIndexDirectoryNames(agentDirectory)) {
             if (params.signal?.aborted) return;
             if (retainedSourceKeys?.has(sourceKey)) continue;
             await retireExternalSessionCandidateIndexAtPaths(resolvePaths(params.activeServerDir, {

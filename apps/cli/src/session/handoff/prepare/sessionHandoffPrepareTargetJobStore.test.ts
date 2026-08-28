@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -71,6 +71,89 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
 
       const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
       await expect(store.read(jobId)).resolves.toBeNull();
+      const entries = await readdir(jobsDirectory);
+      expect(entries).toContain(`${jobId}.json`);
+      expect(entries.filter((entry) => entry.startsWith(`${jobId}.json.invalid-`))).toHaveLength(0);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('quarantines a torn JSON job once while recovering valid jobs', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-corrupt-recovery-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const validJobId = 'prepare_valid_beside_corrupt';
+      const validHandoffId = 'handoff_valid_beside_corrupt';
+      await store.write({
+        jobId: validJobId,
+        handoffId: validHandoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId: validHandoffId,
+          jobId: validJobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+      });
+
+      const jobsDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs');
+      const corruptJobId = 'prepare_torn_json';
+      const corruptBytes = '{"schemaVersion":1,"jobId":"prepare_torn_json"\0';
+      await writeFile(join(jobsDirectory, `${corruptJobId}.json`), corruptBytes, 'utf8');
+
+      await expect(recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: 30,
+      })).resolves.toEqual({ deferredByLiveRunnerLease: false });
+      await expect(store.read(validJobId)).resolves.toMatchObject({
+        jobId: validJobId,
+        status: { status: 'reconciliation_required' },
+      });
+      await expect(store.read(corruptJobId)).resolves.toBeNull();
+
+      const afterFirstRecovery = await readdir(jobsDirectory);
+      const quarantinedEntries = afterFirstRecovery.filter(
+        (entry) => entry.startsWith(`${corruptJobId}.json.invalid-`),
+      );
+      expect(afterFirstRecovery).not.toContain(`${corruptJobId}.json`);
+      expect(quarantinedEntries).toHaveLength(1);
+      await expect(readFile(join(jobsDirectory, quarantinedEntries[0]!), 'utf8')).resolves.toBe(corruptBytes);
+
+      await expect(recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: 40,
+      })).resolves.toEqual({ deferredByLiveRunnerLease: false });
+      expect(
+        (await readdir(jobsDirectory)).filter(
+          (entry) => entry.startsWith(`${corruptJobId}.json.invalid-`),
+        ),
+      ).toEqual(quarantinedEntries);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('serializes concurrent readers while quarantining one corrupt retained job', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-corrupt-readers-'));
+    try {
+      const jobsDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs');
+      await mkdir(jobsDirectory, { recursive: true });
+      const jobId = 'prepare_corrupt_concurrent_readers';
+      await writeFile(join(jobsDirectory, `${jobId}.json`), '{"schemaVersion":1\0', 'utf8');
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+
+      await expect(Promise.all([
+        store.read(jobId),
+        store.list(),
+        store.findByHandoffId('handoff_missing'),
+      ])).resolves.toEqual([null, [], null]);
+
+      const entries = await readdir(jobsDirectory);
+      expect(entries).not.toContain(`${jobId}.json`);
+      expect(entries.filter((entry) => entry.startsWith(`${jobId}.json.invalid-`))).toHaveLength(1);
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
     }

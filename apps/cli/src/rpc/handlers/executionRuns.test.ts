@@ -2675,7 +2675,7 @@ describe('executionRuns session RPC handlers', () => {
     })).resolves.toMatchObject({ done: true });
   });
 
-  it('normalizes predecessor and bounded current-dev transcript commit vectors once at the RPC seam', async () => {
+  it('normalizes the prospective predecessor transcript commit vector once at the RPC seam', async () => {
     const committedUserTurns: Array<Readonly<{ text: string; localId: string }>> = [];
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -2720,17 +2720,18 @@ describe('executionRuns session RPC handlers', () => {
       displayMessage: 'Predecessor display text',
       localId: 'predecessor-local-id',
     })).resolves.toMatchObject({ ok: true });
-    // Bounded support for the already-current undeployed dev writer shape.
     await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
       runId: started.runId,
       text: 'Current-dev provider text',
       displayText: 'Current-dev display text',
       localId: 'current-dev-local-id',
-    })).resolves.toMatchObject({ ok: true });
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'execution_run_invalid_action_input',
+    });
 
     expect(committedUserTurns).toEqual([
       { text: 'Predecessor display text', localId: 'predecessor-local-id' },
-      { text: 'Current-dev display text', localId: 'current-dev-local-id' },
     ]);
   });
 

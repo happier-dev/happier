@@ -119,7 +119,6 @@ describe('persisted takeover source continuity', () => {
       remoteSessionId: record.request.source.remoteSessionId,
       linkGeneration: record.request.source.linkGeneration,
       source: { kind: 'jsonl' },
-      codexBackendMode: null,
     };
     const preparedSource = {
       linked,
@@ -270,6 +269,7 @@ describe('persisted takeover source continuity', () => {
       items: [],
       nextCursor: 'source-cursor-c',
       boundary: 'source-boundary-c',
+      hasMore: false,
     }));
 
     await expect(assertExternalSessionPersistedTakeoverSourceContinuity({

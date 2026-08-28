@@ -143,6 +143,7 @@ describe('createResolvedSessionConnectedServiceAuthTransport', () => {
     expect(callSessionRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({
       token: 'token-1',
       sessionId: 's1',
+      timeoutMs: 60_000,
       method: 's1:session.connectedServiceAuth.applyGeneration',
       request: {
         serviceId: 'openai-codex',
@@ -159,6 +160,7 @@ describe('createResolvedSessionConnectedServiceAuthTransport', () => {
         reason: 'diagnostic',
       },
     }));
+    expect(callSessionRpc.mock.calls[1]?.[0]).not.toHaveProperty('timeoutMs');
   });
 
   it('fails closed when connected-service auth RPC responses are malformed', async () => {

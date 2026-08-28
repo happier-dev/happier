@@ -58,7 +58,6 @@ const source = {
   automationRunId: correspondence.runId,
   resultId: correspondence.handoffId,
   automationId: correspondence.automationId,
-  templateVersion: 3,
   resultDelivery: 'finalResult',
 } as const;
 
@@ -95,6 +94,11 @@ const request = {
     runId: correspondence.runId,
     automationId: correspondence.automationId,
     occurrenceKey: replyContextCorrespondence.occurrenceKey,
+    cause: {
+      kind: 'conversation',
+      occurrenceKey: replyContextCorrespondence.occurrenceKey,
+      occurredAt: 1,
+    },
     accountCurrentness: {
       mode: 'plain',
       version: plainCurrentness.version,
@@ -113,7 +117,6 @@ const request = {
       v: {
         v: 1,
         correspondence: replyContextCorrespondence,
-        templateVersion: source.templateVersion,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
       },
     },
@@ -170,7 +173,6 @@ function createEncryptedRequest(
       replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
         mode: 'e2ee',
         correspondence: replyContextCorrespondence,
-        templateVersion: source.templateVersion,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
         material: snapshot.material,
         randomBytes: deterministicRandomBytes,
@@ -233,16 +235,19 @@ function createRegistration(overrides?: Readonly<{
   installationId?: string | null;
   materializationId?: string | null;
   execution?: AutomationReplyHandoffActionExecution;
+  executeContributedAction?: AutomationReplyHandoffActionExecutor;
   currentnessSequence?: readonly AccountEncryptionCurrentnessResponse[];
   materialSequence?: readonly (AccountScopedCryptoMaterialSnapshotV1 | null)[];
 }>) {
   const { handlers, registrar } = createRegistrar();
   const registry = createRuntimeRegistry();
   const release = vi.fn(async () => {});
-  const executeContributedAction = vi.fn<AutomationReplyHandoffActionExecutor>(async () => overrides?.execution ?? ({
-    matched: true,
-    result: { ok: true, result: { kind: 'accepted', custodyId: 'custody-1' } },
-  }));
+  const executeContributedAction = vi.fn<AutomationReplyHandoffActionExecutor>(
+    overrides?.executeContributedAction ?? (async () => overrides?.execution ?? ({
+      matched: true,
+      result: { ok: true, result: { kind: 'accepted', custodyId: 'custody-1' } },
+    })),
+  );
   const currentnessSequence = overrides?.currentnessSequence ?? [plainCurrentness];
   const materialSequence = overrides?.materialSequence ?? [null];
   let currentnessIndex = 0;
@@ -321,7 +326,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
           kind: 'automationRun',
           automationId: 'automation-1',
           runId: 'run-1',
-          origin: 'conversation',
+          cause: request.handoff.cause,
         },
         signal: controller.signal,
       },
@@ -340,7 +345,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
           kind: 'automationRun',
           automationId: correspondence.automationId,
           runId: correspondence.runId,
-          origin: 'conversation',
+          cause: request.handoff.cause,
         },
       }),
     }));
@@ -754,6 +759,85 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       },
     });
     expect(executeContributedAction).toHaveBeenCalledOnce();
+  });
+
+  it('accepts custody when the Action advances only the Account-wide sequence', async () => {
+    const afterCustody = { ...plainCurrentness, version: plainCurrentness.version + 1 };
+    const { handler, executeContributedAction } = createRegistration({
+      currentnessSequence: [plainCurrentness, plainCurrentness, afterCustody],
+    });
+
+    await expect(handler(request)).resolves.toMatchObject({
+      kind: 'settled',
+      settlement: { kind: 'accepted' },
+      accountCurrentness: {
+        mode: 'plain',
+        version: afterCustody.version,
+        contentKeyFingerprint: null,
+      },
+      receiptEnvelope: { t: 'plain' },
+    });
+    expect(executeContributedAction).toHaveBeenCalledOnce();
+  });
+
+  it('reports a retryable execution failure separately from a proven missing Action', async () => {
+    const { handler } = createRegistration({
+      execution: {
+        matched: true,
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_execution_failed',
+          error: 'The handler may have committed before its response failed.',
+        },
+      },
+    });
+
+    await expect(handler(request)).resolves.toEqual({
+      kind: 'unavailable',
+      code: 'actionExecutionFailed',
+    });
+  });
+
+  it('keeps a not-started generation retirement retryable instead of permanently blocking custody', async () => {
+    const { handler } = createRegistration({
+      execution: {
+        matched: true,
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_generation_retired',
+          error: 'The admitted Action generation retired before its handler began.',
+          actionHandlerInvocation: 'notStarted',
+        },
+      },
+    });
+
+    await expect(handler(request)).resolves.toEqual({
+      kind: 'unavailable',
+      code: 'actionExecutionFailed',
+    });
+  });
+
+  it('classifies cancellation during a not-started Action as retryable cancellation', async () => {
+    const controller = new AbortController();
+    const { handler } = createRegistration({
+      executeContributedAction: async () => {
+        controller.abort();
+        return {
+          matched: true,
+          result: {
+            ok: false,
+            errorCode: 'plugin_action_aborted',
+            error: 'The Action was cancelled before its handler began.',
+            actionHandlerInvocation: 'notStarted',
+          },
+        };
+      },
+    });
+
+    await expect(handler(request, { signal: controller.signal })).resolves.toEqual({
+      kind: 'unavailable',
+      code: 'cancelled',
+    });
   });
 
   it('preserves an accepted A custody result when B publishes during the Action', async () => {

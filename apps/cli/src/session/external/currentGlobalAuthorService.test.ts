@@ -180,6 +180,10 @@ function createCurrentOwner(
       source: Object.freeze({ kind: 'testSource' }),
       externalLinkedTakeoverWriterSafety: 'unsupported' as const,
     })),
+    admitPersistedTakeoverSource: vi.fn(() => Object.freeze({
+      source: Object.freeze({ kind: 'testSource' }),
+      externalLinkedTakeoverWriterSafety: 'unsupported' as const,
+    })),
     takeoverSourceOps: Object.freeze({
       resolveCurrentSource: vi.fn(async () => Object.freeze({
         source: Object.freeze({ kind: 'testSource' }),

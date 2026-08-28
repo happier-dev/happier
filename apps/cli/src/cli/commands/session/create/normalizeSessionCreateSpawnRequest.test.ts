@@ -84,7 +84,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
       agentModeId: 'plan',
       configOptions: { reasoning_effort: 'high' },
       title: 'Review',
-      initialMessage: 'Please review this branch.',
+      initialInput: { text: 'Please review this branch.' },
     }, createDeps());
 
     expect(normalized).toEqual({
@@ -116,7 +116,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
           },
         },
         title: 'Review',
-        initialMessage: 'Please review this branch.',
+        initialInput: { text: 'Please review this branch.' },
       },
     });
   });

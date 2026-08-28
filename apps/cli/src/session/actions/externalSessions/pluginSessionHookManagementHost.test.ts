@@ -1214,6 +1214,49 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
     });
 
+    it.each(['install', 'enable'] as const)(
+        'refuses %s with listener_unavailable before changing durable custody',
+        async (action) => {
+            const unavailableListener = Promise.reject<
+                QualifiedExternalSessionHookListener
+            >(new Error('listener unavailable'));
+            unavailableListener.catch(() => undefined);
+            const fixture = createFixture({
+                listener: unavailableListener,
+                dependencyOverrides: {
+                    readInstallationRecord: async () => (
+                        action === 'install'
+                            ? null
+                            : installationRecord('disabled')
+                    ),
+                },
+            });
+
+            const response = action === 'install'
+                ? await fixture.host.install({
+                    machineId: 'machine-1',
+                    agent,
+                    expectedPreviewId: fixtureExpectedPreviewId,
+                })
+                : await fixture.host.enable({
+                    machineId: 'machine-1',
+                    agent,
+                    installationId: fixtureHostInstallationId,
+                });
+
+            expect(response).toEqual({
+                ok: false,
+                diagnostic: {
+                    code: 'listener_unavailable',
+                    retryable: true,
+                },
+            });
+            expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+            expect(fixture.listener.createOrReuseCredential)
+                .not.toHaveBeenCalled();
+        },
+    );
+
     it('rejects an active installation recheck before Agent readiness when its ingress principal is not enabled', async () => {
         const fixture = createFixture();
         fixture.listener.readCredentialState.mockReturnValue({

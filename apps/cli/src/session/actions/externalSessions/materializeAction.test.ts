@@ -16,6 +16,7 @@ import type {
   SessionMetadata,
 } from '@happier-dev/protocol';
 import {
+  ExternalSessionOperationRecordV1Schema,
   resolveExternalSessionOperationTimelineV1,
 } from '@happier-dev/protocol';
 
@@ -737,6 +738,86 @@ describe('external session materialize action', () => {
       activeServerDir,
       completedInput.operationId,
     )).resolves.toMatchObject({ kind: 'terminal_receipt' });
+  });
+
+  it('cleans operation-owned workspace media before abandoned nonterminal staging', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-materialize-authoritative-abandonment-',
+    ));
+    roots.push(activeServerDir);
+    const base = terminalMaterializeRecord('discarded');
+    const { terminalResult: _terminalResult, ...withoutTerminal } = base;
+    const abandoned = ExternalSessionOperationRecordV1Schema.parse({
+      ...withoutTerminal,
+      operationId: 'external-materialize:authoritatively-abandoned',
+      revision: 2,
+      request: {
+        ...base.request,
+        idempotencyKey: 'authoritatively-abandoned',
+      },
+      status: 'running',
+      phase: 'staging',
+      updatedAtMs: 3,
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, abandoned);
+    const durableStaging = createExternalSessionOperationPrivateStagingStore({
+      activeServerDir,
+      limits: {
+        perOperation: { maxItems: 20, maxBytes: 50_000 },
+        aggregate: { maxItems: 40, maxBytes: 100_000 },
+      },
+    });
+    await durableStaging.beginOperation({
+      operationId: abandoned.operationId,
+      representation: 'content',
+      capturedSource: {
+        sourceIdentity: 'source-identity-1',
+        sourceGeneration: 'source-1',
+        revision: 'revision-1',
+        boundary: 'boundary-1',
+      },
+    });
+    const media = [{
+      workingDirectory: '/workspace',
+      candidateWorkspaceRelativePath: '.happier/uploads/uncommitted.png',
+    }];
+    await durableStaging.recordCreatedWorkspaceMedia({
+      operationId: abandoned.operationId,
+      media,
+    });
+    const order: string[] = [];
+    const staging: ExternalSessionOperationPrivateStagingStore = {
+      ...durableStaging,
+      async cleanupAbandonedOperation(input) {
+        order.push('staging');
+        return await durableStaging.cleanupAbandonedOperation(input);
+      },
+    };
+    const executor = createExternalSessionMaterializeActionExecutor({
+      activeServerDir,
+      operationExclusion: { acquire: vi.fn() },
+      staging,
+      garbageCollectWorkspaceMedia: vi.fn(async () => {
+        order.push('media');
+        return { deletedFiles: 1, deletedBytes: 1 };
+      }),
+      describeSource: vi.fn(),
+      readNewestFirstPages: async function* () {},
+      readFinalCatchUpPages: noFinalCatchUpPages,
+      sendHistoricalCommand: vi.fn(),
+    });
+
+    await expect(executor.cleanupAbandonedOperation?.(abandoned.operationId))
+      .resolves.toBe('cleaned');
+    expect(order).toEqual(['media', 'staging']);
+    await expect(durableStaging.cleanupAbandonedOperation({
+      operationId: abandoned.operationId,
+    })).resolves.toEqual({ status: 'missing' });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      abandoned.operationId,
+    )).resolves.toEqual(abandoned);
   });
 
   it('retains an acknowledged cancelled initial partial through immediate cleanup until exact server Discard discharges it', async () => {

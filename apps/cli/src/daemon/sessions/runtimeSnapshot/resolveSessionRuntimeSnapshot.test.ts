@@ -13,6 +13,7 @@ type RuntimeSnapshotModule = Readonly<{
     trackedSpawnOptions?: SpawnSessionOptions | null;
     persistedVendorResumeId?: string | null;
     trackedVendorResumeId?: string | null;
+    resolutionMode?: 'ordinary' | 'retained_live_process';
   }>) => Readonly<{
     snapshot: Readonly<{
       sessionId: string | null;
@@ -189,6 +190,138 @@ describe('resolveSessionRuntimeSnapshot', () => {
         modelId: 'provider-model',
       },
     });
+  });
+
+  it('keeps the retained live Provider model envelope while preserving a newer next-launch intent', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const retainedSelection = {
+      v: 1 as const,
+      updatedAt: 90,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'retained-model',
+      },
+    };
+    const retainedBinding = {
+      ...persistedProviderBinding,
+      model: { id: 'retained-model', name: 'Retained model' },
+    };
+    const persistedIntent = {
+      v: 1 as const,
+      updatedAt: 100,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'next-model',
+      },
+    };
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      resolutionMode: 'retained_live_process',
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        modelSelection: retainedSelection,
+        providerBindingMetadataV1: retainedBinding,
+      },
+      persistedMetadata: {
+        providerBindingV1: retainedBinding,
+        modelSelectionIntentV1: persistedIntent,
+      },
+    });
+
+    expect(result.spawnOptions.modelSelection).toEqual(retainedSelection);
+    expect(result.spawnOptions.providerBindingMetadataV1).toEqual(retainedBinding);
+    expect(result.snapshot.modelSelection).toEqual({
+      source: 'incoming',
+      value: retainedSelection.ref,
+      updatedAt: retainedSelection.updatedAt,
+    });
+    expect(result.spawnOptions).not.toHaveProperty('modelSelectionIntentV1');
+    expect((result as unknown as { persistedMetadata?: unknown }).persistedMetadata).toBeUndefined();
+    expect(persistedIntent.selection.modelId).toBe('next-model');
+  });
+
+  it.each([
+    ['native', { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native-next' }],
+    ['another Provider', { agentTargetKey: 'backend:codex', providerConnectionId: 'pc_other', modelId: 'other-next' }],
+  ] as const)(
+    'keeps the retained live Provider envelope when the next launch selects %s',
+    async (_label, nextSelection) => {
+      const runtimeSnapshot = await loadRuntimeSnapshotModule();
+      expect(runtimeSnapshot).not.toBeNull();
+      if (!runtimeSnapshot) return;
+      const retainedBinding = {
+        ...persistedProviderBinding,
+        model: { id: 'retained-model', name: 'Retained model' },
+      };
+      const retainedSelection = {
+        v: 1 as const,
+        updatedAt: 90,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_work',
+          modelId: 'retained-model',
+        },
+      };
+
+      const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+        resolutionMode: 'retained_live_process',
+        incomingOptions: {
+          directory: '/tmp/repo',
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          modelSelection: retainedSelection,
+          providerBindingMetadataV1: retainedBinding,
+        },
+        persistedMetadata: {
+          providerBindingV1: retainedBinding,
+          modelSelectionIntentV1: { v: 1, updatedAt: 100, selection: nextSelection },
+        },
+      });
+
+      expect(result.spawnOptions.modelSelection).toEqual(retainedSelection);
+      expect(result.spawnOptions.providerBindingMetadataV1).toEqual(retainedBinding);
+    },
+  );
+
+  it('keeps a retained native process native when the incoming request carries a next-launch Provider selection', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      resolutionMode: 'retained_live_process',
+      trackedSpawnOptions: {
+        directory: '/tmp/repo',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      },
+      incomingOptions: {
+        directory: '/tmp/repo',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        modelSelection: {
+          v: 1,
+          updatedAt: 100,
+          ref: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'next-model',
+          },
+        },
+        providerBindingMetadataV1: {
+          ...persistedProviderBinding,
+          model: { id: 'next-model', name: 'Next model' },
+        },
+      },
+      persistedMetadata: null,
+    });
+
+    expect(result.spawnOptions.modelSelection).toBeUndefined();
+    expect(result.spawnOptions.providerBindingMetadataV1).toBeUndefined();
   });
 
   it('refuses malformed persisted Provider continuity before runtime-state arbitration', async () => {

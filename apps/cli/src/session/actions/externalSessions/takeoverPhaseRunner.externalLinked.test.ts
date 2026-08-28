@@ -93,14 +93,20 @@ const noCommittedRuntimeBindingFailure = async (): Promise<
 > => null;
 
 describe('external-linked durable takeover continuation', () => {
-  it('fails unsupported writer safety before durable advance, exclusion, follow suspension, or spawn', async () => {
-    const writerSafety = 'unsupported' as const;
+  it('fails writer safety from the current admitted source before durable advance or spawn', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-'),
     );
     const record = externalLinkedRecord();
     const acquire = vi.fn();
-    const loadCurrent = vi.fn();
+    const loadCurrent = vi.fn(async () => ({
+      linked: {} as never,
+      pluginGeneration: record.request.source.contributionGeneration,
+      quiescenceIdentity: 'verified-source-and-process',
+      permitsAdmission: true,
+      hostedOwnerSessionId: null,
+      externalLinkedTakeoverWriterSafety: 'unsupported' as const,
+    }));
     const suspendSession = vi.fn();
     const spawnSession = vi.fn();
     const publishProgress = vi.fn();
@@ -109,7 +115,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion: { acquire },
-        resolveWriterSafety: async () => writerSafety,
         loadCurrent,
         followLeaseManager: {
           suspendSession,
@@ -135,7 +140,7 @@ describe('external-linked durable takeover continuation', () => {
       });
 
       expect(acquire).not.toHaveBeenCalled();
-      expect(loadCurrent).not.toHaveBeenCalled();
+      expect(loadCurrent).toHaveBeenCalledOnce();
       expect(suspendSession).not.toHaveBeenCalled();
       expect(spawnSession).not.toHaveBeenCalled();
       expect(publishProgress).not.toHaveBeenCalled();
@@ -172,6 +177,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: 'contribution-1',
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const loadCurrent = vi.fn()
@@ -189,7 +195,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent,
         followLeaseManager: {
           suspendSession: async () => true,
@@ -251,6 +256,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: 'contribution-1',
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const spawnSession = vi.fn();
@@ -259,7 +265,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent: async () => prepared,
         followLeaseManager: {
           suspendSession: async () => true,
@@ -305,7 +310,7 @@ describe('external-linked durable takeover continuation', () => {
     }
   });
 
-  it('revalidates source currentness immediately before launch', async () => {
+  it('revalidates current writer safety immediately before launch', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-final-fence-'),
     );
@@ -319,6 +324,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: 'contribution-1',
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const loadCurrent = vi.fn()
@@ -326,7 +332,7 @@ describe('external-linked durable takeover continuation', () => {
       .mockResolvedValueOnce(prepared)
       .mockResolvedValueOnce({
         ...prepared,
-        quiescenceIdentity: 'verified-source-and-process-2',
+        externalLinkedTakeoverWriterSafety: 'unsupported' as const,
       });
     const spawnSession = vi.fn();
     const spawnResolvedTakeoverSession = vi.fn();
@@ -335,7 +341,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent,
         followLeaseManager: {
           suspendSession: async () => true,
@@ -397,6 +402,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: 'contribution-1',
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const loadCurrent = vi.fn(async () => prepared);
@@ -417,7 +423,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent,
         followLeaseManager: {
           suspendSession: async () => true,
@@ -517,13 +522,13 @@ describe('external-linked durable takeover continuation', () => {
       remoteSessionId: record.request.source.remoteSessionId,
       linkGeneration: record.request.source.linkGeneration,
       source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
-      codexBackendMode: null,
     } as never;
     const prepared = {
       linked,
       pluginGeneration: record.request.source.contributionGeneration,
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     // The Server definitively refuses this exact attempt. The admission owner
@@ -576,7 +581,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent: async () => prepared,
         followLeaseManager: {
           suspendSession: async () => true,
@@ -665,6 +669,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: record.request.source.contributionGeneration,
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     let firstSpawned!: () => void;
@@ -718,7 +723,6 @@ describe('external-linked durable takeover continuation', () => {
     const runnerDependencies = {
       activeServerDir,
       operationExclusion,
-      resolveWriterSafety: async () => 'native_prevention' as const,
       loadCurrent: async () => prepared,
       followLeaseManager: {
         suspendSession: async () => true,
@@ -891,15 +895,13 @@ describe('external-linked durable takeover continuation', () => {
         phase,
         updatedAtMs: 3,
       };
-      const resolveWriterSafety = vi.fn(
-        async () => 'native_prevention' as const,
-      );
       const loadCurrent = vi.fn(async () => ({
         linked: {} as never,
         pluginGeneration:
           interrupted.request.source.contributionGeneration,
         quiescenceIdentity: 'verified-source-and-process-1',
         permitsAdmission: hostedOwnerSessionId === null,
+        externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
         hostedOwnerSessionId,
       }));
       const acquire = vi.fn();
@@ -992,7 +994,6 @@ describe('external-linked durable takeover continuation', () => {
           bindings: interrupted.bindings,
         });
         if (!repaired) throw new Error('expected passively repaired operation');
-        expect(resolveWriterSafety).not.toHaveBeenCalled();
         expect(loadCurrent).not.toHaveBeenCalled();
         expect(acquire).not.toHaveBeenCalled();
         expect(suspendSession).not.toHaveBeenCalled();
@@ -1009,7 +1010,6 @@ describe('external-linked durable takeover continuation', () => {
                 return await operationExclusion.acquire(request);
               },
             },
-            resolveWriterSafety,
             loadCurrent,
             followLeaseManager: {
               suspendSession,
@@ -1035,7 +1035,6 @@ describe('external-linked durable takeover continuation', () => {
           ok: false,
           error: { code: 'stale_revision' },
         });
-        expect(resolveWriterSafety).not.toHaveBeenCalled();
 
         await expect(runner.resume({
           sessionId: repaired.request.sessionId,
@@ -1048,7 +1047,6 @@ describe('external-linked durable takeover continuation', () => {
             phase: 'finalizing',
           },
         });
-        expect(resolveWriterSafety).toHaveBeenCalledOnce();
         expect(loadCurrent).toHaveBeenCalledTimes(3);
         expect(acquire).toHaveBeenCalledTimes(1);
         expect(suspendSession).toHaveBeenCalledTimes(1);
@@ -1065,7 +1063,6 @@ describe('external-linked durable takeover continuation', () => {
         expect(spawnSession).toHaveBeenCalledTimes(1);
 
         const effectCounts = {
-          writerSafety: resolveWriterSafety.mock.calls.length,
           loadCurrent: loadCurrent.mock.calls.length,
           acquire: acquire.mock.calls.length,
           suspend: suspendSession.mock.calls.length,
@@ -1082,7 +1079,6 @@ describe('external-linked durable takeover continuation', () => {
           error: { code: 'stale_revision' },
         });
         expect({
-          writerSafety: resolveWriterSafety.mock.calls.length,
           loadCurrent: loadCurrent.mock.calls.length,
           acquire: acquire.mock.calls.length,
           suspend: suspendSession.mock.calls.length,
@@ -1133,15 +1129,13 @@ describe('external-linked durable takeover continuation', () => {
       ownerId: 'external-linked-finalizing-restart-owner',
     });
     const acquire = vi.fn();
-    const resolveWriterSafety = vi.fn(
-      async () => 'native_prevention' as const,
-    );
     const loadCurrent = vi.fn(async () => ({
       linked: {} as never,
       pluginGeneration:
         interrupted.request.source.contributionGeneration,
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: hostedOwnerSessionId === null,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId,
     }));
     const suspendSession = vi.fn();
@@ -1179,7 +1173,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion: { acquire },
-        resolveWriterSafety,
         loadCurrent,
         followLeaseManager: {
           suspendSession,
@@ -1222,7 +1215,6 @@ describe('external-linked durable takeover continuation', () => {
         error: { code: 'not_allowed' },
       });
 
-      expect(resolveWriterSafety).toHaveBeenCalledOnce();
       expect(loadCurrent).toHaveBeenCalledOnce();
       expect(loadCurrent).toHaveBeenCalledWith(expect.objectContaining({
         revision: repaired.revision,
@@ -1270,7 +1262,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: vi.fn(),
         loadCurrent,
         followLeaseManager: {
           suspendSession: vi.fn(),
@@ -1341,7 +1332,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: vi.fn(),
         loadCurrent,
         followLeaseManager: {
           suspendSession: vi.fn(),
@@ -1393,11 +1383,11 @@ describe('external-linked durable takeover continuation', () => {
         remoteSessionId: 'remote-1',
         linkGeneration: 'link-1',
         source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
-        codexBackendMode: null,
       } as never,
       pluginGeneration: 'contribution-1',
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const loadCurrent = vi.fn(async () => prepared);
@@ -1464,7 +1454,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion: { acquire },
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent,
         followLeaseManager: { suspendSession, resumeSession },
         resolveSpawn,
@@ -1571,6 +1560,7 @@ describe('external-linked durable takeover continuation', () => {
       pluginGeneration: record.request.source.contributionGeneration,
       quiescenceIdentity: 'verified-source-and-process-1',
       permitsAdmission: true,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
       hostedOwnerSessionId: null,
     };
     const admissionLinked = {
@@ -1596,7 +1586,6 @@ describe('external-linked durable takeover continuation', () => {
       remoteSessionId: record.request.source.remoteSessionId,
       linkGeneration: record.request.source.linkGeneration,
       source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
-      codexBackendMode: null,
     } as never;
     const sendAdmissionCommand = vi.fn(async () => {
       throw new Error('acknowledgement lost after admission');
@@ -1612,6 +1601,7 @@ describe('external-linked durable takeover continuation', () => {
         pluginGeneration: record.request.source.contributionGeneration,
         quiescenceIdentity: 'verified-source-and-process-1',
         permitsAdmission: true,
+        externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
         hostedOwnerSessionId: null,
       }),
       nowMs: () => 60,
@@ -1688,7 +1678,6 @@ describe('external-linked durable takeover continuation', () => {
       const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
         activeServerDir,
         operationExclusion,
-        resolveWriterSafety: async () => 'native_prevention',
         loadCurrent: async () => prepared,
         followLeaseManager: {
           suspendSession: async () => true,

@@ -3439,7 +3439,9 @@ describe('external-session operation progress producer selection', () => {
     )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
-  it('prunes an expired selected predecessor before boot compacts its already-acknowledged completed successor', async () => {
+  it.each(['completed', 'cancelled', 'discarded'] as const)(
+    'prunes an expired selected predecessor before boot compacts its already-acknowledged %s successor',
+    async (successorStatus) => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-operation-completed-successor-predecessor-repair-',
@@ -3472,9 +3474,10 @@ describe('external-session operation progress producer selection', () => {
     })).resolves.toMatchObject({ status: 'compacted' });
 
     const successorInput = privateRecord({
-      operationId: 'operation-completed-successor-after-ack-crash',
+      operationId:
+        `operation-${successorStatus}-successor-after-ack-crash`,
       sessionId,
-      status: 'completed',
+      status: successorStatus,
       phase: 'finalizing',
       plan: 'takeover',
       targetStorageMode: 'external-linked',
@@ -3531,7 +3534,8 @@ describe('external-session operation progress producer selection', () => {
       activeServerDir,
       successor.operationId,
     )).resolves.toEqual(compactedSuccessor);
-  });
+    },
+  );
 
   it.each(['cleaned', 'missing'] as const)(
     'compacts an acknowledged materialize completion after terminal staging is %s and repeat repair is byte-stable',

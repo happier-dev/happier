@@ -144,6 +144,9 @@ export type ExternalSessionMaterializeActionExecutor = Readonly<{
   cleanupTerminalStaging?(
     operationId: string,
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'>;
+  cleanupAbandonedOperation?(
+    operationId: string,
+  ): Promise<'cleaned' | 'missing' | 'not_applicable'>;
 }>;
 
 type ImportBearingRequest =
@@ -502,6 +505,30 @@ export function createExternalSessionMaterializeActionExecutor(
     ?? readExternalSessionOperationSharedPresentation;
   const garbageCollectWorkspaceMedia = dependencies.garbageCollectWorkspaceMedia
     ?? garbageCollectUncommittedSessionMedia;
+  const cleanupOwnedWorkspaceMedia = async (operationId: string): Promise<void> => {
+    const ownedWorkspaceMedia = await dependencies.staging
+      .readCreatedWorkspaceMediaForCleanup({ operationId });
+    const pathsByWorkingDirectory = new Map<string, string[]>();
+    for (const owned of ownedWorkspaceMedia) {
+      const paths = pathsByWorkingDirectory.get(owned.workingDirectory) ?? [];
+      paths.push(owned.candidateWorkspaceRelativePath);
+      pathsByWorkingDirectory.set(owned.workingDirectory, paths);
+    }
+    for (const [workingDirectory, candidateWorkspaceRelativePaths] of pathsByWorkingDirectory) {
+      const cleaned = await garbageCollectWorkspaceMedia({
+        workingDirectory,
+        candidateWorkspaceRelativePaths,
+        reason: 'interrupted_ingestion',
+      });
+      if (cleaned === null) {
+        throw new Error('historical_import_staged_media_cleanup_failed');
+      }
+    }
+    await dependencies.staging.acknowledgeCreatedWorkspaceMediaCleanup({
+      operationId,
+      media: ownedWorkspaceMedia,
+    });
+  };
   const cleanupTerminalStaging = async (
     operationId: string,
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'> => {
@@ -517,28 +544,7 @@ export function createExternalSessionMaterializeActionExecutor(
       return 'not_terminal';
     }
     if (current.status === 'discarded') {
-      const ownedWorkspaceMedia = await dependencies.staging
-        .readCreatedWorkspaceMediaForCleanup({ operationId });
-      const pathsByWorkingDirectory = new Map<string, string[]>();
-      for (const owned of ownedWorkspaceMedia) {
-        const paths = pathsByWorkingDirectory.get(owned.workingDirectory) ?? [];
-        paths.push(owned.candidateWorkspaceRelativePath);
-        pathsByWorkingDirectory.set(owned.workingDirectory, paths);
-      }
-      for (const [workingDirectory, candidateWorkspaceRelativePaths] of pathsByWorkingDirectory) {
-        const cleaned = await garbageCollectWorkspaceMedia({
-          workingDirectory,
-          candidateWorkspaceRelativePaths,
-          reason: 'interrupted_ingestion',
-        });
-        if (cleaned === null) {
-          throw new Error('historical_import_staged_media_cleanup_failed');
-        }
-      }
-      await dependencies.staging.acknowledgeCreatedWorkspaceMediaCleanup({
-        operationId,
-        media: ownedWorkspaceMedia,
-      });
+      await cleanupOwnedWorkspaceMedia(operationId);
     }
     const cleaned = await dependencies.staging.cleanupTerminalOperation({
       operationId,
@@ -558,6 +564,21 @@ export function createExternalSessionMaterializeActionExecutor(
       });
     }
     return stagingDisposition;
+  };
+  const cleanupAbandonedOperation = async (
+    operationId: string,
+  ): Promise<'cleaned' | 'missing' | 'not_applicable'> => {
+    const current = await readRecord(dependencies.activeServerDir, operationId);
+    if (!current) return 'missing';
+    if (!isImportBearingRequest(current.request)) return 'not_applicable';
+    await cleanupOwnedWorkspaceMedia(operationId);
+    const cleaned = await dependencies.staging.cleanupAbandonedOperation({
+      operationId,
+    });
+    if (cleaned.status === 'not_ready') {
+      throw new Error('historical_import_abandoned_staging_cleanup_not_ready');
+    }
+    return cleaned.status === 'completed' ? 'cleaned' : 'missing';
   };
   const activeCancellationByOperationId = new Map<string, AbortController>();
   const discardingOperationIds = new Set<string>();
@@ -2262,6 +2283,7 @@ export function createExternalSessionMaterializeActionExecutor(
 
   return Object.freeze({
     cleanupTerminalStaging,
+    cleanupAbandonedOperation,
 
     async status(raw) {
       const parsed = ExternalSessionOperationStatusInputV1Schema.safeParse(raw);

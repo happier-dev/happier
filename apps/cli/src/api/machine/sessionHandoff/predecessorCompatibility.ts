@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ConnectedServiceBindingsV1Schema,
+  normalizeCodexBackendMode,
   projectRuntimeDescriptorV1ForPredecessor,
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
@@ -22,6 +23,161 @@ import type {
 } from '../../../session/shared/spawnSessionContract';
 
 type JsonRecord = Record<string, unknown>;
+
+// Immutable request vectors from cli-v0.2.1. These schemas deliberately live
+// at the released compatibility seam: current Protocol handoff schemas are
+// additive/passthrough and therefore cannot freeze the unversioned methods.
+const RELEASED_HANDOFF_ID_MAX = 256;
+const RELEASED_MACHINE_ID_MAX = 256;
+const RELEASED_PATH_MAX = 4096;
+const RELEASED_ENDPOINT_URL_MAX = 2048;
+const RELEASED_ENDPOINT_TOKEN_MAX = 2048;
+const RELEASED_ENDPOINTS_MAX = 20;
+const RELEASED_TRANSFER_ID_MAX = 512;
+const RELEASED_MANIFEST_HASH_MAX = 256;
+const RELEASED_INCLUDE_GLOBS_MAX = 128;
+const RELEASED_METADATA_KEYS_MAX = 50;
+const RELEASED_METADATA_BYTES_MAX = 32 * 1024;
+
+const ReleasedEndpointCandidateSchema = z.object({
+  kind: z.enum(['tcp', 'http', 'https']),
+  url: z.string().min(1).max(RELEASED_ENDPOINT_URL_MAX),
+  authorizationToken: z.string().min(1).max(RELEASED_ENDPOINT_TOKEN_MAX).optional(),
+  expiresAt: z.number().int().nonnegative(),
+}).strict().superRefine((value, context) => {
+  try {
+    if (new URL(value.url).protocol !== `${value.kind}:`) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message: `Transfer endpoint candidate URL must use the ${value.kind}: scheme`,
+      });
+    }
+  } catch {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['url'],
+      message: 'Transfer endpoint candidates need an absolute URL',
+    });
+  }
+});
+
+const ReleasedWorkspaceTransferSchema = z.object({
+  enabled: z.boolean(),
+  strategy: z.enum(['transfer_snapshot', 'sync_changes']).default('transfer_snapshot'),
+  conflictPolicy: z.enum(['create_sibling_copy', 'replace_existing']),
+  includeIgnoredMode: z.enum(['exclude', 'include_selected']).default('exclude'),
+  ignoredIncludeGlobs: z.array(z.string().min(1).max(512))
+    .max(RELEASED_INCLUDE_GLOBS_MAX).readonly().default(() => []),
+}).strict().superRefine((value, context) => {
+  if (value.strategy === 'sync_changes' && value.conflictPolicy === 'create_sibling_copy') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['conflictPolicy'],
+      message: 'conflictPolicy=create_sibling_copy is not supported for workspaceTransfer.strategy=sync_changes',
+    });
+  }
+});
+
+const ReleasedBundlePublicationSchema = z.object({
+  transferId: z.string().min(1).max(RELEASED_TRANSFER_ID_MAX),
+  sizeBytes: z.number().int().min(0),
+  manifestHash: z.string().min(1).max(RELEASED_MANIFEST_HASH_MAX),
+  endpointCandidates: z.array(ReleasedEndpointCandidateSchema).max(RELEASED_ENDPOINTS_MAX).readonly().optional(),
+}).strict();
+
+const ReleasedManifestPublicationSchema = z.object({
+  transferId: z.string().min(1).max(RELEASED_TRANSFER_ID_MAX),
+  endpointCandidates: z.array(ReleasedEndpointCandidateSchema).max(RELEASED_ENDPOINTS_MAX).readonly().optional(),
+}).strict();
+
+const ReleasedMetadataV2Schema = z.object({
+  providerBundleTransferPublication: ReleasedBundlePublicationSchema.optional(),
+  workspaceReplicationSourceRootPath: z.string().min(1).max(RELEASED_PATH_MAX).optional(),
+  workspaceReplicationHandoffBackTargetRootPath: z.string().min(1).max(RELEASED_PATH_MAX).optional(),
+  workspaceReplicationManifestTransferPublication: ReleasedManifestPublicationSchema.optional(),
+  workspaceReplicationSourceControllerMetadata: z.record(z.string().min(1).max(128), z.unknown())
+    .superRefine((value, context) => {
+      if (Object.keys(value).length > RELEASED_METADATA_KEYS_MAX) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'workspaceReplicationSourceControllerMetadata is too large' });
+      }
+      let encoded: string;
+      try {
+        encoded = JSON.stringify(value);
+      } catch {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'workspaceReplicationSourceControllerMetadata is too large' });
+        return;
+      }
+      if (new TextEncoder().encode(encoded).length > RELEASED_METADATA_BYTES_MAX) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'workspaceReplicationSourceControllerMetadata is too large' });
+      }
+    }).optional(),
+}).strict();
+
+const ReleasedStartRequestSchema = z.object({
+  sessionId: z.string().min(1).max(RELEASED_HANDOFF_ID_MAX),
+  sourceMachineId: z.string().min(1).max(RELEASED_MACHINE_ID_MAX),
+  targetMachineId: z.string().min(1).max(RELEASED_MACHINE_ID_MAX),
+  sessionStorageMode: z.enum(['direct', 'persisted']),
+  preferredTransportStrategies: z.array(z.enum(['direct_peer', 'server_routed_stream']))
+    .min(1).max(4).readonly(),
+  negotiatedTransportStrategy: z.enum(['direct_peer', 'server_routed_stream']).optional(),
+  workspaceTransfer: ReleasedWorkspaceTransferSchema.optional(),
+}).strict();
+
+const ReleasedPrepareTargetRequestSchema = z.object({
+  handoffId: z.string().min(1).max(RELEASED_HANDOFF_ID_MAX),
+  sourceMachineId: z.string().min(1).max(RELEASED_MACHINE_ID_MAX),
+  targetMachineId: z.string().min(1).max(RELEASED_MACHINE_ID_MAX),
+  negotiatedTransportStrategy: z.enum(['direct_peer', 'server_routed_stream']),
+  allowServerRoutedFallback: z.boolean().optional(),
+  sourceSessionStorageMode: z.enum(['direct', 'persisted']),
+  targetSessionStorageMode: z.enum(['direct', 'persisted']).optional(),
+  targetPath: z.string().min(1).max(RELEASED_PATH_MAX),
+  endpointCandidates: z.array(ReleasedEndpointCandidateSchema).max(RELEASED_ENDPOINTS_MAX).readonly().default(() => []),
+  handoffMetadataV2: ReleasedMetadataV2Schema.optional(),
+  workspaceTransfer: ReleasedWorkspaceTransferSchema.optional(),
+}).strict();
+
+const ReleasedResultGetRequestSchema = z.object({
+  handoffId: z.string().min(1).max(RELEASED_HANDOFF_ID_MAX),
+}).strict();
+
+const ReleasedCommitRequestSchema = z.object({
+  handoffId: z.string().min(1).max(RELEASED_HANDOFF_ID_MAX),
+  mode: z.enum(['target', 'source_cleanup']).optional(),
+  workspaceReplicationReverseSourceRootPath: z.string().min(1).max(RELEASED_PATH_MAX).optional(),
+  workspaceReplicationReverseTargetRootPath: z.string().min(1).max(RELEASED_PATH_MAX).optional(),
+}).strict();
+
+const ReleasedAbortRequestSchema = z.object({
+  handoffId: z.string().min(1).max(RELEASED_HANDOFF_ID_MAX),
+  reason: z.string().min(1).max(1024),
+}).strict();
+
+const RELEASED_REQUEST_SCHEMA_BY_METHOD = Object.freeze({
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_START]: ReleasedStartRequestSchema,
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET]: ReleasedPrepareTargetRequestSchema,
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET]: ReleasedResultGetRequestSchema,
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT]: ReleasedCommitRequestSchema,
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT]: ReleasedAbortRequestSchema,
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET]: ReleasedResultGetRequestSchema,
+} satisfies Readonly<Record<string, z.ZodType>>);
+
+export function projectReleasedSessionHandoffRequestForMethod(
+  method: string,
+  input: unknown,
+): Readonly<
+  | { accepted: true; input: unknown }
+  | { accepted: false; response: Readonly<{ ok: false; errorCode: 'invalid_request' }> }
+> {
+  const schema = RELEASED_REQUEST_SCHEMA_BY_METHOD[method as keyof typeof RELEASED_REQUEST_SCHEMA_BY_METHOD];
+  if (!schema) return { accepted: true, input };
+  const parsed = schema.safeParse(input);
+  return parsed.success
+    ? { accepted: true, input: parsed.data }
+    : { accepted: false, response: { ok: false, errorCode: 'invalid_request' } };
+}
 
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -175,9 +331,15 @@ function projectMetadata(value: unknown): unknown {
   };
 }
 
-function projectResume(value: unknown): unknown {
+function projectResume(value: unknown, runtimeDescriptorV1?: unknown): unknown {
   const resume = asRecord(value);
   if (!resume) return value;
+  const descriptor = asRecord(runtimeDescriptorV1);
+  const descriptorAgent = asRecord(descriptor?.agent);
+  const codexBackendMode = normalizeCodexBackendMode(
+    resume.codexBackendMode
+      ?? (descriptor?.agentId === 'codex' ? descriptorAgent?.backendMode : undefined),
+  ) ?? undefined;
   return {
     directory: resume.directory,
     agent: resume.agent,
@@ -187,9 +349,7 @@ function projectResume(value: unknown): unknown {
       : {}),
     transcriptStorage: resume.transcriptStorage,
     approvedNewDirectoryCreation: resume.approvedNewDirectoryCreation,
-    ...(resume.codexBackendMode !== undefined
-      ? { codexBackendMode: resume.codexBackendMode }
-      : {}),
+    ...(codexBackendMode ? { codexBackendMode } : {}),
   };
 }
 
@@ -231,7 +391,9 @@ export function projectSessionHandoffPrepareTargetResponseForPredecessor(
             projectRuntimeDescriptorV1ForPredecessor(response.runtimeDescriptorV1),
         }
       : {}),
-    ...(response.resume !== undefined ? { resume: projectResume(response.resume) } : {}),
+    ...(response.resume !== undefined
+      ? { resume: projectResume(response.resume, response.runtimeDescriptorV1) }
+      : {}),
   };
 }
 
@@ -250,6 +412,33 @@ function projectStatusResponseForPredecessor(value: unknown): unknown {
       ? { targetCleanup: response.targetCleanup }
       : {}),
   };
+}
+
+/**
+ * The six immutable released RPC spellings are the compatibility
+ * discriminator. Current V3 methods never enter this projection.
+ */
+export function projectReleasedSessionHandoffResponseForMethod(
+  method: string,
+  value: unknown,
+): unknown {
+  if (method === RPC_METHODS.DAEMON_SESSION_HANDOFF_START) {
+    return projectSessionHandoffResponseForPredecessor('start', value);
+  }
+  if (
+    method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET
+    || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET
+  ) {
+    return projectSessionHandoffResponseForPredecessor('prepare', value);
+  }
+  if (
+    method === RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT
+    || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT
+    || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET
+  ) {
+    return projectStatusResponseForPredecessor(value);
+  }
+  return value;
 }
 
 export function projectSessionHandoffResponseForPredecessor(

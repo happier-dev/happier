@@ -187,6 +187,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       defaultSessionId: context.defaultSessionId,
       ...(context.serverId ? { serverId: context.serverId } : {}),
       surface: 'agent',
+      authority: 'account_automation',
       placement: null,
       ...(context.callerPermissionMode ? { callerPermissionMode: context.callerPermissionMode } : {}),
     });

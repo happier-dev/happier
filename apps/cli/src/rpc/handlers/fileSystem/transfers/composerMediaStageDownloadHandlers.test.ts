@@ -140,7 +140,28 @@ describe('Composer media stage download handler', () => {
       executionTarget,
       owner,
     })).resolves.toMatchObject({ status: 'ready' });
-    await expect(release({ handle: finalized.handle })).resolves.toEqual({ success: true });
-    await expect(release({ handle: finalized.handle })).resolves.toEqual({ success: true });
+    const claimant = {
+      composer: { kind: 'session' as const, sessionId: 'session-1' },
+      attachmentInstanceId: 'attachment-1',
+    };
+    await expect(store.claim({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toEqual({ status: 'claimed' });
+    await expect(release({
+      handle: finalized.handle,
+      claimant: {
+        composer: { kind: 'session', sessionId: 'session-2' },
+        attachmentInstanceId: 'attachment-1',
+      },
+    })).resolves.toEqual({ success: false, error: 'Composer media stage is unavailable' });
+    await expect(release({ handle: finalized.handle })).resolves.toEqual({
+      success: false,
+      error: 'Composer media stage is unavailable',
+    });
+    await expect(release({ handle: finalized.handle, claimant })).resolves.toEqual({ success: true });
+    await expect(release({ handle: finalized.handle, claimant })).resolves.toEqual({ success: true });
   });
 });

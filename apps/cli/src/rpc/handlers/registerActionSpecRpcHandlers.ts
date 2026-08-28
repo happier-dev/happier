@@ -69,6 +69,18 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
         isAlias: boolean;
         response: unknown;
     }>) => unknown | Promise<unknown>;
+    mapRequestForMethod?: (context: Readonly<{
+        actionId: ActionId;
+        method: string;
+        isAlias: boolean;
+        input: unknown;
+    }>) => Readonly<
+        | { accepted: true; input: unknown }
+        | { accepted: false; response: unknown }
+    > | Promise<Readonly<
+        | { accepted: true; input: unknown }
+        | { accepted: false; response: unknown }
+    >>;
 }>;
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -221,12 +233,23 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
         const handleAction = async (
             input: unknown,
             context?: RpcHandlerContext,
+            method: string = rpcMethod,
+            isAlias: boolean = method !== rpcMethod,
         ) => {
             const typedActionId = actionId as ActionId;
+            const mappedRequest = await params.mapRequestForMethod?.({
+                actionId: typedActionId,
+                method,
+                isAlias,
+                input,
+            }) ?? { accepted: true as const, input };
+            if (!mappedRequest.accepted) {
+                return mappedRequest.response;
+            }
             const rpcBinding = spec.surfaceBindings?.rpc;
-            let semanticInput = input;
+            let semanticInput = mappedRequest.input;
             if (rpcBinding) {
-                const transportInput = rpcBinding.inputSchema.safeParse(input);
+                const transportInput = rpcBinding.inputSchema.safeParse(mappedRequest.input);
                 if (!transportInput.success) {
                     return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
                 }
@@ -315,11 +338,12 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                 input: unknown,
                 context?: RpcHandlerContext,
             ) => {
-                const response = await handleAction(input, context);
+                const isAlias = method !== rpcMethod;
+                const response = await handleAction(input, context, method, isAlias);
                 return await params.mapResponseForMethod?.({
                     actionId: actionId as ActionId,
                     method,
-                    isAlias: method !== rpcMethod,
+                    isAlias,
                     response,
                 }) ?? response;
             });

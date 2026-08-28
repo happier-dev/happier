@@ -50,6 +50,35 @@ function createRpcHarness() {
 }
 
 describe('ActionSpec-derived RPC registrar', () => {
+    it('lets one compatibility seam reject an alias request before canonical Action dispatch', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        const execute = vi.fn(async () => ({ ok: true as const, result: null }));
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute },
+            actionSpecs: [{
+                id: 'session.handoff',
+                surfaces: { rpc: true },
+                bindings: {
+                    rpcMethod: 'daemon.sessionHandoff.start.v3',
+                    rpcMethodAliases: ['daemon.sessionHandoff.start'],
+                },
+            }],
+            mapRequestForMethod: ({ method, input }) => method.endsWith('.v3')
+                ? { accepted: true, input }
+                : { accepted: false, response: { ok: false, errorCode: 'invalid_request' } },
+        });
+
+        await expect(handlers.get('daemon.sessionHandoff.start')?.({ currentOnly: true }))
+            .resolves.toEqual({ ok: false, errorCode: 'invalid_request' });
+        expect(execute).not.toHaveBeenCalled();
+
+        await expect(handlers.get('daemon.sessionHandoff.start.v3')?.({ currentOnly: true }))
+            .resolves.toBeNull();
+        expect(execute).toHaveBeenCalledOnce();
+    });
+
     it('projects only strict execution-run start certainty across the generated RPC seam', async () => {
         const module = await import('./registerActionSpecRpcHandlers');
         expect(module.unwrapActionResultForRpc('execution.run.start', {
@@ -159,7 +188,7 @@ describe('ActionSpec-derived RPC registrar', () => {
         expect(execute).toHaveBeenCalledWith(
             'sessions.external.operation.status.get',
             { operationId: 'operation-1' },
-            { surface: 'rpc' },
+            { surface: 'rpc', authority: 'present_user' },
         );
     });
 
@@ -229,6 +258,7 @@ describe('ActionSpec-derived RPC registrar', () => {
             { request: { idempotencyKey: 'takeover-1' } },
             {
                 surface: 'rpc',
+                authority: 'present_user',
                 signal: controller.signal,
             },
         );
@@ -301,6 +331,7 @@ describe('ActionSpec-derived RPC registrar', () => {
                 context: {
                     defaultSessionId: 'parent-session',
                     surface: 'rpc',
+                    authority: 'present_user',
                 },
             },
             {
@@ -309,6 +340,7 @@ describe('ActionSpec-derived RPC registrar', () => {
                 context: {
                     serverId: 'server-1',
                     surface: 'rpc',
+                    authority: 'present_user',
                 },
             },
         ]);
@@ -418,7 +450,7 @@ describe('ActionSpec-derived RPC registrar', () => {
             {
                 actionId: 'reviews.comments.create',
                 input: { projectId: 'project-1' },
-                context: { surface: 'rpc' },
+                context: { surface: 'rpc', authority: 'present_user' },
             },
         ]);
     });

@@ -64,6 +64,7 @@ function sameSelectedTarget(
 
 function exactHeaders(
   raw: Readonly<Record<string, string>>,
+  requiredHeaderNames: readonly string[],
   allowedHeaderNames: readonly string[],
 ): Readonly<Record<string, string>> | null {
   const allowed = new Set(allowedHeaderNames.map((name) => name.toLowerCase()));
@@ -78,7 +79,7 @@ function exactHeaders(
     ) return null;
     normalized.set(name, value);
   }
-  if (normalized.size !== allowed.size) return null;
+  if (requiredHeaderNames.some((name) => !normalized.has(name.toLowerCase()))) return null;
   return Object.freeze(Object.fromEntries(normalized));
 }
 
@@ -187,7 +188,12 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
         // resolution against that authority before and after materialization.
         const expectedSelection = request.data.expectedSelection;
         const materialization = await connectedAccounts.materialize({
-          purpose: identity.purpose,
+          // The slot purpose above owns source selection. Recipient
+          // materialization is authorized for this exact operation purpose.
+          purpose: {
+            consumer: identity.contribution,
+            purpose: operation.purpose,
+          },
           serviceRefs: Object.freeze([selectedService]),
           ...(expectedSelection.kind === 'account'
             ? { expectedAccount: expectedSelection.account }
@@ -206,7 +212,11 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           machineId: null,
         });
         if (JSON.stringify(after.selection) !== JSON.stringify(before.selection)) return failure(null);
-        const headers = exactHeaders(materialization.headers, projection.allowedHeaderNames);
+        const headers = exactHeaders(
+          materialization.headers,
+          projection.requiredHeaderNames,
+          projection.allowedHeaderNames,
+        );
         if (!headers) {
           return Object.freeze({
             ok: false as const,

@@ -617,7 +617,7 @@ export async function repairExternalSessionOperationProgressProjections(
           },
           async () => {
             if (
-              terminalRecord.status === 'completed'
+              isCompactableSettledRecord(terminalRecord)
               && terminalRecord.progressProjection.acknowledgedRevision
                 === terminalRecord.revision
             ) {

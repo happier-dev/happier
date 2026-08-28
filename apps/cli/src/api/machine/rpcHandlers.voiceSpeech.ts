@@ -352,6 +352,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
             phase: VoiceSpeechCredentialPhase,
             signal: AbortSignal,
             isCurrent: () => boolean,
+            isCredentialCurrent: () => boolean,
           ) => VoiceSpeechCredentialAccess['mediated'])
         | null = null;
       if (
@@ -378,7 +379,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         if (lifecycle) {
           const voiceProviders = lease.registry.contributes.voiceProviders ?? [];
           const transport = createGlobalFetchRuntime();
-          createMediatedOperationAccess = (phase, signal, isCurrent) => {
+          createMediatedOperationAccess = (phase, signal, isCurrent, isCredentialCurrent) => {
             if (!hasDeclaredMediatedSpeechAccess(phase)) return null;
             return createVoiceAccountOperationService({
               voiceProviders,
@@ -390,6 +391,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                 getSnapshot: readAccountSettingsSnapshot,
               }),
               isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
+              isCredentialCurrent,
               signal,
               transport,
             });
@@ -480,7 +482,12 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
               const credentials = resolveSpeechCredentialAccess({
                 phase,
                 admission,
-                mediated: createMediatedOperationAccess?.(phase, signal, isOperationCurrent) ?? null,
+                mediated: createMediatedOperationAccess?.(
+                  phase,
+                  signal,
+                  isCurrent,
+                  admission.isAuthorityCurrent,
+                ) ?? null,
                 raw: rawCredentialMaterializers.get(phase)
                   ? createInvocationVoiceRawCredentialAccess({
                       materializer: rawCredentialMaterializers.get(phase)!,

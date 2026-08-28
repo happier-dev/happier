@@ -25,7 +25,7 @@ export type SessionCreateSpawnRequest = Readonly<{
   directory: string;
   backendTargetKey: string | null;
   title?: string;
-  initialMessage?: string;
+  initialInput?: Readonly<{ text: string }>;
   modelId?: string;
   providerConnectionId?: string;
   permissionMode?: string;
@@ -308,7 +308,7 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
       directory: path,
       backendTargetKey,
       ...(title ? { title } : {}),
-      ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
+      ...(initialPrompt ? { initialInput: { text: initialPrompt } } : {}),
       ...(modelId ? { modelId } : {}),
       ...(providerConnectionId ? { providerConnectionId } : {}),
       ...(permissionMode ? { permissionMode } : {}),

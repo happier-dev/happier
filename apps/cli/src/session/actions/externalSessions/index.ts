@@ -1,7 +1,4 @@
 export {
-    resolveTakeoverReadinessCacheMs,
-} from './actionConfiguration';
-export {
     type ExternalSessionActionContext,
     type ExternalSessionTakeoverActionInput,
 } from './externalSessionActionContext';

@@ -1,17 +1,22 @@
 import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
+  AgentExecutionTargetV1Schema,
   AgentSessionStartupInstructionsV1Schema,
   RuntimeDescriptorV1Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
   SessionCreationCorrespondenceV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
+  SessionInputRequestV1Schema,
+  SessionMessageProvenanceV1Schema,
+  SessionUserMessageSendRequestSchema,
   SessionModelSelectionV1Schema,
   SessionCreationTagV1Schema,
   SessionProviderBindingSecurityChangeConfirmationV1Schema,
   SpawnSessionExecutionAuthorizationSchema,
   buildBackendTargetKeyV2,
+  type AgentExecutionTargetV1,
   type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 
@@ -65,13 +70,13 @@ type CanonicalSpawnBackendTarget = BackendTargetRefV2;
 
 export type SpawnDaemonSessionRequest = Omit<
   SpawnSessionOptions,
-  | 'experimentalCodexAcp'
   | 'backendTarget'
   | 'providerBindingMetadataV1'
 > & {
   /** Private machine transport discriminator retained for lifecycle routing. */
   type?: 'spawn-in-directory' | 'resume-session';
   backendTarget?: BackendTargetRefV2;
+  agentTarget?: AgentExecutionTargetV1;
 };
 
 export function canonicalizeSpawnBackendTargetFromTransportInput(params: Readonly<{
@@ -117,11 +122,40 @@ function canonicalizeSpawnDaemonSessionRequestIngress(value: unknown): unknown {
   }
 
   const request = value as Record<string, unknown>;
-  const { runtimeDescriptorV1 } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-    runtimeDescriptorV1: request.runtimeDescriptorV1,
-    legacyAgentRuntimeDescriptorV1: request.agentRuntimeDescriptorV1,
-  });
-  const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = request;
+  if (
+    request.codexBackendMode !== undefined
+    && request.codexBackendMode !== 'mcp'
+    && request.codexBackendMode !== 'acp'
+    && request.codexBackendMode !== 'appServer'
+  ) {
+    return value;
+  }
+  if (
+    request.experimentalCodexAcp !== undefined
+    && typeof request.experimentalCodexAcp !== 'boolean'
+  ) {
+    return value;
+  }
+  const runtimeSelection = (() => {
+    try {
+      return readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+        codexBackendMode: request.codexBackendMode,
+        experimentalCodexAcp: request.experimentalCodexAcp,
+        runtimeDescriptorV1: request.runtimeDescriptorV1,
+        legacyAgentRuntimeDescriptorV1: request.agentRuntimeDescriptorV1,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  if (!runtimeSelection) return value;
+  const { runtimeDescriptorV1 } = runtimeSelection;
+  const {
+    agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1,
+    codexBackendMode: _legacyCodexBackendMode,
+    experimentalCodexAcp: _legacyExperimentalCodexAcp,
+    ...rest
+  } = request;
 
   return runtimeDescriptorV1
     ? {
@@ -141,8 +175,24 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   sessionCreationCorrespondence: SessionCreationCorrespondenceV1Schema.optional(),
   initialTitle: z.string().trim().min(1).optional(),
   pendingFirstInput: z.object({
-    text: z.string().refine((value) => value.trim().length > 0),
+    text: z.string(),
     localId: z.string().refine((value) => value.trim().length > 0),
+    meta: z.record(z.string(), z.unknown()).optional(),
+    inputAdmission: z.object({
+      provenance: SessionMessageProvenanceV1Schema,
+      request: SessionInputRequestV1Schema,
+    }).strict().optional(),
+  }).strict().superRefine((value, ctx) => {
+    const parsed = SessionUserMessageSendRequestSchema.safeParse({
+      text: value.text,
+      meta: value.meta ?? {},
+    });
+    if (parsed.success) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['text'],
+      message: 'Pending first input requires text or a valid Composer attachment.',
+    });
   }).optional(),
   accountSettingsVersionHint: z.number().int().min(0).optional(),
   sessionId: z.string().trim().min(1).optional(),
@@ -154,9 +204,6 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   nativeForkSource: NativeForkSourceSchema.optional(),
   agentSessionStartupInstructionsV1:
     AgentSessionStartupInstructionsV1Schema.optional(),
-  experimentalCodexAcp: z.boolean().optional(),
-  backendMode: z.string().trim().min(1).optional(),
-  codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   permissionMode: SpawnSessionPermissionModeSchema.optional(),
   permissionModeUpdatedAt: z.number().int().optional(),
@@ -168,6 +215,7 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   providerBindingSecurityChangeConfirmationV1: SessionProviderBindingSecurityChangeConfirmationV1Schema.optional(),
   sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
   backendTarget: z.any().optional(),
+  agentTarget: AgentExecutionTargetV1Schema.optional(),
   agent: z.string().trim().min(1).optional(),
   terminal: SpawnSessionTerminalSchema.optional(),
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
@@ -214,9 +262,6 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     return z.NEVER;
   }
   const {
-    experimentalCodexAcp: _experimentalCodexAcp,
-    backendMode,
-    codexBackendMode,
     agent,
     approvedNewDirectoryCreation,
     modelId: legacyModelId,
@@ -239,11 +284,15 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     });
     return z.NEVER;
   }
-  const targetKey = canonicalBackendTarget ? buildBackendTargetKeyV2(canonicalBackendTarget) : null;
+  const targetKey = rest.agentTarget
+    ? buildBackendTargetKeyV2(rest.agentTarget)
+    : canonicalBackendTarget
+      ? buildBackendTargetKeyV2(canonicalBackendTarget)
+      : null;
   if (rest.modelSelection && (!targetKey || rest.modelSelection.ref.agentTargetKey !== targetKey)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Model selection agent target must match backendTarget',
+      message: 'Model selection agent target must match the selected target',
       path: ['modelSelection', 'ref', 'agentTargetKey'],
     });
     return z.NEVER;
@@ -252,8 +301,8 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
   if (normalizedLegacyModelId && !targetKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'backendTarget is required when modelId is provided',
-      path: ['backendTarget'],
+      message: 'An Agent or backend target is required when modelId is provided',
+      path: ['agentTarget'],
     });
     return z.NEVER;
   }
@@ -265,12 +314,11 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     })
     : undefined);
   const {
-    codexBackendMode: canonicalCodexBackendMode,
     runtimeDescriptorV1,
   } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-    backendMode,
-    codexBackendMode,
-    experimentalCodexAcp: _experimentalCodexAcp,
+    agentId: canonicalBackendTarget?.sourceKind === 'built_in'
+      ? canonicalBackendTarget.backendId
+      : undefined,
     runtimeDescriptorV1: request.runtimeDescriptorV1,
   });
 
@@ -279,9 +327,7 @@ export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSc
     ...(approvedNewDirectoryCreation !== undefined ? { approvedNewDirectoryCreation } : {}),
     ...(canonicalBackendTarget ? { backendTarget: canonicalBackendTarget } : {}),
     ...(modelSelection ? { modelSelection } : {}),
-    ...(backendMode ? { backendMode } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
 }) as z.ZodType<SpawnDaemonSessionRequest>;
 
@@ -298,8 +344,6 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'resume',
   'nativeForkSource',
   'agentSessionStartupInstructionsV1',
-  'backendMode',
-  'codexBackendMode',
   'runtimeDescriptorV1',
   'existingSessionId',
   'initialTranscriptAfterSeq',
@@ -313,6 +357,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'sessionConfigOptionOverrides',
   'approvedNewDirectoryCreation',
   'backendTarget',
+  'agentTarget',
   'terminal',
   'windowsRemoteSessionLaunchMode',
   'windowsRemoteSessionConsole',

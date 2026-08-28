@@ -156,9 +156,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle: importSessionBundleB,
       });
 
-      const prepareA = registeredA.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const prepareB = registeredB.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGetA = registeredA.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const prepareA = registeredA.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const prepareB = registeredB.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGetA = registeredA.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(prepareA).toBeDefined();
       expect(prepareB).toBeDefined();
       expect(resultGetA).toBeDefined();
@@ -336,9 +336,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle,
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(prepare).toBeDefined();
       expect(statusGet).toBeDefined();
       expect(resultGet).toBeDefined();
@@ -552,9 +552,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle,
       });
 
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resume = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resume = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3);
       expect(resultGet).toBeDefined();
       expect(statusGet).toBeDefined();
       expect(resume).toBeDefined();
@@ -709,7 +709,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         } as any,
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
       expect(prepare).toBeDefined();
 
       await expect(prepare!({
@@ -869,8 +869,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle,
       });
 
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
 
@@ -985,8 +985,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         } as any,
       });
 
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(statusGet).toBeDefined();
       expect(resultGet).toBeDefined();
 
@@ -1081,8 +1081,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         } as any,
       });
 
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
       expect(statusGet).toBeDefined();
       expect(resultGet).toBeDefined();
 
@@ -1167,10 +1167,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
 
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();
@@ -1301,11 +1301,11 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         importSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT);
-      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3);
+      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3);
 
       expect(start).toBeDefined();
       expect(prepare).toBeDefined();

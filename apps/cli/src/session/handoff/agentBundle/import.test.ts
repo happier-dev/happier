@@ -6,7 +6,15 @@ const { resolveExecutionSurfaces } = vi.hoisted(() => ({
 
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
     getSessionHostBridge: () => ({
-        resolveExecutionSurfaces,
+        resolveCurrentExecutionSurfacesForCatalogAgent: async (agentId: string) => ({
+            agentId,
+            backendId: agentId,
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: `happier.agent.${agentId}`, localId: agentId },
+            },
+            executionSurfaces: await resolveExecutionSurfaces(agentId),
+        }),
     }),
 }));
 
@@ -32,9 +40,6 @@ describe('importSessionHandoffAgentBundle', () => {
                 launch: {
                     directory: '/repo',
                     environmentVariables: { CODEX_HOME: '/tmp/codex' },
-                    resumePlanOptions: {
-                        codexBackendMode: 'appServer',
-                    },
                     sessionStateUpdates: [
                         {
                             fieldId: 'identity.runtimeDescriptor',
@@ -90,8 +95,11 @@ describe('importSessionHandoffAgentBundle', () => {
             resume: {
                 directory: '/repo',
                 agent: 'codex',
+                agentTarget: {
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                },
                 resume: 'codex_1',
-                codexBackendMode: 'appServer',
                 environmentVariables: { CODEX_HOME: '/tmp/codex' },
                 transcriptStorage: 'persisted',
                 approvedNewDirectoryCreation: true,
@@ -109,7 +117,7 @@ describe('importSessionHandoffAgentBundle', () => {
         });
     });
 
-    it('uses provider-owned resume options from the handoff import surface without host provider branches', async () => {
+    it('does not spread provider-owned resume options into generic host spawn options', async () => {
         const importBundle = vi.fn(async () => ({
             ok: true,
             value: {
@@ -142,7 +150,7 @@ describe('importSessionHandoffAgentBundle', () => {
         });
         const { importSessionHandoffAgentBundle } = await import('./import');
 
-        await expect(importSessionHandoffAgentBundle({
+        const result = await importSessionHandoffAgentBundle({
             bundle: {
                 agentId: 'acme.sample.backend',
                 remoteSessionId: 'future-session-1',
@@ -150,19 +158,26 @@ describe('importSessionHandoffAgentBundle', () => {
             } as unknown as Parameters<typeof importSessionHandoffAgentBundle>[0]['bundle'],
             targetPath: '/repo',
             sessionStorageMode: 'direct',
-        })).resolves.toMatchObject({
+        });
+        expect(result).toMatchObject({
             remoteSessionId: 'future-session-1',
             resume: {
                 directory: '/repo',
                 agent: 'acme.sample.backend',
+                agentTarget: {
+                    kind: 'agent',
+                    identity: {
+                        pluginId: 'happier.agent.acme.sample.backend',
+                        localId: 'acme.sample.backend',
+                    },
+                },
                 resume: 'future-session-1',
                 transcriptStorage: 'direct',
                 approvedNewDirectoryCreation: true,
-                providerRuntimeSelection: {
-                    mode: 'cloud',
-                },
             },
         });
+        expect(result.resume).not.toHaveProperty('providerRuntimeSelection');
+        expect(result.resume).not.toHaveProperty('resumePlanOptions');
 
         expect(resolveExecutionSurfaces).toHaveBeenCalledWith('acme.sample.backend');
         expect(importBundle).toHaveBeenCalledWith({

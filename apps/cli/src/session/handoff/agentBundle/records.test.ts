@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -108,5 +111,24 @@ describe('readSessionHandoffAgentBundleRecords', () => {
         },
       ],
     })).toEqual([{ id: 'codex-message-1' }]);
+  });
+
+  it('streams file-backed JSONL bundle fields through the generic shape fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-handoff-records-'));
+    const filePath = join(root, 'rollout.jsonl');
+    const contents = '{"id":"file-backed-message-1"}\nnot-json\n';
+    await writeFile(filePath, contents, 'utf8');
+
+    expect(await readSessionHandoffAgentBundleRecords({
+      agentId: 'future-files-provider',
+      files: [{
+        contentFile: {
+          t: 'happier.handoff.file.v1',
+          filePath,
+          offsetBytes: 0,
+          sizeBytes: Buffer.byteLength(contents),
+        },
+      }],
+    })).toEqual([{ id: 'file-backed-message-1' }]);
   });
 });

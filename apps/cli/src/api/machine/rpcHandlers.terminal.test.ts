@@ -72,7 +72,7 @@ class FakeInteractivePty implements PtyProcess {
     return { dispose: () => { } };
   }
 
-  emitBytes(data: Buffer | Uint8Array): void {
+  emitBytes(data: Buffer | string): void {
     for (const listener of this.onDataBytesListeners) {
       listener(data);
     }

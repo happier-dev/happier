@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
+import {
+    PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+    PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+} from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import {
     createFeatureDecision,
     DaemonContributionRegistryProjectionDescribeResponseSchema,
@@ -1576,6 +1581,55 @@ describe('daemon contribution registry projection rpc handler', () => {
         })).resolves.toEqual({
             ok: false,
             code: 'plugin_generation_stale',
+        });
+    });
+
+    it('projects only canonical PluginError recovery facts across structured Action RPC', async () => {
+        const action = createStructuredActionFixture({ id: 'setup-source', placementBindings: [] });
+        const registry = createResolvedContributionRegistry({
+            agents: Object.freeze([]),
+            actions: [action],
+        });
+        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
+        const { handlers, registrar } = createRegistrar();
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => runtimeRegistry,
+            resolveGeneration: async () => 7,
+            resolveInstalledPackages: async () => [],
+        });
+        executePluginActionIfAvailableMock.mockResolvedValueOnce({
+            matched: true,
+            result: {
+                ok: false,
+                errorCode: 'channels_connection_required',
+                error: 'Set up Channels first',
+                retryable: false,
+                data: {
+                    details: { privateProviderFact: 'must-not-cross' },
+                    remediation: {
+                        kind: 'openSettings',
+                        path: '/settings/plugins/happier.channels/connections',
+                    },
+                },
+            },
+        });
+
+        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+        await expect(handler?.({
+            machineId: 'machine-1',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/setup-source',
+            input: {},
+            executionSurface: 'ui',
+        })).resolves.toEqual({
+            ok: false,
+            code: 'channels_connection_required',
+            retryable: false,
+            remediation: {
+                kind: 'openSettings',
+                path: '/settings/plugins/happier.channels/connections',
+            },
         });
     });
 
@@ -4362,24 +4416,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                     },
                     inputHints: null,
                     inputSchema: { type: 'object', additionalProperties: false },
-                    outputSchema: {
-                        type: 'object',
-                        additionalProperties: false,
-                        required: [
-                            'v',
-                            'sourceInstanceId',
-                            'sourceContractVersion',
-                            'sourceConfig',
-                            'displayLabel',
-                        ],
-                        properties: {
-                            v: { type: 'integer', const: 1 },
-                            sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-                            sourceContractVersion: { type: 'integer', const: 1 },
-                            sourceConfig: { type: 'object', additionalProperties: false },
-                            displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-                        },
-                    },
+                    outputSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+                        1,
+                        { type: 'object', additionalProperties: false },
+                    ),
                 },
             }, {
                 provenance: 'external',
@@ -4409,20 +4449,8 @@ describe('daemon contribution registry projection rpc handler', () => {
                         plugin: true,
                     },
                     inputHints: null,
-                    inputSchema: {
-                        type: 'object',
-                        additionalProperties: false,
-                        properties: { automationId: { type: 'string' } },
-                        required: ['automationId'],
-                    },
-                    outputSchema: {
-                        oneOf: [{
-                            type: 'object',
-                            additionalProperties: false,
-                            properties: { kind: { type: 'string', const: 'baselined' } },
-                            required: ['kind'],
-                        }],
-                    },
+                    inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+                    outputSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
                 },
             }],
             events: [{
@@ -4489,6 +4517,306 @@ describe('daemon contribution registry projection rpc handler', () => {
                 },
             }],
         });
+    });
+
+    it('projects one exact ephemeral setup-surface mount with the canonical renderer chain', async () => {
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+        const pluginId = 'acme.events';
+        const immutableGenerationId = 'event-generation-a';
+        const rendererManifestPath = `/plugins/${pluginId}/.happier-plugin/plugin.json`;
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+            actions: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId,
+                definition: {
+                    kindVersion: 1,
+                    id: 'configure-source',
+                    title: 'Configure source',
+                    description: 'Choose a repository',
+                    safety: 'safe',
+                    dangerLevel: 'safe',
+                    execution: { target: 'daemon' },
+                    scopes: ['global'],
+                    placements: [],
+                    slash: null,
+                    bindings: null,
+                    examples: null,
+                    surfaces: {
+                        ui: false,
+                        voice: false,
+                        agent: false,
+                        mcp: false,
+                        cli: false,
+                        rpc: false,
+                        api: false,
+                        plugin: true,
+                    },
+                    inputHints: null,
+                    inputSchema: { type: 'object', additionalProperties: false },
+                    outputSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+                        1,
+                        { type: 'object', additionalProperties: false },
+                    ),
+                },
+            }],
+            events: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId,
+                definition: {
+                    id: `${pluginId}/repository/updated`,
+                    localId: 'repository/updated',
+                    kind: 'event',
+                    title: 'Repository updated',
+                    description: 'A repository changed',
+                    payloadSchema: { type: 'object', additionalProperties: false },
+                    automation: {
+                        v: 1,
+                        eligible: true,
+                        source: {
+                            sourceContractVersion: 1,
+                            supportedObservationTransports: ['checkpointedPull'],
+                            sourceConfigSchema: { type: 'object', additionalProperties: false },
+                            setupActionRef: { pluginId, localId: 'configure-source' },
+                            setupSurface: {
+                                renderer: 'repository-picker',
+                                fallbackRenderers: ['repository-picker-web', 'repository-picker-native'],
+                            },
+                        },
+                    },
+                },
+            }],
+            uiRenderersV2: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    identity: createPluginContributionIdentity({ pluginId, localId: 'repository-picker' }),
+                    manifestPath: rendererManifestPath,
+                    definition: {
+                        id: 'repository-picker',
+                        kind: 'declarative',
+                        root: { kind: 'text', text: 'Pick a repository' },
+                    },
+                },
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    identity: createPluginContributionIdentity({ pluginId, localId: 'repository-picker-web' }),
+                    manifestPath: rendererManifestPath,
+                    definition: {
+                        id: 'repository-picker-web',
+                        kind: 'hostedWeb',
+                        source: { kind: 'artifact', artifact: 'repository-picker-web' },
+                        requiredHostMethods: ['context', 'settleEphemeralInput'],
+                    },
+                },
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    identity: createPluginContributionIdentity({ pluginId, localId: 'repository-picker-native' }),
+                    manifestPath: rendererManifestPath,
+                    definition: {
+                        id: 'repository-picker-native',
+                        kind: 'reactNative',
+                        artifact: 'repository-picker-native',
+                        requiredHostMethods: ['context'],
+                    },
+                },
+            ],
+            immutableGenerationIdsByPluginId: { [pluginId]: immutableGenerationId },
+            materializationIdsByPluginId: { [pluginId]: 'events-materialization' },
+        });
+        const getPluginUiResourceCapability = vi.fn(() => Object.freeze({ readable: true, dynamic: true }));
+        const runtimeRegistry = createRuntimeRegistry(registry, {
+            generation: 23,
+            getPluginUiResourceCapability,
+            readAdmittedTargetedContributions: registry.readAdmittedTargetedContributions,
+        });
+        const { handlers, registrar } = createRegistrar();
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar, {
+            resolveRuntimeRegistry: async () => runtimeRegistry,
+            resolveInstalledPackages: async () => [],
+            resolveGeneration: async () => 23,
+            resolvePluginProjectionExecutionOriginContext: async () => ({
+                serverIdentityId: 'srv_events',
+                machineId: 'machine-events',
+            }),
+        });
+
+        const raw = await handlers
+            .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'machine-events' });
+
+        // The optional surface rides beside the unchanged setup Action binding.
+        expect(getPluginUiResourceCapability).toHaveBeenCalledWith(pluginId);
+        expect(raw.automationEligibleEvents).toEqual([
+            expect.objectContaining({
+                event: expect.objectContaining({
+                    identity: { pluginId, localId: 'repository/updated' },
+                    immutableGenerationId,
+                }),
+                setupAction: expect.objectContaining({
+                    identity: { pluginId, localId: 'configure-source' },
+                    immutableGenerationId,
+                }),
+                setupSurface: expect.objectContaining({
+                    contribution: { pluginId, localId: 'repository/updated' },
+                    immutableGenerationId,
+                    projectionGeneration: 23,
+                    rendererChain: [
+                        { pluginId, localId: 'repository-picker' },
+                        { pluginId, localId: 'repository-picker-web' },
+                        { pluginId, localId: 'repository-picker-native' },
+                    ],
+                    // The daemon selects the one available chain member and
+                    // never falls back inside the consumer.
+                    selectedRenderer: expect.objectContaining({
+                        identity: { pluginId, localId: 'repository-picker' },
+                        renderer: expect.objectContaining({
+                            kind: 'declarative',
+                            contributionId: 'repository-picker',
+                        }),
+                        availability: expect.objectContaining({ state: 'available' }),
+                    }),
+                    executionOrigin: {
+                        serverIdentityId: 'srv_events',
+                        materializationRef: {
+                            machineId: 'machine-events',
+                            materializationId: 'events-materialization',
+                            pluginId,
+                        },
+                    },
+                    resourceCapability: { readable: true, dynamic: true },
+                    // The child snapshot is the contributor's own cold view at
+                    // its exact generation, never synthesized target membership.
+                    contributorTargetedContributions: {
+                        target: { pluginId, immutableGenerationId },
+                        points: [],
+                    },
+                }),
+            }),
+        ]);
+        expect(
+            DaemonContributionRegistryProjectionDescribeResponseSchema.parse(raw).automationEligibleEvents?.[0]?.setupSurface,
+        ).toBeDefined();
+    });
+
+    it('drops the optional setup-surface mount fail-closed while keeping the eligible Event and setup Action', async () => {
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+        const pluginId = 'acme.events';
+        const immutableGenerationId = 'event-generation-a';
+        const createEventRegistry = (renderers: readonly unknown[]) => createResolvedContributionRegistry({
+            agents: [],
+            actions: [{
+                provenance: 'external' as const,
+                source: { kind: 'path' as const },
+                pluginId,
+                definition: {
+                    kindVersion: 1,
+                    id: 'configure-source',
+                    title: 'Configure source',
+                    description: null,
+                    safety: 'safe',
+                    dangerLevel: 'safe',
+                    execution: { target: 'daemon' },
+                    scopes: ['global'],
+                    placements: [],
+                    slash: null,
+                    bindings: null,
+                    examples: null,
+                    surfaces: {
+                        ui: false,
+                        voice: false,
+                        agent: false,
+                        mcp: false,
+                        cli: false,
+                        rpc: false,
+                        api: false,
+                        plugin: true,
+                    },
+                    inputHints: null,
+                    inputSchema: { type: 'object', additionalProperties: false },
+                    outputSchema: createPluginEventAutomationSetupResultV1JsonSchema(
+                        1,
+                        { type: 'object', additionalProperties: false },
+                    ),
+                },
+            }],
+            events: [{
+                provenance: 'external' as const,
+                source: { kind: 'path' as const },
+                pluginId,
+                definition: {
+                    id: `${pluginId}/repository/updated`,
+                    localId: 'repository/updated',
+                    kind: 'event',
+                    title: 'Repository updated',
+                    description: 'A repository changed',
+                    payloadSchema: { type: 'object', additionalProperties: false },
+                    automation: {
+                        v: 1,
+                        eligible: true,
+                        source: {
+                            sourceContractVersion: 1,
+                            supportedObservationTransports: ['checkpointedPull'],
+                            sourceConfigSchema: { type: 'object', additionalProperties: false },
+                            setupActionRef: { pluginId, localId: 'configure-source' },
+                            setupSurface: { renderer: 'repository-picker' },
+                        },
+                    },
+                },
+            }],
+            uiRenderersV2: renderers as never,
+            immutableGenerationIdsByPluginId: { [pluginId]: immutableGenerationId },
+            materializationIdsByPluginId: { [pluginId]: 'events-materialization' },
+        });
+        const registerWith = (params: Readonly<{ registry: ReturnType<typeof createEventRegistry> }>) => {
+            projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
+            const runtimeRegistry = createRuntimeRegistry(params.registry, {
+                generation: 23,
+                readAdmittedTargetedContributions: params.registry.readAdmittedTargetedContributions,
+            });
+            const local = createRegistrar();
+            projectionModule.registerDaemonContributionRegistryProjectionHandler(local.registrar, {
+                resolveRuntimeRegistry: async () => runtimeRegistry,
+                resolveInstalledPackages: async () => [],
+                resolveGeneration: async () => 23,
+            });
+            return local.handlers;
+        };
+
+        // No execution origin: the optional mount is removed, never fabricated
+        // from a local or coarse-machine substitute.
+        const withoutOrigin = registerWith({
+            registry: createEventRegistry([{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId,
+                identity: createPluginContributionIdentity({ pluginId, localId: 'repository-picker' }),
+                manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+                definition: { id: 'repository-picker', kind: 'declarative', root: { kind: 'text', text: 'Pick' } },
+            }]),
+        });
+        const originless = await withoutOrigin
+            .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'machine-events' });
+        expect(originless.automationEligibleEvents).toHaveLength(1);
+        expect(originless.automationEligibleEvents?.[0]?.setupAction).toMatchObject({
+            identity: { pluginId, localId: 'configure-source' },
+        });
+        expect(originless.automationEligibleEvents?.[0]?.setupSurface).toBeUndefined();
+
+        // Unresolvable renderer chain: the mount is removed, never invented.
+        const withoutRenderer = registerWith({ registry: createEventRegistry([]) });
+        const rendererless = await withoutRenderer
+            .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'machine-events' });
+        expect(rendererless.automationEligibleEvents).toHaveLength(1);
+        expect(rendererless.automationEligibleEvents?.[0]?.setupSurface).toBeUndefined();
     });
 
     it('projects the authoritative executable runtime snapshot instead of the manifest-only registry snapshot', async () => {

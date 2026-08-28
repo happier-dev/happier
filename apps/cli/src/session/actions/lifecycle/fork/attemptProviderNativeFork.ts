@@ -3,7 +3,6 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
@@ -93,12 +92,8 @@ export async function attemptProviderNativeFork(params: Readonly<{
             'fork.launch.sessionStateUpdates',
         );
         const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
-        const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
-        const agentBackendMode = runtimeSelection.agentBackendMode;
-        const codexBackendMode = runtimeSelection.codexBackendMode;
         const agentHint = {
             agentId: params.forkBackendResolution.agentHintAgentId,
-            ...(agentBackendMode ? { backendMode: agentBackendMode } : {}),
             providerSessionId: nativeForkProviderSessionId,
         };
         const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
@@ -112,7 +107,6 @@ export async function attemptProviderNativeFork(params: Readonly<{
             spawnNonce: params.spawnNonce,
             resume: nativeForkProviderSessionId,
             ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-            ...(codexBackendMode ? { codexBackendMode } : {}),
             ...(nativeFork.launch.environmentVariables ? { environmentVariables: { ...nativeFork.launch.environmentVariables } } : {}),
             ...inheritedForkOverrides.spawn,
         } satisfies SpawnSessionOptions);

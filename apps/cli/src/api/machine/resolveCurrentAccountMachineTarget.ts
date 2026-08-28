@@ -18,6 +18,9 @@ export type CurrentAccountMachineTarget = Readonly<{
   machineId: string;
   machineLabel: string;
 }>;
+export type CurrentAccountMachineInventoryItem = Readonly<{
+  id: string; label: string; active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
+}>;
 
 export type CurrentAccountMachineTargetResolution =
   | Readonly<{ kind: 'selected'; target: CurrentAccountMachineTarget }>
@@ -50,6 +53,27 @@ function projectCurrentMachineTarget(
   return { machineId: row.id, machineLabel: readMachineLabel(row.metadata, row.id) };
 }
 
+export async function listCurrentAccountMachines(params: Readonly<{ token: string; signal?: AbortSignal }>): Promise<readonly CurrentAccountMachineInventoryItem[]> {
+  params.signal?.throwIfAborted();
+  try {
+    const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}/v1/machines`, {
+      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+      timeout: 20_000,
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    params.signal?.throwIfAborted();
+    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(response.data);
+    if (!inventory.success) throw new Error('invalid machine inventory');
+    return inventory.data.map((row) => ({
+      id: row.id, label: readMachineLabel(row.metadata, row.id), active: row.active,
+      revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
+    }));
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw Object.assign(new Error('The current machine inventory is unavailable.'), { code: 'machine_inventory_unavailable', cause: error });
+  }
+}
+
 /**
  * Resolves an automatic current-daemon target from the authenticated account inventory.
  *
@@ -76,35 +100,16 @@ export async function resolveCurrentAccountMachineTarget(params: Readonly<{
       : unavailable('machine_not_current', 'The selected machine is no longer active.');
   }
 
-  let rawInventory: unknown;
   try {
-    const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}/v1/machines`, {
-      headers: {
-        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-        Authorization: `Bearer ${params.token}`,
-      },
-      timeout: 20_000,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-    rawInventory = response.data;
+    const inventory = await listCurrentAccountMachines(params);
+    const candidates = inventory
+      .filter((row) => row.active && row.revokedAt === null && row.replacedByMachineId === null)
+      .map((row) => ({ machineId: row.id, machineLabel: row.label }));
+    if (candidates.length === 0) return unavailable('no_current_machine', 'No current machine is available.');
+    if (candidates.length > 1) return { kind: 'selection_required', candidates };
+    return { kind: 'selected', target: candidates[0]! };
   } catch {
     params.signal?.throwIfAborted();
     return unavailable('machine_inventory_unavailable', 'The current machine inventory is unavailable.');
   }
-  params.signal?.throwIfAborted();
-
-  const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(rawInventory);
-  if (!inventory.success) {
-    return unavailable('machine_inventory_unavailable', 'The current machine inventory is unavailable.');
-  }
-
-  const candidates = inventory.data.flatMap((row) => {
-    const target = projectCurrentMachineTarget(row);
-    return target ? [target] : [];
-  });
-  if (candidates.length === 0) {
-    return unavailable('no_current_machine', 'No current machine is available.');
-  }
-  if (candidates.length > 1) return { kind: 'selection_required', candidates };
-  return { kind: 'selected', target: candidates[0]! };
 }

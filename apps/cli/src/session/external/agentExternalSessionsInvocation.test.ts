@@ -419,6 +419,28 @@ describe('bounded Agent External Sessions invocation', () => {
         },
     );
 
+    it('rejects a whitespace-only candidate title at the canonical Agent result parser', async () => {
+        const wrapped = createWrapper({
+            contribution: contributionWith(() => ({
+                ok: true,
+                value: {
+                    candidates: [{
+                        remoteSessionId: 'remote-1',
+                        updatedAtMs: 1,
+                        title: '   \n\t ',
+                    }],
+                    nextCursor: null,
+                },
+            })),
+        });
+
+        await expect(wrapped.listCandidates(requestFor('listCandidates'))).resolves.toEqual({
+            ok: false,
+            code: 'agent_error',
+            retryable: false,
+        });
+    });
+
     it.each([
         ['resolveSource', 262_144, undefined],
         ['listCandidates', 1_048_576, 50],

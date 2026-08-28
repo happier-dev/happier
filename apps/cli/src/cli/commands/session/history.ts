@@ -25,6 +25,8 @@ const COMPACT_HISTORY_TRUNCATION_SUFFIX = '… [truncated; use --json for full t
 type SessionHistoryDependencies = Readonly<{
   readCredentialsFn: () => Promise<StoredCredentials | null>;
   signal?: AbortSignal;
+  /** Internal creation-flow boundary; ordinary history follows from the current tail. */
+  initialFollowCursor?: string;
 }>;
 
 type SessionActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>;
@@ -119,13 +121,14 @@ async function followSessionHistory(params: Readonly<{
   jsonl: boolean;
   signal?: AbortSignal;
   executor: SessionActionExecutor;
+  initialCursor: string;
 }>): Promise<void> {
   const leaseId = randomUUID();
   const { followTranscriptSourceWithFiniteActions } = await import(
     '@happier-dev/agents/runtime/facets/transcriptSource'
   );
   await followTranscriptSourceWithFiniteActions({
-    initialCursor: 'tail',
+    initialCursor: params.initialCursor,
     leaseId,
     follow: async ({ cursor, leaseId: activeLeaseId }) => {
       const normalized = normalizeActionExecuteResult(await params.executor.execute(
@@ -257,6 +260,7 @@ export async function cmdSessionHistory(
       includeMeta,
       includeStructuredPayload,
       jsonl,
+      initialCursor: deps.initialFollowCursor ?? 'tail',
       ...(deps.signal ? { signal: deps.signal } : {}),
       executor,
     });
@@ -321,5 +325,7 @@ export async function cmdSessionHistory(
       console.log(formatCompactHistoryMessage(message));
     }
   }
-  console.log(ok(`History fetched (${result.messages.length} messages)`));
+  if (result.format !== 'raw') {
+    console.log(ok(`History fetched (${result.messages.length} messages)`));
+  }
 }

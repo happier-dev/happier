@@ -942,6 +942,131 @@ export async function listExternalSessionOperationRecords(
   );
 }
 
+/**
+ * Retire Account-private recovery state only from the durable Session-deletion
+ * fact. Account-relative fetch absence is intentionally not an input to this
+ * owner: share revocation and temporary access loss must retain recovery data.
+ *
+ * Claim barrier -> Session admission -> exact record -> staging capacity ->
+ * inventory is the incumbent lock order used by passive repair. Cleanup is
+ * deliberately before unlink so a crash can only leave an idempotently
+ * retryable full record, never an unowned private payload.
+ */
+export async function abandonExternalSessionOperationsForDeletedSession(
+  input: Readonly<{
+    activeServerDir: string;
+    sessionId: string;
+    withSessionOperationBarrier<TResult>(
+      input: Readonly<{ sessionId: string }>,
+      effect: () => Promise<TResult>,
+    ): Promise<
+      | Readonly<{ status: 'active' }>
+      | Readonly<{ status: 'executed'; value: TResult }>
+    >;
+    cleanupPrivateOperation(
+      record: ExternalSessionOperationRecordV1,
+    ): Promise<void>;
+  }>,
+): Promise<Readonly<{ deleted: number; deferred: number; retained: number }>> {
+  const sessionId = input.sessionId.trim();
+  if (!sessionId) {
+    throw new Error('external_session_operation_deleted_session_id_required');
+  }
+  const scopedRecordsDirectory =
+    await resolveExternalSessionOperationRecordsDirectory(
+      input.activeServerDir,
+      'session-deletion',
+    );
+  const barrier = await input.withSessionOperationBarrier(
+    { sessionId },
+    async () => await withExternalSessionOperationSessionAdmissionLock(
+      scopedRecordsDirectory,
+      sessionId,
+      async () => {
+        const inventory = await readExternalSessionOperationRecordInventory(
+          scopedRecordsDirectory,
+          'session-deletion',
+        );
+        const candidates = inventory.flatMap(({ entry }) =>
+          entry.kind === 'full_record'
+          && entry.record.request.sessionId === sessionId
+            ? [entry.record]
+            : []
+        );
+        let deleted = 0;
+        let retained = 0;
+        for (const candidate of candidates) {
+          if (isExternalSessionOperationTerminalStatusV1(candidate.status)) {
+            retained += 1;
+            continue;
+          }
+          const disposition = await withJsonOwnerFileLock({
+            lockPath: recordMutationLockPath(
+              scopedRecordsDirectory,
+              candidate.operationId,
+            ),
+            timeoutMs: 5_000,
+            staleAfterMs: 30_000,
+            pollIntervalMs: 5,
+            errorCode: 'external_session_operation_record_lock_timeout',
+          }, async () => {
+            const current = await readExternalSessionOperationStoredEntry(
+              scopedRecordsDirectory,
+              candidate.operationId,
+            );
+            if (
+              !current
+              || current.kind !== 'full_record'
+              || current.record.request.sessionId !== sessionId
+              || isExternalSessionOperationTerminalStatusV1(current.record.status)
+            ) {
+              return 'retained' as const;
+            }
+            await input.cleanupPrivateOperation(current.record);
+            return await withJsonOwnerFileLock({
+              lockPath: inventoryAdmissionLockPath(scopedRecordsDirectory),
+              timeoutMs: EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS,
+              staleAfterMs: 30_000,
+              pollIntervalMs: 5,
+              errorCode:
+                'external_session_operation_inventory_admission_lock_timeout',
+            }, async () => {
+              const exact = await readExternalSessionOperationStoredEntry(
+                scopedRecordsDirectory,
+                candidate.operationId,
+              );
+              if (
+                !exact
+                || exact.kind !== 'full_record'
+                || exact.record.request.sessionId !== sessionId
+                || isExternalSessionOperationTerminalStatusV1(exact.record.status)
+              ) {
+                return 'retained' as const;
+              }
+              await unlink(recordPath(
+                scopedRecordsDirectory,
+                candidate.operationId,
+              ));
+              return 'deleted' as const;
+            });
+          });
+          if (disposition === 'deleted') deleted += 1;
+          else retained += 1;
+        }
+        return Object.freeze({ deleted, retained });
+      },
+    ),
+  );
+  if (barrier.status === 'active') {
+    return Object.freeze({ deleted: 0, deferred: 1, retained: 0 });
+  }
+  return Object.freeze({
+    deleted: barrier.value.deleted,
+    deferred: 0,
+    retained: barrier.value.retained,
+  });
+}
+
 export async function readExternalSessionOperationRecord(
   activeServerDir: string,
   operationId: string,

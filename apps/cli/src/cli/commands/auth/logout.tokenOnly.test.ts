@@ -92,6 +92,7 @@ describe('happier auth logout token-only authentication', () => {
       expect(stopDaemonMock).toHaveBeenCalledTimes(1);
       expect(clearCredentialsMock).toHaveBeenCalledTimes(1);
       expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+      expect(rmSyncMock).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.flat().join(' ')).not.toContain('Not currently authenticated');
     } finally {
       logSpy.mockRestore();
@@ -145,6 +146,25 @@ describe('happier auth logout token-only authentication', () => {
       expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledTimes(1);
       expect(rmSyncMock).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.flat().join(' ')).not.toContain('Successfully logged out');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('removes the complete local home only after explicit logout --all stops every daemon', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      await handleAuthLogout(['--all']);
+
+      expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledTimes(1);
+      expect(rmSyncMock).toHaveBeenCalledExactlyOnceWith(
+        '/tmp/happier-logout-token-only-test',
+        { recursive: true, force: true },
+      );
+      expect(
+        stopAllDaemonsBestEffortMock.mock.invocationCallOrder[0]!,
+      ).toBeLessThan(rmSyncMock.mock.invocationCallOrder[0]!);
     } finally {
       logSpy.mockRestore();
     }

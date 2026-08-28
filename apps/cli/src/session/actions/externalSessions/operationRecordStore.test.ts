@@ -12,6 +12,11 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createExternalSessionOperationExclusion,
+} from '@/session/external/operationExclusion';
+
+import {
+  abandonExternalSessionOperationsForDeletedSession,
   acknowledgeExternalSessionOperationProgressProjection,
   assertExternalSessionOperationRecordAdmission,
   compactExternalSessionOperationRecordToTerminalReceipt,
@@ -505,6 +510,222 @@ afterEach(async () => {
 });
 
 describe('external session operation record store integrity', () => {
+  it('abandons only nonterminal full records for the exact authoritatively deleted Session', async () => {
+    const activeServerDir = await createRoot();
+    const deletedSessionRecord = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:deleted-session-operation',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'deleted-session-operation',
+        sessionId: 'session-deleted',
+      },
+    });
+    const otherSessionRecord = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:other-session-operation',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'other-session-operation',
+        sessionId: 'session-other',
+      },
+    });
+    const terminal = ExternalSessionOperationRecordV1Schema.parse({
+      ...terminalOperationRecord(),
+      operationId: 'external-takeover:deleted-session-terminal',
+      request: {
+        ...terminalOperationRecord().request,
+        idempotencyKey: 'deleted-session-terminal',
+        sessionId: 'session-deleted',
+      },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, deletedSessionRecord);
+    await writeExternalSessionOperationRecord(activeServerDir, otherSessionRecord);
+    await writeRawRecord(
+      activeServerDir,
+      terminal.operationId,
+      JSON.stringify(terminal),
+    );
+    const cleanupPrivateOperation = vi.fn(async () => undefined);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted',
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 1, deferred: 0, retained: 1 });
+
+    expect(cleanupPrivateOperation).toHaveBeenCalledOnce();
+    expect(cleanupPrivateOperation).toHaveBeenCalledWith(deletedSessionRecord);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      deletedSessionRecord.operationId,
+    )).resolves.toBeNull();
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      otherSessionRecord.operationId,
+    )).resolves.toEqual(otherSessionRecord);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      terminal.operationId,
+    )).resolves.toEqual(terminal);
+
+    // Crash/retry and duplicate delivery are idempotent once the exact row is gone.
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted',
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 1 });
+    expect(cleanupPrivateOperation).toHaveBeenCalledOnce();
+  });
+
+  it('defers authoritative deletion while the exact operation claim remains active', async () => {
+    const activeServerDir = await createRoot();
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:active-deleted-session-operation',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'active-deleted-session-operation',
+        sessionId: 'session-deleted-active',
+      },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, record);
+    const cleanupPrivateOperation = vi.fn(async () => undefined);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-active',
+      withSessionOperationBarrier: async () => ({ status: 'active' as const }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 1, retained: 0 });
+    expect(cleanupPrivateOperation).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toEqual(record);
+  });
+
+  it('defers authoritative deletion while a claimed operation has not written its first record', async () => {
+    const activeServerDir = await createRoot();
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'session-deletion-pre-record-claim-owner',
+    });
+    const acquired = await operationExclusion.acquire({
+      kind: 'materialize',
+      sessionId: 'session-deleted-before-first-record',
+      requestId: 'request-before-first-record',
+      sourceIdentity: 'source-before-first-record',
+      sourceGeneration: 'generation-before-first-record',
+    });
+    expect(acquired.status).toBe('acquired');
+    if (acquired.status !== 'acquired') {
+      throw new Error('Expected the pre-record operation claim.');
+    }
+    const cleanupPrivateOperation = vi.fn(async () => undefined);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-before-first-record',
+      withSessionOperationBarrier:
+        operationExclusion.withPassiveRepairSessionBarrier,
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 1, retained: 0 });
+    expect(cleanupPrivateOperation).not.toHaveBeenCalled();
+
+    await acquired.claim.release();
+  });
+
+  it('replays cleanup idempotently when a crash occurs after private cleanup but before record unlink', async () => {
+    const activeServerDir = await createRoot();
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:deleted-session-cleanup-crash',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'deleted-session-cleanup-crash',
+        sessionId: 'session-deleted-cleanup-crash',
+      },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, record);
+    let crashAfterCleanup = true;
+    const cleanupPrivateOperation = vi.fn(async () => {
+      if (crashAfterCleanup) {
+        crashAfterCleanup = false;
+        throw new Error('simulated_crash_after_private_cleanup');
+      }
+    });
+    const withSessionOperationBarrier = async <T>(
+      _input: Readonly<{ sessionId: string }>,
+      effect: () => Promise<T>,
+    ) => ({ status: 'executed' as const, value: await effect() });
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: record.request.sessionId,
+      withSessionOperationBarrier,
+      cleanupPrivateOperation,
+    })).rejects.toThrow('simulated_crash_after_private_cleanup');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toEqual(record);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: record.request.sessionId,
+      withSessionOperationBarrier,
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 1, deferred: 0, retained: 0 });
+    expect(cleanupPrivateOperation).toHaveBeenCalledTimes(2);
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toBeNull();
+  });
+
+  it('cannot abandon another Account partition even when Session and operation identities are known', async () => {
+    const activeServerDir = await createRoot();
+    useAccount('account-a');
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:account-a-deleted-session-operation',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'account-a-deleted-session-operation',
+        sessionId: 'session-deleted-account-a',
+      },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, record);
+    useAccount('account-b');
+    const cleanupPrivateOperation = vi.fn(async () => undefined);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: record.request.sessionId,
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 0 });
+    expect(cleanupPrivateOperation).not.toHaveBeenCalled();
+
+    useAccount('account-a', 'refreshed');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toEqual(record);
+  });
+
   it('treats an absent operation-storage root as an empty inventory before Account scope is available', async () => {
     const activeServerDir = await createRoot();
     const priorVitest = process.env.VITEST;

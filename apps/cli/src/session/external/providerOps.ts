@@ -30,8 +30,10 @@ export type ExternalSessionTranscriptReadAfter =
     items: readonly ExternalSessionTranscriptRawMessageV1[];
     nextCursor: string;
     boundary: string;
+    hasMore: boolean;
     diagnostics?: readonly Readonly<{
       code: string;
+      severity: 'benign' | 'required';
       count: number;
       positions: readonly number[];
     }>[];

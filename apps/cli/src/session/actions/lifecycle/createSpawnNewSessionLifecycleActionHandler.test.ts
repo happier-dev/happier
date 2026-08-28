@@ -172,7 +172,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
     expect(firstSpawnNonce).toBe(secondSpawnNonce);
   });
 
-  it('propagates canonical backendMode over stale codexBackendMode to spawn options', async () => {
+  it('carries current Codex selection through runtimeDescriptorV1 only', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
       type: 'success',
       sessionId: 'session-1',
@@ -182,14 +182,22 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
     const result = await handler({
       directory: '/tmp/project',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      backendMode: 'appServer',
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
 
     expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
     const spawnOptions = spawnSession.mock.calls[0]?.[0];
-    expect(spawnOptions?.backendMode).toBe('appServer');
-    expect(spawnOptions?.codexBackendMode).toBe('appServer');
+    expect(spawnOptions?.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'acp' },
+    });
+    expect(spawnOptions).not.toHaveProperty('backendMode');
+    expect(spawnOptions).not.toHaveProperty('codexBackendMode');
   });
 
   it('preserves exact opaque execution-authorization request-id bytes', async () => {

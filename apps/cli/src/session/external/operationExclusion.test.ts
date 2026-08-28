@@ -521,6 +521,9 @@ describe('external session operation exclusion', () => {
             sessionId: acquired.claim.record.request.sessionId,
             operationClaimId: acquired.claim.record.claimId,
         }, repairEffect)).resolves.toEqual({ status: 'active' });
+        await expect(owner.withPassiveRepairSessionBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
+        }, repairEffect)).resolves.toEqual({ status: 'active' });
         expect(repairEffect).not.toHaveBeenCalled();
         await expect(owner.inspectPassiveRepairClaim({
             sessionId: acquired.claim.record.request.sessionId,
@@ -541,7 +544,13 @@ describe('external session operation exclusion', () => {
             status: 'executed',
             value: 'repaired',
         });
-        expect(repairEffect).toHaveBeenCalledOnce();
+        await expect(owner.withPassiveRepairSessionBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
+        }, repairEffect)).resolves.toEqual({
+            status: 'executed',
+            value: 'repaired',
+        });
+        expect(repairEffect).toHaveBeenCalledTimes(2);
         await acquired.claim.release();
 
         const sessionKey = createHash('sha256')
@@ -564,6 +573,11 @@ describe('external session operation exclusion', () => {
         await expect(owner.withPassiveRepairClaimBarrier({
             sessionId: acquired.claim.record.request.sessionId,
             operationClaimId: acquired.claim.record.claimId,
+        }, malformedEffect)).rejects.toThrow(
+            'external_session_operation_repair_claim_unreadable',
+        );
+        await expect(owner.withPassiveRepairSessionBarrier({
+            sessionId: acquired.claim.record.request.sessionId,
         }, malformedEffect)).rejects.toThrow(
             'external_session_operation_repair_claim_unreadable',
         );

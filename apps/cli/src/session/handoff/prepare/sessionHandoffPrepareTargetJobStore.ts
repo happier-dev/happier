@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -17,6 +17,7 @@ import {
 } from './sessionHandoffPrepareTargetJobLease';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import { logger } from '@/ui/logger';
 
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1 = 1 as const;
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2 = 2 as const;
@@ -577,10 +578,35 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
   };
 }
 
-async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandoffPrepareTargetJobRecord | null> {
+async function quarantineInvalidPrepareTargetJobFile(filePath: string): Promise<void> {
+  const quarantinePath = `${filePath}.invalid-${Date.now()}-${randomUUID()}`;
+  try {
+    await rename(filePath, quarantinePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return;
+    throw error;
+  }
+  logger.debug(
+    `[SESSION HANDOFF] Quarantined invalid prepare-target job '${filePath}' as '${quarantinePath}'`,
+  );
+}
+
+/**
+ * Reads while the job mutation lock is held. Invalid retained bytes are moved
+ * aside once so one torn job cannot block recovery of every valid job after
+ * each daemon restart. The exact bytes remain available for diagnosis.
+ */
+async function readPrepareTargetJobFileUnlocked(filePath: string): Promise<SessionHandoffPrepareTargetJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const value = normalizePredecessorV2RecoveryActions(JSON.parse(raw) as unknown);
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw) as unknown;
+    } catch {
+      await quarantineInvalidPrepareTargetJobFile(filePath);
+      return null;
+    }
+    const value = normalizePredecessorV2RecoveryActions(decoded);
     const parsed = SessionHandoffPrepareTargetJobRecordSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   } catch (error) {
@@ -590,6 +616,13 @@ async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandof
     }
     throw error;
   }
+}
+
+async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandoffPrepareTargetJobRecord | null> {
+  return await withPrepareTargetJobMutationLock(
+    filePath,
+    async () => await readPrepareTargetJobFileUnlocked(filePath),
+  );
 }
 
 /**
@@ -648,7 +681,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async write(record) {
       const jobPath = resolveJobPath(record.jobId);
       await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         await mkdir(jobsDirectory, { recursive: true });
         if (current?.schemaVersion === SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) {
           const next = SessionHandoffPrepareTargetJobRecordV2Schema.parse({
@@ -725,7 +758,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async update(jobId, updater) {
       const jobPath = resolveJobPath(jobId);
       return await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         if (!current) return null;
         const nextInput = updater(structuredClone(current));
         if (current.schemaVersion === SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) {
@@ -752,7 +785,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async upgradeReadyV1ToPreparedV2(upgradeInput) {
       const jobPath = resolveJobPath(upgradeInput.jobId);
       return await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         if (!current) {
           throw new Error(`Session handoff prepare-target job not found: ${upgradeInput.jobId}`);
         }
@@ -786,7 +819,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async transitionPredecessorV2(jobId, updater) {
       const jobPath = resolveJobPath(jobId);
       return await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         if (!current) return null;
         if (current.schemaVersion !== SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2) {
           throw new Error('Predecessor V2 transition cannot mutate a v1 handoff job');
@@ -806,7 +839,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async hydrateInterrupted(jobId, nowMs) {
       const jobPath = resolveJobPath(jobId);
       return await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         if (!current || isTerminalPrepareTargetStatusCode(current.status.status)) {
           return current;
         }
@@ -859,7 +892,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
     async acceptPrepareTargetResume(resumeInput) {
       const jobPath = resolveJobPath(resumeInput.jobId);
       return await withPrepareTargetJobMutationLock(jobPath, async () => {
-        const current = await readPrepareTargetJobFile(jobPath);
+        const current = await readPrepareTargetJobFileUnlocked(jobPath);
         if (!current) return { ok: false, errorCode: 'not_found' } as const;
         if (
           current.jobId !== resumeInput.jobId

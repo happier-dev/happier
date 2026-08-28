@@ -85,6 +85,13 @@ type StagingPageReservation = Readonly<{
     acceptedThroughServerSeq?: number;
 }>;
 
+type StagingPreparedReplayCharge = Readonly<{
+    captureIndex: number;
+    groupId: string;
+    serializedBytes: number;
+    contentSha256: string;
+}>;
+
 /**
  * Every fact about the captured pages that a lifecycle or capacity decision
  * needs without opening one file per page. It is derived state: every field is
@@ -115,6 +122,7 @@ type StagingHeader = Readonly<{
     captureState: 'capturing' | 'complete';
     lifecycle: StagingLifecycle;
     summary: StagingGroupSummary;
+    pendingPreparedReplay?: StagingPreparedReplayCharge;
     createdWorkspaceMedia: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
 }>;
 
@@ -286,6 +294,17 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
      * after the canonical operation owner has durably committed its terminal result.
      */
     cleanupTerminalOperation(input: Readonly<{
+        operationId: string;
+    }>): Promise<
+        | Readonly<{ status: 'completed' }>
+        | Readonly<{ status: 'missing' }>
+        | Readonly<{ status: 'not_ready' }>
+    >;
+    /**
+     * Delete staging after an authoritative parent Session deletion. The
+     * caller must first discharge every operation-owned workspace-media path.
+     */
+    cleanupAbandonedOperation(input: Readonly<{
         operationId: string;
     }>): Promise<
         | Readonly<{ status: 'completed' }>
@@ -748,6 +767,27 @@ function parsePreparedReplayReservation(value: unknown): Readonly<{
     });
 }
 
+function parsePreparedReplayCharge(value: unknown): StagingPreparedReplayCharge | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        !isNonnegativeSafeInteger(record.captureIndex)
+        || typeof record.groupId !== 'string'
+        || !record.groupId.trim()
+        || !isNonnegativeSafeInteger(record.serializedBytes)
+        || typeof record.contentSha256 !== 'string'
+        || !/^[a-f0-9]{64}$/.test(record.contentSha256)
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        captureIndex: record.captureIndex,
+        groupId: record.groupId,
+        serializedBytes: record.serializedBytes,
+        contentSha256: record.contentSha256,
+    });
+}
+
 function parseGroupSummary(value: unknown): StagingGroupSummary | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
@@ -785,6 +825,9 @@ function parseHeader(value: unknown): StagingHeader | null {
     const record = value as Record<string, unknown>;
     const lifecycle = parseLifecycle(record.lifecycle);
     const summary = parseGroupSummary(record.summary);
+    const pendingPreparedReplay = record.pendingPreparedReplay === undefined
+        ? undefined
+        : parsePreparedReplayCharge(record.pendingPreparedReplay);
     if (
         record.schemaVersion !== 1
         || typeof record.operationId !== 'string'
@@ -792,6 +835,7 @@ function parseHeader(value: unknown): StagingHeader | null {
         || (record.captureState !== 'capturing' && record.captureState !== 'complete')
         || !summary
         || !lifecycle
+        || pendingPreparedReplay === null
     ) {
         return null;
     }
@@ -827,6 +871,7 @@ function parseHeader(value: unknown): StagingHeader | null {
         captureState: record.captureState,
         lifecycle,
         summary,
+        ...(pendingPreparedReplay === undefined ? {} : { pendingPreparedReplay }),
         createdWorkspaceMedia: Object.freeze(createdWorkspaceMedia),
     });
 }
@@ -1168,7 +1213,8 @@ function sumReservations(headers: readonly StagingHeader[]): Readonly<{
     let serializedBytes = 0;
     for (const header of headers) {
         itemCount += header.summary.itemCount;
-        serializedBytes += header.summary.serializedBytes;
+        serializedBytes += header.summary.serializedBytes
+            + (header.pendingPreparedReplay?.serializedBytes ?? 0);
     }
     return Object.freeze({ itemCount, serializedBytes });
 }
@@ -1753,6 +1799,27 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 const contentSha256 = createHash('sha256')
                     .update(JSON.stringify(prepared), 'utf8')
                     .digest('hex');
+                const charge = Object.freeze({
+                    captureIndex: reservation.captureIndex,
+                    groupId,
+                    serializedBytes,
+                    contentSha256,
+                });
+                const pendingCharge = manifest.pendingPreparedReplay;
+                if (
+                    pendingCharge
+                    && (
+                        pendingCharge.captureIndex !== charge.captureIndex
+                        || pendingCharge.groupId !== charge.groupId
+                        || pendingCharge.serializedBytes !== charge.serializedBytes
+                        || pendingCharge.contentSha256 !== charge.contentSha256
+                    )
+                ) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_prepared_replay_conflict',
+                        'External session staging has a different prepared replay charge pending repair',
+                    );
+                }
                 if (reservation.preparedReplay) {
                     const existing = await readPreparedReplayGroup(
                         resolvePreparedReplayGroupPath(
@@ -1781,22 +1848,51 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                             'External session staging prepared replay conflicts with its existing receipt',
                         );
                     }
+                    if (pendingCharge) {
+                        const {
+                            preparedReplay: _preparedReplay,
+                            ...withoutPreparedReplay
+                        } = reservation;
+                        const {
+                            pendingPreparedReplay: _pendingPreparedReplay,
+                            ...withoutPendingPreparedReplay
+                        } = manifest;
+                        await atomicWrite(paths.manifestPath, Object.freeze({
+                            ...withoutPendingPreparedReplay,
+                            summary: summaryWithRowTransition(
+                                manifest.summary,
+                                Object.freeze(withoutPreparedReplay),
+                                reservation,
+                            ),
+                        }));
+                    }
                     return Object.freeze({ status: 'already_stored' as const });
                 }
 
-                const operationTotals = sumReservations([manifest]);
-                if (operationTotals.serializedBytes + serializedBytes > limits.perOperation.maxBytes) {
-                    return Object.freeze({
-                        status: 'refused' as const,
-                        reason: 'per_operation_byte_capacity' as const,
+                let chargedManifest = manifest;
+                if (!pendingCharge) {
+                    const operationTotals = sumReservations([manifest]);
+                    if (operationTotals.serializedBytes + serializedBytes > limits.perOperation.maxBytes) {
+                        return Object.freeze({
+                            status: 'refused' as const,
+                            reason: 'per_operation_byte_capacity' as const,
+                        });
+                    }
+                    const aggregateTotals = sumReservations(await readAllHeaders(paths.rootDirectory));
+                    if (aggregateTotals.serializedBytes + serializedBytes > limits.aggregate.maxBytes) {
+                        return Object.freeze({
+                            status: 'refused' as const,
+                            reason: 'aggregate_byte_capacity' as const,
+                        });
+                    }
+                    chargedManifest = Object.freeze({
+                        ...manifest,
+                        pendingPreparedReplay: charge,
                     });
-                }
-                const aggregateTotals = sumReservations(await readAllHeaders(paths.rootDirectory));
-                if (aggregateTotals.serializedBytes + serializedBytes > limits.aggregate.maxBytes) {
-                    return Object.freeze({
-                        status: 'refused' as const,
-                        reason: 'aggregate_byte_capacity' as const,
-                    });
+                    // Capacity becomes durable before the prepared payload. A
+                    // crash can therefore retain only an owner-local safe
+                    // overcharge, which this exact operation retry repairs.
+                    await atomicWrite(paths.manifestPath, chargedManifest);
                 }
 
                 await atomicWrite(
@@ -1811,10 +1907,14 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     resolveGroupRowPath(paths.operationDirectory, reservation.captureIndex),
                     retained,
                 );
+                const {
+                    pendingPreparedReplay: _pendingPreparedReplay,
+                    ...withoutPendingPreparedReplay
+                } = chargedManifest;
                 await atomicWrite(paths.manifestPath, Object.freeze({
-                    ...manifest,
+                    ...withoutPendingPreparedReplay,
                     summary: summaryWithRowTransition(
-                        manifest.summary,
+                        chargedManifest.summary,
                         reservation,
                         retained,
                     ),
@@ -1835,28 +1935,77 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     clearInput.captureIndex,
                     groupId,
                 );
-                if (!reservation?.preparedReplay) return;
+                if (!reservation) return;
+                const pendingCharge = manifest.pendingPreparedReplay;
+                const pendingTargetsReservation =
+                    pendingCharge?.captureIndex === reservation.captureIndex
+                    && pendingCharge.groupId
+                        === reservation.groupId;
+                const preparedReplayPath = resolvePreparedReplayGroupPath(
+                    paths.operationDirectory,
+                    reservation.captureIndex,
+                );
+                if (!reservation.preparedReplay) {
+                    if (pendingTargetsReservation) {
+                        const {
+                            pendingPreparedReplay: _pendingPreparedReplay,
+                            ...withoutPendingPreparedReplay
+                        } = manifest;
+                        await atomicWrite(
+                            paths.manifestPath,
+                            Object.freeze(withoutPendingPreparedReplay),
+                        );
+                    }
+                    // A prior clear may have published its row and header in
+                    // either order before crashing. The row is authoritative
+                    // that no replay receipt remains, so exact cleanup can
+                    // idempotently remove an orphaned prepared payload.
+                    await rm(preparedReplayPath, { force: true });
+                    return;
+                }
                 const {
                     preparedReplay: _preparedReplay,
                     ...withoutPreparedReplay
                 } = reservation;
                 const cleared = Object.freeze(withoutPreparedReplay);
+                const clearsPendingCharge =
+                    pendingCharge !== undefined
+                    && pendingTargetsReservation
+                    && pendingCharge.serializedBytes
+                        === reservation.preparedReplay.serializedBytes
+                    && pendingCharge.contentSha256
+                        === reservation.preparedReplay.contentSha256;
+                if (pendingTargetsReservation && !clearsPendingCharge) {
+                    throw new ExternalSessionStagingError(
+                        'external_session_staging_prepared_replay_conflict',
+                        'External session staging prepared replay charge conflicts with its row receipt',
+                    );
+                }
                 await atomicWrite(
                     resolveGroupRowPath(paths.operationDirectory, reservation.captureIndex),
                     cleared,
                 );
+                const {
+                    pendingPreparedReplay: _pendingPreparedReplay,
+                    ...withoutPendingPreparedReplay
+                } = manifest;
                 await atomicWrite(paths.manifestPath, Object.freeze({
-                    ...manifest,
-                    summary: summaryWithRowTransition(
-                        manifest.summary,
-                        reservation,
-                        cleared,
-                    ),
+                    ...(clearsPendingCharge
+                        ? withoutPendingPreparedReplay
+                        : manifest),
+                    // A pending charge means the prepared row won the write
+                    // race but its summary fold did not. Clearing that exact
+                    // row restores the already-published header summary; an
+                    // ordinarily folded row still needs the normal transition.
+                    summary: clearsPendingCharge
+                        ? manifest.summary
+                        : summaryWithRowTransition(
+                            manifest.summary,
+                            reservation,
+                            cleared,
+                        ),
                 }));
-                await rm(
-                    resolvePreparedReplayGroupPath(paths.operationDirectory, reservation.captureIndex),
-                    { force: true },
-                );
+                await rm(preparedReplayPath, { force: true });
             });
         },
 
@@ -2403,6 +2552,22 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                             createdWorkspaceMedia: Object.freeze(nextMedia),
                         }));
                     }
+                }
+                await rm(paths.operationDirectory, { recursive: true, force: true });
+                stagingPaths.release(operationId);
+                return Object.freeze({ status: 'completed' as const });
+            });
+        },
+
+        async cleanupAbandonedOperation(abandonInput) {
+            const operationId = readNonemptyString(abandonInput.operationId, 'operationId');
+            return await withCapacityLock(operationId, async (paths) => {
+                const manifest = await readHeader(paths.manifestPath);
+                if (!manifest || manifest.operationId !== operationId) {
+                    return Object.freeze({ status: 'missing' as const });
+                }
+                if (manifest.createdWorkspaceMedia.length > 0) {
+                    return Object.freeze({ status: 'not_ready' as const });
                 }
                 await rm(paths.operationDirectory, { recursive: true, force: true });
                 stagingPaths.release(operationId);

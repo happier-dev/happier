@@ -37,6 +37,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     hostExternalSessionAction?: ActionExecutorDeps['hostExternalSessionAction'];
     /** Thin adapters to the canonical Account-server-owned auth routes. */
     accountServerActionDeps?: AccountServerActionDeps;
+    pluginActionExecutionOwner?: 'daemon_control' | 'current_process';
   }>;
 
 export function createCredentialedTargetActionCurrentIntent(
@@ -89,7 +90,9 @@ export function createCliActionExecutor(
       }),
     },
   ).executor;
-  const daemonAware = createDaemonPluginActionExecutor({ base });
+  const daemonAware = params.pluginActionExecutionOwner === 'current_process'
+    ? base
+    : createDaemonPluginActionExecutor({ base });
   const resolveContext = (context: Parameters<typeof base.execute>[2]) => ({
     ...(context ?? {}),
     surface: context?.surface ?? 'cli',

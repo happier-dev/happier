@@ -28,8 +28,11 @@ describe('resolveTrackedSessionCatalogAgentId', () => {
   it('uses the explicit built-in backend target before webhook metadata', () => {
     expect(resolveTrackedSessionCatalogAgentId(trackedSession({
       happySessionMetadataFromLocalWebhook: metadata({
-        codexSessionId: 'codex-session',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer', providerSessionId: 'codex-session' },
+        },
       }),
       spawnOptions: {
         directory: '/repo',
@@ -41,8 +44,11 @@ describe('resolveTrackedSessionCatalogAgentId', () => {
   it('infers Codex from webhook metadata when spawn options are not hydrated yet', () => {
     expect(resolveTrackedSessionCatalogAgentId(trackedSession({
       happySessionMetadataFromLocalWebhook: metadata({
-        codexSessionId: 'codex-session',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer', providerSessionId: 'codex-session' },
+        },
       }),
     }))).toBe('codex');
   });
@@ -50,8 +56,11 @@ describe('resolveTrackedSessionCatalogAgentId', () => {
   it('does not turn configured ACP backend targets into built-in catalog identities', () => {
     expect(resolveTrackedSessionCatalogAgentId(trackedSession({
       happySessionMetadataFromLocalWebhook: metadata({
-        codexSessionId: 'codex-session',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer', providerSessionId: 'codex-session' },
+        },
       }),
       spawnOptions: {
         directory: '/repo',

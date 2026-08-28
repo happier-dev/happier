@@ -189,7 +189,7 @@ export async function normalizeSessionCreateSpawnRequest(
   }
   const configuration = resolveConfiguration(request, updatedAtMs);
   const title = nonEmptyString(request.title);
-  const initialMessage = nonEmptyString(request.initialMessage);
+  const initialInputText = nonEmptyString(request.initialInput?.text);
   const permissionModeRaw = nonEmptyString(request.permissionMode);
   const permissionMode = permissionModeRaw
     ? parseAgentPermissionIntentV1Alias(permissionModeRaw)
@@ -228,7 +228,7 @@ export async function normalizeSessionCreateSpawnRequest(
         }
       : {}),
     ...(title ? { title } : {}),
-    ...(initialMessage ? { initialMessage } : {}),
+    ...(initialInputText ? { initialInput: { text: initialInputText } } : {}),
     ...(permissionMode ? { permissionMode } : {}),
     ...(agentModeId ? { agentModeId } : {}),
     ...(configuration ? { configuration } : {}),

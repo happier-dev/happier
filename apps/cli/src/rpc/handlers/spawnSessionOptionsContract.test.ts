@@ -115,7 +115,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     })).toThrow();
   });
 
-  it('accepts exact pending first-input custody and rejects blank handoffs', () => {
+  it('accepts exact text or structured pending first-input custody and rejects empty handoffs', () => {
     expect(SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp/repo',
       pendingFirstInput: {
@@ -125,6 +125,30 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     }).pendingFirstInput).toEqual({
       text: '  exact prompt bytes  ',
       localId: '  opaque local id  ',
+    });
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/repo',
+      pendingFirstInput: {
+        text: '',
+        localId: 'spawn-first-turn:structured',
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [{
+              v: 1,
+              instanceId: 'spawn-first-turn:structured#0',
+              attachment: { pluginId: 'happier.triage', localId: 'entry' },
+              key: 'entry:42',
+              value: { v: 1, entryId: '42' },
+              presentation: { label: 'Fix the race', typeLabel: 'Triage entry' },
+            }],
+          },
+        },
+      },
+    }).pendingFirstInput).toMatchObject({
+      text: '',
+      localId: 'spawn-first-turn:structured',
     });
 
     expect(() => SpawnDaemonSessionRequestSchema.parse({
@@ -405,14 +429,19 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     expect(parsed.windowsTerminalWindowName).toBe('happier-qa');
   });
 
-  it('maps legacy experimentalCodexAcp requests onto canonical codexBackendMode', () => {
+  it('maps legacy experimentalCodexAcp requests onto the canonical runtime descriptor', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
       experimentalCodexAcp: true,
     });
 
-    expect(parsed.codexBackendMode).toBe('acp');
+    expect(parsed.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'acp' },
+    });
     expect(parsed).not.toHaveProperty('experimentalCodexAcp');
+    expect(parsed).not.toHaveProperty('codexBackendMode');
   });
 
   it('drops legacy experimentalCodexAcp when false', () => {
@@ -421,17 +450,64 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       experimentalCodexAcp: false,
     });
 
-    expect(parsed.codexBackendMode).toBeUndefined();
+    expect(parsed.runtimeDescriptorV1).toBeUndefined();
     expect(parsed).not.toHaveProperty('experimentalCodexAcp');
   });
 
-  it('preserves canonical codex backend mode from the transport request', () => {
+  it('normalizes released codex backend mode from the transport request', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
       codexBackendMode: 'appServer',
     });
 
-    expect(parsed.codexBackendMode).toBe('appServer');
+    expect(parsed.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'appServer' },
+    });
+    expect(parsed).not.toHaveProperty('codexBackendMode');
+  });
+
+  it('rejects conflicting released Codex selection without throwing from safeParse', () => {
+    expect(SpawnDaemonSessionRequestSchema.safeParse({
+      directory: '/tmp',
+      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
+    }).success).toBe(false);
+  });
+
+  it('preserves a qualified Agent target and binds model selection to it', () => {
+    const agentTarget = {
+      kind: 'agent' as const,
+      identity: { pluginId: 'acme.agent.runtime', localId: 'runtime' },
+    };
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      agentTarget,
+      modelSelection: {
+        v: 1,
+        updatedAt: 42,
+        ref: {
+          agentTargetKey: 'agent:acme.agent.runtime/runtime',
+          providerConnectionId: null,
+          modelId: 'model-1',
+        },
+      },
+    });
+
+    expect(parsed.agentTarget).toEqual(agentTarget);
+    expect(pickDefinedSpawnSessionOptions(parsed).agentTarget).toEqual(agentTarget);
+  });
+
+  it('rejects the undeployed generic backendMode alias', () => {
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendMode: 'appServer',
+    })).toThrow();
   });
 
   it('preserves canonical runtimeDescriptorV1 from the transport request', () => {

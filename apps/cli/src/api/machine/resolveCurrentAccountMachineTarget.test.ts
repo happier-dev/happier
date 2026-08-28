@@ -12,7 +12,7 @@ vi.mock('@/api/client/serverHttpBaseUrl', () => ({
   resolveServerHttpBaseUrl: () => 'https://api.example.test',
 }));
 
-import { resolveCurrentAccountMachineTarget } from './resolveCurrentAccountMachineTarget';
+import { listCurrentAccountMachines, resolveCurrentAccountMachineTarget } from './resolveCurrentAccountMachineTarget';
 
 function currentMachine(id: string, host?: string) {
   return {
@@ -29,6 +29,17 @@ beforeEach(() => {
 });
 
 describe('resolveCurrentAccountMachineTarget', () => {
+  it('projects the complete signed Account inventory without hiding revoked machines', async () => {
+    boundaries.axiosGet.mockResolvedValue({ data: [
+      currentMachine('machine-current', 'desk'),
+      { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
+    ] });
+    await expect(listCurrentAccountMachines({ token: 'token-1' })).resolves.toEqual([
+      { id: 'machine-current', label: 'desk', active: true, revokedAt: null, replacedByMachineId: null },
+      { id: 'machine-old', label: 'old-desk', active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
+    ]);
+  });
+
   it('selects the sole current API-token bootstrap machine without metadata', async () => {
     boundaries.axiosGet.mockResolvedValue({ data: [currentMachine('machine-remote')] });
 

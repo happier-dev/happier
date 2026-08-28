@@ -5,12 +5,11 @@ import {
   buildAutomationSessionInputAdmissionV1,
   buildAgentRuntimeFirstInputAdmissionV1,
   buildPluginSessionInputAdmissionV1,
-  buildSessionSpawnInitialInputAdmissionV1,
+  buildSessionSpawnInitialInputAdmissionForLocalIdV1,
   deriveAutomationSessionInputLocalIdV1,
 } from './sessionInputAdmissionIdentity';
 
 describe('derivePluginSessionInputLocalIdV1', () => {
-  const creationTag = `create:v1:${'a'.repeat(43)}`;
   const caller = {
     kind: 'plugin' as const,
     pluginId: 'acme.channels',
@@ -106,18 +105,16 @@ describe('derivePluginSessionInputLocalIdV1', () => {
     });
   });
 
-  it('derives spawn-initial identity only from the host creation namespace while retaining real plugin provenance', () => {
-    const first = buildSessionSpawnInitialInputAdmissionV1({
+  it('retains the host-sealed spawn identity while preserving real plugin provenance', () => {
+    const first = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: caller,
       callerSurface: 'plugin',
-      sessionId: 'session-1',
-      sessionCreationTag: creationTag,
+      localId: 'spawn-first-turn:stable-creation',
     });
-    const renamedContribution = buildSessionSpawnInitialInputAdmissionV1({
+    const renamedContribution = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { ...caller, contributionLocalId: 'renamed-inbound' },
       callerSurface: 'plugin',
-      sessionId: 'session-1',
-      sessionCreationTag: creationTag,
+      localId: 'spawn-first-turn:stable-creation',
     });
 
     expect(first.localId).toBe(renamedContribution.localId);
@@ -136,11 +133,10 @@ describe('derivePluginSessionInputLocalIdV1', () => {
   });
 
   it('does not invent an owner or a requested ceiling for a host UI spawn input', () => {
-    expect(buildSessionSpawnInitialInputAdmissionV1({
+    expect(buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' },
       callerSurface: 'ui',
-      sessionId: 'session-1',
-      sessionCreationTag: creationTag,
+      localId: 'spawn-first-turn:host-ui',
     }).inputAdmission).toEqual({
       provenance: {
         v: 1,
@@ -157,16 +153,15 @@ describe('derivePluginSessionInputLocalIdV1', () => {
   });
 
   it('retains exact Automation Run provenance for a spawned Session initial input', () => {
-    const admission = buildSessionSpawnInitialInputAdmissionV1({
+    const admission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: {
         kind: 'automationRun',
         automationId: 'automation-7',
         runId: 'run-42',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
       },
       callerSurface: 'cli',
-      sessionId: 'session-1',
-      sessionCreationTag: creationTag,
+      localId: 'spawn-first-turn:automation',
     });
 
     expect(admission).toMatchObject({

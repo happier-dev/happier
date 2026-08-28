@@ -2,6 +2,9 @@ import {
   SPAWN_SESSION_ERROR_CODES,
   readConnectedServiceMaterializationIdentityV1FromMetadata,
   normalizeSpawnSessionNonceResolution,
+  buildSpawnedFirstTurnLocalId,
+  buildSessionSpawnInitialInputLocalIdV1,
+  hasSessionInputContentV1,
   sessionCreationCorrespondenceMatchesV1,
   type BackendTargetRefV2,
   type SessionCreationCorrespondenceV1,
@@ -11,6 +14,7 @@ import {
   type SessionOrganizationPlacementV1,
   type SessionModelSelectionV1,
   type SpawnSessionNonceResolution,
+  type PluginSessionInputAttachmentV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
@@ -111,7 +115,8 @@ export type CreateSpawnedSessionParams = Readonly<{
    * its own cannot silently fan out to another machine.
    */
   machineId?: string;
-  backendTarget: BackendTargetRefV2;
+  /** Released remote-daemon compatibility projection and configured ACP target. */
+  backendTarget?: BackendTargetRefV2;
   sessionCreationTag?: SessionCreationTagV1;
   sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
   organizationPlacement?: SessionOrganizationPlacementV1;
@@ -124,9 +129,12 @@ export type CreateSpawnedSessionParams = Readonly<{
    * Session tag.
    */
   legacyMetadataLabel?: string;
-  initialMessage?: string;
-  buildInitialInputAdmission?: (sessionId: string) => Readonly<{
-    localId: string;
+  initialInput?: Readonly<{
+    text?: string;
+    attachments?: readonly PluginSessionInputAttachmentV1[];
+  }>;
+  buildInitialInputHandoff?: (localId: string) => Readonly<{
+    meta?: Record<string, unknown>;
     inputAdmission: NonNullable<Parameters<typeof sendSessionMessage>[0]['inputAdmission']>;
   }>;
   /** Authenticated target transport required for machine-only input admission. */
@@ -187,8 +195,7 @@ export type CreateSpawnedSessionParams = Readonly<{
   | 'windowsTerminalWindowName'
   | 'runtimeDescriptorV1'
   | 'agentSessionStartupInstructionsV1'
-  | 'backendMode'
-  | 'codexBackendMode'
+  | 'agentTarget'
 >>>;
 
 const DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS = 10_000;
@@ -442,38 +449,39 @@ function validateExistingSessionCreationCandidate(params: Readonly<{
 async function submitSpawnInitialInput(params: Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
-  initialMessage?: string;
-  buildInitialInputAdmission?: CreateSpawnedSessionParams['buildInitialInputAdmission'];
+  initialInput?: CreateSpawnedSessionParams['initialInput'];
+  localId: string;
+  buildInitialInputHandoff?: CreateSpawnedSessionParams['buildInitialInputHandoff'];
   machineAdmissionTransport?: CreateSpawnedSessionParams['machineAdmissionTransport'];
   signal?: AbortSignal;
 }>): Promise<SessionSpawnNewInitialInputDispositionV1> {
-  const normalizedInitialMessage = typeof params.initialMessage === 'string'
-    ? params.initialMessage.trim()
-    : '';
-  if (!normalizedInitialMessage) return { status: 'notRequested' };
+  const text = typeof params.initialInput?.text === 'string' ? params.initialInput.text : '';
+  const attachmentCount = params.initialInput?.attachments?.length ?? 0;
+  if (!hasSessionInputContentV1({ text, attachmentCount })) return { status: 'notRequested' };
   // Session identity is already settled at this call site. A caller that
   // retired before Message admission began has a definite nested rejection,
   // not a reason to recast the committed Session as cancelled.
   if (params.signal?.aborted) {
     return { status: 'rejected', code: 'session_input_cancelled' };
   }
-  if (!params.buildInitialInputAdmission) {
+  if (!params.buildInitialInputHandoff) {
     throw createCodedError(
       'Initial input requires Message-owned admission identity',
       SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
       { sessionId: params.sessionId },
     );
   }
-  const initialInputAdmission = params.buildInitialInputAdmission(params.sessionId);
+  const initialInputHandoff = params.buildInitialInputHandoff(params.localId);
   try {
     const sent = await sendSessionMessage({
       credentials: params.credentials,
       idOrPrefix: params.sessionId,
-      message: normalizedInitialMessage,
+      message: text,
       wait: false,
       timeoutMs: 60_000,
-      localId: initialInputAdmission.localId,
-      inputAdmission: initialInputAdmission.inputAdmission,
+      localId: params.localId,
+      inputAdmission: initialInputHandoff.inputAdmission,
+      ...(initialInputHandoff.meta ? { messageMeta: initialInputHandoff.meta } : {}),
       requestedAction: { v: 1, kind: 'send_now' },
       ...(params.machineAdmissionTransport
         ? { machineAdmissionTransport: params.machineAdmissionTransport }
@@ -484,7 +492,7 @@ async function submitSpawnInitialInput(params: Readonly<{
   } catch {
     return {
       status: 'outcomeUnknown',
-      localId: initialInputAdmission.localId,
+      localId: params.localId,
       code: 'session_input_action_execution_failed',
     };
   }
@@ -741,14 +749,12 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     // The committed Session is already known; a mutable presentation read
     // cannot undo that fact.
   }
-  const initialInput = await submitSpawnInitialInput({
-    credentials: params.credentials,
-    sessionId,
-    initialMessage: params.initialMessage,
-    buildInitialInputAdmission: params.buildInitialInputAdmission,
-    machineAdmissionTransport: params.machineAdmissionTransport,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
+  const pendingFirstInput = args.spawnRequestInput.pendingFirstInput as
+    | Readonly<{ localId: string }>
+    | undefined;
+  const initialInput: SessionSpawnNewInitialInputDispositionV1 = pendingFirstInput
+    ? { status: 'accepted', localId: pendingFirstInput.localId }
+    : { status: 'notRequested' };
   return {
     disposition: created.created ? 'created' : 'rejoined',
     sessionId,
@@ -796,13 +802,40 @@ export async function createSpawnedSession(
       sessionCreationTag: params.sessionCreationTag,
     })
     : null;
-  const spawnNonce = callerOwnedSpawnNonce ?? creationOwnedSpawnNonce ?? randomUUID();
+  // A public creation key is the durable retry identity. The transport request
+  // id only distinguishes otherwise-unkeyed calls and must never change the
+  // first-turn local id for a retry of the same creation.
+  const spawnNonce = creationOwnedSpawnNonce ?? callerOwnedSpawnNonce ?? randomUUID();
   const hasRetryableSpawnNonce = callerOwnedSpawnNonce !== null || creationOwnedSpawnNonce !== null;
+  const initialInputText = typeof params.initialInput?.text === 'string' ? params.initialInput.text : '';
+  const initialInputRequested = hasSessionInputContentV1({
+    text: initialInputText,
+    attachmentCount: params.initialInput?.attachments?.length ?? 0,
+  });
+  const initialInputLocalId = params.sessionCreationTag
+    ? buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag: params.sessionCreationTag })
+    : buildSpawnedFirstTurnLocalId(spawnNonce);
+  if (!initialInputLocalId) {
+    throw createCodedError(
+      'Spawn identity did not produce a valid first-turn identity',
+      SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    );
+  }
+  const initialInputHandoff = initialInputRequested
+    ? params.buildInitialInputHandoff?.(initialInputLocalId)
+    : undefined;
+  if (initialInputRequested && !initialInputHandoff) {
+    throw createCodedError(
+      'Initial input requires Message-owned admission identity',
+      SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    );
+  }
   const spawnRequestInput = {
     directory: params.directory,
     spawnNonce,
     ...(exactMachineId ? { machineId: exactMachineId } : {}),
-    backendTarget: params.backendTarget,
+    ...(params.agentTarget ? { agentTarget: params.agentTarget } : {}),
+    ...(!params.agentTarget && params.backendTarget ? { backendTarget: params.backendTarget } : {}),
     ...(params.sessionCreationTag ? { sessionCreationTag: params.sessionCreationTag } : {}),
     ...(params.sessionCreationCorrespondence
       ? { sessionCreationCorrespondence: params.sessionCreationCorrespondence }
@@ -847,8 +880,16 @@ export async function createSpawnedSession(
     ...(params.agentSessionStartupInstructionsV1
       ? { agentSessionStartupInstructionsV1: params.agentSessionStartupInstructionsV1 }
       : {}),
-    ...(params.backendMode ? { backendMode: params.backendMode } : {}),
-    ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
+    ...(initialInputRequested && initialInputHandoff
+      ? {
+        pendingFirstInput: {
+          text: initialInputText,
+          localId: initialInputLocalId,
+          ...(initialInputHandoff.meta ? { meta: initialInputHandoff.meta } : {}),
+          inputAdmission: initialInputHandoff.inputAdmission,
+        },
+      }
+      : {}),
   } satisfies Record<string, unknown>;
   const spawnRequest = SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
@@ -931,8 +972,9 @@ export async function createSpawnedSession(
       const initialInput = await submitSpawnInitialInput({
         credentials: params.credentials,
         sessionId: existing.id,
-        initialMessage: params.initialMessage,
-        buildInitialInputAdmission: params.buildInitialInputAdmission,
+        initialInput: params.initialInput,
+        localId: initialInputLocalId,
+        buildInitialInputHandoff: params.buildInitialInputHandoff,
         machineAdmissionTransport: params.machineAdmissionTransport,
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -953,7 +995,12 @@ export async function createSpawnedSession(
     try {
       return params.directTransport
         ? await params.directTransport.spawn(
-          request,
+          // Released cli-v0.2.1 daemons do not read agentTarget. Keep the
+          // caller-supplied exact backend projection only at this version-skew
+          // transport seam; remove when those remote readers are unreachable.
+          (params.agentTarget && params.backendTarget
+            ? { ...request, backendTarget: params.backendTarget }
+            : request),
           params.signal ? { signal: params.signal } : undefined,
         )
         : params.machineActionTransport
@@ -1144,14 +1191,9 @@ export async function createSpawnedSession(
         { sessionId },
       );
     }
-    const initialInput = await submitSpawnInitialInput({
-      credentials: params.credentials,
-      sessionId,
-      initialMessage: params.initialMessage,
-      buildInitialInputAdmission: params.buildInitialInputAdmission,
-      machineAdmissionTransport: params.machineAdmissionTransport,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
+    const initialInput: SessionSpawnNewInitialInputDispositionV1 = initialInputRequested
+      ? { status: 'accepted', localId: initialInputLocalId }
+      : { status: 'notRequested' };
     return {
       disposition: sessionCreationOutcome.disposition,
       sessionId,
@@ -1214,14 +1256,9 @@ export async function createSpawnedSession(
       legacyMetadataLabel: params.legacyMetadataLabel,
     });
   }
-  const initialInput = await submitSpawnInitialInput({
-    credentials: params.credentials,
-    sessionId,
-    initialMessage: params.initialMessage,
-    buildInitialInputAdmission: params.buildInitialInputAdmission,
-    machineAdmissionTransport: params.machineAdmissionTransport,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
+  const initialInput: SessionSpawnNewInitialInputDispositionV1 = initialInputRequested
+    ? { status: 'accepted', localId: initialInputLocalId }
+    : { status: 'notRequested' };
 
   return {
     disposition: sessionCreationOutcome.disposition,

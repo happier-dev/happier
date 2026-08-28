@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   ConnectedServiceIdSchema,
   ExternalSessionAgentIdSchema,
@@ -433,6 +435,11 @@ export type ConfiguredPluginExternalSessionsComposition = Readonly<{
     ref: AuthorTakeoverRef,
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<ContextualExternalSessionTakeoverResolution>;
+  admitPersistedTakeoverSource(input: Readonly<{
+    agentId: string;
+    sourceId: string;
+    source: ExternalSessionsSource;
+  }>): ContextualExternalSessionTakeoverResolution | null;
   compositionPort: ExternalSessionsCompositionPort;
   dispose: () => void;
 }>;
@@ -711,10 +718,12 @@ function projectAuthorTranscriptReadResult(
       items: Object.freeze(value.items.map(projectAuthorTranscriptItem)),
       nextCursor: value.nextCursor,
       boundary: value.boundary,
+      hasMore: value.hasMore,
       ...(value.diagnostics === undefined
         ? {}
         : { diagnostics: Object.freeze(value.diagnostics.map((diagnostic) => Object.freeze({
             code: diagnostic.code,
+            severity: diagnostic.severity,
             count: diagnostic.count,
             positions: Object.freeze([...diagnostic.positions]),
           }))) }),
@@ -1340,6 +1349,29 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         ops.externalLinkedTakeoverWriterSafety ?? 'unsupported',
     });
   };
+  const admitPersistedTakeoverSource = (input: Readonly<{
+    agentId: string;
+    sourceId: string;
+    source: ExternalSessionsSource;
+  }>): ContextualExternalSessionTakeoverResolution | null => {
+    if (!isCurrent() || retirementSignal.aborted) return null;
+    const agentId = ExternalSessionAgentIdSchema.safeParse(input.agentId);
+    const sourceId = ExternalSessionSourceIdSchema.safeParse(input.sourceId);
+    if (!agentId.success || !sourceId.success) return null;
+    const entry = snapshot.resolve(
+      agentId.data,
+      sourceId.data,
+      params.readCurrentBasis(),
+    );
+    if (!entry || !isDeepStrictEqual(entry.source, input.source)) return null;
+    const declaration = params.agents.find((agent) => agent.id === agentId.data)
+      ?.richDefinition?.definition.surfaces?.externalSession;
+    return Object.freeze({
+      source: entry.source,
+      externalLinkedTakeoverWriterSafety:
+        declaration?.externalLinkedTakeover?.writerSafety ?? 'unsupported',
+    });
+  };
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({
     resolveFollowTarget: async (input: CompositionResolveInput) => await domain.compositionPort.resolveFollowTarget(input),
     followTranscript: async (
@@ -1357,6 +1389,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
     sourceRefusals: snapshot.refusals,
     bindAuthorService,
     resolveAuthorSource,
+    admitPersistedTakeoverSource,
     compositionPort,
     /**
      * Releases this composition only. The persisted candidate index is keyed by
@@ -1433,6 +1466,8 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
    * ever get, so it is carried as that error's `cause` rather than discarded.
    */
   let lastRebuildFailure: unknown = null;
+  let sameRevisionRetryAccountRevision: string | null = null;
+  let sameRevisionRetryRequestedAccountRevision: string | null = null;
   let activeRetirement: AbortController | null = null;
   let pendingRebuild: Readonly<{ accountRevision: string; lifecycleRevision: number }> | null = null;
   let rebuildWorker: Promise<void> | null = null;
@@ -1479,6 +1514,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
     activeRetirement = retirement;
     active = next;
     lastRebuildFailure = null;
+    sameRevisionRetryRequestedAccountRevision = null;
     try {
       params.onSourceRefusalsChanged?.(next.sourceRefusals);
     } catch {
@@ -1508,7 +1544,25 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
         const next = pendingRebuild;
         pendingRebuild = null;
         await rebuild(next.accountRevision, next.lifecycleRevision).catch((error: unknown) => {
-          lastRebuildFailure = error;
+          if (
+            observedAccountRevision === next.accountRevision
+            && lifecycleRevision === next.lifecycleRevision
+          ) {
+            lastRebuildFailure = error;
+            if (
+              sameRevisionRetryRequestedAccountRevision === next.accountRevision
+              && sameRevisionRetryAccountRevision !== next.accountRevision
+            ) {
+              sameRevisionRetryAccountRevision = next.accountRevision;
+              sameRevisionRetryRequestedAccountRevision = null;
+              lastRebuildFailure = null;
+              const retryRevision = ++lifecycleRevision;
+              pendingRebuild = Object.freeze({
+                accountRevision: next.accountRevision,
+                lifecycleRevision: retryRevision,
+              });
+            }
+          }
         });
       }
     })().finally(() => {
@@ -1520,10 +1574,27 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   const beginRevision = (rawRevision: string): Promise<void> => {
     const accountRevision = rawRevision.trim();
     if (!accountRevision) return Promise.resolve();
-    if (accountRevision === observedAccountRevision && (active || pendingRebuild || rebuildWorker)) {
-      return rebuildWorker ?? Promise.resolve();
+    if (accountRevision === observedAccountRevision && lifecycleRevision > 0) {
+      if (active) {
+        return rebuildWorker ?? Promise.resolve();
+      }
+      if (pendingRebuild || (rebuildWorker && lastRebuildFailure === null)) {
+        sameRevisionRetryRequestedAccountRevision = accountRevision;
+        return rebuildWorker ?? Promise.resolve();
+      }
+      if (
+        lastRebuildFailure === null
+        || sameRevisionRetryAccountRevision === accountRevision
+      ) {
+        return Promise.resolve();
+      }
+      sameRevisionRetryAccountRevision = accountRevision;
+    } else if (accountRevision !== observedAccountRevision) {
+      observedAccountRevision = accountRevision;
+      sameRevisionRetryAccountRevision = null;
+      sameRevisionRetryRequestedAccountRevision = null;
     }
-    observedAccountRevision = accountRevision;
+    lastRebuildFailure = null;
     const revision = ++lifecycleRevision;
     activeRetirement?.abort();
     active?.dispose();
@@ -1643,6 +1714,11 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   ): Promise<ContextualExternalSessionTakeoverResolution> => (
     await current().resolveAuthorSource(ref, options)
   );
+  const admitPersistedTakeoverSource = (
+    input: Parameters<ConfiguredPluginExternalSessionsComposition['admitPersistedTakeoverSource']>[0],
+  ): ContextualExternalSessionTakeoverResolution | null => (
+    current().admitPersistedTakeoverSource(input)
+  );
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({
     resolveFollowTarget: async (input: CompositionResolveInput) => await current().compositionPort.resolveFollowTarget(input),
     followTranscript: async (
@@ -1663,6 +1739,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
     },
     bindAuthorService,
     resolveAuthorSource,
+    admitPersistedTakeoverSource,
     compositionPort,
     dispose() {
       if (disposed) return;

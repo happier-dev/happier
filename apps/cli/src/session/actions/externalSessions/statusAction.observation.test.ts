@@ -133,14 +133,6 @@ function actionContext(
                 reconcileStatusLink,
             },
             getServerFeaturesSnapshot,
-            takeoverReadiness: {
-                read: vi.fn<
-                    (sessionId: string, linkGeneration: string) =>
-                        boolean | null
-                >(() => null),
-                write: vi.fn(),
-                invalidate: vi.fn(),
-            },
         },
         reconcileStatusLink,
         getServerFeaturesSnapshot,
@@ -577,13 +569,8 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
         expect(getServerFeaturesSnapshot).toHaveBeenCalledOnce();
     });
 
-    it('recomputes cached readiness after a same-session relink advances the link generation', async () => {
+    it('asks the canonical takeover availability owner for the current linked Agent', async () => {
         const owner = actionContext(snapshot('unknown'));
-        owner.context.takeoverReadiness.read.mockImplementation(
-            (_sessionId: string, linkGeneration: string) => (
-                linkGeneration === '1000' ? true : null
-            ),
-        );
         mocks.isExternalTakeoverLaunchAvailable.mockResolvedValueOnce(false);
         const loaded = await mocks.loadLinkedExternalSession();
         mocks.loadLinkedExternalSession.mockResolvedValueOnce({
@@ -607,11 +594,6 @@ describe('executeExternalSessionStatusGetAction observation reconciliation', () 
             owner.context as never,
         );
 
-        expect(owner.context.takeoverReadiness.invalidate).not.toHaveBeenCalled();
-        expect(owner.context.takeoverReadiness.read).toHaveBeenCalledWith(
-            'session-1',
-            '2000',
-        );
         expect(mocks.isExternalTakeoverLaunchAvailable)
             .toHaveBeenCalledWith('opencode');
         expect(response).toMatchObject({

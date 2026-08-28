@@ -3,6 +3,7 @@ import {
   ExternalSessionTakeoverTargetDirectoryV1Schema,
   readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionsSource,
+  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
@@ -92,9 +93,21 @@ export type CurrentGlobalExternalSessionsTakeoverSourceOps = Pick<
   | 'deriveTakeoverStartRequest'
 >;
 
+export type PersistedTakeoverSourceAdmission = Readonly<{
+  source: ExternalSessionsSource;
+  externalLinkedTakeoverWriterSafety:
+    PluginAgentExternalLinkedTakeoverWriterSafetyV1;
+}>;
+
 export type CurrentGlobalExternalSessionsAuthorService =
   LiveConfiguredPluginExternalSessionsAdapter & Readonly<{
     takeoverSourceOps: CurrentGlobalExternalSessionsTakeoverSourceOps;
+    admitPersistedTakeoverSource(input: Readonly<{
+      agentId: string;
+      machineId: string;
+      sourceId: string;
+      source: ExternalSessionsSource;
+    }>): PersistedTakeoverSourceAdmission | null;
     bindCallerAuthorService(input: Readonly<{
       pluginId: string;
       contextualTakeover?: ContextualExternalSessionTakeoverAdapter;
@@ -738,6 +751,13 @@ export async function createCurrentGlobalExternalSessionsAuthorService(
       return owner.sourceRefusals;
     },
     takeoverSourceOps,
+    admitPersistedTakeoverSource(
+      input: Parameters<CurrentGlobalExternalSessionsAuthorService['admitPersistedTakeoverSource']>[0],
+    ) {
+      const machineId = params.resolveMachineId()?.trim() ?? '';
+      if (!machineId || input.machineId !== machineId) return null;
+      return owner.admitPersistedTakeoverSource(input);
+    },
     bindCallerAuthorService({ contextualTakeover }) {
       return owner.bindAuthorService(
         contextualTakeover,

@@ -58,7 +58,6 @@ vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
                 baseUrl: 'http://127.0.0.1:4096',
                 directory: '/stale/link/path',
             },
-            codexBackendMode: null,
         },
     }),
 }));
@@ -160,11 +159,6 @@ describe('executeExternalSessionTakeoverAction persisted import working director
             publish: vi.fn(async () => undefined),
         },
         observationProjection: {} as never,
-        takeoverReadiness: {
-            read: () => null,
-            write: () => undefined,
-            invalidate: () => undefined,
-        },
         spawnSession: vi.fn(async () => ({ type: 'success' as const, sessionId: 'linked-session-1' })),
         stopSession: vi.fn(async () => true),
     });

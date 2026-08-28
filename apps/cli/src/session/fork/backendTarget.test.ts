@@ -7,12 +7,12 @@ const {
   resolveAgentIdFromSessionMetadataMock,
   readAgentCatalogSnapshotMock,
   resolveAvailableAccountSettingsMock,
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettingsMock,
 } = vi.hoisted(() => ({
   resolveAgentIdFromSessionMetadataMock: vi.fn(),
   readAgentCatalogSnapshotMock: vi.fn(),
   resolveAvailableAccountSettingsMock: vi.fn(),
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock: vi.fn(),
+  resolveConfiguredAcpBackendFromAccountSettingsMock: vi.fn(),
 }));
 
 vi.mock('@happier-dev/agents', () => ({
@@ -25,18 +25,12 @@ vi.mock('@/settings/accountSettings/resolveAvailableAccountSettings', () => ({
   resolveAvailableAccountSettings: resolveAvailableAccountSettingsMock,
 }));
 
-vi.mock('@/configuration', () => ({
-  configuration: {
-    happyHomeDir: '/tmp/happy-home',
-  },
-}));
-
 vi.mock('@/agent/catalog/snapshot', () => ({
   readAgentCatalogSnapshot: readAgentCatalogSnapshotMock,
 }));
 
 vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
-  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins: resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettings: resolveConfiguredAcpBackendFromAccountSettingsMock,
 }));
 
 import { resolveSessionForkBackendTarget } from './backendTarget';
@@ -55,8 +49,8 @@ describe('resolveSessionForkBackendTarget', () => {
         claude: { id: 'claude', cliSubcommand: 'claude' },
       },
     });
-    resolveAvailableAccountSettingsMock.mockResolvedValue(null);
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue(null);
+    resolveAvailableAccountSettingsMock.mockReturnValue(null);
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue(null);
     resolveAgentIdFromSessionMetadataMock.mockReturnValue('claude');
   });
 
@@ -76,11 +70,7 @@ describe('resolveSessionForkBackendTarget', () => {
     });
 
     expect(resolveAvailableAccountSettingsMock).toHaveBeenCalledWith({ credentials });
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
-      settings: {},
-      backendId: 'review-bot',
-      happyHomeDir: '/tmp/happy-home',
-    });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith({}, 'review-bot');
     expect(result).toMatchObject({
       ok: true,
       catalogAgentId: null,
@@ -113,8 +103,8 @@ describe('resolveSessionForkBackendTarget', () => {
     const accountSettings = { source: 'snapshot' };
     const resolvedBackend = { backendId: 'review-bot', title: 'Review Bot' };
 
-    resolveAvailableAccountSettingsMock.mockResolvedValueOnce(accountSettings);
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValueOnce(resolvedBackend);
+    resolveAvailableAccountSettingsMock.mockReturnValueOnce(accountSettings);
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValueOnce(resolvedBackend);
 
     const result = await resolveSessionForkBackendTarget({
       credentials,
@@ -131,11 +121,10 @@ describe('resolveSessionForkBackendTarget', () => {
     });
 
     expect(resolveAvailableAccountSettingsMock).toHaveBeenCalledWith({ credentials });
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
-      settings: accountSettings,
-      backendId: 'review-bot',
-      happyHomeDir: '/tmp/happy-home',
-    });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
+      accountSettings,
+      'review-bot',
+    );
     expect(result).toMatchObject({
       ok: true,
       catalogAgentId: null,
@@ -167,8 +156,8 @@ describe('resolveSessionForkBackendTarget', () => {
   it('recovers configured ACP fork targets from plugin contributions when account settings are empty', async () => {
     const resolvedBackend = { backendId: 'plugin-review-bot', title: 'Plugin Review Bot' };
 
-    resolveAvailableAccountSettingsMock.mockResolvedValueOnce(null);
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValueOnce(resolvedBackend);
+    resolveAvailableAccountSettingsMock.mockReturnValueOnce(null);
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValueOnce(resolvedBackend);
 
     const result = await resolveSessionForkBackendTarget({
       credentials,
@@ -184,11 +173,10 @@ describe('resolveSessionForkBackendTarget', () => {
       },
     });
 
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
-      settings: {},
-      backendId: 'plugin-review-bot',
-      happyHomeDir: '/tmp/happy-home',
-    });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
+      {},
+      'plugin-review-bot',
+    );
     expect(result).toMatchObject({
       ok: true,
       catalogAgentId: null,
@@ -226,7 +214,7 @@ describe('resolveSessionForkBackendTarget', () => {
     });
 
     expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).not.toHaveBeenCalled();
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
       catalogAgentId: 'claude',
@@ -298,7 +286,7 @@ describe('resolveSessionForkBackendTarget', () => {
       errorMessage: 'linked_session_reconciliation_required',
     });
     expect(resolveAvailableAccountSettingsMock).not.toHaveBeenCalled();
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).not.toHaveBeenCalled();
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).not.toHaveBeenCalled();
     expect(resolveAgentIdFromSessionMetadataMock).not.toHaveBeenCalled();
   });
 

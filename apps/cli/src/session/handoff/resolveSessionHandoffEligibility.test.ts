@@ -7,8 +7,8 @@ import { resolveSessionHandoffEligibility } from './resolveSessionHandoffEligibi
 
 function resolveEligibilityFromOwnerMetadata(input: Readonly<{
   metadata: unknown;
-  accountSettings?: Record<string, unknown> | null;
   sessionAgentId?: string | null;
+  sessionProviderSessionId?: string | null;
   runtimeDeps?: Record<string, unknown>;
 }>) {
   const metadata = input.metadata && typeof input.metadata === 'object'
@@ -21,13 +21,50 @@ function resolveEligibilityFromOwnerMetadata(input: Readonly<{
     sourceMachineId: metadata.machineId,
     externalSessionLinkAuthority:
       resolveLinkedExternalSessionAuthorityV1(metadata),
-    accountSettings: input.accountSettings,
     sessionAgentId: input.sessionAgentId,
+    sessionProviderSessionId: input.sessionProviderSessionId,
+    resolveCurrentExecutionSurfacesForAgent: async (agentId: string) => ({
+      backendId: agentId,
+      executionSurfaces: {
+        terminalRuntime: null,
+        externalSession: null,
+        attach: null,
+        handoff: {
+          evaluateAvailability: async () => ({ available: true as const }),
+          exportBundle: async () => ({ ok: false as const, code: 'handoff_failed' as const }),
+          importBundle: async () => ({ ok: false as const, code: 'handoff_failed' as const }),
+        },
+        fork: null,
+        checkpoint: null,
+      },
+    }),
     ...input.runtimeDeps,
   });
 }
 
 describe('resolveSessionHandoffEligibility', () => {
+  it('does not interpret an Agent-owned runtime descriptor as host Session identity', async () => {
+    await expect(
+      resolveEligibilityFromOwnerMetadata({
+        metadata: {
+          machineId: 'machine_source',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'acme.handoff',
+            agent: { providerSessionId: 'agent-private-session-id' },
+          },
+        },
+        sessionAgentId: 'acme.handoff',
+        sessionProviderSessionId: null,
+      }),
+    ).resolves.toEqual({
+      eligible: false,
+      reasonCode: 'vendor_handoff_id_missing',
+      agentId: 'acme.handoff',
+      storageMode: 'persisted',
+    });
+  });
+
   it('allows an eligible persisted Claude session', async () => {
     await expect(
       resolveEligibilityFromOwnerMetadata({
@@ -36,10 +73,12 @@ describe('resolveSessionHandoffEligibility', () => {
           machineId: 'machine_source',
           claudeSessionId: 'sess_1',
         },
+        sessionProviderSessionId: 'sess_1',
       }),
     ).resolves.toEqual({
       eligible: true,
       agentId: 'claude',
+      backendId: 'claude',
       storageMode: 'persisted',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'sess_1',
@@ -66,6 +105,7 @@ describe('resolveSessionHandoffEligibility', () => {
     ).resolves.toEqual({
       eligible: true,
       agentId: 'opencode',
+      backendId: 'opencode',
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'sess_2',
@@ -96,6 +136,7 @@ describe('resolveSessionHandoffEligibility', () => {
     ).resolves.toEqual({
       eligible: true,
       agentId: 'opencode',
+      backendId: 'opencode',
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'opencode_runtime_1',
@@ -120,6 +161,7 @@ describe('resolveSessionHandoffEligibility', () => {
     ).resolves.toEqual({
       eligible: true,
       agentId: 'opencode',
+      backendId: 'opencode',
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'opencode_runtime_2',
@@ -144,6 +186,7 @@ describe('resolveSessionHandoffEligibility', () => {
     ).resolves.toEqual({
       eligible: true,
       agentId: 'opencode',
+      backendId: 'opencode',
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'opencode_legacy',
@@ -227,10 +270,12 @@ describe('resolveSessionHandoffEligibility', () => {
           codexSessionId: 'codex_1',
           codexBackendMode: 'appServer',
         },
+        sessionProviderSessionId: 'codex_1',
       }),
     ).resolves.toEqual({
       eligible: true,
       agentId: 'codex',
+      backendId: 'codex',
       storageMode: 'persisted',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'codex_1',
@@ -243,10 +288,11 @@ describe('resolveSessionHandoffEligibility', () => {
       externalSession: null,
       attach: null,
       handoff: {
-        evaluateAvailability: async (request: { operation: string; sessionId?: string }) => {
+        evaluateAvailability: async (request: { operation: string; sessionId?: string; transcriptStorage?: string }) => {
           expect(request).toMatchObject({
             operation: 'exportBundle',
             sessionId: 'acme-session-1',
+            transcriptStorage: 'persisted',
           });
           return { available: true as const };
         },
@@ -267,6 +313,7 @@ describe('resolveSessionHandoffEligibility', () => {
             agent: { providerSessionId: 'acme-session-1' },
           },
         },
+        sessionProviderSessionId: 'acme-session-1',
         runtimeDeps: {
           resolveCurrentExecutionSurfacesForAgent: async (agentId: string) => (
             agentId === 'acme.handoff'
@@ -294,9 +341,9 @@ describe('resolveSessionHandoffEligibility', () => {
       resolveEligibilityFromOwnerMetadata({
         metadata: {
           machineId: 'machine_source',
-          providerSessionId: 'acme-session-2',
         },
         sessionAgentId: 'acme.handoff',
+        sessionProviderSessionId: 'acme-session-2',
         runtimeDeps: {
           resolveCurrentExecutionSurfacesForAgent: async () => ({
             backendId: 'acme.handoff.backend',
@@ -339,6 +386,10 @@ describe('resolveSessionHandoffEligibility', () => {
             agent: { providerSessionId: 'acme-session-1' },
           },
         },
+        sessionProviderSessionId: 'acme-session-1',
+        runtimeDeps: {
+          resolveCurrentExecutionSurfacesForAgent: async () => null,
+        },
       }),
     ).resolves.toEqual({
       eligible: false,
@@ -359,6 +410,7 @@ describe('resolveSessionHandoffEligibility', () => {
             agent: { providerSessionId: 'acme-session-1' },
           },
         },
+        sessionProviderSessionId: 'acme-session-1',
         runtimeDeps: {
           resolveCurrentExecutionSurfacesForAgent: async () => {
             throw new Error('runtime reloaded');

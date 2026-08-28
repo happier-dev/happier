@@ -436,7 +436,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
     const updatedAtMs = parseTimestamp(record.updatedAtMs);
     const title = record.title === undefined
         ? undefined
-        : parseBoundedString(record.title, MAX_TITLE_CODE_UNITS, true);
+        : parseBoundedString(record.title, MAX_TITLE_CODE_UNITS);
     const createdAtMs = record.createdAtMs === undefined ? undefined : parseTimestamp(record.createdAtMs);
     const archived = parseOptionalBoolean(record.archived);
     const linkData = record.linkData === undefined ? undefined : parseLinkData(record.linkData);
@@ -444,6 +444,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
         remoteSessionId === null
         || updatedAtMs === null
         || title === null
+        || (title !== undefined && title.trim().length === 0)
         || createdAtMs === null
         || archived === null
         || linkData === null
@@ -741,10 +742,11 @@ function parseTranscriptPageValue(
 }
 
 function parseReadAfterDiagnostic(value: unknown): AgentExternalSessionsReadAfterDiagnostic | null {
-    const record = readStrictRecord(value, ['code', 'count', 'positions']);
+    const record = readStrictRecord(value, ['code', 'severity', 'count', 'positions']);
     if (
         !record
         || parseBoundedString(record.code, MAX_READ_AFTER_DIAGNOSTIC_CODE_UNITS) === null
+        || (record.severity !== 'benign' && record.severity !== 'required')
         || !Number.isSafeInteger(record.count)
         || (record.count as number) <= 0
         || !Array.isArray(record.positions)
@@ -756,6 +758,7 @@ function parseReadAfterDiagnostic(value: unknown): AgentExternalSessionsReadAfte
     }
     return Object.freeze({
         code: record.code as string,
+        severity: record.severity,
         count: record.count as number,
         positions: Object.freeze([...(record.positions as number[])]),
     });
@@ -768,7 +771,7 @@ function parseReadAfterTranscriptValue(
     identity: ContributionIdentity,
     scope: CursorScope,
 ): AgentExternalSessionsReadAfterTranscriptResult | null {
-    const discriminator = readStrictRecord(value, ['outcome'], ['items', 'nextCursor', 'boundary', 'diagnostics']);
+    const discriminator = readStrictRecord(value, ['outcome'], ['items', 'nextCursor', 'boundary', 'hasMore', 'diagnostics']);
     if (!discriminator || typeof discriminator.outcome !== 'string') return null;
     switch (discriminator.outcome) {
         case 'already_current':
@@ -780,13 +783,14 @@ function parseReadAfterTranscriptValue(
             return record ? Object.freeze({ outcome: discriminator.outcome }) : null;
         }
         case 'advanced': {
-            const record = readStrictRecord(value, ['outcome', 'items', 'nextCursor', 'boundary'], ['diagnostics']);
+            const record = readStrictRecord(value, ['outcome', 'items', 'nextCursor', 'boundary', 'hasMore'], ['diagnostics']);
             if (
                 !record
                 || !Array.isArray(record.items)
                 || record.items.length > maxItems
                 || typeof record.nextCursor !== 'string'
                 || record.nextCursor === inputCursor
+                || typeof record.hasMore !== 'boolean'
             ) {
                 return null;
             }
@@ -813,6 +817,7 @@ function parseReadAfterTranscriptValue(
                 items: Object.freeze(items as AgentExternalSessionTranscriptItem[]),
                 nextCursor,
                 boundary,
+                hasMore: record.hasMore,
                 ...(diagnostics === undefined
                     ? {}
                     : { diagnostics: Object.freeze(diagnostics as AgentExternalSessionsReadAfterDiagnostic[]) }),

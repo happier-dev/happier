@@ -3,7 +3,7 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from '@/rpc/handlers/spawnRuntimeSelection';
+import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { canonicalizeSpawnBackendTargetFromTransportInput } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
     createRandomSpawnNonce,
@@ -17,6 +17,7 @@ import {
     SessionModelSelectionV1Schema,
     SessionCreationCorrespondenceV1Schema,
     SessionCreationTagV1Schema,
+    RuntimeDescriptorV1Schema,
     buildBackendTargetKeyV2,
     SessionMcpSelectionV1Schema,
     SpawnSessionExecutionAuthorizationSchema,
@@ -71,11 +72,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             windowsRemoteSessionLaunchMode,
             windowsRemoteSessionConsole,
             windowsTerminalWindowName,
-            experimentalCodexAcp,
-            backendMode,
-            codexBackendMode,
             runtimeDescriptorV1,
-            agentRuntimeDescriptorV1: legacyAgentRuntimeDescriptorV1,
             mcpSelection,
             agentSessionStartupInstructionsV1,
             sessionCreationTag,
@@ -288,17 +285,26 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             sessionConfigOptionOverrides: canonicalSessionConfigOptionOverrides,
             configOptions: normalizedConfigOptions,
         });
-        const normalizedRuntimeSelection = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-            backendMode,
-            codexBackendMode,
-            experimentalCodexAcp,
-            runtimeDescriptorV1,
-            legacyAgentRuntimeDescriptorV1,
-        });
-        const normalizedRuntimeDescriptorV1 = normalizedRuntimeSelection.runtimeDescriptorV1;
-        const normalizedBackendMode =
-            normalizedRuntimeSelection.agentBackendMode ?? normalizedRuntimeSelection.codexBackendMode;
-        const normalizedCodexBackendMode = normalizedRuntimeSelection.codexBackendMode;
+        let normalizedRuntimeDescriptorV1;
+        try {
+            const parsedRuntimeDescriptorV1 = runtimeDescriptorV1 === undefined
+                ? undefined
+                : RuntimeDescriptorV1Schema.parse(runtimeDescriptorV1);
+            normalizedRuntimeDescriptorV1 = readCanonicalSpawnRuntimeSelection({
+                agentId: normalizedBackendTarget?.sourceKind === 'built_in'
+                    ? normalizedBackendTarget.backendId
+                    : undefined,
+                runtimeDescriptorV1: parsedRuntimeDescriptorV1,
+            }).runtimeDescriptorV1;
+        } catch (error) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: error instanceof Error
+                    ? error.message
+                    : 'Invalid runtime descriptor identity',
+            };
+        }
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             directory: resolvedDirectory,
             spawnNonce: normalizedSpawnNonce,
@@ -339,8 +345,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 }
                 : {}),
             ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
-            ...(normalizedBackendMode ? { backendMode: normalizedBackendMode } : {}),
-            ...(normalizedCodexBackendMode ? { codexBackendMode: normalizedCodexBackendMode } : {}),
         });
 
         if (isResumeSessionRequest) {

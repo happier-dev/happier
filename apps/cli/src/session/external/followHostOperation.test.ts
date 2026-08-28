@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import type { HostExternalTranscriptFollowEvent } from './privateContract';
 import type { ExternalSessionTranscriptReadAfter } from './providerOps';
 import { createExternalSessionHostOperationOwner } from './hostOperationOwner';
+import { invokeBoundedExternalSessionsOperation } from './agentExternalSessionsInvocation';
 
 const mocks = vi.hoisted(() => ({
     loadLinkedExternalSession: vi.fn(),
@@ -82,6 +83,11 @@ const observation = Object.freeze({
 });
 
 describe('createExternalSessionFollowHostOperation', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.readCredentials.mockResolvedValue(null);
@@ -179,7 +185,10 @@ describe('createExternalSessionFollowHostOperation', () => {
         const operation = createExternalSessionFollowHostOperation({
             machineId: 'machine-1',
             followLeaseManager: {
-                attachScoped: vi.fn(async () => ({ release })),
+                attachScoped: vi.fn(async () => ({
+                    acceptedTailCursor: 'cursor-1',
+                    release,
+                })),
             } as never,
             observationProjection: {
                 reconcileTranscriptDemand: async () => ({ state: 'observing' }),
@@ -301,6 +310,315 @@ describe('createExternalSessionFollowHostOperation', () => {
         if (result.status === 'following') {
             await result.subscription.dispose();
         }
+    });
+
+    it('binds live observation before initial replay and follows from the admitted cursor', async () => {
+        const order: string[] = [];
+        const release = vi.fn(async () => undefined);
+        const pageTranscript = vi.fn(async () => {
+            order.push('replay');
+            return {
+                items: [],
+                nextCursor: null,
+                tailCursor: 'captured-tail',
+                hasMore: false,
+                truncated: false,
+            };
+        });
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript,
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager: {
+                attachScoped: vi.fn(async () => {
+                    order.push('attach');
+                    return {
+                        leaseId: 'lease-1',
+                        acceptedTailCursor: 'captured-tail',
+                        release,
+                    };
+                }),
+            } as never,
+            observationProjection: {
+                reconcileTranscriptDemand: async () => ({ state: 'observing' }),
+            } as never,
+        });
+
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs: Date.now() + 30_000 },
+            listener: async () => undefined,
+            isCurrent: () => true,
+        });
+
+        expect(result).toMatchObject({ status: 'following', startingCursor: 'captured-tail' });
+        expect(order).toEqual(['attach', 'replay']);
+        if (result.status === 'following') await result.subscription.dispose();
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('drains an invalidation raised during replay from the replay tail without a cursor gap', async () => {
+        type ScopedAttachInput = Parameters<
+            ReturnType<typeof createExternalSessionFollowLeaseManager>['attachScoped']
+        >[0];
+        let refreshScoped!: ScopedAttachInput['requestTranscriptRefresh'];
+        const release = vi.fn(async () => undefined);
+        const readAfterTranscript = vi.fn(async () => ({
+            outcome: 'advanced' as const,
+            items: [{
+                id: 'live-1',
+                localId: 'fact-live-1',
+                createdAtMs: 2,
+                raw: {
+                    role: 'agent' as const,
+                    content: {
+                        type: 'output',
+                        data: { type: 'message', message: 'live' },
+                    },
+                },
+            }],
+            nextCursor: 'live-tail',
+            hasMore: false,
+        }));
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: vi.fn(async () => ({
+                    items: [],
+                    nextCursor: null,
+                    tailCursor: 'replay-tail',
+                    hasMore: false,
+                    truncated: false,
+                })),
+                readAfterTranscript,
+            },
+            resource,
+        });
+        const followLeaseManager = {
+            attachScoped: vi.fn(async (input: ScopedAttachInput) => {
+                refreshScoped = input.requestTranscriptRefresh;
+                await refreshScoped('admitted-tail', () => true);
+                return {
+                    leaseId: 'lease-1',
+                    acceptedTailCursor: 'admitted-tail',
+                    release,
+                };
+            }),
+            requestTranscriptRefresh: vi.fn(async () => {
+                await refreshScoped('admitted-tail', () => true);
+                return { requested: true, coalesced: false } as const;
+            }),
+        };
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: async () => ({ state: 'observing' }),
+            } as never,
+        });
+        const listener = vi.fn(async (_event: HostExternalTranscriptFollowEvent) => undefined);
+
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs: Date.now() + 30_000 },
+            listener,
+            isCurrent: () => true,
+        });
+
+        expect(result).toMatchObject({ status: 'following', startingCursor: 'replay-tail' });
+        expect(followLeaseManager.requestTranscriptRefresh).toHaveBeenCalledOnce();
+        expect(readAfterTranscript).toHaveBeenCalledWith(expect.objectContaining({
+            cursor: 'replay-tail',
+        }));
+        expect(listener.mock.calls.map(([event]) => event)).toEqual([
+            expect.objectContaining({
+                kind: 'data',
+                phase: 'initial_replay',
+                nextCursor: 'replay-tail',
+            }),
+            expect.objectContaining({
+                kind: 'data',
+                fromCursor: 'replay-tail',
+                nextCursor: 'live-tail',
+            }),
+        ]);
+        if (result.status === 'following') await result.subscription.dispose();
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('releases the admitted live lease exactly once when initial replay fails', async () => {
+        const replayFailure = new Error('replay failed');
+        const release = vi.fn(async () => undefined);
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: vi.fn(async () => { throw replayFailure; }),
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager: {
+                attachScoped: vi.fn(async () => ({
+                    leaseId: 'lease-1',
+                    acceptedTailCursor: 'captured-tail',
+                    release,
+                })),
+            } as never,
+            observationProjection: {
+                reconcileTranscriptDemand: async () => ({ state: 'observing' }),
+            } as never,
+        });
+
+        await expect(operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs: Date.now() + 30_000 },
+            listener: async () => undefined,
+            isCurrent: () => true,
+        })).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_acquisition_failed',
+        });
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('releases the admitted live lease exactly once when replay delivery rejects', async () => {
+        const listenerFailure = new Error('listener rejected replay');
+        const release = vi.fn(async () => undefined);
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: vi.fn(async () => ({
+                    items: [{
+                        id: 'row-1',
+                        localId: 'fact-1',
+                        createdAtMs: 1,
+                        raw: {
+                            role: 'agent',
+                            content: {
+                                type: 'output',
+                                data: { type: 'message', message: 'hello' },
+                            },
+                        },
+                    }],
+                    nextCursor: null,
+                    tailCursor: 'captured-tail',
+                    hasMore: false,
+                    truncated: false,
+                })),
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager: {
+                attachScoped: vi.fn(async () => ({
+                    leaseId: 'lease-1',
+                    acceptedTailCursor: 'captured-tail',
+                    release,
+                })),
+            } as never,
+            observationProjection: {
+                reconcileTranscriptDemand: async () => ({ state: 'observing' }),
+            } as never,
+        });
+
+        await expect(operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs: Date.now() + 30_000 },
+            listener: async () => { throw listenerFailure; },
+            isCurrent: () => true,
+        })).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_acquisition_failed',
+        });
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('releases the admitted live lease exactly once when replay exhausts its admission deadline', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const admissionDeadlineAtMs = 2_000;
+        const release = vi.fn(async () => undefined);
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: vi.fn(async () => {
+                    vi.setSystemTime(admissionDeadlineAtMs);
+                    return {
+                        items: [],
+                        nextCursor: null,
+                        tailCursor: 'captured-tail',
+                        hasMore: false,
+                        truncated: false,
+                    };
+                }),
+                readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+            },
+            resource,
+        });
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager: {
+                attachScoped: vi.fn(async () => ({
+                    leaseId: 'lease-1',
+                    acceptedTailCursor: 'captured-tail',
+                    release,
+                })),
+            } as never,
+            observationProjection: {
+                reconcileTranscriptDemand: async () => ({ state: 'observing' }),
+            } as never,
+        });
+
+        await expect(operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { initialReplay: true, admissionDeadlineAtMs },
+            listener: async () => undefined,
+            isCurrent: () => true,
+        })).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_external_follow_resync_required',
+        });
+        expect(release).toHaveBeenCalledOnce();
     });
 
     it('durably replays initial pages in chronological order before following their captured tail', async () => {
@@ -461,7 +779,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         if (result.status === 'following') await result.subscription.dispose();
     });
 
-    it('fails initial replay before page 101 without admitting a live follow or jumping to a tail', async () => {
+    it('releases the admitted live follow when replay reaches its page boundary without jumping to a tail', async () => {
         let page = 0;
         const pageTranscript = vi.fn(async () => {
             page += 1;
@@ -487,7 +805,9 @@ describe('createExternalSessionFollowHostOperation', () => {
             machineId: 'machine-1',
             followLeaseManager,
             observationProjection: {
-                reconcileTranscriptDemand: async () => ({ state: 'idle' }),
+                reconcileTranscriptDemand: async (
+                    { demanded }: Readonly<{ demanded: boolean }>,
+                ) => ({ state: demanded ? 'observing' : 'idle' }),
             } as never,
         });
 
@@ -509,8 +829,8 @@ describe('createExternalSessionFollowHostOperation', () => {
             status: 'unavailable',
             code: 'plugin_external_follow_resync_required',
         });
-        expect(pageTranscript).toHaveBeenCalledTimes(100);
-        expect(attachScoped).not.toHaveBeenCalled();
+        expect(pageTranscript).toHaveBeenCalledTimes(101);
+        expect(attachScoped).toHaveBeenCalledOnce();
     });
 
     it('fails an expired whole-admission deadline before the first provider page', async () => {
@@ -593,7 +913,9 @@ describe('createExternalSessionFollowHostOperation', () => {
                 machineId: 'machine-1',
                 followLeaseManager: createExternalSessionFollowLeaseManager(),
                 observationProjection: {
-                    reconcileTranscriptDemand: async () => ({ state: 'idle' }),
+                    reconcileTranscriptDemand: async (
+                        { demanded }: Readonly<{ demanded: boolean }>,
+                    ) => ({ state: demanded ? 'observing' : 'idle' }),
                 } as never,
             });
 
@@ -615,11 +937,14 @@ describe('createExternalSessionFollowHostOperation', () => {
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
             });
-            expect(pageTranscript).toHaveBeenCalledTimes(replayCase.maximumCalls);
+            expect(pageTranscript).toHaveBeenCalledTimes(replayCase.maximumCalls + 1);
         }
     });
 
     it('turns one scoped D5 demand into content-free refresh and authoritative exact-six read-after data', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        const admissionDeadlineAtMs = Date.now() + 30_000;
         const providerAcquireFollowLease = vi.fn();
         const pageTranscript = vi.fn(async () => ({
             items: [],
@@ -628,7 +953,10 @@ describe('createExternalSessionFollowHostOperation', () => {
             hasMore: false,
             truncated: false,
         }));
-        const readAfterTranscript = vi.fn(async () => ({
+        const leafReadAfterTranscript = vi.fn(async (_request: Readonly<{
+            deadlineAtMs: number;
+            signal: AbortSignal;
+        }>) => ({
             outcome: 'advanced' as const,
             items: [{
                 id: 'item-1',
@@ -637,7 +965,22 @@ describe('createExternalSessionFollowHostOperation', () => {
             }],
             nextCursor: 'cursor-2',
             boundary: 'boundary-2',
+            hasMore: false,
         }));
+        const retirement = new AbortController();
+        const readAfterTranscript = vi.fn(async (request) => {
+            const bounded = await invokeBoundedExternalSessionsOperation({
+                signal: request.signal,
+                retirementSignal: retirement.signal,
+                isCurrent: () => true,
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) =>
+                    await leafReadAfterTranscript({ signal, deadlineAtMs }),
+            });
+            return bounded.status === 'fulfilled'
+                ? bounded.value
+                : { outcome: 'read_failed' as const };
+        });
         mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
             immutablePluginGenerationId: resource.pluginGeneration,
             providerOps: {
@@ -670,7 +1013,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             machineId: 'machine-1',
             ref,
             source,
-            options: {},
+            options: { admissionDeadlineAtMs },
             listener,
             isCurrent: () => true,
         });
@@ -684,6 +1027,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             resolved: observation,
             demanded: true,
         });
+        vi.setSystemTime(admissionDeadlineAtMs + 1);
         await expect(followLeaseManager.requestTranscriptRefresh({
             sessionId: 'linked-session-1',
             resource,
@@ -696,6 +1040,12 @@ describe('createExternalSessionFollowHostOperation', () => {
             maxItems: expect.any(Number),
             signal: expect.any(AbortSignal),
         });
+        expect(leafReadAfterTranscript).toHaveBeenCalledWith({
+            deadlineAtMs: expect.any(Number),
+            signal: expect.any(AbortSignal),
+        });
+        expect(leafReadAfterTranscript.mock.calls[0]![0].deadlineAtMs)
+            .toBeGreaterThan(admissionDeadlineAtMs);
         expect(listener).toHaveBeenCalledWith({
             kind: 'data',
             items: [{
@@ -718,6 +1068,130 @@ describe('createExternalSessionFollowHostOperation', () => {
             resolved: observation,
             demanded: false,
         });
+    });
+
+    it.each([
+        ['bounded partial', {
+            items: [{
+                id: 'item-partial',
+                raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'partial' } } },
+            }],
+            hasMore: true,
+            diagnostics: undefined,
+        }],
+        ['required diagnostic with items', {
+            items: [{
+                id: 'item-before-required-gap',
+                raw: { role: 'agent', content: { type: 'output', data: { type: 'message', message: 'unsafe' } } },
+            }],
+            hasMore: false,
+            diagnostics: [{ code: 'unsupported_record_skipped', severity: 'required', count: 1, positions: [17] }],
+        }],
+        ['required diagnostic only', {
+            items: [],
+            hasMore: false,
+            diagnostics: [{ code: 'malformed_record_skipped', severity: 'required', count: 1, positions: [17] }],
+        }],
+    ] as const)('zero-applies %s and requests resync without advancing the accepted cursor', async (_label, advanced) => {
+        const readAfterTranscript = vi.fn(async () => ({
+            outcome: 'advanced' as const,
+            items: advanced.items,
+            nextCursor: 'cursor-partial',
+            boundary: 'boundary-partial',
+            hasMore: advanced.hasMore,
+            ...(advanced.diagnostics ? { diagnostics: advanced.diagnostics } : {}),
+        }));
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: async () => ({
+                    items: [], nextCursor: null, tailCursor: 'cursor-1', hasMore: false, truncated: false,
+                }),
+                readAfterTranscript,
+            },
+            resource,
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: async ({ demanded }: Readonly<{ demanded: boolean }>) => ({
+                    state: demanded ? 'observing' : 'idle',
+                }),
+            } as never,
+        });
+        const listener = vi.fn(async () => undefined);
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled',
+            contributionId: 'codex',
+            generationId: resource.pluginGeneration,
+            sessionId: 'linked-session-1',
+            machineId: 'machine-1',
+            ref,
+            source,
+            options: { cursor: 'cursor-1' },
+            listener,
+            isCurrent: () => true,
+        });
+
+        await followLeaseManager.requestTranscriptRefresh({ sessionId: 'linked-session-1', resource });
+
+        expect(listener).toHaveBeenCalledOnce();
+        expect(listener).toHaveBeenCalledWith({
+            kind: 'resyncRequired',
+            reason: 'cursorDiscontinuity',
+            cursor: 'cursor-1',
+        });
+        if (result.status === 'following') await result.subscription.dispose();
+    });
+
+    it('advances across an explicitly benign non-transcript diagnostic', async () => {
+        const readAfterTranscript = vi.fn(async () => ({
+            outcome: 'advanced' as const,
+            items: [],
+            nextCursor: 'cursor-2',
+            boundary: 'boundary-2',
+            hasMore: false,
+            diagnostics: [{
+                code: 'non_transcript_record_skipped',
+                severity: 'benign' as const,
+                count: 1,
+                positions: [17],
+            }],
+        }));
+        mocks.resolveGenerationBoundExternalSessionFollowSurface.mockResolvedValue({
+            immutablePluginGenerationId: resource.pluginGeneration,
+            providerOps: {
+                pageTranscript: async () => ({
+                    items: [], nextCursor: null, tailCursor: 'cursor-1', hasMore: false, truncated: false,
+                }),
+                readAfterTranscript,
+            },
+            resource,
+        });
+        const followLeaseManager = createExternalSessionFollowLeaseManager();
+        const operation = createExternalSessionFollowHostOperation({
+            machineId: 'machine-1',
+            followLeaseManager,
+            observationProjection: {
+                reconcileTranscriptDemand: async ({ demanded }: Readonly<{ demanded: boolean }>) => ({
+                    state: demanded ? 'observing' : 'idle',
+                }),
+            } as never,
+        });
+        const listener = vi.fn(async () => undefined);
+        const result = await operation.execute({
+            pluginId: 'synthetic.non-bundled', contributionId: 'codex',
+            generationId: resource.pluginGeneration, sessionId: 'linked-session-1', machineId: 'machine-1',
+            ref, source, options: { cursor: 'cursor-1' }, listener, isCurrent: () => true,
+        });
+
+        await followLeaseManager.requestTranscriptRefresh({ sessionId: 'linked-session-1', resource });
+        expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+            kind: 'data', fromCursor: 'cursor-1', nextCursor: 'cursor-2', items: [],
+        }));
+        if (result.status === 'following') await result.subscription.dispose();
     });
 
     it('does not advance the cursor until the listener acknowledges authoritative data', async () => {
@@ -1111,6 +1585,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             }],
             nextCursor: 'cursor-stale',
             boundary: 'boundary-stale',
+            hasMore: false,
         });
         await refresh;
 
@@ -1422,7 +1897,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({
                 kind: 'terminated',
                 reason: expectedReason,
-                cursor: 'cursor-1',
+                cursor: null,
                 code: expectedCode,
             }));
             finishAdmission();

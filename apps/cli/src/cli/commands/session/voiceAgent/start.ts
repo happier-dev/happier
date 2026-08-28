@@ -11,15 +11,23 @@ import {
 } from '../shared/normalizeBackendTargetKeys';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
+import { assertSessionCommandArguments } from '../shared/assertSessionCommandArguments';
 
 export async function cmdSessionVoiceAgentStart(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
+  assertSessionCommandArguments(argv, {
+    usage: `Usage: ${SESSION_HELP_LINES.voiceAgentStart}`,
+    startIndex: 2,
+    booleanFlags: ['--json'],
+    valueFlags: ['--backends', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode', '--machine-id'],
+    maxPositionals: 1,
+  });
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = readCommandPositionals(argv, {
     startIndex: 2,
-    valueFlags: ['--backends', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    valueFlags: ['--backends', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode', '--machine-id'],
   });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.voiceAgentStart}`);
@@ -32,6 +40,7 @@ export async function cmdSessionVoiceAgentStart(
   const retentionPolicy = readFlagValue(argv, '--retention') ?? undefined;
   const runClass = readFlagValue(argv, '--run-class') ?? undefined;
   const ioMode = readFlagValue(argv, '--io-mode') ?? undefined;
+  const machineId = readFlagValue(argv, '--machine-id');
 
   if (!hasBackendTargetSelectionFromCsv(backendsRaw) || !instructions.trim()) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.voiceAgentStart}`);
@@ -47,7 +56,10 @@ export async function cmdSessionVoiceAgentStart(
     process.exit(1);
   }
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials,
+    ...(machineId !== null ? { machineId } : {}),
+  });
   const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {

@@ -81,6 +81,8 @@ describe('requestInactiveSessionResume', () => {
     }));
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
     expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('spawnNonce');
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('codexBackendMode');
   });
 
   it('rejects an archived session before contacting its recorded machine', async () => {

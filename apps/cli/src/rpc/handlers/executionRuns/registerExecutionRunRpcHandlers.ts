@@ -50,6 +50,7 @@ import { resolveWorkspaceRefForMachineRoot } from '@/settings/accountSettings/wo
 import { checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
 import { resolvePluginPromptAssetBlocks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { resolveInvocationContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
+import type { NativeAgentSessionInteractionHostBinding } from '@/agent/runtime/registry/engineRegistryTypes';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   /** Fixed handler scope: a concrete Session or the daemon-owned detached scope. */
@@ -114,6 +115,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   budgetRegistry?: ExecutionBudgetRegistry;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
   parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+  sessionInteractionHost?: NativeAgentSessionInteractionHostBinding;
   onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
   onExecutionRunVoiceAgentWelcomed?: (run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
@@ -301,6 +303,9 @@ export function registerExecutionRunRpcHandlers(
     budgetRegistry: ctx.budgetRegistry,
     getPermissionRequestStore: ctx.getPermissionRequestStore,
     parentSessionStateTarget: ctx.parentSessionStateTarget ?? null,
+    ...(ctx.sessionInteractionHost
+      ? { sessionInteractionHost: ctx.sessionInteractionHost }
+      : {}),
     resolveAccountSettings: ctx.resolveAccountSettings,
     ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
     resolveProvidersFeatureEnabled: () => {
@@ -372,24 +377,11 @@ export function registerExecutionRunRpcHandlers(
       if (!manager.commitUserTranscript) {
         return { ok: false, error: 'Transcript commit unavailable', errorCode: 'execution_run_not_allowed' };
       }
-      const normalized = typeof parsed.data.message === 'string'
-        ? {
-            text: parsed.data.message,
-            ...(typeof parsed.data.displayMessage === 'string'
-              ? { displayText: parsed.data.displayMessage }
-              : {}),
-          }
-        : typeof parsed.data.text === 'string'
-          ? {
-              text: parsed.data.text,
-              ...(typeof parsed.data.displayText === 'string'
-                ? { displayText: parsed.data.displayText }
-                : {}),
-            }
-          : null;
-      if (!normalized) return invalidParams();
       return await manager.commitUserTranscript(parsed.data.runId, {
-        ...normalized,
+        text: parsed.data.message,
+        ...(typeof parsed.data.displayMessage === 'string'
+          ? { displayText: parsed.data.displayMessage }
+          : {}),
         localId: parsed.data.localId,
       });
     },

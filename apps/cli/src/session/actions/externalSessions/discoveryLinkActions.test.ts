@@ -307,7 +307,7 @@ describe('executeExternalSessionLinkEnsureAction', () => {
         expect(resolveExternalSessionSourceKeyOwnerMock).not.toHaveBeenCalled();
     });
 
-    it('forwards unknown future Codex backend modes to the canonical link owner', async () => {
+    it('normalizes released Codex selectors into plugin-owned link data before dispatch', async () => {
         ensureExternalSessionLinkMock.mockRejectedValueOnce(new ExternalSessionProviderFailureError({
             code: 'source_invalid',
             message: 'codex_backend_mode_unsupported',
@@ -327,8 +327,10 @@ describe('executeExternalSessionLinkEnsureAction', () => {
         expect(ensureExternalSessionLinkMock).toHaveBeenCalledWith(expect.objectContaining({
             source: { kind: 'codexHome', home: 'user' },
             remoteSessionId: 'remote-1',
-            linkData: { projectId: 'project-b' },
-            codexBackendMode: 'future-codex-mode',
+            linkData: {
+                projectId: 'project-b',
+                codexBackendMode: 'future-codex-mode',
+            },
         }), expect.any(Object));
     });
 

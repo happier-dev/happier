@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   readAgentCatalogSnapshot,
-  listConfiguredAcpBackendsFromAccountSettingsOrPlugins,
+  listConfiguredAcpBackendsFromAccountSettings,
 } = vi.hoisted(() => ({
   readAgentCatalogSnapshot: vi.fn(),
-  listConfiguredAcpBackendsFromAccountSettingsOrPlugins: vi.fn<() => Promise<readonly Readonly<{
+  listConfiguredAcpBackendsFromAccountSettings: vi.fn<() => Promise<readonly Readonly<{
     backendId: string;
     title: string;
     description?: string;
@@ -18,7 +18,7 @@ vi.mock('@/agent/catalog/snapshot', () => ({
 }));
 
 vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
-  listConfiguredAcpBackendsFromAccountSettingsOrPlugins,
+  listConfiguredAcpBackendsFromAccountSettings,
 }));
 
 import { buildAgentBackendInventoryItems } from './buildAgentBackendInventoryItems';
@@ -53,7 +53,7 @@ describe('buildAgentBackendInventoryItems', () => {
         },
       },
     });
-    listConfiguredAcpBackendsFromAccountSettingsOrPlugins.mockResolvedValue([]);
+    listConfiguredAcpBackendsFromAccountSettings.mockResolvedValue([]);
   });
 
   it('preserves the stable identity of an externally contributed catalog Agent', async () => {
@@ -85,7 +85,7 @@ describe('buildAgentBackendInventoryItems', () => {
   });
 
   it('keeps configured ACP backends selectable without manufacturing an Agent identity', async () => {
-    listConfiguredAcpBackendsFromAccountSettingsOrPlugins.mockResolvedValue([{
+    listConfiguredAcpBackendsFromAccountSettings.mockResolvedValue([{
       backendId: 'review-bot',
       title: 'Review Bot',
       description: 'Configured ACP backend',

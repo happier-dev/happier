@@ -18,7 +18,8 @@ import { registerMachineVoiceClientMediatedCredentialRpcHandlers } from './rpcHa
 
 const contribution = Object.freeze({ pluginId: 'happier.voice.openai', localId: 'realtime-openai' });
 const service = Object.freeze({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
-const purpose = Object.freeze({ consumer: contribution, purpose: 'voice.client-auth' });
+const bindingPurpose = Object.freeze({ consumer: contribution, purpose: 'voice.credential-slot' });
+const operationPurpose = Object.freeze({ consumer: contribution, purpose: 'voice.client-auth' });
 const materializationRequest = Object.freeze({
   kind: 'httpHeaders' as const,
   origin: 'https://api.openai.com',
@@ -77,7 +78,7 @@ function manifest() {
     platforms: ['web'],
     capabilities: { turn: { cancelResponse: true, bargeIn: true } },
     credentials: {
-      slot: { id: 'api_key', purpose: purpose.purpose, title: 'OpenAI credential' },
+      slot: { id: 'api_key', purpose: bindingPurpose.purpose, title: 'OpenAI credential' },
       requirement: { kind: 'always' },
       sources: [{
         kind: 'connectedAccount',
@@ -87,12 +88,13 @@ function manifest() {
           operation: 'client-auth',
           phase: 'prepare',
           request: materializationRequest,
+          requiredHeaderNames: ['authorization'],
           allowedHeaderNames: materializationRequest.headerNames,
         }],
       }],
       hostMediated: { operations: [{
         id: 'client-auth',
-        purpose: purpose.purpose,
+        purpose: operationPurpose.purpose,
         credentialSlotId: 'api_key',
         effect: 'read',
         request: {
@@ -147,7 +149,7 @@ function snapshot(accountId: string): ActiveAccountSettingsSnapshot {
         credentialBindings: { account: {} },
       }] },
       connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
-        purpose,
+        purpose: bindingPurpose,
         target: { kind: 'account', account: { service, accountId } },
       }] },
     }),
@@ -169,7 +171,7 @@ function groupSnapshot(groupId: string): ActiveAccountSettingsSnapshot {
         credentialBindings: { account: {} },
       }] },
       connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
-        purpose,
+        purpose: bindingPurpose,
         target: { kind: 'group', service, groupId },
       }] },
     }),
@@ -282,7 +284,7 @@ describe('Voice client mediated Connected Account credential RPC', () => {
       },
     });
     expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
-      purpose,
+      purpose: operationPurpose,
       serviceRefs: [service],
       request: materializationRequest,
       expectedAccount: { service, accountId: 'account-a' },
@@ -300,6 +302,63 @@ describe('Voice client mediated Connected Account credential RPC', () => {
       errorCode: 'plugin_voice_credential_access_unavailable',
     });
     expect(owner.materialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the required Codex authorization header without its optional account header', async () => {
+    const owner = connectedAccountsOwner({
+      resolvedAccountId: 'account-a',
+      headersByAccountId: {
+        'account-a': { authorization: 'Bearer account-a' },
+      },
+    });
+    const handler = registerHandler({
+      materialize: owner.materialize,
+      currentSnapshot: snapshot('account-a'),
+    });
+
+    await expect(handler({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      operationId: 'client-auth',
+      declarationAuthority: projectedAuthority(DAEMON_REGISTRY_GENERATION),
+      expectedSelection: accountTarget('account-a'),
+    })).resolves.toEqual({
+      ok: true,
+      headers: { authorization: 'Bearer account-a' },
+    });
+    expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: operationPurpose,
+    }));
+  });
+
+  it.each([
+    ['undeclared', { authorization: 'Bearer account-a', 'x-extra': 'nope' }],
+    ['missing required', { 'chatgpt-account-id': 'account-a' }],
+    ['empty', { authorization: '' }],
+    ['newline', { authorization: 'Bearer account-a\r\nInjected: yes' }],
+    ['case conflict', { authorization: 'Bearer account-a', Authorization: 'Bearer other' }],
+  ])('rejects %s Connected Account header materialization', async (_label, headers) => {
+    const owner = connectedAccountsOwner({
+      resolvedAccountId: 'account-a',
+      headersByAccountId: { 'account-a': headers },
+    });
+    const handler = registerHandler({
+      materialize: owner.materialize,
+      currentSnapshot: snapshot('account-a'),
+    });
+
+    await expect(handler({
+      contribution,
+      platform: 'web',
+      phase: 'prepare',
+      operationId: 'client-auth',
+      declarationAuthority: projectedAuthority(DAEMON_REGISTRY_GENERATION),
+      expectedSelection: accountTarget('account-a'),
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'plugin_voice_provider_operation_failed',
+    });
   });
 
   it('rejects a caller whose projected declaration generation is not the daemon registry generation, before materializing', async () => {

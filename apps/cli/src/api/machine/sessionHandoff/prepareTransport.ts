@@ -151,11 +151,10 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
 async function requestServerRoutedPrepareAgentBundle(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
+  destinationPath: string;
   machineTransferChannel: MachineTransferChannel;
   transferTimeoutMs?: number;
 }>): Promise<SessionHandoffAgentBundle> {
-  const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-server-routed-'));
-  const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
   const timeoutMs = params.transferTimeoutMs;
   const openBody =
     typeof timeoutMs === 'number'
@@ -165,19 +164,15 @@ async function requestServerRoutedPrepareAgentBundle(params: Readonly<{
       }
       : undefined;
 
-  try {
-    await requestServerRoutedTransferToFile({
-      transferId: params.transferId,
-      sourceMachineId: params.sourceMachineId,
-      machineTransferChannel: params.machineTransferChannel,
-      destinationPath: payloadFilePath,
-      ...(openBody ? { openBody } : {}),
-      ...(timeoutMs ? { timeoutMs } : {}),
-    });
-    return await readSessionHandoffAgentBundleFile(payloadFilePath);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
-  }
+  await requestServerRoutedTransferToFile({
+    transferId: params.transferId,
+    sourceMachineId: params.sourceMachineId,
+    machineTransferChannel: params.machineTransferChannel,
+    destinationPath: params.destinationPath,
+    ...(openBody ? { openBody } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
+  });
+  return await readSessionHandoffAgentBundleFile(params.destinationPath);
 }
 
 export async function resolvePrepareAgentBundle(params: Readonly<{
@@ -189,6 +184,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
   transferTimeoutMs?: number;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
+  receivedAgentBundlePath: string;
 }>): Promise<SessionHandoffAgentBundle | undefined> {
   const transferPublication = params.handoffMetadataV2?.agentBundleTransferPublication;
   if (!transferPublication) {
@@ -196,6 +192,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
       return await requestServerRoutedPrepareAgentBundle({
         transferId: buildSessionHandoffAgentBundleTransferId(params.request.handoffId),
         sourceMachineId: params.request.sourceMachineId,
+        destinationPath: params.receivedAgentBundlePath,
         machineTransferChannel: params.machineTransferChannel,
         transferTimeoutMs: params.transferTimeoutMs,
       });
@@ -211,6 +208,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
       ? await requestServerRoutedPrepareAgentBundle({
         transferId: transferPublication.transferId,
         sourceMachineId: params.request.sourceMachineId,
+        destinationPath: params.receivedAgentBundlePath,
         machineTransferChannel: params.machineTransferChannel,
         transferTimeoutMs: params.transferTimeoutMs,
       })
@@ -224,6 +222,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
               return await requestServerRoutedPrepareAgentBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
+                destinationPath: params.receivedAgentBundlePath,
                 machineTransferChannel: params.machineTransferChannel,
                 transferTimeoutMs: params.transferTimeoutMs,
               });
@@ -245,6 +244,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
               return await requestServerRoutedPrepareAgentBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
+                destinationPath: params.receivedAgentBundlePath,
                 machineTransferChannel: params.machineTransferChannel,
                 transferTimeoutMs: params.transferTimeoutMs,
               });
@@ -252,15 +252,12 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
             throw new Error(directPeerTransferUnavailable().error);
           }
           const timeoutMs = params.transferTimeoutMs;
-          const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-direct-peer-'));
-          const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
           try {
-            try {
               await requestDirectPeerPayloadFileWithWorkspaceRetry({
                 request: params.request,
                 transferId: transferPublication.transferId,
                 endpointCandidates,
-                destinationPath: payloadFilePath,
+                destinationPath: params.receivedAgentBundlePath,
                 expectedSizeBytes: transferPublication.sizeBytes,
                 expectedManifestHash: transferPublication.manifestHash,
                 ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
@@ -271,7 +268,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 remoteMachineId: params.request.sourceMachineId,
                 endpointCandidates,
               });
-              return await readSessionHandoffAgentBundleFile(payloadFilePath);
+              return await readSessionHandoffAgentBundleFile(params.receivedAgentBundlePath);
             } catch (error) {
               if (isSessionHandoffDirectPeerProtocolError(error)) {
                 throw error;
@@ -287,15 +284,13 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 return await requestServerRoutedPrepareAgentBundle({
                   transferId: transferPublication.transferId,
                   sourceMachineId: params.request.sourceMachineId,
+                  destinationPath: params.receivedAgentBundlePath,
                   machineTransferChannel: params.machineTransferChannel,
                   transferTimeoutMs: params.transferTimeoutMs,
                 });
               }
               throw new Error(directPeerTransferUnavailable().error);
             }
-          } finally {
-            await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
-          }
         })()
         : undefined;
 

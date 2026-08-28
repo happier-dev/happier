@@ -27,6 +27,8 @@ const indexReadMetrics = vi.hoisted(() => ({
     peakObservedRss: 0,
     largeHashUpdates: 0,
     maximumHashUpdateBytes: 0,
+    measureDirectoryReconciliation: false,
+    candidateDirectoryReaddirPaths: [] as string[],
     readObserver: null as null | ((bytes: Buffer) => void),
 }));
 
@@ -39,6 +41,15 @@ vi.mock('node:fs/promises', async () => {
     };
     return {
         ...actual,
+        readdir: async (...args: Parameters<typeof actual.readdir>) => {
+            if (
+                indexReadMetrics.measureDirectoryReconciliation
+                && String(args[0]).includes('external-sessions/candidate-indexes')
+            ) {
+                indexReadMetrics.candidateDirectoryReaddirPaths.push(String(args[0]));
+            }
+            return await actual.readdir(...args);
+        },
         readFile: async (...args: Parameters<typeof actual.readFile>) => {
             const value = await actual.readFile(...args);
             if (indexReadMetrics.enabled && isCandidateIndexPath(args[0])) {
@@ -164,6 +175,7 @@ vi.mock('node:crypto', async () => {
 import {
     executeExternalSessionCandidateQuery,
     ExternalSessionCandidateIndexCursorResetError,
+    reconcileExternalSessionCandidateIndexes,
     retireExternalSessionCandidateIndex,
 } from './candidateQuery';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
@@ -210,6 +222,8 @@ function resetIndexReadMetrics(): void {
     indexReadMetrics.peakObservedRss = 0;
     indexReadMetrics.largeHashUpdates = 0;
     indexReadMetrics.maximumHashUpdateBytes = 0;
+    indexReadMetrics.measureDirectoryReconciliation = false;
+    indexReadMetrics.candidateDirectoryReaddirPaths = [];
 }
 
 async function findCandidateIndexPath(activeServerDir: string): Promise<string> {
@@ -234,6 +248,56 @@ async function findCandidateIndexPaths(activeServerDir: string): Promise<string[
 }
 
 describe('External Sessions persisted candidate-index page locality', () => {
+    it('reconciles streamed on-disk source indexes against the bounded admitted identity set', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-reconciliation-'));
+        roots.push(activeServerDir);
+        const agentIdentity = { pluginId: 'happier.codex', localId: 'codex' };
+        const retiredSource = { kind: 'codexHome', home: 'connectedService', connectedServiceProfileId: 'retired' };
+        const retainedSource = { kind: 'codexHome', home: 'connectedService', connectedServiceProfileId: 'retained' };
+        for (const [source, remoteSessionId] of [
+            [retiredSource, 'retired-session'],
+            [retainedSource, 'retained-session'],
+        ] as const) {
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                const page = await executeExternalSessionCandidateQuery({
+                    activeServerDir,
+                    agentIdentity,
+                    source,
+                    limit: 1,
+                    listCandidates: async () => ({
+                        candidates: [{ remoteSessionId, updatedAtMs: 1 }],
+                        nextCursor: null,
+                        preparation: { kind: 'building_candidate_index', scanned: 1, total: 1 },
+                    }),
+                });
+                if (!page.preparation) break;
+                if (attempt === 3) throw new Error('candidate index did not complete');
+            }
+        }
+        const indexesBeforeReconciliation = await findCandidateIndexPaths(activeServerDir);
+        expect(indexesBeforeReconciliation).toHaveLength(2);
+
+        indexReadMetrics.measureDirectoryReconciliation = true;
+        try {
+            await reconcileExternalSessionCandidateIndexes({
+                activeServerDir,
+                admitted: [{ agentIdentity, source: retainedSource }],
+            });
+        } finally {
+            indexReadMetrics.measureDirectoryReconciliation = false;
+        }
+        const indexRoot = join(activeServerDir, 'external-sessions', 'candidate-indexes', 'v1');
+        const agentDirectory = dirname(dirname(indexesBeforeReconciliation[0]!));
+        expect(indexReadMetrics.candidateDirectoryReaddirPaths).not.toContain(indexRoot);
+        expect(indexReadMetrics.candidateDirectoryReaddirPaths).not.toContain(agentDirectory);
+
+        const remainingIndexes = await findCandidateIndexPaths(activeServerDir);
+        expect(remainingIndexes).toHaveLength(1);
+        await expect(fsPromisesActual.readFile(remainingIndexes[0]!, 'utf8')).resolves.toContain(
+            'retained-session',
+        );
+    });
+
     it('retires only the exact source index and preserves an active sibling source', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-candidate-exact-retirement-'));
         roots.push(activeServerDir);

@@ -106,7 +106,7 @@ describe('waitForSessionInputResult', () => {
     }));
 
     const { waitForSessionInputResult } = await import('./sendSessionMessage');
-    const wait = (timeoutMs = 1_000, maxResultTextUtf8Bytes = 1_024) =>
+    const wait = (timeoutMs = 1_000) =>
       waitForSessionInputResult({
         credentials: {
           token: 'token',
@@ -115,7 +115,6 @@ describe('waitForSessionInputResult', () => {
         idOrPrefix: 'sess-1',
         localId: inputRow.localId,
         timeoutMs,
-        maxResultTextUtf8Bytes,
       });
 
     return {
@@ -234,24 +233,22 @@ describe('waitForSessionInputResult', () => {
     });
   });
 
-  it('returns an explicit terminal no-result disposition when final text exceeds the caller UTF-8 ceiling', async () => {
+  it('returns the canonical final text without inventing a consumer-specific ceiling', async () => {
+    const text = 'é'.repeat((512 * 1024) + 1);
     const { wait } = await arrange({
       rowsAfterInput: () => [
         rawClaudeOutput({
-          content: [{ type: 'text', text: 'éé' }],
+          content: [{ type: 'text', text }],
           stopReason: 'end_turn',
         }),
       ],
     });
 
-    await expect(wait(1_000, 3)).resolves.toEqual({
+    await expect(wait()).resolves.toEqual({
       ok: true,
       sessionId: 'sess-1',
       localId: 'automation:run:run-1',
-      result: {
-        kind: 'terminal_no_result',
-        reason: 'final_assistant_text_exceeds_utf8_byte_limit',
-      },
+      result: { kind: 'final_text', text },
     });
   });
 });

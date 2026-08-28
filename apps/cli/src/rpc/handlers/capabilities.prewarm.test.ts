@@ -1,29 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse } from '@happier-dev/protocol';
-import type { Capability } from '@/capabilities/service';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
   return {
     agents: [],
-        actions: [],
+    actions: [],
     resources: [],
     activationTargets: [],
-        catalogEntriesById: {},
+    catalogEntriesById: {},
     agentDefinitionsById: new Map(),
-        pluginDiagnosticsByPluginId: {},
+    pluginDiagnosticsByPluginId: {},
   };
 }
 
-function createCodexCatalogEntry(loaderSpy: () => Promise<Capability>): AgentCatalogEntry {
+function createCodexCatalogEntry(): AgentCatalogEntry {
   return {
     id: 'codex',
     cliSubcommand: 'codex',
     vendorResumeSupport: 'supported',
-    getCliCapabilityOverride: loaderSpy,
   };
+}
+
+function mockPreflightAdapterResolution(resolverSpy: () => Promise<null>): void {
+  vi.doMock('@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter', () => ({
+    resolvePreflightSessionControlsProbeAdapter: resolverSpy,
+  }));
 }
 
 function mockProviderCliResolution(): void {
@@ -44,7 +48,7 @@ function mockPrimeResolvedContributionRegistry(
 }
 
 describe('registerCapabilitiesHandlers prewarm', () => {
-  it('waits for merged registry priming before loading capability overrides', async () => {
+  it('waits for merged registry priming before resolving generic capability support', async () => {
     vi.resetModules();
 
     let releasePrime!: (value: ResolvedContributionRegistry) => void;
@@ -53,24 +57,17 @@ describe('registerCapabilitiesHandlers prewarm', () => {
         releasePrime = resolve;
       }),
     );
-    const loaderSpy = vi.fn(async (): Promise<Capability> => ({
-      descriptor: {
-        id: 'cli.codex' as const,
-        kind: 'cli' as const,
-        title: 'Codex CLI',
-        methods: {},
-      },
-      detect: async () => ({ available: true }),
-    }));
+    const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
 
     mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/agent/catalog/registry', () => {
       return {
         AGENTS: {
-          codex: createCodexCatalogEntry(loaderSpy),
+          codex: createCodexCatalogEntry(),
         },
       };
     });
@@ -88,40 +85,29 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(1);
-    expect(loaderSpy).toHaveBeenCalledTimes(0);
+    expect(resolverSpy).toHaveBeenCalledTimes(0);
 
     releasePrime(createEmptyResolvedContributionRegistry());
     await Promise.resolve();
     await Promise.resolve();
-    expect(loaderSpy).toHaveBeenCalledTimes(1);
+    expect(resolverSpy).toHaveBeenCalledTimes(1);
   });
 
   it('warms capability service during handler registration', async () => {
     vi.resetModules();
 
-    let allowLoader = true;
     const primeResolvedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
-    const loaderSpy = vi.fn(async (): Promise<Capability> => {
-      if (!allowLoader) throw new Error('late-loader-failure');
-      return {
-        descriptor: {
-          id: 'cli.codex' as const,
-          kind: 'cli' as const,
-          title: 'Codex CLI',
-          methods: {},
-        },
-        detect: async () => ({ available: true }),
-      };
-    });
+    const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
 
     mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/agent/catalog/registry', () => {
       return {
         AGENTS: {
-          codex: createCodexCatalogEntry(loaderSpy),
+          codex: createCodexCatalogEntry(),
         },
       };
     });
@@ -137,68 +123,14 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     });
 
     await vi.waitFor(() => {
-      expect(loaderSpy).toHaveBeenCalledTimes(1);
+      expect(resolverSpy).toHaveBeenCalledTimes(1);
     });
     expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(1);
 
-    allowLoader = false;
     const result = await call<CapabilitiesDescribeResponse, Record<string, never>>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
 
     expect(result.capabilities.some((entry: { id: string }) => entry.id === 'cli.codex')).toBe(true);
-    expect(loaderSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('clears a failed prewarm promise so later calls can recover', async () => {
-    vi.resetModules();
-
-    let allowLoader = false;
-    const primeResolvedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
-    const loaderSpy = vi.fn(async (): Promise<Capability> => {
-      if (!allowLoader) throw new Error('late-loader-failure');
-      return {
-        descriptor: {
-          id: 'cli.codex' as const,
-          kind: 'cli' as const,
-          title: 'Codex CLI',
-          methods: {},
-        },
-        detect: async () => ({ available: true }),
-      };
-    });
-
-    mockProviderCliResolution();
-
-    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
-
-    vi.doMock('@/agent/catalog/registry', () => {
-      return {
-        AGENTS: {
-          codex: createCodexCatalogEntry(loaderSpy),
-        },
-      };
-    });
-
-    const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
-    });
-
-    // Prewarm failures are swallowed; force a first request to observe the failure shape.
-    const first = await call<Record<string, unknown>, Record<string, never>>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
-    expect(first).toHaveProperty('error');
-
-    allowLoader = true;
-    const result = await call<CapabilitiesDescribeResponse, Record<string, never>>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
-
-    expect(Array.isArray(result.capabilities)).toBe(true);
-    expect(result.capabilities.some((entry: { id: string }) => entry.id === 'cli.codex')).toBe(true);
-    expect(loaderSpy).toHaveBeenCalledTimes(2);
-    expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(2);
+    expect(resolverSpy).toHaveBeenCalledTimes(1);
   });
 
   it('rebuilds the warmed service after the plugin reload generation changes', async () => {
@@ -206,21 +138,11 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     let pluginReloadGeneration = 0;
     const primeResolvedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
-    const loaderSpy = vi.fn(async (): Promise<Capability> => {
-      const loadIndex = loaderSpy.mock.calls.length;
-      return {
-        descriptor: {
-          id: 'cli.codex' as const,
-          kind: 'cli' as const,
-          title: `Codex CLI ${loadIndex}`,
-          methods: {},
-        },
-        detect: async () => ({ available: true }),
-      };
-    });
+    const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
     mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/plugins/runtime/reload/singleton', () => ({
       pluginReloadController: {
@@ -237,7 +159,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     vi.doMock('@/agent/catalog/registry', () => {
       return {
         AGENTS: {
-          codex: createCodexCatalogEntry(loaderSpy),
+          codex: createCodexCatalogEntry(),
         },
       };
     });
@@ -253,7 +175,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     });
 
     await vi.waitFor(() => {
-      expect(loaderSpy).toHaveBeenCalledTimes(1);
+      expect(resolverSpy).toHaveBeenCalledTimes(1);
     });
 
     const beforeReload = await call<CapabilitiesDescribeResponse, Record<string, never>>(
@@ -261,7 +183,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
       {},
     );
     expect(beforeReload.capabilities.find((entry: { id: string }) => entry.id === 'cli.codex')?.title)
-      .toBe('Codex CLI 1');
+      .toBe('Codex CLI');
 
     pluginReloadGeneration = 1;
 
@@ -270,8 +192,8 @@ describe('registerCapabilitiesHandlers prewarm', () => {
       {},
     );
     expect(afterReload.capabilities.find((entry: { id: string }) => entry.id === 'cli.codex')?.title)
-      .toBe('Codex CLI 2');
-    expect(loaderSpy).toHaveBeenCalledTimes(2);
+      .toBe('Codex CLI');
+    expect(resolverSpy).toHaveBeenCalledTimes(2);
     expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(2);
   });
 });

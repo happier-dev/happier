@@ -1,22 +1,17 @@
-import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
-
 import type { Metadata } from '@/api/types';
 import {
     createSessionHandoffMetadataSplit,
     pickSessionHandoffRuntimeLocalMetadata,
     type SessionHandoffLocalMetadataSource,
+    type SessionHandoffRuntimeLocalMetadata,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
-import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
-import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { TrackedSession } from '../types';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
-    getAgentResumeConfig,
-    readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
-} from '@happier-dev/agents';
-import { ExternalSessionsSourceSchema } from '@happier-dev/protocol';
-import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+    ExternalSessionsSourceSchema,
+    readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -43,30 +38,12 @@ function resolveFallbackFlavorFromBackendTarget(trackedSession: TrackedSession):
         return '';
     }
     if (backendTarget.sourceKind === 'configured') {
-        const backendId = backendTarget.configuredBackendId?.trim() || backendTarget.backendId.trim();
-        return backendId ? `acp:${backendId}` : '';
+        return '';
     }
     if (backendTarget.sourceKind === 'built_in') {
         return backendTarget.backendId.trim();
     }
     return '';
-}
-
-function buildConfiguredAcpFallbackMetadata(trackedSession: TrackedSession): Record<string, unknown> | null {
-    const backendTarget = resolveConcreteBackendTargetRefV2(trackedSession.spawnOptions?.backendTarget);
-    if (backendTarget?.sourceKind !== 'configured') {
-        return null;
-    }
-    const backendId = backendTarget.configuredBackendId?.trim() || backendTarget.backendId.trim();
-    if (!backendId) {
-        return null;
-    }
-    return {
-        ...buildConfiguredAcpBackendSessionMetadata({
-            backendId,
-            title: backendId,
-        }),
-    };
 }
 
 function resolveTrackedSessionFallbackMetadata(params: Readonly<{
@@ -80,21 +57,16 @@ function resolveTrackedSessionFallbackMetadata(params: Readonly<{
             : '';
     const machineId = typeof params.machineId === 'string' ? params.machineId.trim() : '';
     const fallbackHomeDir = typeof params.fallbackHomeDir === 'string' ? params.fallbackHomeDir.trim() : '';
-    const environmentVariables = params.trackedSession.spawnOptions?.environmentVariables;
-    const homeDir = typeof environmentVariables?.HOME === 'string' && environmentVariables.HOME.trim().length > 0
-        ? environmentVariables.HOME.trim()
-        : fallbackHomeDir;
+    const homeDir = fallbackHomeDir;
     const flavor = resolveFallbackFlavorFromBackendTarget(params.trackedSession);
     if (!sourcePath || !machineId || !homeDir || !flavor) {
         return null;
     }
-    const configuredAcpFallbackMetadata = buildConfiguredAcpFallbackMetadata(params.trackedSession);
     return {
         machineId,
         path: sourcePath,
         homeDir,
         flavor,
-        ...(configuredAcpFallbackMetadata ?? {}),
     };
 }
 
@@ -115,15 +87,12 @@ export async function buildHandoffSessionMetadataFromTrackedSession(params: Read
         }
         : localExportMetadataOverlay
             ? { ...localExportMetadataOverlay }
-        : null;
+            : null;
     if (!metadata) {
         return null;
     }
 
-    const runtimeLocalMetadata: Partial<Pick<
-        Metadata,
-        'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'
-    >> = {
+    let runtimeLocalMetadata: SessionHandoffRuntimeLocalMetadata = {
         ...(pickSessionHandoffRuntimeLocalMetadata(metadata) ?? {}),
     };
     const vendorResumeId = normalizeOptionalString(params.trackedSession.vendorResumeId)
@@ -136,29 +105,19 @@ export async function buildHandoffSessionMetadataFromTrackedSession(params: Read
         });
     }
 
-    const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
-    const agentId = typeof runtimeIdentity.providerId === 'string' ? runtimeIdentity.providerId.trim() : '';
-
-    const agentResumeConfig = agentId ? getAgentResumeConfig(agentId) : null;
-    if (agentResumeConfig) {
-        const vendorResumeIdField = agentResumeConfig.vendorResumeIdField;
-        if (vendorResumeIdField && !(runtimeLocalMetadata as Record<string, unknown>)[vendorResumeIdField]) {
-            Object.assign(
-                runtimeLocalMetadata,
-                buildProviderSessionIdSessionMetadata({
-                    metadataKey: vendorResumeIdField,
-                    value: vendorResumeId,
-                }),
-            );
-        }
-    }
-
-    // Catalog membership, rather than the generated built-in ID set, decides
-    // whether a runtime identity owns a handoff metadata hook. This keeps an
-    // installed external Agent exact while leaving configured ACP identities
-    // without a catalog Agent unmodified.
-    const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
-    if (agentId && runtimeDescriptorV1 && isCatalogAgentId(agentId)) {
+    // Current writers persist the canonical descriptor. Released flat session
+    // ids are read only by pickSessionHandoffRuntimeLocalMetadata above; this
+    // path does not synthesize another Agent-specific writer.
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(metadata);
+    const agentId = runtimeDescriptorV1?.agentId ?? '';
+    const compatibilityBackendTarget = resolveConcreteBackendTargetRefV2(
+        params.trackedSession.spawnOptions?.backendTarget,
+    );
+    if (
+        agentId
+        && runtimeDescriptorV1
+        && compatibilityBackendTarget?.sourceKind !== 'configured'
+    ) {
         const currentRuntime = await getSessionHostBridge()
             .resolveCurrentExecutionSurfacesForCatalogAgent(agentId);
         const buildRuntimeLocalMetadata = currentRuntime?.agentId === agentId
@@ -183,13 +142,17 @@ export async function buildHandoffSessionMetadataFromTrackedSession(params: Read
             && identity.machineId
             && identity.transcriptStorage === 'direct'
         ) {
-            runtimeLocalMetadata.externalSessionV1 = {
-                v: 1,
-                agentId,
-                machineId: identity.machineId,
-                remoteSessionId: vendorResumeId,
-                source: externalSessionSource.data,
-                linkedAtMs: Date.now(),
+            runtimeLocalMetadata = {
+                ...runtimeLocalMetadata,
+                externalSessionV1: {
+                    v: 1,
+                    agentId,
+                    machineId: identity.machineId,
+                    remoteSessionId: vendorResumeId,
+                    source: externalSessionSource.data,
+                    linkedAtMs: Date.now(),
+                    runtimeDescriptorV1,
+                },
             };
         }
     }

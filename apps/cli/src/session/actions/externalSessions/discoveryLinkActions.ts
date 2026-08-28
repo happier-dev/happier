@@ -15,8 +15,8 @@ import { validateExternalMachineSource } from '@/api/session/external/security/v
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/utils/logger';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 
-import { resolveDefaultCandidatesLimit } from './actionConfiguration';
 import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import {
     executeExternalSessionCandidateQuery,
@@ -46,7 +46,8 @@ export async function executeExternalSessionCandidatesListAction(
         }
         const { agentId, cursor, searchTerm, searchMode } = parsed.data;
         const source = validatedSource.source;
-        const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
+        const limit = parsed.data.limit
+            ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxItems;
         const startedAtMs = Date.now();
         const startMemory = process.memoryUsage();
         const providerOps = validatedSource.providerOps;
@@ -218,7 +219,6 @@ export async function executeExternalSessionLinkEnsureAction(
             agentId: parsed.data.agentId,
             remoteSessionId: parsed.data.remoteSessionId,
             linkData: parsed.data.linkData,
-            codexBackendMode: parsed.data.codexBackendMode,
             runtimeDescriptor: parsed.data.runtimeDescriptorV1,
             titleHint: parsed.data.titleHint,
             directoryHint: parsed.data.directoryHint,

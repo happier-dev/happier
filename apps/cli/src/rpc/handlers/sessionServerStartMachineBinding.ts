@@ -91,6 +91,7 @@ export function registerMachineSessionServerStartRpcHandler(
             try {
                 const execution = await executor.execute('session.spawn_new', input, {
                     surface: 'cli',
+                    authority: 'account_automation',
                     actionCaller: context.actionCaller,
                     signal: context.signal,
                 });

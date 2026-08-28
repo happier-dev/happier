@@ -303,7 +303,7 @@ export function createRemoteDevSessionSpawnApprovalReplayNormalizer(params: Read
       ...(input.transcriptStorage ? { transcriptStorage: input.transcriptStorage } : {}),
       ...(terminal ? { terminal } : {}),
       ...(input.profileId ? { profileId: input.profileId } : {}),
-      ...(initialMessage ? { initialMessage } : {}),
+      ...(initialMessage ? { initialInput: { text: initialMessage } } : {}),
     };
     const canonical = SessionSpawnNewInputV2Schema.safeParse(candidate);
     if (!canonical.success) return null;

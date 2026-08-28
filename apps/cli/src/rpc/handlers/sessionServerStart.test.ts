@@ -35,7 +35,7 @@ const plainSpawnInput = {
         kind: "agent",
         identity: { pluginId: "happier.agent.codex", localId: "codex" },
     },
-    initialMessage: "Start the automation task.",
+    initialInput: { text: "Start the automation task." },
 };
 
 const validatedPlainSpawnInput = SessionSpawnNewInputV2Schema.parse(plainSpawnInput);
@@ -59,7 +59,7 @@ const request: SessionServerStartDispatchRequestV1 = {
         runId: "run-1",
         attempt: 3,
         claimedByMachineId: "machine-source",
-        origin: "event",
+        cause: { kind: "manual", invokedAt: 1 },
         accountCurrentness: {
             mode: "plain",
             version: 7,
@@ -137,7 +137,7 @@ describe("registerSessionServerStartRpcHandler", () => {
                     kind: "automationRun",
                     automationId: "automation-1",
                     runId: "run-1",
-                    origin: "event",
+                    cause: { kind: "manual", invokedAt: 1 },
                 },
             },
         );

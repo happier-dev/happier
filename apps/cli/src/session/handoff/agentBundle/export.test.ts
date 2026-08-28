@@ -25,9 +25,28 @@ describe('exportSessionHandoffAgentBundle', () => {
         resolveExecutionSurfaces.mockReset();
         resolveCurrentExecutionSurfacesForCatalogAgent.mockReset();
         resolveSessionHandoffEligibility.mockReset();
-        resolveSessionHandoffEligibility.mockImplementation(
-            resolveActualSessionHandoffEligibility,
-        );
+        resolveCurrentExecutionSurfacesForCatalogAgent.mockImplementation(async (agentId: string) => ({
+            agentId,
+            backendId: agentId,
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: `happier.agent.${agentId}`, localId: agentId },
+            },
+            executionSurfaces: await resolveExecutionSurfaces(agentId),
+        }));
+        resolveSessionHandoffEligibility.mockImplementation((input) =>
+            resolveActualSessionHandoffEligibility({
+                ...input,
+                resolveCurrentExecutionSurfacesForAgent: async (agentId) => {
+                    const current = await resolveCurrentExecutionSurfacesForCatalogAgent(agentId);
+                    return current
+                        ? {
+                            backendId: current.backendId,
+                            executionSurfaces: current.executionSurfaces,
+                        }
+                        : null;
+                },
+            }));
     });
 
     afterEach(() => {
@@ -49,7 +68,7 @@ describe('exportSessionHandoffAgentBundle', () => {
                 },
             },
         }));
-        resolveExecutionSurfaces.mockResolvedValueOnce({
+        resolveExecutionSurfaces.mockResolvedValue({
             terminalRuntime: null,
             externalSession: null,
             attach: null,
@@ -166,7 +185,7 @@ describe('exportSessionHandoffAgentBundle', () => {
                 },
             },
         }));
-        resolveExecutionSurfaces.mockResolvedValueOnce({
+        resolveExecutionSurfaces.mockResolvedValue({
             terminalRuntime: null,
             externalSession: null,
             attach: null,

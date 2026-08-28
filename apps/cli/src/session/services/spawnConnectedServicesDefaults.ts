@@ -9,11 +9,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
-import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 export function agentSupportsSpawnConnectedServicesDefaults(agentId: string): boolean {
-  return resolveCatalogAgentConnectedServiceIds(agentId).length > 0;
+  return resolveCatalogAgentConnectedAccountServiceIds(agentId).length > 0;
 }
 
 export type SpawnConnectedServicesDefaultDisposition =
@@ -95,7 +95,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   accountSettings: unknown;
   agentId: string;
 }>): SpawnConnectedServicesDefaultDisposition {
-  const supportedServiceIds = resolveCatalogAgentConnectedServiceIds(params.agentId);
+  const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
   if (supportedServiceIds.length === 0) return { kind: 'native' };
 
   const settingsRecord = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)

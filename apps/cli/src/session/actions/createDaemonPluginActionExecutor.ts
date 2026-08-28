@@ -21,6 +21,11 @@ type ActionExecutorLike = Readonly<{
   ) => Promise<ActionExecuteResult>;
 }>;
 
+const DAEMON_OWNED_PLUGIN_META_ACTION_IDS = new Set<string>([
+  'action.spec.search',
+  'action.spec.get',
+  'action.invoke',
+]);
 const BUILT_IN_ACTION_IDS = new Set<string>(ACTION_IDS);
 
 /**
@@ -36,22 +41,24 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
     surface: 'cli' | 'mcp' | 'agent';
     defaultSessionId?: string;
     expectedContributorImmutableGenerationId?: string;
-  }>) => Promise<PluginActionExecutionAttempt>;
+  }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<PluginActionExecutionAttempt>;
 }>): ActionExecutorLike {
   const requestPluginActionExecution = params.requestPluginActionExecution
     ?? requestDaemonPluginActionExecution;
   return {
     execute: async (actionId, input, context) => {
       const normalizedActionId = String(actionId);
-      if (!BUILT_IN_ACTION_IDS.has(normalizedActionId)) {
-        const attempt = await requestPluginActionExecution({
+      if (!BUILT_IN_ACTION_IDS.has(normalizedActionId)
+        || DAEMON_OWNED_PLUGIN_META_ACTION_IDS.has(normalizedActionId)) {
+        const surface: 'cli' | 'mcp' | 'agent' = context?.surface === 'mcp'
+          ? 'mcp'
+          : context?.surface === 'agent'
+            ? 'agent'
+            : 'cli';
+        const request = {
           actionId: normalizedActionId,
           input,
-          surface: context?.surface === 'mcp'
-            ? 'mcp'
-            : context?.surface === 'agent'
-              ? 'agent'
-              : 'cli',
+          surface,
           ...(typeof context?.defaultSessionId === 'string'
             ? { defaultSessionId: context.defaultSessionId }
             : {}),
@@ -62,7 +69,10 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
                   context.expectedContributorImmutableGenerationId.trim(),
               }
             : {}),
-        });
+        };
+        const attempt = context?.signal
+          ? await requestPluginActionExecution(request, { signal: context.signal })
+          : await requestPluginActionExecution(request);
         if (attempt.matched) {
           return attempt.result;
         }
