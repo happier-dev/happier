@@ -594,13 +594,13 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         status: 'conflict',
         code: 'connected_account_configuration_settings_conflict',
       });
-      expect(updateSettings).toHaveBeenCalledTimes(3);
+      expect(updateSettings).toHaveBeenCalledTimes(1);
     } finally {
       resetActiveAccountSettingsSnapshotForTests();
     }
   });
 
-  it('reapplies a service configuration and SavedSecret delta to a CAS winner that added siblings', async () => {
+  it('returns conflict without replaying a service configuration and SavedSecret callback onto a CAS winner', async () => {
     resetActiveAccountSettingsSnapshotForTests();
     const credentials = {
       token: 'token-1',
@@ -704,41 +704,30 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         secretValues: { clientSecret: 'caller-secret-value' },
         generation: 'generation-1',
         immutableGenerationId: 'artifact-1',
-      })).resolves.toMatchObject({
-        status: 'committed',
-        record: {
-          revision: 'caller-configuration',
-          secretRefs: { clientSecret: 'caller-secret' },
-        },
+      })).resolves.toEqual({
+        status: 'conflict',
+        code: 'connected_account_configuration_settings_conflict',
       });
 
-      expect(writes).toHaveLength(2);
-      const finalContent = writes[1]?.content;
+      expect(writes).toHaveLength(1);
+      const finalContent = writes[0]?.content;
       expect(finalContent?.t).toBe('plain');
       if (finalContent?.t !== 'plain') {
-        throw new Error('Expected the retrying Account Settings write to remain plain');
+        throw new Error('Expected the one-shot Account Settings write to remain plain');
       }
       expect(finalContent.v[CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY])
         .toMatchObject({
           v: 1,
-          entries: expect.arrayContaining([
-            expect.objectContaining({
-              service: winnerService,
-              modeId: 'oauth',
-              revision: 'winner-configuration',
-            }),
-            expect.objectContaining({
-              service,
-              modeId: 'oauth',
-              revision: 'caller-configuration',
-              secretRefs: { clientSecret: 'caller-secret' },
-            }),
-          ]),
+          entries: [expect.objectContaining({
+            service,
+            modeId: 'oauth',
+            revision: 'caller-configuration',
+            secretRefs: { clientSecret: 'caller-secret' },
+          })],
         });
-      expect(finalContent.v.secrets).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'winner-secret' }),
+      expect(finalContent.v.secrets).toEqual([
         expect.objectContaining({ id: 'caller-secret' }),
-      ]));
+      ]);
     } finally {
       resetActiveAccountSettingsSnapshotForTests();
     }

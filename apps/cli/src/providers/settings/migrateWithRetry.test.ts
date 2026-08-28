@@ -192,7 +192,7 @@ describe('migrateProviderSettingsWithRetry', () => {
     expect(updates).toBe(1);
   });
 
-  it('converges two concurrent migrators on one connection and recorded outcome', async () => {
+  it('lets one concurrent migrator win and returns conflict without replaying the other callback', async () => {
     let version = 1;
     let content: AccountSettingsStoredContentEnvelope = {
       t: 'plain',
@@ -232,18 +232,23 @@ describe('migrateProviderSettingsWithRetry', () => {
       writeCache: async () => undefined,
     } as const;
 
-    const [left, right] = await Promise.all([
+    const [left, right] = await Promise.allSettled([
       migrateProviderSettingsWithRetry({ credentials: credentials(), ...migrationParams('pc_left'), deps }),
       migrateProviderSettingsWithRetry({ credentials: credentials(), ...migrationParams('pc_right'), deps }),
     ]);
 
-    const winnerId = left.outcomes[0]?.kind === 'connection' ? left.outcomes[0].connectionId : null;
+    const fulfilled = [left, right].find((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof migrateProviderSettingsWithRetry>>> => result.status === 'fulfilled');
+    const rejected = [left, right].find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(fulfilled).toBeDefined();
+    expect(rejected?.reason).toEqual(expect.objectContaining({ message: expect.stringContaining('conflict') }));
+    const winnerId = fulfilled?.value.outcomes[0]?.kind === 'connection'
+      ? fulfilled.value.outcomes[0].connectionId
+      : null;
     expect(winnerId).toMatch(/^pc_(left|right)$/);
     expect(arrivals).toBe(2);
     expect(casWins).toBe(1);
     expect(observedConflicts).toBe(1);
     expect(new Set(attemptedConnectionIds)).toEqual(new Set(['pc_left', 'pc_right']));
-    expect(right.outcomes).toEqual(left.outcomes);
     expect(content).toMatchObject({
       t: 'plain',
       v: {
@@ -253,10 +258,10 @@ describe('migrateProviderSettingsWithRetry', () => {
     });
   });
 
-  it('retries an unrelated-settings conflict and preserves the winner while adding providers', async () => {
+  it('returns an unrelated-settings conflict without replaying the migration callback', async () => {
     let updateAttempt = 0;
     let finalContent: AccountSettingsStoredContentEnvelope | null = null;
-    const result = await migrateProviderSettingsWithRetry({
+    await expect(migrateProviderSettingsWithRetry({
       credentials: credentials(),
       ...migrationParams('pc_after_unrelated_conflict'),
       deps: {
@@ -281,17 +286,10 @@ describe('migrateProviderSettingsWithRetry', () => {
         resolveCachePath: () => '/unused/provider-settings-cache',
         writeCache: async () => undefined,
       },
-    });
+    })).rejects.toThrow('Account Settings mutation did not settle: conflict');
 
-    expect(updateAttempt).toBe(2);
-    expect(result.version).toBe(3);
-    expect(finalContent).toMatchObject({
-      t: 'plain',
-      v: {
-        unrelated: 'concurrent-winner',
-        providerSettingsV1: { connections: [{ id: 'pc_after_unrelated_conflict' }] },
-      },
-    });
+    expect(updateAttempt).toBe(1);
+    expect(finalContent).toBeNull();
   });
 
   it('does not report a dynamic migration as complete when its submitted CAS outcome is unknown', async () => {

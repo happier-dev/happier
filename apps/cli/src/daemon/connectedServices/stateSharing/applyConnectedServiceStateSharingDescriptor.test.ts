@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
 import { describe, expect, it } from 'vitest';
 
-import { applyConnectedServiceStateSharingDescriptor } from './applyConnectedServiceStateSharingDescriptor';
+import {
+  applyConnectedServiceStateSharingDescriptor,
+  resolveConnectedServiceNativeHomeRoot,
+} from './applyConnectedServiceStateSharingDescriptor';
 
 function createDescriptor(params: Readonly<{
   configEntries?: ConnectedServiceStateSharingDescriptor['config']['entries'];
@@ -33,6 +36,44 @@ function createDescriptor(params: Readonly<{
 }
 
 describe('applyConnectedServiceStateSharingDescriptor', () => {
+  it('resolves native Agent homes from the declared environment key or its home-relative default', () => {
+    expect(resolveConnectedServiceNativeHomeRoot({
+      nativeHome: {
+        environmentKey: 'CODEX_HOME',
+        defaultRelativePath: '.codex',
+      },
+      sourceEnvironment: { CODEX_HOME: '/provider/codex-home' },
+      homeDir: '/users/example',
+    })).toBe('/provider/codex-home');
+    expect(resolveConnectedServiceNativeHomeRoot({
+      nativeHome: {
+        environmentKey: 'CODEX_HOME',
+        defaultRelativePath: '.codex',
+      },
+      sourceEnvironment: {},
+      homeDir: '/users/example',
+    })).toBe('/users/example/.codex');
+  });
+
+  it('rejects relative environment overrides and defaults that escape the host home', () => {
+    expect(() => resolveConnectedServiceNativeHomeRoot({
+      nativeHome: {
+        environmentKey: 'CLAUDE_CONFIG_DIR',
+        defaultRelativePath: '.claude',
+      },
+      sourceEnvironment: { CLAUDE_CONFIG_DIR: '../ambient-claude' },
+      homeDir: '/users/example',
+    })).toThrow('connected_service_native_home_environment_must_be_absolute');
+    expect(() => resolveConnectedServiceNativeHomeRoot({
+      nativeHome: {
+        environmentKey: 'CLAUDE_CONFIG_DIR',
+        defaultRelativePath: '../ambient-claude',
+      },
+      sourceEnvironment: {},
+      homeDir: '/users/example',
+    })).toThrow('connected_service_native_home_default_must_be_home_relative');
+  });
+
   it('materializes descriptor entries and emits extended manifest metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-state-sharing-descriptor-'));
     const sourceRoot = join(root, 'source');

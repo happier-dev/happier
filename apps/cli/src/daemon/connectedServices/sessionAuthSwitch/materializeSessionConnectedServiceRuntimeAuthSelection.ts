@@ -6,6 +6,7 @@ import {
   readConnectedServiceChildSelectionsFromEnv,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { resolveConnectedServiceMaterializedHomeRoot } from '@/daemon/connectedServices/catalogHooks';
+import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedServices/runtimeAuth/createRuntimeAuthNativeHome';
 import { createSessionConnectedServiceAuthTransport } from '@/session/runtime/control/transport';
 import {
   type AccountSettings,
@@ -99,7 +100,6 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
           generation: generation!,
         }
       : {}),
-    record,
     credentialRevision,
   };
 
@@ -132,11 +132,19 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     credentials: params.credentials,
     sessionId: params.input.sessionId,
   });
+  const nativeHome = targetMaterializedRoot
+    ? await createConnectedServiceRuntimeAuthNativeHome({
+        agentId: params.input.agentId,
+        root: targetMaterializedRoot,
+      })
+    : null;
 
   return {
     ...baseSelection,
+    credential: record,
     applyConnectedServiceAuthGeneration:
       runtimeAuthTransport.applyConnectedServiceAuthGeneration,
     ...(targetMaterializedRoot ? { targetMaterializedRoot } : {}),
+    ...(nativeHome ? { nativeHome } : {}),
   };
 }

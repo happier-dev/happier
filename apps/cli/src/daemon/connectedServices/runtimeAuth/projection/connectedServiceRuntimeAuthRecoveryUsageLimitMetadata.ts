@@ -1,5 +1,5 @@
 import {
-  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryResumePromptModeV1Schema,
   SessionUsageLimitRecoveryV1Schema,
@@ -43,8 +43,9 @@ function readNonNegativeInteger(value: unknown): number | null {
 }
 
 function readConnectedServiceId(value: unknown): SessionUsageLimitRecoveryV1['selectedAuth']['serviceId'] | null {
-  const parsed = ConnectedServiceIdSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  // Persisted recovery state keys are canonical qualified keys; released
+  // bundled scalars normalize through the sole legacy ingress normalizer.
+  return readBuiltInLegacyConnectedAccountServiceKeyIngress(value);
 }
 
 function readRecoveryIntent(metadata: MetadataRecord): SessionUsageLimitRecoveryV1 | null {

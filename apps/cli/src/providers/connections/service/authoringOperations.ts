@@ -43,7 +43,7 @@ import { addInitialProviderManualModels } from './models';
 import {
   ProviderConnectionValidationError,
   addPreparedSavedSecret,
-  isProviderError,
+  parseProviderError,
   readSettings,
   replaceSettings,
   savedSecretExists,
@@ -294,7 +294,8 @@ async function currentAuthoringDiscoveryCandidates(input: Readonly<{
       connections: [],
     });
   } catch (error) {
-    if (isProviderError(error)) throw error;
+    const providerError = parseProviderError(error);
+    if (providerError) throw providerError;
     throw createProviderErrorV1('provider_endpoint_unavailable', {
       connectionId: input.connectionId,
       machineId: input.machineId,
@@ -718,7 +719,8 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
             connectionId: persistedConnectionId, machineId: input.machineId,
           }) };
     } catch (error) {
-      if (isProviderError(error)) return { status: 'error', error };
+      const providerError = parseProviderError(error);
+      if (providerError) return { status: 'error', error: providerError };
       if (error instanceof ProviderSettingsLimitError) {
         return { status: 'error', error: createProviderErrorV1('provider_settings_limit_exceeded', {
           connectionId: input.connectionId, machineId: input.machineId,

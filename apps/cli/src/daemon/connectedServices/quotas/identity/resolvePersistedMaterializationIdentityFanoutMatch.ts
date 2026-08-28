@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type {
   PersistedSessionAccountIdentity,
@@ -38,7 +38,7 @@ function normalizeGeneration(value: number | null | undefined): number | null {
  */
 export function persistedSessionAccountIdentityMatchesFailingAccount(input: Readonly<{
   identity: PersistedSessionAccountIdentity;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   providerAccountId: string;
   candidate: Pick<RuntimeAccountIdentityEntry, 'serviceId' | 'groupId' | 'groupGeneration'>;

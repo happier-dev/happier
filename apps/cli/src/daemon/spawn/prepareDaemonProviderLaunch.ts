@@ -139,6 +139,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                 happyHomeDir: configuration.happyHomeDir,
                 pluginRuntimeRegistry: appliedPluginRuntimeLease.registry,
                 options: optionsWithProviderIsolation,
+                resolvedAgentId: input.catalogAgentId,
                 profileEnvironmentVariables: input.profileEnvironmentVariables,
                 daemonSpawnHooks: input.daemonSpawnHooks,
                 processEnv: input.processEnv,

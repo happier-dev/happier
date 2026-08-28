@@ -16,7 +16,7 @@ import { bindProviderConnectionSecret, setProviderConnectionGrant } from './gran
 import {
   ProviderConnectionValidationError,
   addPreparedSavedSecret,
-  isProviderError,
+  parseProviderError,
   readSettings,
   replaceSettings,
   savedSecretExists,
@@ -182,7 +182,8 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
         }));
       });
     } catch (error) {
-      if (isProviderError(error)) return { status: 'error', error };
+      const providerError = parseProviderError(error);
+      if (providerError) return { status: 'error', error: providerError };
       if (error instanceof ProviderSettingsLimitError) {
         return { status: 'error', error: createProviderErrorV1('provider_settings_limit_exceeded', { connectionId: input.connectionId, machineId: input.machineId }) };
       }

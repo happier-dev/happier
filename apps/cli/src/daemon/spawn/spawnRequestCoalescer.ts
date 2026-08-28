@@ -118,11 +118,13 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
   return {
     machineId: normalizeNonEmptyString(options.machineId),
     directory: normalizeNonEmptyString(options.directory) ?? '',
+    agentTarget: options.agentTarget === undefined
+      ? null
+      : toStableJson(options.agentTarget, new WeakSet()),
     backendTarget: options.backendTarget === undefined
       ? null
       : toStableJson(options.backendTarget, new WeakSet()),
     runtimeDescriptor: normalizeRuntimeDescriptorForFingerprint(runtimeSelection.runtimeDescriptorV1),
-    agentRuntimeSelection: toStableJson(runtimeSelection.agentRuntimeSelection ?? null, new WeakSet()),
     approvedNewDirectoryCreation: options.approvedNewDirectoryCreation === true,
     profileId: options.profileId !== undefined ? String(options.profileId ?? '') : null,
     terminal: toStableJson(options.terminal ?? null, new WeakSet()),

@@ -1,9 +1,9 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceIdSchema,
+  ConnectedAccountServiceKeySchema,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceId,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
@@ -18,6 +18,7 @@ import type {
   AcceptedConnectedServiceAccountVerification,
   AcceptedConnectedServiceAccountVerificationByServiceId,
 } from '../accountTransitions/acceptedConnectedServiceAccountVerification';
+import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
 
 type HotApplyResult =
   | Readonly<{
@@ -31,7 +32,7 @@ type HotApplyResult =
         | 'hot_apply_failed'
         | 'hot_apply_restart_required'
         | 'credential_revision_superseded';
-      serviceId?: ConnectedServiceId;
+      serviceId?: ConnectedAccountServiceKey;
       serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
     }>;
 
@@ -76,7 +77,7 @@ function readAcceptedVerificationFromHotApplyResult(
   const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(verification.credentialRevision);
   const credentialFingerprint = readString(verification.credentialFingerprint);
   const generationApplicationRaw = readRecord(verification.generationApplication);
-  const generationApplicationServiceId = ConnectedServiceIdSchema.safeParse(generationApplicationRaw?.serviceId);
+  const generationApplicationServiceId = ConnectedAccountServiceKeySchema.safeParse(generationApplicationRaw?.serviceId);
   const generationApplicationCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
     generationApplicationRaw?.credentialRevision,
   );
@@ -159,7 +160,7 @@ function readHotApplyFailureErrorCode(
 export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
   resolveRuntimeAuthAdapter?: (agentId: CatalogAgentId) => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
   validateGroupMutationCurrentness?: (input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     profileId: string;
     generation: number;
@@ -172,8 +173,8 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
   return async function hotApplySessionConnectedServiceAuth(input: Readonly<{
     tracked: TrackedSession;
     normalizedBindings: ConnectedServiceBindingsV1;
-    serviceIds?: ReadonlySet<ConnectedServiceId>;
-    runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedServiceId, unknown>;
+    serviceIds?: ReadonlySet<ConnectedAccountServiceKey>;
+    runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, unknown>;
   }>): Promise<HotApplyResult> {
     const agentId = resolveTrackedSessionCatalogAgentId(input.tracked);
     if (!agentId) return { ok: false, errorCode: 'hot_apply_unavailable' };
@@ -183,7 +184,7 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
     const targetBindings = Object.entries(input.normalizedBindings.bindingsByServiceId)
       .flatMap(([serviceIdRaw, binding]) => {
         if (binding.source !== 'connected') return [];
-        const serviceId = serviceIdRaw as ConnectedServiceId;
+        const serviceId = ConnectedAccountServiceKeySchema.parse(serviceIdRaw);
         if (input.serviceIds && !input.serviceIds.has(serviceId)) return [];
         return [{ serviceId, binding }];
       });
@@ -220,9 +221,10 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
             });
           }
         : undefined;
-      const request = {
-        target: { agentId },
-        selection: materializedSelection ?? {
+      const request = projectConnectedServiceRuntimeAuthTargetInput({
+        agentId,
+        materializedSelection,
+        fallbackSelection: {
           serviceId,
           binding,
           profileId: binding.profileId,
@@ -231,7 +233,7 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
             : {}),
         },
         ...(validateCurrentBeforeMutation ? { validateCurrentBeforeMutation } : {}),
-      };
+      });
       const result = await adapter.hotApply(request);
       if (!resultApplied(result)) {
         const errorCode = readHotApplyFailureErrorCode(result);

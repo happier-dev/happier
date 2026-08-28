@@ -89,7 +89,6 @@ function unsupportedRuntimeAuthAdapter(): ConnectedServiceProviderRuntimeAuthAda
     materializeActiveProfile: async () => ({}),
     canHotApply: () => ({}),
     hotApply: async () => ({}),
-    recoverAfterRuntimeAuthSwitch: async () => ({}),
     probeQuota: async () => ({}),
     refreshActiveProfile: async () => ({ status: 'unsupported' }),
   };

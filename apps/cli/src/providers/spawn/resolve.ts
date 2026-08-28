@@ -156,7 +156,7 @@ export type ProviderManagedProbeHostAuthorizationTicket = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderProbeAuthorizationRequest['protocol'];
-  sourceRegistryVersion?: string;
+  sourceRegistryVersion: string;
   path: string;
   parser: Extract<ProviderProbeAuthorizationRequest, { deployment: 'managedLocal' }>['parser'];
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;
@@ -352,6 +352,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       || !contribution
       || !contribution.definition.managedRuntime
       || !contributionManagedRuntime
+      || sourceRegistryVersion === undefined
       || !endpointTemplate
       || !declaredProbe
       || input.request.sourceRegistryVersion !== sourceRegistryVersion

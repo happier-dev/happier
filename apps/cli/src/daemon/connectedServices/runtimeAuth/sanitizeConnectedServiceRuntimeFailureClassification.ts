@@ -1,6 +1,8 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   readConnectedServiceLimitCategoryV1,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import {
@@ -85,6 +87,21 @@ function readKind(value: unknown): ConnectedServiceRuntimeAuthFailureKind | null
   return parsed.success ? parsed.data : null;
 }
 
+/**
+ * Sole runtime-auth classification service-key ingress. Current writers emit
+ * canonical qualified Plugin contribution keys; released bundled scalar ids
+ * normalize through the protocol-owned legacy normalizer (provenance and
+ * removal condition are documented there). Malformed, non-canonical, and
+ * unknown scalar ids reject the whole classification so callers observe a
+ * typed invalid-classification outcome instead of a silent identity change.
+ */
+function readServiceKeyIngress(value: unknown): ConnectedAccountServiceKey | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > SAFE_STRING_MAX_LENGTH) return null;
+  return readBuiltInLegacyConnectedAccountServiceKeyIngress(normalized);
+}
+
 function readLimitCategory(value: unknown): ConnectedServiceRuntimeLimitCategory | undefined {
   return readConnectedServiceLimitCategoryV1(value) ?? undefined;
 }
@@ -136,7 +153,7 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
 ): ConnectedServiceRuntimeFailureClassification | null {
   if (!isRecord(value)) return null;
   const kind = readKind(value.kind);
-  const serviceId = readBoundedString(value.serviceId);
+  const serviceId = readServiceKeyIngress(value.serviceId);
   const source = readSource(value.source);
   if (!kind || !serviceId || !source) return null;
 

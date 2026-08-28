@@ -79,6 +79,9 @@ function createEphemeralRuntimeStore(machineId: string): ProviderRuntimeStateSto
   return {
     path: '<ephemeral-draft-provider-probe>',
     read: async () => state,
+    updateTransientEndpointHealth: async (transform) => {
+      state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
+    },
     update: async (transform) => {
       state = await transform(state);
       return state;

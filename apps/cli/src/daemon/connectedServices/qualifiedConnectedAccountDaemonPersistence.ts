@@ -61,7 +61,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
-  updateAccountSettingsV2WithRetry,
+  updateAccountSettingsV2OnceAgainstLatest,
   type AccountSettingsMutationResult,
   type AccountSettingsUpdateV2Deps,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
@@ -825,12 +825,12 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         === activeLifetimeTokenAtStart
         && (active === activeAtStart || active?.scopeKey === expectedScopeKey);
     };
-    const result = await updateAccountSettingsV2WithRetry({
+    const result = await updateAccountSettingsV2OnceAgainstLatest({
       credentials: params.credentials,
-      // Service configuration and SavedSecret updates are a domain delta, not
-      // a whole Settings-key replacement. The canonical retry owner invokes
-      // this callback again for each CAS winner so it can validate and retain
-      // independently written service entries and SavedSecrets.
+      // Service configuration and SavedSecret updates are one atomic domain
+      // delta. The callback runs once against one fetched version; a
+      // concurrent winner returns a truthful conflict rather than replaying
+      // caller code.
       mutate,
       shouldSubmit: remainsCurrent,
       shouldCommit: remainsCurrent,

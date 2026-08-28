@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   createConfiguredAcpBackendMock,
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettingsMock,
   materializeConfiguredAcpEnvironmentMock,
 } = vi.hoisted(() => ({
   createConfiguredAcpBackendMock: vi.fn(),
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock: vi.fn(),
+  resolveConfiguredAcpBackendFromAccountSettingsMock: vi.fn(),
   materializeConfiguredAcpEnvironmentMock: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
 }));
 
 vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
-  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins: resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettings: resolveConfiguredAcpBackendFromAccountSettingsMock,
 }));
 
 vi.mock('@/agent/acp/catalog/configured/materializeEnvironment', () => ({
@@ -27,12 +27,12 @@ import { probeAgentModesBestEffort } from './agentModesProbe';
 describe('probeAgentModesBestEffort (configured ACP backend)', () => {
   beforeEach(() => {
     createConfiguredAcpBackendMock.mockReset();
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockReset();
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReset();
     materializeConfiguredAcpEnvironmentMock.mockReset();
   });
 
   it('uses the configured ACP backend backend for dynamic mode probing', async () => {
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
       backendId: 'custom-backend',
       name: 'review-bot',
       title: 'Review Bot',
@@ -75,11 +75,10 @@ describe('probeAgentModesBestEffort (configured ACP backend)', () => {
     expect(result.source).toBe('dynamic');
     expect(result.agentId).toBe('customAcp');
     expect(result.availableModes).toEqual([{ id: 'plan', name: 'Plan' }]);
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
-      settings: { acpCatalogSettingsV1: { v: 2, backends: [] } },
-      backendId: 'review-bot',
-      happyHomeDir: expect.any(String),
-    });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
+      { acpCatalogSettingsV1: { v: 2, backends: [] } },
+      'review-bot',
+    );
     expect(materializeConfiguredAcpEnvironmentMock).not.toHaveBeenCalled();
     expect(createConfiguredAcpBackendMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: '/repo',
@@ -90,7 +89,7 @@ describe('probeAgentModesBestEffort (configured ACP backend)', () => {
   });
 
   it('invalidates the configured ACP mode probe cache when backend settings change', async () => {
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockImplementation(async ({ settings }: any) => {
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockImplementation((settings: any) => {
       const backend = settings.acpCatalogSettingsV1.backends[0];
       return {
         backendId: 'custom-backend',

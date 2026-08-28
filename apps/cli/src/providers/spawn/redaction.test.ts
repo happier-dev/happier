@@ -25,6 +25,17 @@ describe('provider redaction lease', () => {
     expect(lease.redact('Bearer token token')).toBe('[REDACTED] [REDACTED]');
   });
 
+  it('detects raw, percent-encoded, and form-encoded registered values without exposing them', () => {
+    const lease = createProviderRedactionLease({ values: ['raw secret/value'] });
+
+    expect(lease.containsSensitiveValue('echo raw secret/value')).toBe(true);
+    expect(lease.containsSensitiveValue('echo raw%20secret%2Fvalue')).toBe(true);
+    expect(lease.containsSensitiveValue('echo raw+secret%2fvalue')).toBe(true);
+    expect(lease.containsSensitiveValue('safe output')).toBe(false);
+    lease.close();
+    expect(lease.containsSensitiveValue('raw secret/value')).toBe(false);
+  });
+
   it('creates a request-scope snapshot that remains safe while the credential lease closes', () => {
     const lease = createProviderRedactionLease({ values: ['secret-value'] });
     lease.add(['Bearer secret-value']);

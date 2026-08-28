@@ -18,9 +18,6 @@ describe('canResumeFromMaterializedState', () => {
         agentId: 'pi',
         serviceId: 'openai-codex',
         targetMaterializedRoot: root,
-        targetMaterializedEnv: {
-          PI_CODING_AGENT_DIR: join(root, 'pi-agent-dir'),
-        },
         requestedStateMode: 'shared',
         effectiveStateMode: 'shared',
         materializationIdentity: { v: 1, id: 'csm_1' },
@@ -49,7 +46,6 @@ describe('canResumeFromMaterializedState', () => {
         agentId: 'pi',
         serviceId: 'openai-codex',
         targetMaterializedRoot: root,
-        targetMaterializedEnv: {},
         requestedStateMode: 'shared',
         effectiveStateMode: 'shared',
         materializationIdentity: { v: 1, id: 'csm_1' },
@@ -81,9 +77,6 @@ describe('canResumeFromMaterializedState', () => {
         agentId: 'pi',
         serviceId: 'openai-codex',
         targetMaterializedRoot: root,
-        targetMaterializedEnv: {
-          PI_CODING_AGENT_DIR: join(root, 'pi-agent-dir'),
-        },
         requestedStateMode: 'shared',
         effectiveStateMode: 'shared',
         materializationIdentity: { v: 1, id: 'csm_1' },
@@ -123,7 +116,6 @@ describe('canResumeFromMaterializedState', () => {
         agentId: 'opencode',
         serviceId: 'openai',
         targetMaterializedRoot: root,
-        targetMaterializedEnv: {},
         requestedStateMode: 'shared',
         effectiveStateMode: 'shared',
         materializationIdentity: { v: 1, id: 'csm_1' },
@@ -131,7 +123,7 @@ describe('canResumeFromMaterializedState', () => {
         cwd: '/tmp/project',
       })).resolves.toMatchObject({
         ok: false,
-        reason: 'opencode_state_not_shared',
+        reason: 'reachability_check_not_implemented',
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -147,9 +139,6 @@ describe('canResumeFromMaterializedState', () => {
         agentId: 'pi',
         serviceId: 'openai-codex',
         targetMaterializedRoot: root,
-        targetMaterializedEnv: {
-          PI_CODING_AGENT_DIR: join(root, 'pi-agent-dir'),
-        },
         requestedStateMode: 'isolated',
         effectiveStateMode: 'isolated',
         materializationIdentity: { v: 1, id: 'csm_pi_shared' },

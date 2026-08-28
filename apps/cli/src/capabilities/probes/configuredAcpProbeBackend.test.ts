@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   createConfiguredAcpBackendMock,
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettingsMock,
   materializeConfiguredAcpEnvironmentMock,
 } = vi.hoisted(() => ({
   createConfiguredAcpBackendMock: vi.fn(),
-  resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock: vi.fn(),
+  resolveConfiguredAcpBackendFromAccountSettingsMock: vi.fn(),
   materializeConfiguredAcpEnvironmentMock: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
 }));
 
 vi.mock('@/agent/acp/catalog/configured/resolveBackend', () => ({
-  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins: resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
+  resolveConfiguredAcpBackendFromAccountSettings: resolveConfiguredAcpBackendFromAccountSettingsMock,
 }));
 
 vi.mock('@/agent/acp/catalog/configured/materializeEnvironment', () => ({
@@ -27,13 +27,13 @@ import { createConfiguredAcpProbeBackend } from './configuredAcpProbeBackend';
 describe('createConfiguredAcpProbeBackend', () => {
   beforeEach(() => {
     createConfiguredAcpBackendMock.mockReset();
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockReset();
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReset();
     materializeConfiguredAcpEnvironmentMock.mockReset();
   });
 
   it('creates a probe backend for literal-env configured ACP targets without account credentials', async () => {
     const backend = { dispose: vi.fn(async () => undefined) };
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
       backendId: 'plugin-review-bot',
       name: 'plugin-review-bot',
       title: 'Plugin Review Bot',
@@ -56,11 +56,10 @@ describe('createConfiguredAcpProbeBackend', () => {
       }),
     ).resolves.toBe(backend);
 
-    expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
-      settings: {},
-      backendId: 'plugin-review-bot',
-      happyHomeDir: expect.any(String),
-    });
+    expect(resolveConfiguredAcpBackendFromAccountSettingsMock).toHaveBeenCalledWith(
+      {},
+      'plugin-review-bot',
+    );
     expect(materializeConfiguredAcpEnvironmentMock).not.toHaveBeenCalled();
     expect(createConfiguredAcpBackendMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: '/repo',
@@ -72,7 +71,7 @@ describe('createConfiguredAcpProbeBackend', () => {
 
   it('materializes saved-secret environment for token-only plaintext account settings', async () => {
     const backend = { dispose: vi.fn(async () => undefined) };
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
       backendId: 'plugin-review-bot',
       name: 'plugin-review-bot',
       title: 'Plugin Review Bot',
@@ -110,7 +109,7 @@ describe('createConfiguredAcpProbeBackend', () => {
   });
 
   it('does not materialize a saved-secret environment when credentials are unavailable', async () => {
-    resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockResolvedValue({
+    resolveConfiguredAcpBackendFromAccountSettingsMock.mockReturnValue({
       backendId: 'plugin-review-bot',
       name: 'plugin-review-bot',
       title: 'Plugin Review Bot',

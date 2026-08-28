@@ -18,12 +18,12 @@ type ReachabilitySource = 'persisted_file' | 'manifest_cache_validated' | 'provi
 
 export type CanResumeFromMaterializedStateCoreInput = Readonly<{
   targetMaterializedRoot: string;
-  targetMaterializedEnv: Readonly<Record<string, string>>;
   effectiveStateMode: StateMode;
   requestedStateMode: StateMode;
   materializationIdentity: Readonly<{ v: 1; id: string }>;
   vendorResumeId: string;
   cwd: string;
+  runtimeDescriptorV1?: VerifyResumeReachableInput['runtimeDescriptorV1'];
   candidatePersistedSessionFile?: string | null;
   manifest?: ConnectedServiceStateSharingManifestV1 | null;
   verifyResumeReachable: (input: VerifyResumeReachableInput) => Promise<VerifyResumeReachableResult>;
@@ -116,18 +116,28 @@ export async function canResumeFromMaterializedStateCore(
     });
   }
 
+  // The candidate is host-custodied current resume evidence. Keep path access
+  // here; Agent callbacks receive only their opaque runtime descriptor.
+  if (
+    candidatePersistedSessionFile
+    && isAbsolute(candidatePersistedSessionFile)
+    && await statFile(candidatePersistedSessionFile)
+  ) {
+    return toResultOk({
+      source: 'persisted_file',
+      resolvedPath: candidatePersistedSessionFile,
+      effectiveStateMode: input.effectiveStateMode,
+    });
+  }
+
   const providerReachability = await input.verifyResumeReachable({
     targetMaterializedRoot: input.targetMaterializedRoot,
-    targetMaterializedEnv: input.targetMaterializedEnv,
     vendorResumeId: input.vendorResumeId,
-    cwd: input.cwd,
-    candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
+    ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
   });
   if (providerReachability.ok) {
     return toResultOk({
-      source: candidatePersistedSessionFile && providerReachability.resolvedPath === candidatePersistedSessionFile
-        ? 'persisted_file'
-        : 'provider_search',
+      source: 'provider_search',
       resolvedPath: providerReachability.resolvedPath,
       effectiveStateMode: input.effectiveStateMode,
     });

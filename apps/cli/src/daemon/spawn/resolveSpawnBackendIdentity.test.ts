@@ -82,6 +82,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-live',
       resume: '',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -103,6 +104,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-live-v2',
       resume: '',
+      agentTarget: undefined,
       backendTarget: {
         kind: 'backend',
         backendId: 'codex',
@@ -133,6 +135,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-persisted',
       resume: '',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       credentials: null,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -170,6 +173,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-handoff-source',
       resume: '',
+      agentTarget: undefined,
       backendTarget: undefined,
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId,
@@ -200,6 +204,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-external',
       resume: '',
+      agentTarget: undefined,
       backendTarget: undefined,
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => ({
@@ -229,6 +234,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: '',
       resume: '',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'acme-agent', sourceKind: 'built_in' },
       credentials: createLegacyCredentials('live-token', 15),
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -255,6 +261,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-linked-stale',
       resume: 'caller-supplied-stale-id',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'antigravity', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId,
@@ -283,6 +290,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-linked-current',
       resume: 'caller-supplied-stale-id',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'antigravity', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -311,6 +319,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: 'sess-configured',
       resume: '',
+      agentTarget: undefined,
       backendTarget: undefined,
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -334,6 +343,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: '',
       resume: '',
+      agentTarget: undefined,
       backendTarget: {
         kind: 'backend',
         backendId: 'customAcp',
@@ -356,12 +366,13 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
     });
   });
 
-  it('fails closed with Unknown backend target when a fresh spawn explicitly provides customAcp as a built-in backend target', async () => {
+  it('fails closed when a fresh spawn explicitly provides customAcp as a built-in backend target', async () => {
     const liveCredentials = createLegacyCredentials('live-token', 6);
 
     const result = await resolveSpawnBackendIdentity({
       existingSessionId: '',
       resume: '',
+      agentTarget: undefined,
       backendTarget: { kind: 'backend', backendId: 'customAcp', sourceKind: 'built_in' },
       credentials: liveCredentials,
       loadLocalHandoffMetadataByVendorResumeId: async () => null,
@@ -372,7 +383,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       error: {
         type: 'error',
         errorCode: 'INVALID_REQUEST',
-        errorMessage: 'Unknown backend target',
+        errorMessage: 'Unknown Agent or backend target',
       },
     });
   });

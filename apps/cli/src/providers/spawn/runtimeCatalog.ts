@@ -134,19 +134,24 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
   if (!('probes' in catalog) || catalog.probes.length === 0) return null;
 
   if (record.deployment.kind === 'managedLocal') {
-    if (
-      record.source.kind !== 'contribution'
-      || catalog.probes.length !== 1
-    ) {
-      return null;
-    }
+    if (record.source.kind !== 'contribution') return null;
+    const contributionSource = record.source;
+    const managedDeployment = record.deployment;
     const contribution = input.registry.providersByContributionKey.get(
-      record.source.contributionKey,
+      contributionSource.contributionKey,
     );
-    const probe = catalog.probes[0]!;
-    const endpointTemplate = record.source.definition.endpointTemplates.find(
-      (candidate) => candidate.id === probe.endpointTemplateId,
+    const sourceRegistryVersion = 'sourceRegistryVersion' in catalog
+      ? catalog.sourceRegistryVersion
+      : undefined;
+    const catalogFallback = contributionSource.definition.discovery?.catalogFallback;
+    const endpointTemplateIds = new Set(
+      catalog.probes.map((probe) => probe.endpointTemplateId),
     );
+    if (catalogFallback) endpointTemplateIds.add(catalogFallback.endpointTemplateId);
+    const endpointTemplates = [...endpointTemplateIds].map((endpointTemplateId) =>
+      contributionSource.definition.endpointTemplates.find(
+        (candidate) => candidate.id === endpointTemplateId,
+      ));
     const contributionManagedRuntime = contribution?.definition.managedRuntime
       ? resolveProviderManagedRuntimeDeclarationV1({
           implementationIdentity: contribution.identity,
@@ -157,17 +162,19 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       !contribution
       || !contribution.definition.managedRuntime
       || !contributionManagedRuntime
-      || !endpointTemplate
-      || !record.deployment.managedRuntime.endpointTemplateIds.includes(
-        endpointTemplate.id,
-      )
+      || sourceRegistryVersion === undefined
+      || endpointTemplates.some((endpointTemplate) => !endpointTemplate)
+      || endpointTemplates.some((endpointTemplate) =>
+        !managedDeployment.managedRuntime.endpointTemplateIds.includes(
+          endpointTemplate!.id,
+        ))
       || createProviderManagedRuntimeDeclarationEqualityKeyV1({
         implementationIdentity: contribution.identity,
         managedRuntime: contributionManagedRuntime,
       })
         !== createProviderManagedRuntimeDeclarationEqualityKeyV1({
-          implementationIdentity: record.deployment.implementationIdentity,
-          managedRuntime: record.deployment.managedRuntime,
+          implementationIdentity: managedDeployment.implementationIdentity,
+          managedRuntime: managedDeployment.managedRuntime,
         })
     ) {
       return null;
@@ -178,74 +185,77 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       try {
         purposeBindings =
           await resolveManagedProviderPurposeBindingSnapshot({
-            implementationIdentity: record.deployment.implementationIdentity,
+            implementationIdentity: managedDeployment.implementationIdentity,
             connectedAccounts:
-              record.deployment.managedRuntime.connectedAccounts ?? [],
-            purposeBindingIntents: record.deployment.purposeBindingIntents,
+              managedDeployment.managedRuntime.connectedAccounts ?? [],
+            purposeBindingIntents: managedDeployment.purposeBindingIntents,
             resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
           });
       } catch {
         return null;
       }
     }
-    const managedSource = {
-      implementationIdentity: record.deployment.implementationIdentity,
-      managedRuntime: record.deployment.managedRuntime,
+    const managedSources = endpointTemplates.map((endpointTemplate) => ({
+      implementationIdentity: managedDeployment.implementationIdentity,
+      managedRuntime: managedDeployment.managedRuntime,
       purposeBindings,
-      endpointTemplateId: endpointTemplate.id,
-      protocol: endpointTemplate.protocol,
-      sourceRegistryVersion: catalog.sourceRegistryVersion,
-      publicHeaders: endpointTemplate.publicHeaders ?? {},
-    } as const;
-    const requestFingerprint =
-      createProviderManagedProbeRequestFingerprintV1({
+      endpointTemplateId: endpointTemplate!.id,
+      protocol: endpointTemplate!.protocol,
+      sourceRegistryVersion,
+      publicHeaders: endpointTemplate!.publicHeaders ?? {},
+    } as const));
+    const managedSourceByEndpointTemplateId = new Map(
+      managedSources.map((source) => [source.endpointTemplateId, source] as const),
+    );
+    const catalogFingerprint = createProviderCatalogRefreshFingerprint({
+      endpoints: [],
+      probes: catalog.probes,
+      ...(catalogFallback ? { catalogFallback } : {}),
+      managedSources,
+    });
+    const currentAuthorizations = new Set<ProviderObservationAuthorizationFingerprintV1>();
+    for (const probe of catalog.probes) {
+      const managedSource = managedSourceByEndpointTemplateId.get(probe.endpointTemplateId);
+      if (!managedSource) return null;
+      const requestFingerprint = createProviderManagedProbeRequestFingerprintV1({
         ...managedSource,
         method: 'GET',
         path: probe.path,
         parser: probe.parser,
       });
-    const catalogFingerprint = createProviderCatalogRefreshFingerprint({
-      endpoints: [],
-      probes: [probe],
-      managedSource,
-    });
-    const authorization = resolveProviderProbeAuthorization({
-      request: {
-        deployment: 'managedLocal',
-        connectionId,
-        machineId: input.machineId,
-        implementationIdentity:
-          record.deployment.implementationIdentity,
-        managedRuntime: record.deployment.managedRuntime,
-        purposeBindings,
-        endpointTemplateId: endpointTemplate.id,
-        protocol: endpointTemplate.protocol,
-        sourceRegistryVersion: managedSource.sourceRegistryVersion,
-        path: probe.path,
-        parser: probe.parser,
-        probeRequestFingerprint: requestFingerprint,
-      },
-      managedPurposeBindingSnapshot: purposeBindings,
-      accountSettings: input.accountSettings,
-      providerSettings: input.providerSettings,
-      registry: input.registry,
-      dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
-      ...(input.localCandidateUrlsByConnectionId
-        ? {
-            localCandidateUrlsByConnectionId:
-              input.localCandidateUrlsByConnectionId,
-          }
-        : {}),
-    });
-    if (!authorization.ok) return null;
+      const authorization = resolveProviderProbeAuthorization({
+        request: {
+          deployment: 'managedLocal',
+          connectionId,
+          machineId: input.machineId,
+          implementationIdentity: record.deployment.implementationIdentity,
+          managedRuntime: record.deployment.managedRuntime,
+          purposeBindings,
+          endpointTemplateId: managedSource.endpointTemplateId,
+          protocol: managedSource.protocol,
+          sourceRegistryVersion,
+          path: probe.path,
+          parser: probe.parser,
+          probeRequestFingerprint: requestFingerprint,
+        },
+        managedPurposeBindingSnapshot: purposeBindings,
+        accountSettings: input.accountSettings,
+        providerSettings: input.providerSettings,
+        registry: input.registry,
+        dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
+        ...(input.localCandidateUrlsByConnectionId
+          ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
+          : {}),
+      });
+      if (!authorization.ok) return null;
+      currentAuthorizations.add(authorization.observationAuthorizationFingerprint);
+    }
     return selectProviderRuntimeCatalogSelectionObservation({
       runtimeState: await input.runtimeStateStore.read(),
       machineId: input.machineId,
       connectionId,
       catalogFingerprint,
-      currentObservationAuthorizationFingerprints: new Set([
-        authorization.observationAuthorizationFingerprint,
-      ]),
+      currentObservationAuthorizationFingerprints: currentAuthorizations,
       modelId: input.selection.ref.modelId,
     });
   }

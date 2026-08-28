@@ -1,16 +1,10 @@
-const POTENTIAL_AUTH_VARS = [
-  'ANTHROPIC_AUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'OPENAI_API_KEY',
-  'CODEX_HOME',
-  'AZURE_OPENAI_API_KEY',
-  'TOGETHER_API_KEY',
-] as const;
-
-export function findUnexpandedAuthEnvironmentReferences(env: Record<string, string | undefined>): string[] {
+export function findUnexpandedAuthEnvironmentReferences(
+  env: Readonly<Record<string, string | undefined>>,
+  credentialEnvironmentVariables: readonly string[],
+): string[] {
   const findings: string[] = [];
 
-  for (const varName of POTENTIAL_AUTH_VARS) {
+  for (const varName of new Set(credentialEnvironmentVariables)) {
     const value = env[varName];
     if (!value || !value.includes('${')) {
       continue;

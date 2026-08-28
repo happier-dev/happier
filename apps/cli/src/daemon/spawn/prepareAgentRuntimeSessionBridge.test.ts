@@ -224,6 +224,90 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
         });
     });
 
+    it('preserves two installed same-local-id Agents as distinct qualified daemon descriptors', async () => {
+        const localAgentId = 'assistant';
+        const entries = [
+            { pluginId: 'acme.alpha', routingId: 'acme.alpha/assistant' },
+            { pluginId: 'acme.beta', routingId: 'acme.beta/assistant' },
+        ] as const;
+        const agentDefinitionsById = new Map(entries.map((entry) => [
+            entry.routingId,
+            {
+                id: entry.routingId,
+                identity: {
+                    pluginId: entry.pluginId,
+                    localId: localAgentId,
+                },
+                provenance: 'external' as const,
+                source: { kind: 'path' as const },
+                definition: {
+                    kindVersion: 1,
+                    id: entry.routingId,
+                    ownedBackendIds: [entry.routingId],
+                },
+                richDefinition: {
+                    provenance: 'external' as const,
+                    definition: {
+                        id: localAgentId,
+                        title: `${entry.pluginId} Assistant`,
+                        runtime: { kind: 'custom' as const },
+                        primary: 'sessions' as const,
+                        capabilities: {
+                            sessions: {
+                                open: ['create' as const],
+                                delivery: ['newTurn' as const],
+                                cancel: true,
+                            },
+                        },
+                    },
+                },
+                pluginId: entry.pluginId,
+            },
+        ]));
+        const agentRuntimesByAgentId = new Map(entries.map((entry) => [
+            entry.routingId,
+            {
+                pluginId: entry.pluginId,
+                pluginVersion: '1.0.0',
+                agentId: entry.routingId,
+                localAgentId,
+                generation: `generation-${entry.pluginId}`,
+                immutableGenerationId: `immutable-${entry.pluginId}`,
+                hasPrimaryRuntime: true,
+            },
+        ]));
+        const registry = {
+            contributes: {
+                agentDefinitionsById,
+                voiceProviders: [],
+            },
+            agentRuntimesByAgentId,
+            runtimeCapabilitiesByPluginId: new Map(entries.map((entry) => [
+                entry.pluginId,
+                new Set(['agents']),
+            ])),
+            activateContributionsOnDemand: async () => [],
+        };
+
+        const prepared = await Promise.all(entries.map((entry) =>
+            prepareRunnerAgentSessionBootstrapForLease({
+                target: {
+                    kind: 'backend',
+                    sourceKind: 'built_in',
+                    backendId: entry.routingId,
+                },
+                lease: { registry },
+            } as never),
+        ));
+
+        expect(prepared.map((entry) => entry?.authorization.descriptor.agentId)).toEqual([
+            'acme.alpha/agents/assistant',
+            'acme.beta/agents/assistant',
+        ]);
+        expect(prepared.map((entry) => entry?.authorization.descriptor.agentDeclaration?.definition.id))
+            .toEqual([localAgentId, localAgentId]);
+    });
+
     it('carries the activated manifest authority without transferring the registry lease', async () => {
         const agent = {
             id: 'claude',

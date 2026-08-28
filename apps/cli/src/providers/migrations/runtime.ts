@@ -11,7 +11,10 @@ import {
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { createProviderOperationLifetime } from '@/providers/operationLifetime';
+import {
+  awaitWithinProviderOperation,
+  createProviderOperationLifetime,
+} from '@/providers/operationLifetime';
 
 import {
   allocateLegacyProfileMigrationConnectionIds,
@@ -77,7 +80,14 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
   const lifetime = createProviderOperationLifetime({
     wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
   });
-  const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+  const pendingLease = acquireAuthoritativePluginRuntimeRegistryLease();
+  let lease: Awaited<typeof pendingLease>;
+  try {
+    lease = await awaitWithinProviderOperation(pendingLease, lifetime);
+  } catch (error) {
+    void pendingLease.then((lateLease) => lateLease.release(), () => {});
+    throw error;
+  }
   try {
     const contributionMap = readLegacyProfileMigrationContributionMap(lease.registry);
     const allocatedConnectionIdsBySourceProfileId = allocateLegacyProfileMigrationConnectionIds(

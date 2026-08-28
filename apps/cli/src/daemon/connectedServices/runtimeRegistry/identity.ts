@@ -1,6 +1,6 @@
 import {
-  ConnectedServiceIdSchema,
-  type ConnectedServiceId,
+  ConnectedAccountServiceKeySchema,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import { parseConnectedServicesBindings } from '../parseConnectedServicesBindings';
@@ -113,7 +113,7 @@ export function buildRuntimeBoundProfiles(input: Readonly<{
 
 function buildSelectionByServiceId(
   selections: ReadonlyArray<ConnectedServiceChildSelection>,
-): ReadonlyMap<ConnectedServiceId, ConnectedServiceChildSelection> {
+): ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceChildSelection> {
   return new Map(selections.map((selection) => [selection.serviceId, selection]));
 }
 
@@ -126,7 +126,7 @@ export function buildRuntimeActiveBindings(input: Readonly<{
   const raw = normalizeConnectedServicesBindingsRaw(input.connectedServicesBindingsRaw);
   const bindings = raw.bindingsByServiceId ?? {};
   for (const [serviceIdRaw, bindingRaw] of Object.entries(bindings)) {
-    const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
+    const parsedServiceId = ConnectedAccountServiceKeySchema.safeParse(serviceIdRaw);
     if (!parsedServiceId.success || !isRecord(bindingRaw)) continue;
     if (bindingRaw.source !== 'connected') continue;
     const selection = selectionsByServiceId.get(parsedServiceId.data);

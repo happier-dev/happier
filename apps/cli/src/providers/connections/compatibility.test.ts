@@ -30,7 +30,14 @@ function lease(externalAgentProtocol?: ProviderWireProtocol): PluginRuntimeRegis
     materialize: async () => ({ v: 1 as const, kind: 'spawnEnv' as const, env: [] }),
   };
   const definitions = new Map([
-    ['codex', { definition: { id: 'codex', kindVersion: 1, providerRequirements: support('openai-responses') }, runtimeSpec: { title: 'Codex' } }],
+    ['codex', {
+      definition: { id: 'codex', kindVersion: 1, providerRequirements: support('openai-responses') },
+      runtimeSpec: { title: 'Legacy Codex runtime title' },
+      richDefinition: {
+        provenance: 'first_party' as const,
+        definition: { id: 'codex', title: 'Codex' },
+      },
+    }],
     ['claude', { definition: { id: 'claude', kindVersion: 1, providerRequirements: support('anthropic') }, runtimeSpec: { title: 'Claude' } }],
     ['inactive', {
       definition: { id: 'inactive', kindVersion: 1, providerRequirements: support('openai-responses') },

@@ -2,7 +2,8 @@ import { GH_DEP_ID } from '@happier-dev/protocol/installables';
 
 import { CapabilityError } from '../errors';
 import type { Capability } from '../service';
-import { getGhDepStatus, INSTALL_GH_CONSENT_TOKEN, installGh } from '../deps/gh';
+import { getGhDepStatus } from '../deps/gh';
+import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 
 export const ghDepCapability: Capability = {
   descriptor: {
@@ -24,15 +25,14 @@ export const ghDepCapability: Capability = {
       throw new CapabilityError(`Unsupported method: ${method}`, 'unsupported-method');
     }
 
-    // The capability registry's invoke path is the user-confirmed install consent flow:
-    // it is reachable only via an explicit `dep.gh.install` capability invocation that
-    // the UI surfaces behind a consent.install descriptor gate (FD-0054).
-    const result = await installGh(INSTALL_GH_CONSENT_TOKEN);
+    // This capability invocation is the user-confirmed consent boundary; the shared
+    // source adapter remains the sole owner of GitHub-release installation mechanics.
+    const result = await (await getRuntimeInstallableAdapter('gh')).installOrUpgrade();
     if (!result.ok) {
       return {
         ok: false,
         error: { message: result.errorMessage, code: 'install-failed' },
-        logPath: result.logPath,
+        ...(result.logPath ? { logPath: result.logPath } : {}),
       };
     }
     return { ok: true, result: { logPath: result.logPath } };

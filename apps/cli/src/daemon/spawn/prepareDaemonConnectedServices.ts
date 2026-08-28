@@ -51,6 +51,7 @@ import {
     CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER,
 } from '../connectedServices/runtimeAuth/sensitiveConnectedServiceDiagnosticFields';
 import { shouldResolveConnectedServiceAuthForSpawn } from '../connectedServices/shouldResolveConnectedServiceAuthForSpawn';
+import type { ConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
@@ -132,6 +133,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     processEnv: NodeJS.ProcessEnv;
     connectedServicesMaterializationBaseDir: string;
     pluginContributions: AgentSpawnPurposeContributions;
+    activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     serverContract?:
         SessionSyncPendingInputServerContractResult | null;
     repairMissingMaterializationIdentity?: (repair: Readonly<{
@@ -219,6 +221,9 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 processEnv: input.processEnv,
                 credentialRefreshService: input.connectedServiceRefreshCoordinator,
                 vendorResumeId: input.effectiveResume || null,
+                ...(options.runtimeDescriptorV1
+                    ? { runtimeDescriptorV1: options.runtimeDescriptorV1 }
+                    : {}),
                 resumeReachabilityRequired: spawnSharedStateContinuityRequested,
                 resolveQualifiedPurposeBindingSnapshot: (bindings) =>
                     resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
@@ -226,6 +231,28 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                         bindings,
                         contributions: input.pluginContributions,
                     }),
+                ...(input.activatePurposeBindings
+                    ? {
+                        activateQualifiedPurposeBindings: (snapshot) => {
+                            const consumer = snapshot.purposes[0]?.consumer;
+                            if (!consumer) {
+                                throw new Error(
+                                    'connected_account_materialization_consumer_unavailable',
+                                );
+                            }
+                            return input.activatePurposeBindings!({
+                                subject: {
+                                    kind: 'operation',
+                                    operationId: materializationKey,
+                                    consumer,
+                                    isCurrent: () => true,
+                                },
+                                purposes: snapshot.purposes,
+                                bindings: snapshot.bindings,
+                            });
+                        },
+                    }
+                    : {}),
                 allowLegacyUnfencedOneShotMaterialization: true,
                 serverContract: input.serverContract,
             });

@@ -1,6 +1,7 @@
 import {
   ConnectedAccountUiProjectionEntryV1Schema,
   ConnectedServiceIdSchema,
+  MAX_INTERACTION_TRANSIENT_CHOICES_V1,
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   isQualifiedConnectedAccountProfileActiveV4,
@@ -417,6 +418,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       serviceRefs: readonly PluginContributionRef[];
       currentSession?: Parameters<StablePluginConnectedAccountsOwner['requestSelection']>[0]['currentSession'];
       permissionOwner?: PermissionRequestOwner;
+      assertGenerationCurrent(): void;
       reason: string;
       signal: AbortSignal;
     }>,
@@ -584,7 +586,13 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   const selectTarget = async (
     input: Parameters<NonNullable<typeof params.selectTarget>>[0],
   ): Promise<QualifiedConnectedAccountPurposeBindingTargetV1> => {
-    if (params.selectTarget) return await params.selectTarget(input);
+    input.assertGenerationCurrent();
+    if (params.selectTarget) {
+      const target = await params.selectTarget(input);
+      input.assertGenerationCurrent();
+      input.signal.throwIfAborted();
+      return target;
+    }
     if (!input.currentSession) unavailableSelection();
     input.signal.throwIfAborted();
     const candidates: Array<Readonly<{
@@ -709,58 +717,101 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         message: 'No available Connected Account matches this purpose',
       });
     }
-    if (candidates.length > 256) {
-      throw new PluginError({
-        code: 'plugin_ui_unavailable',
-        message: 'Connected Account selection is unavailable because the authorized target inventory is too large',
-      });
-    }
-    const result = await createPluginInteractionsService({
+    const interactions = createPluginInteractionsService({
       currentSession: input.currentSession ?? null,
       signal: input.signal,
-      isGenerationCurrent: () => !input.signal.aborted,
+      isGenerationCurrent: () => {
+        try {
+          input.assertGenerationCurrent();
+          return !input.signal.aborted;
+        } catch {
+          return false;
+        }
+      },
       ...(input.permissionOwner ? { permissionOwner: input.permissionOwner } : {}),
-    }).askQuestions({
-      kind: 'questions',
-      title: 'Choose Connected Account',
-      questions: [{
-        id: 'connected-account-target',
-        prompt: input.reason,
-        type: 'singleChoice',
-        required: true,
-        choices: candidates.map((candidate, index) => ({
-          id: `target-${index}`,
-          label: candidate.label,
-          description: candidate.description,
-        })) as [
-          { id: string; label: string; description: string },
-          ...{ id: string; label: string; description: string }[],
-        ],
-      }],
     });
-    input.signal.throwIfAborted();
-    if (result.status !== 'answered') {
-      throw new PluginError({
-        code: result.status === 'userCancelled' ? 'plugin_ui_cancelled' : 'plugin_ui_unavailable',
-        message: result.status === 'userCancelled'
-          ? 'Connected Account selection was cancelled'
-          : 'Connected Account selection is unavailable',
+    const pagedTargetCount = MAX_INTERACTION_TRANSIENT_CHOICES_V1 - 2;
+    const pageCount = candidates.length <= MAX_INTERACTION_TRANSIENT_CHOICES_V1
+      ? 1
+      : Math.ceil(candidates.length / pagedTargetCount);
+    let pageIndex = 0;
+    while (pageIndex < pageCount) {
+      input.assertGenerationCurrent();
+      input.signal.throwIfAborted();
+      const firstCandidateIndex = pageCount === 1 ? 0 : pageIndex * pagedTargetCount;
+      const pageCandidates = pageCount === 1
+        ? candidates
+        : candidates.slice(firstCandidateIndex, firstCandidateIndex + pagedTargetCount);
+      const targetChoices = pageCandidates.map((candidate, index) => ({
+        id: `target-${pageIndex}-${index}`,
+        label: candidate.label,
+        description: candidate.description,
+      }));
+      const previousChoiceId = `page-${pageIndex}-previous`;
+      const nextChoiceId = `page-${pageIndex}-next`;
+      const choices = [
+        ...targetChoices,
+        ...(pageIndex > 0 ? [{
+          id: previousChoiceId,
+          label: 'Previous page',
+          description: 'Show earlier Connected Accounts',
+        }] : []),
+        ...(pageIndex + 1 < pageCount ? [{
+          id: nextChoiceId,
+          label: 'Next page',
+          description: 'Show more Connected Accounts',
+        }] : []),
+      ] as [
+        { id: string; label: string; description: string },
+        ...{ id: string; label: string; description: string }[],
+      ];
+      const result = await interactions.askQuestions({
+        kind: 'questions',
+        title: 'Choose Connected Account',
+        questions: [{
+          id: 'connected-account-target',
+          prompt: input.reason,
+          type: 'singleChoice',
+          required: true,
+          choices,
+        }],
       });
+      input.assertGenerationCurrent();
+      input.signal.throwIfAborted();
+      if (result.status !== 'answered') {
+        throw new PluginError({
+          code: result.status === 'userCancelled' ? 'plugin_ui_cancelled' : 'plugin_ui_unavailable',
+          message: result.status === 'userCancelled'
+            ? 'Connected Account selection was cancelled'
+            : 'Connected Account selection is unavailable',
+        });
+      }
+      const answer = result.answers['connected-account-target'];
+      const selectedId = answer?.kind === 'singleChoice' && answer.answer.kind === 'choice'
+        ? answer.answer.choiceId
+        : null;
+      if (selectedId === previousChoiceId && pageIndex > 0) {
+        pageIndex -= 1;
+        continue;
+      }
+      if (selectedId === nextChoiceId && pageIndex + 1 < pageCount) {
+        pageIndex += 1;
+        continue;
+      }
+      const selected = selectedId === null
+        ? undefined
+        : pageCandidates.find(
+            (_candidate, index) => selectedId === `target-${pageIndex}-${index}`,
+          );
+      if (!selected) {
+        throw new PluginError({
+          code: 'plugin_connected_account_binding_out_of_scope',
+          message: 'Connected Account selection returned an unknown target',
+        });
+      }
+      return selected.target;
     }
-    const answer = result.answers['connected-account-target'];
-    const selectedId = answer?.kind === 'singleChoice' && answer.answer.kind === 'choice'
-      ? answer.answer.choiceId
-      : null;
-    const selected = selectedId === null
-      ? undefined
-      : candidates.find((_candidate, index) => selectedId === `target-${index}`);
-    if (!selected) {
-      throw new PluginError({
-        code: 'plugin_connected_account_binding_out_of_scope',
-        message: 'Connected Account selection returned an unknown target',
-      });
-    }
-    return selected.target;
+    throw new Error('Connected Account selection page is unavailable');
   };
 
   /**

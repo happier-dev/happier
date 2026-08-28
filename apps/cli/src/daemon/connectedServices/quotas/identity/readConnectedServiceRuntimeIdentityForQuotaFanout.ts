@@ -1,7 +1,4 @@
-import type {
-  ConnectedServiceId,
-  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
-} from '@happier-dev/protocol';
+import type { SessionConnectedServiceAuthReadRuntimeIdentityResponseV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import {
   createSessionConnectedServiceAuthTransport,

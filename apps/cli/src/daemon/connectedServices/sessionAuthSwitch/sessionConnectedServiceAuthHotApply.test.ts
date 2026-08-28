@@ -11,7 +11,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -33,7 +32,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           happyLibDir: '/home/user/.happy/lib',
           happyToolsDir: '/home/user/.happy/tools',
           codexSessionId: 'codex-session-1',
-          codexBackendMode: 'appServer',
         },
       },
       normalizedBindings: {
@@ -50,13 +48,11 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
   it('invokes the provider runtime auth adapter for connected bindings', async () => {
     const hotApply = vi.fn(async () => ({ applied: true }));
-    const recoverAfterRuntimeAuthSwitch = vi.fn(async () => ({ status: 'resumed' }));
     const adapter = {
       classifyRuntimeAuthFailure: () => null,
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch,
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -87,10 +83,8 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       selection: expect.objectContaining({
         serviceId: 'openai-codex',
         profileId: 'work',
-        binding: { source: 'connected', selection: 'profile', profileId: 'work' },
       }),
     });
-    expect(recoverAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
   });
 
   it('returns exact accepted verification from provider runtime hot-apply proof', async () => {
@@ -106,7 +100,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           source: 'applied_credential',
         },
       }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -168,7 +161,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           },
         },
       }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -212,7 +204,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     const hotApply = vi.fn(async (request: Parameters<ConnectedServiceProviderRuntimeAuthAdapter['hotApply']>[0]) => {
       const currentness = await request.validateCurrentBeforeMutation?.();
       return currentness?.current === false
-        ? { applied: false, status: 'superseded_after_apply', reason: currentness.reason, recovery: 'none' }
+        ? { applied: false, status: 'superseded_after_apply' as const, reason: currentness.reason }
         : { applied: true };
     });
     const adapter = {
@@ -220,7 +212,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -276,7 +267,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           source: 'applied_credential',
         },
       }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -309,7 +299,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply: async () => ({ applied: false, reason: 'not_ready' }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -353,7 +342,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
         reason: 'transport_invalidation_failed',
         recovery: 'restart_resume',
       }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -400,7 +388,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
         reason: 'auth_store_persistence_failed_after_live_apply',
         recovery: 'restart_resume',
       }),
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -436,13 +423,11 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
   it('prefers materialized runtime auth selections when provided', async () => {
     const hotApply = vi.fn(async () => ({ applied: true }));
-    const recoverAfterRuntimeAuthSwitch = vi.fn(async () => ({ status: 'resumed' }));
     const adapter = {
       classifyRuntimeAuthFailure: () => null,
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch,
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -477,20 +462,20 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     expect(hotApply).toHaveBeenCalledWith({
       target: { agentId: 'codex' },
-      selection,
+      selection: {
+        serviceId: 'openai-codex',
+        profileId: 'work',
+      },
     });
-    expect(recoverAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
   });
 
   it('applies only requested connected service bindings when a switch scope is provided', async () => {
     const hotApply = vi.fn(async () => ({ applied: true }));
-    const recoverAfterRuntimeAuthSwitch = vi.fn(async () => ({ status: 'resumed' }));
     const adapter = {
       classifyRuntimeAuthFailure: () => null,
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch,
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
@@ -522,7 +507,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     expect(hotApply).toHaveBeenCalledWith(expect.objectContaining({
       selection: expect.objectContaining({ serviceId: 'openai-codex' }),
     }));
-    expect(recoverAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
   });
 
   it('reports per-service hot-apply progress when a later service fails', async () => {
@@ -539,7 +523,6 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       materializeActiveProfile: async () => ({}),
       canHotApply: () => ({ supported: true }),
       hotApply,
-      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
       probeQuota: async () => ({}),
       refreshActiveProfile: async () => ({}),
     } satisfies ConnectedServiceProviderRuntimeAuthAdapter;

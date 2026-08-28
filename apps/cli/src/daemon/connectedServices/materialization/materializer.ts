@@ -1,7 +1,6 @@
 import { rm } from 'node:fs/promises';
 
 import type {
-  AccountSettings,
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceCredentialRevisionV1,
   ConnectedServiceId,
@@ -32,8 +31,8 @@ export type ConnectedServicesMaterialization = Readonly<{
   env: Record<string, string>;
   targetMaterializedRoot?: string | null;
   requestAuthMaterializedRoot?: string | null;
-  cleanupOnFailure: (() => void) | null;
-  cleanupOnExit: (() => void) | null;
+  cleanupOnFailure: (() => void | Promise<void>) | null;
+  cleanupOnExit: (() => void | Promise<void>) | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
 }>;
 
@@ -90,19 +89,6 @@ export type ConnectedServicesMaterializationAuthority =
   | Readonly<{
       kind: 'legacy_unfenced_one_shot';
     }>;
-
-export type ConnectedServicesMaterializer = (params: Readonly<{
-  materializationKey: string;
-  activeServerDir: string;
-  baseDir: string;
-  rootDir: string;
-  sessionDirectory?: string | null;
-  recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-  selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
-  connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
-  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
-  processEnv?: NodeJS.ProcessEnv;
-}>) => Promise<ConnectedServicesMaterialization | null>;
 
 export function createBestEffortCleanupDirectory(path: string): () => void {
   let cleaned = false;

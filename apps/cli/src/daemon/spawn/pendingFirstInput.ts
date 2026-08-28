@@ -1,4 +1,8 @@
 import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
+import type {
+  SessionInputRequestV1,
+  SessionMessageProvenanceV1,
+} from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { buildAgentRuntimeFirstInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
@@ -8,11 +12,23 @@ export const HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY = 'HAPPIER_DAEMON_PENDIN
 export type PendingFirstInput = Readonly<{
   text: string;
   localId: string;
+  meta?: Record<string, unknown>;
+  inputAdmission?: Readonly<{
+    provenance: SessionMessageProvenanceV1;
+    request: SessionInputRequestV1;
+  }>;
 }>;
 
 function requireNonBlank(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`Pending first input ${field} must not be blank`);
+  }
+  return value;
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`Pending first input ${field} must be a string`);
   }
   return value;
 }
@@ -32,8 +48,10 @@ export function createPendingFirstInput(params: Readonly<{
 
 export function serializePendingFirstInputForEnv(input: PendingFirstInput): string {
   return JSON.stringify({
-    text: requireNonBlank(input.text, 'text'),
+    text: requireString(input.text, 'text'),
     localId: requireNonBlank(input.localId, 'localId'),
+    ...(input.meta ? { meta: input.meta } : {}),
+    ...(input.inputAdmission ? { inputAdmission: input.inputAdmission } : {}),
   });
 }
 
@@ -53,8 +71,14 @@ export function readPendingFirstInputFromEnv(
   }
   const value = parsed as Record<string, unknown>;
   return Object.freeze({
-    text: requireNonBlank(value.text, 'text'),
+    text: requireString(value.text, 'text'),
     localId: requireNonBlank(value.localId, 'localId'),
+    ...(value.meta && typeof value.meta === 'object' && !Array.isArray(value.meta)
+      ? { meta: value.meta as Record<string, unknown> }
+      : {}),
+    ...(value.inputAdmission && typeof value.inputAdmission === 'object' && !Array.isArray(value.inputAdmission)
+      ? { inputAdmission: value.inputAdmission as PendingFirstInput['inputAdmission'] }
+      : {}),
   });
 }
 
@@ -87,8 +111,13 @@ export function createPendingFirstInputCommitter(
         await session.enqueueSessionUserMessage({
           text: pendingFirstInput.text,
           localId: pendingFirstInput.localId,
-          meta: { source: 'ui', sentFrom: 'cli' },
-          inputAdmission: buildAgentRuntimeFirstInputAdmissionV1(),
+          meta: {
+            source: 'ui',
+            sentFrom: 'cli',
+            ...(pendingFirstInput.meta ?? {}),
+          },
+          inputAdmission: pendingFirstInput.inputAdmission
+            ?? buildAgentRuntimeFirstInputAdmissionV1(),
         });
         committed = true;
         clearPendingFirstInputFromEnv(env);

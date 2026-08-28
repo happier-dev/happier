@@ -98,11 +98,14 @@ function readPredecessorPendingVisibleEvents(
 }
 
 /**
- * Converts the exact runtime-auth V2 persistence vector written by the moving
- * remote-dev predecessor at 6e6ecb42e7f9ab8607b5710547563bbc9c232728.
+ * Converts the exact runtime-auth V2 persistence vector introduced by
+ * remote-dev at 6e6ecb42e7f9ab8607b5710547563bbc9c232728 and still written by
+ * the moving predecessor origin/dev@fbdd5d9cb07391eb839eab313c5ba60fe77ce20b.
  *
  * Only passive waiting custody is accepted. In-flight/terminal/future records
- * fail closed because dev cannot prove their process/effect ownership.
+ * fail closed because dev cannot prove their process/effect ownership. Remove
+ * this adapter only after the supported predecessor no longer writes the
+ * four-part key and retained predecessor rows are outside the support window.
  */
 function normalizePredecessorRuntimeAuthRecoveryIntent(value: unknown): RuntimeAuthRecoveryIntent | null {
   const record = asRecord(value);
@@ -347,9 +350,10 @@ class RuntimeAuthRecoveryOwnerOccupiedError extends Error {
 }
 
 /**
- * A scheduler-local key/shape adapter over the single canonical production file
- * store. It retains the predecessor key as the transaction/effect-claim owner and
- * exposes the current composite key to the current scheduler.
+ * A scheduler-local forward reader over the single canonical production file
+ * store. A supported predecessor value is read from its four-part key, then the
+ * first current mutation atomically adopts its intent/effect claim under the
+ * canonical five-part key. Current writers never recreate predecessor keys.
  *
  * Remove after the predecessor frontier no longer writes V2/four-part keys and
  * the bounded seven-day terminal-retention horizon for those records has elapsed.
@@ -462,7 +466,6 @@ export function createPredecessorCompatibleRuntimeAuthRecoveryStore(
       const predecessorOwns = predecessorIsPresent
         && predecessorEntry !== null
         && predecessorEntry.intent !== null;
-      const currentOwns = currentIsPresent && currentEntry.intent !== null;
       const sourceKey = predecessorOwns && predecessorKey ? predecessorKey : currentKey;
       const sourceEntry = predecessorOwns ? predecessorEntry : currentEntry;
       const normalized = sourceEntry.intent === null
@@ -472,12 +475,8 @@ export function createPredecessorCompatibleRuntimeAuthRecoveryStore(
         intent: normalized,
         effectClaimToken: sourceEntry.effectClaimToken,
       });
-      // During predecessor coexistence, the four-part key is the only physical key
-      // both versions know. Current-only owners move there on their next mutation.
-      // The locked census above rejects another fifth-part fingerprint before it
-      // can alias two logical owners onto that physical key.
-      const targetKey = predecessorKey ?? currentKey;
-      const mutations = currentOwns && sourceKey !== targetKey
+      const targetKey = currentKey;
+      const mutations = sourceKey !== targetKey
         ? [
             {
               sessionId: sourceKey,

@@ -1,6 +1,6 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceId,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import {
@@ -21,7 +21,7 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 export function hasExactConnectedServiceTargetAdoptionProof(input: Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   target: Readonly<{ groupId: string; profileId: string; generation: number; credentialRevision: string | null }>;
   outcome: unknown;
 }>): boolean {
@@ -44,7 +44,7 @@ export function hasExactConnectedServiceTargetAdoptionProof(input: Readonly<{
 }
 
 export function resolveCommittedGenerationFromRuntimeAuthRecovery(input: Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   recovery: unknown;
   provenance?: ConnectedServiceAuthGroupCommittedGenerationFact['provenance'];

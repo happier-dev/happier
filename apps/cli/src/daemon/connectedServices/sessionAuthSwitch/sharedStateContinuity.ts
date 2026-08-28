@@ -1,6 +1,7 @@
 import {
   resolveConnectedServicesProviderStateSharingPolicyV1,
   type AccountSettings,
+  type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import { getConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/catalogHooks';
 import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
@@ -35,6 +36,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
   materializationIdentity?: Readonly<{ v: 1; id: string }> | null;
   vendorResumeId?: string | null;
   cwd?: string | null;
+  runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
   candidatePersistedSessionFile?: string | null;
   warnings?: readonly string[];
 }>): Promise<SessionConnectedServiceSwitchContinuity> {
@@ -72,9 +74,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
       !serviceId
       || !targetMaterializedRoot
       || !vendorResumeId
-      || !cwd
       || !materializationIdentity
-      || !input.targetMaterializedEnv
     ) {
       return {
         mode: 'unsupported',
@@ -87,12 +87,12 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
       agentId: input.agentId,
       serviceId,
       targetMaterializedRoot,
-      targetMaterializedEnv: input.targetMaterializedEnv,
       requestedStateMode: 'shared',
       effectiveStateMode: 'shared',
       materializationIdentity,
       vendorResumeId,
-      cwd,
+      cwd: cwd ?? '',
+      ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
       candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
     });
     if (!reachability.ok) {

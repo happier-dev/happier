@@ -14,6 +14,7 @@ type CandidateMarker = Readonly<{
   status: unknown;
   finishedAtMs?: unknown;
   executionRunConnectedServicesLaunchV1?: unknown;
+  executionRunConnectedServicesCleanupReceiptV1?: unknown;
 }>;
 
 /**
@@ -25,6 +26,8 @@ export async function rehydrateLiveExecutionRunTargets(input: Readonly<{
   markers: readonly CandidateMarker[] | (() => Promise<readonly CandidateMarker[]>);
   proveRunnerLive: (marker: CandidateMarker) => boolean | Promise<boolean>;
   adopt: ExecutionRunConnectedServicesBridge['adoptLiveMaterialization'];
+  cleanupTerminal?: ExecutionRunConnectedServicesBridge['cleanupTerminalMaterialization'];
+  clearTerminalCleanupReceipt?: (runId: string) => Promise<void>;
 }>): Promise<Readonly<{ registeredRunIds: string[]; inactiveRunIds: string[] }>> {
   const markers = typeof input.markers === 'function' ? await input.markers() : input.markers;
   const candidates = markers.map((marker) => ({
@@ -51,6 +54,21 @@ export async function rehydrateLiveExecutionRunTargets(input: Readonly<{
       continue;
     }
     const isRunning = marker.status === 'running' && typeof marker.finishedAtMs !== 'number';
+    if (!isRunning) {
+      if (marker.executionRunConnectedServicesCleanupReceiptV1 && input.cleanupTerminal) {
+        const cleaned = await input.cleanupTerminal({
+          runId: marker.runId,
+          runnerPid: marker.pid,
+          sessionId: marker.happySessionId,
+          receipt: marker.executionRunConnectedServicesCleanupReceiptV1,
+        });
+        if (cleaned) {
+          await input.clearTerminalCleanupReceipt?.(marker.runId);
+        }
+      }
+      inactiveRunIds.push(marker.runId);
+      continue;
+    }
     const registration = normalized?.registration;
     const isExact = Boolean(
       registration
@@ -63,7 +81,7 @@ export async function rehydrateLiveExecutionRunTargets(input: Readonly<{
       && isCatalogAgentId(registration.agentId)
       && runKeyCounts.get(registration.runKey) === 1,
     );
-    if (!isRunning || !isExact || !(await input.proveRunnerLive(marker))) {
+    if (!isExact || !(await input.proveRunnerLive(marker))) {
       inactiveRunIds.push(marker.runId);
       continue;
     }

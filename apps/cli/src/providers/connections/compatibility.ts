@@ -15,7 +15,7 @@ function readAgentName(
   agentId: string,
 ): string {
   const rich = contribution.richDefinition;
-  if (rich?.provenance === 'external') {
+  if (rich) {
     const title = rich.definition.title;
     const localizedTitle = typeof title === 'string' ? title : title.fallback;
     if (localizedTitle.trim().length > 0) return localizedTitle.trim();

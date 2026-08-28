@@ -40,6 +40,7 @@ import {
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import {
+  awaitWithinProviderOperation,
   createProviderOperationLifetime,
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
@@ -521,6 +522,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   | { ok: true; attempt: ProviderSpawnAuthorizationAttempt }
   | { ok: false; error: ProviderErrorV1 }
 >> {
+  const admissionLifetime = createProviderOperationLifetime({
+    wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+  });
   // Reject only cold, locally definitive facts before activation can create an
   // executable plugin runtime or any downstream launch state.  A later fresh
   // resolution still owns dynamic prerequisites and can legitimately fail.
@@ -543,10 +547,27 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   });
   if (!definitive.ok) return definitive;
 
-  const activationResults = await activateAgentRuntimeContributionOnDemand(
-    input.lease.registry,
-    input.agentId,
-  );
+  let activationResults;
+  try {
+    activationResults = await awaitWithinProviderOperation(
+      activateAgentRuntimeContributionOnDemand(
+        input.lease.registry,
+        input.agentId,
+      ),
+      admissionLifetime,
+    );
+  } catch (error) {
+    if (error instanceof ProviderOperationAbandonedError) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_endpoint_unavailable', {
+          connectionId: input.selection.ref.providerConnectionId ?? undefined,
+          machineId: input.machineId,
+        }),
+      };
+    }
+    throw error;
+  }
   if (activationResults.some((result) => (
     result.diagnostics.length > 0
     && !input.lease.registry.activatedPluginIds.has(result.pluginId)
@@ -567,10 +588,11 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       input.lease.registry.contributes.providersByContributionKey ?? new Map(),
   };
   let managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
-  const resolveCurrent = async (): Promise<ProviderSpawnAuthorizationResult> => {
-    const lifetime = createProviderOperationLifetime({
+  const resolveCurrent = async (
+    lifetime = createProviderOperationLifetime({
       wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-    });
+    }),
+  ): Promise<ProviderSpawnAuthorizationResult> => {
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {
       return {
@@ -764,7 +786,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     }
     return authorization;
   };
-  const initial = await resolveCurrent();
+  const initial = await resolveCurrent(admissionLifetime);
   if (!initial.ok) return initial;
   const retainedManagedRuntimeBindingBasis =
     isManagedProviderSpawnAuthorization(initial.authorization)

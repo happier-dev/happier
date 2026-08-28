@@ -178,11 +178,40 @@ describe('provider runtime-state store', () => {
     expect(persisted.endpointHealth[0]?.state).toMatchObject({ status: 'available', observedAt: 1 });
   });
 
+  it('publishes transient activity without taking the durable write path', async () => {
+    const happyHomeDir = await tempHome();
+    const writeJsonAtomicSpy = vi.fn(writeJsonAtomic);
+    const store = createProviderRuntimeStateStore({
+      happyHomeDir,
+      machineId: 'machine_a',
+      writeJsonAtomic: writeJsonAtomicSpy,
+    });
+    const checking = fileWithEndpoint(endpointRecord('responses', 1, 'checking'));
+
+    await expect(store.updateTransientEndpointHealth(
+      () => checking.endpointHealth,
+    )).resolves.toBeUndefined();
+    await expect(store.read()).resolves.toEqual(checking);
+    expect(writeJsonAtomicSpy).not.toHaveBeenCalled();
+    await expect(readFile(store.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await store.update((state) => ({
+      ...state,
+      endpointHealth: state.endpointHealth.map((record) => ({
+        ...record,
+        state: { ...record.state, activity: 'idle' as const },
+      })),
+    }));
+    expect(writeJsonAtomicSpy).toHaveBeenCalledOnce();
+  });
+
   it('keeps its own live checking activity across a mutation that merges another process store', async () => {
     const happyHomeDir = await tempHome();
     const probingStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
     const otherStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
-    await probingStore.update(() => fileWithEndpoint(endpointRecord('responses', 1, 'checking')));
+    await probingStore.updateTransientEndpointHealth(() => [
+      endpointRecord('responses', 1, 'checking'),
+    ]);
     await otherStore.update((state) => ({
       ...state,
       endpointHealth: [...state.endpointHealth, endpointRecord('completions', 2)],

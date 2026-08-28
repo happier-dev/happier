@@ -33,6 +33,32 @@ type AgentConnectedAccountPurposeProjection = Readonly<{
     identity: unknown;
     connectedAccounts: unknown;
     requestAuthUses: unknown;
+    fileEnvironmentUses: unknown;
+    environmentUses: unknown;
+}>;
+
+type AgentConnectedAccountFileEnvironmentUse = Readonly<{
+    purpose: string;
+    fileId: string;
+    environmentKey: string;
+}>;
+
+type AgentConnectedAccountEnvironmentUse = Readonly<{
+    purpose: string;
+    environmentKey: string;
+}>;
+
+export type AgentSpawnQualifiedFileEnvironmentUse = Readonly<{
+    purpose: QualifiedConnectedAccountPurposeV1;
+    serviceRefs: readonly PluginContributionIdentityV1[];
+    fileId: string;
+    environmentKey: string;
+}>;
+
+export type AgentSpawnQualifiedEnvironmentUse = Readonly<{
+    purpose: QualifiedConnectedAccountPurposeV1;
+    serviceRefs: readonly PluginContributionIdentityV1[];
+    environmentKey: string;
 }>;
 
 export type AgentSpawnPurposeContributions = Readonly<{
@@ -43,6 +69,8 @@ export type AgentSpawnPurposeContributions = Readonly<{
         }> | null;
         catalogEntry?: Readonly<{
             connectedAccountRequestAuthUses?: unknown;
+            connectedAccountFileEnvironmentUses?: unknown;
+            connectedAccountEnvironmentUses?: unknown;
         }> | null;
     }>>;
 }>;
@@ -50,7 +78,11 @@ export type AgentSpawnPurposeContributions = Readonly<{
 export type AgentSpawnQualifiedPurposeBindingSnapshot = Readonly<{
     purposes: readonly QualifiedConnectedAccountPurposeV1[];
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+    authorizedPurposes?: readonly ConnectedAccountPurposeAuthorizationScope[];
+    fileMaterializationPurposes?: readonly ConnectedAccountPurposeAuthorizationScope[];
     requestAuthUses?: readonly QualifiedConnectedAccountRequestAuthUseV1[];
+    fileEnvironmentUses?: readonly AgentSpawnQualifiedFileEnvironmentUse[];
+    environmentUses?: readonly AgentSpawnQualifiedEnvironmentUse[];
 }>;
 
 /**
@@ -62,7 +94,10 @@ export type AgentSpawnQualifiedPurposeBindingSnapshot = Readonly<{
 export type AgentSpawnQualifiedPurposeDeclarationSnapshot = Readonly<{
     purposes: readonly QualifiedConnectedAccountPurposeV1[];
     authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
+    fileMaterializationPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
     requestAuthUses?: readonly QualifiedConnectedAccountRequestAuthUseV1[];
+    fileEnvironmentUses?: readonly AgentSpawnQualifiedFileEnvironmentUse[];
+    environmentUses?: readonly AgentSpawnQualifiedEnvironmentUse[];
 }>;
 
 type ResolvedAgentSpawnPurposeDeclarations = Readonly<{
@@ -83,7 +118,57 @@ function resolveAgentContribution(
             contribution.richDefinition.definition.connectedAccounts,
         requestAuthUses:
             contribution.catalogEntry?.connectedAccountRequestAuthUses,
+        fileEnvironmentUses:
+            contribution.catalogEntry?.connectedAccountFileEnvironmentUses,
+        environmentUses:
+            contribution.catalogEntry?.connectedAccountEnvironmentUses,
     };
+}
+
+function snapshotAgentConnectedAccountFileEnvironmentUses(
+    value: unknown,
+): readonly AgentConnectedAccountFileEnvironmentUse[] | null | undefined {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length === 0) return null;
+    const uses: AgentConnectedAccountFileEnvironmentUse[] = [];
+    for (const entry of value) {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+        const candidate = entry as Record<string, unknown>;
+        if (
+            typeof candidate.purpose !== 'string'
+            || candidate.purpose.length === 0
+            || typeof candidate.fileId !== 'string'
+            || candidate.fileId.length === 0
+            || typeof candidate.environmentKey !== 'string'
+            || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(candidate.environmentKey)
+        ) return null;
+        uses.push(Object.freeze({
+            purpose: candidate.purpose,
+            fileId: candidate.fileId,
+            environmentKey: candidate.environmentKey,
+        }));
+    }
+    return Object.freeze(uses);
+}
+
+function snapshotAgentConnectedAccountEnvironmentUses(
+    value: unknown,
+): readonly AgentConnectedAccountEnvironmentUse[] | null | undefined {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length === 0) return null;
+    const uses: AgentConnectedAccountEnvironmentUse[] = [];
+    for (const entry of value) {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+        const candidate = entry as Record<string, unknown>;
+        if (
+            typeof candidate.purpose !== 'string'
+            || candidate.purpose.length === 0
+            || typeof candidate.environmentKey !== 'string'
+            || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(candidate.environmentKey)
+        ) return null;
+        uses.push(Object.freeze({ purpose: candidate.purpose, environmentKey: candidate.environmentKey }));
+    }
+    return Object.freeze(uses);
 }
 
 function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
@@ -107,6 +192,14 @@ function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
             projection.requestAuthUses,
         );
     if (requestAuthUses?.success === false) return null;
+    const fileEnvironmentUses = snapshotAgentConnectedAccountFileEnvironmentUses(
+        projection?.fileEnvironmentUses,
+    );
+    if (fileEnvironmentUses === null) return null;
+    const environmentUses = snapshotAgentConnectedAccountEnvironmentUses(
+        projection?.environmentUses,
+    );
+    if (environmentUses === null) return null;
     const declarationsByPurpose = new Map(
         declarations.data.map((declaration) => [
             declaration.purpose,
@@ -125,6 +218,12 @@ function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
     ) {
         return null;
     }
+    if (fileEnvironmentUses?.some((use) => (
+        declarationsByPurpose.get(use.purpose)?.materializationKinds?.includes('files') !== true
+    ))) return null;
+    if (environmentUses?.some((use) => (
+        declarationsByPurpose.get(use.purpose)?.materializationKinds?.includes('environment') !== true
+    ))) return null;
     const consumer = Object.freeze({ ...identity.data });
     const authorizedPurposes = Object.freeze(
         declarations.data.map((declaration) => {
@@ -146,6 +245,16 @@ function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
             });
         }),
     );
+    const authorizedPurposesByLocalId = new Map(
+        authorizedPurposes.map((scope) => [scope.purpose.purpose, scope]),
+    );
+    const fileMaterializationPurposes = Object.freeze(
+        declarations.data.flatMap((declaration) => {
+            if (declaration.materializationKinds?.includes('files') !== true) return [];
+            const scope = authorizedPurposesByLocalId.get(declaration.purpose);
+            return scope ? [scope] : [];
+        }),
+    );
     const qualifiedRequestAuthUses: readonly QualifiedConnectedAccountRequestAuthUseV1[] | null =
         requestAuthUses?.success
             ? Object.freeze(requestAuthUses.data.map((use): QualifiedConnectedAccountRequestAuthUseV1 =>
@@ -160,14 +269,44 @@ function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
                     }),
                 })))
             : null;
+    const qualifiedFileEnvironmentUses = fileEnvironmentUses === undefined
+        ? null
+        : Object.freeze(fileEnvironmentUses.map((use): AgentSpawnQualifiedFileEnvironmentUse => {
+            const scope = authorizedPurposesByLocalId.get(use.purpose);
+            if (!scope) throw new Error('connected_account_launch_file_environment_purpose_unavailable');
+            return Object.freeze({
+                purpose: scope.purpose,
+                serviceRefs: scope.serviceRefs,
+                fileId: use.fileId,
+                environmentKey: use.environmentKey,
+            });
+        }));
+    const qualifiedEnvironmentUses = environmentUses === undefined
+        ? null
+        : Object.freeze(environmentUses.map((use): AgentSpawnQualifiedEnvironmentUse => {
+            const scope = authorizedPurposesByLocalId.get(use.purpose);
+            if (!scope) throw new Error('connected_account_launch_environment_purpose_unavailable');
+            return Object.freeze({
+                purpose: scope.purpose,
+                serviceRefs: scope.serviceRefs,
+                environmentKey: use.environmentKey,
+            });
+        }));
     return Object.freeze({
         consumer,
         declarations: Object.freeze([...declarations.data]),
         snapshot: Object.freeze({
             purposes: Object.freeze(authorizedPurposes.map((scope) => scope.purpose)),
             authorizedPurposes,
+            fileMaterializationPurposes,
             ...(qualifiedRequestAuthUses
                 ? { requestAuthUses: qualifiedRequestAuthUses }
+                : {}),
+            ...(qualifiedFileEnvironmentUses
+                ? { fileEnvironmentUses: qualifiedFileEnvironmentUses }
+                : {}),
+            ...(qualifiedEnvironmentUses
+                ? { environmentUses: qualifiedEnvironmentUses }
                 : {}),
         }),
     });
@@ -235,8 +374,16 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
     });
     return {
         ...snapshot,
+        authorizedPurposes: declarations.snapshot.authorizedPurposes,
+        fileMaterializationPurposes: declarations.snapshot.fileMaterializationPurposes,
         ...(declarations.snapshot.requestAuthUses
             ? { requestAuthUses: declarations.snapshot.requestAuthUses }
+            : {}),
+        ...(declarations.snapshot.fileEnvironmentUses
+            ? { fileEnvironmentUses: declarations.snapshot.fileEnvironmentUses }
+            : {}),
+        ...(declarations.snapshot.environmentUses
+            ? { environmentUses: declarations.snapshot.environmentUses }
             : {}),
     };
 }

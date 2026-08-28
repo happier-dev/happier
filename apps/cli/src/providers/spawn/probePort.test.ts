@@ -16,6 +16,8 @@ import {
 
 import { resolveProviderConnectionForMachine } from '../registry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import { readProviderSettingsForCli } from '../settings/read';
+import { createProviderOperationLifetime } from '../operationLifetime';
 
 import {
   createRuntimeProviderModelLoadAuthorizationPort,
@@ -70,6 +72,7 @@ const managedTicket: ProviderManagedProbeHostAuthorizationTicket = {
   purposeBindings: { v: 1, bindings: [] },
   endpointTemplateId: 'responses',
   protocol: 'openai-responses',
+  sourceRegistryVersion: 'managed-test:v1',
   path: '/models',
   parser: 'openai-models',
   probeRequestFingerprint:
@@ -272,6 +275,71 @@ describe('provider probe authorization port', () => {
     });
   });
 
+  it('reuses a matching bulk settings parse but rejects it after the canonical settings generation changes', async () => {
+    const admitted = privateGrantedSnapshot();
+    let current = admitted;
+    const resolveAddresses = vi.fn(async () => ['10.0.0.1']);
+    const port = createRuntimeProviderProbeAuthorizationPort({
+      registry: privateRegistry,
+      getAccountSettingsSnapshot: () => current,
+      resolveAddresses,
+    });
+    const request = {
+      connectionId: privateConnectionId,
+      machineId: 'machine-a',
+      endpointTemplateId: 'chat',
+      endpointUrl: privateEndpointUrl,
+      protocol: 'openai-chat' as const,
+      path: '/models',
+      parser: 'openai-models' as const,
+      probeRequestFingerprint: createProviderProbeRequestFingerprintV1({
+        method: 'GET',
+        endpointUrl: privateEndpointUrl,
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+      }),
+    };
+    const scope = {
+      registry: privateRegistry,
+      accountSettingsBasis: {
+        scopeKey: admitted.scopeKey,
+        settingsVersion: admitted.settingsVersion,
+        accountSettings: admitted.settings,
+        settingsRead: readProviderSettingsForCli(admitted.settings),
+      },
+      dnsEvidenceByConnectionId: new Map([[
+        privateConnectionId,
+        new Map([[privateEndpointUrl, ['10.0.0.1']]]),
+      ]]),
+      lifetime: createProviderOperationLifetime({ wallTimeMs: 5_000 }),
+    };
+    await expect(port.authorize(request, scope)).resolves.toMatchObject({ ok: true });
+    expect(resolveAddresses).not.toHaveBeenCalled();
+
+    current = {
+      ...admitted,
+      settingsVersion: admitted.settingsVersion + 1,
+    };
+    await expect(port.authorize(request, scope)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'provider_authorization_changed' },
+    });
+    expect(resolveAddresses).not.toHaveBeenCalled();
+
+    current = {
+      ...admitted,
+      settings: AccountSettingsSchema.parse({
+        providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1,
+      }),
+      settingsVersion: admitted.settingsVersion + 2,
+    };
+    await expect(port.authorize(request, scope)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'provider_authorization_changed' },
+    });
+  });
+
   it('revalidates every request/grant/secret field and returns the precise current refusal', () => {
     expect(revalidateProviderProbeAuthorizationTicket(ticket, ticket)).toEqual({ ok: true });
     expect(revalidateProviderProbeAuthorizationTicket(ticket, {
@@ -395,6 +463,54 @@ describe('provider probe authorization port', () => {
       ok: false,
       error: { code: 'provider_secret_missing', connectionId: 'pc_gateway', machineId: 'machine-a' },
     });
+  });
+
+  it('keeps raw, rendered, and encoded credential forms inside the opaque probe lease predicate', async () => {
+    const key = new Uint8Array(32).fill(7);
+    const rawSecret = 'raw secret/value';
+    const encryptedValue = {
+      _isSecretValue: true as const,
+      encryptedValue: encryptSecretStringV1(
+        rawSecret,
+        key,
+        (length) => new Uint8Array(length).fill(3),
+      ),
+    };
+    const secretRecordFingerprint = createProviderSavedSecretRecordFingerprintV1({
+      secretId: 'secret-a',
+      persistedEncryptedEnvelope: encryptedValue.encryptedValue,
+    });
+    const port = createRuntimeProviderProbeAuthorizationPort({
+      registry: { providersByContributionKey: new Map() },
+      getAccountSettingsSnapshot: () => ({
+        source: 'network',
+        settings: accountSettingsParse({ secrets: [{ id: 'secret-a', encryptedValue }] }),
+        settingsVersion: 1,
+        loadedAtMs: 1,
+        settingsSecretsReadKeys: [key],
+        scopeKey: 'account-a',
+      }),
+    });
+
+    const resolved = await port.resolveCredential({
+      connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
+      machineId: 'machine-a',
+      reference: { kind: 'apiKey', secretId: 'secret-a', secretRecordFingerprint },
+      transport: {
+        id: 'bearer',
+        protocols: ['openai-responses'],
+        uses: ['probe'],
+        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+      },
+      protocol: 'openai-responses',
+    });
+    if (!resolved.ok) throw new Error(`Expected credential lease, received ${resolved.error.code}`);
+
+    expect(resolved.lease.credential.value).toBe(`Bearer ${rawSecret}`);
+    expect(resolved.lease.containsSensitiveValue(`echo ${rawSecret}`)).toBe(true);
+    expect(resolved.lease.containsSensitiveValue(`echo Bearer ${rawSecret}`)).toBe(true);
+    expect(resolved.lease.containsSensitiveValue('echo raw%20secret%2Fvalue')).toBe(true);
+    resolved.lease.close();
   });
 
   it('keeps authorization and credential resolution pinned to the first account scope', async () => {

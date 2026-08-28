@@ -25,6 +25,45 @@ const launch = {
 };
 
 describe('rehydrateLiveExecutionRunTargets', () => {
+  it('retries terminal cleanup from the bounded receipt without reconstructing run authority', async () => {
+    const cleanupTerminal = vi.fn(async () => true);
+    const clearTerminalCleanupReceipt = vi.fn(async () => undefined);
+    const proveRunnerLive = vi.fn(async () => true);
+    const adopt = vi.fn(async () => true);
+    const receipt = {
+      v: 1 as const,
+      activationId: '44444444-4444-4444-8444-444444444444',
+      runKey: 'run-terminal-cleanup',
+      agentId: 'codex',
+    };
+
+    const result = await rehydrateLiveExecutionRunTargets({
+      markers: [{
+        runId: receipt.runKey,
+        happySessionId: 'session-1',
+        pid: 4321,
+        status: 'succeeded',
+        finishedAtMs: 20,
+        executionRunConnectedServicesCleanupReceiptV1: receipt,
+      }],
+      proveRunnerLive,
+      adopt,
+      cleanupTerminal,
+      clearTerminalCleanupReceipt,
+    });
+
+    expect(result).toEqual({ registeredRunIds: [], inactiveRunIds: [receipt.runKey] });
+    expect(cleanupTerminal).toHaveBeenCalledWith({
+      runId: receipt.runKey,
+      runnerPid: 4321,
+      sessionId: 'session-1',
+      receipt,
+    });
+    expect(clearTerminalCleanupReceipt).toHaveBeenCalledWith(receipt.runKey);
+    expect(proveRunnerLive).not.toHaveBeenCalled();
+    expect(adopt).not.toHaveBeenCalled();
+  });
+
   it('leaves a detached marker inactive without attempting Session liveness or target adoption', async () => {
     const proveRunnerLive = vi.fn(async () => true);
     const adopt = vi.fn(async () => true);

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
+import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
@@ -24,7 +24,6 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
-  happyHomeDir?: string;
 }>): Promise<string | null> {
   if (!isConfiguredAcpProbeTarget(params)) {
     return null;
@@ -34,11 +33,10 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   if (!backendId) {
     return 'configuredAcp:missing-backend-id';
   }
-  const backend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
-    settings: params.accountSettings ?? {},
+  const backend = resolveConfiguredAcpBackendFromAccountSettings(
+    params.accountSettings ?? {},
     backendId,
-    happyHomeDir: params.happyHomeDir,
-  });
+  );
   if (!backend) {
     if (!params.accountSettings) {
       return `configuredAcp:${backendId}:missing-account-settings`;
@@ -52,7 +50,6 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
     args: backend.args,
     env: backend.env,
     auth: backend.auth,
-    transportProfile: backend.transportProfile,
     capabilities: backend.capabilities,
     defaultMode: backend.defaultMode,
     defaultModel: backend.defaultModel,

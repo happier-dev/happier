@@ -14,6 +14,7 @@ import {
 import {
     isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
     normalizePersistedExecutionRunConnectedServicesLaunchV1,
+    ExecutionRunConnectedServicesCleanupReceiptV1Schema,
     type ExecutionRunAgentContributionIdentityV1,
 } from '@happier-dev/protocol';
 
@@ -57,8 +58,20 @@ import {
  * auth.
  */
 
+type ResolveAuthForSpawnInput = Pick<
+    Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
+    | 'agentId'
+    | 'connectedServicesBindingsRaw'
+    | 'materializationKey'
+    | 'sessionDirectory'
+    | 'vendorResumeId'
+    | 'resumeReachabilityRequired'
+    | 'resolveQualifiedPurposeBindingSnapshot'
+    | 'activateQualifiedPurposeBindings'
+>;
+
 type ResolveAuthForSpawn = (
-    input: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
+    input: ResolveAuthForSpawnInput,
 ) => ReturnType<typeof resolveConnectedServiceAuthForSpawn>;
 
 type ExecutionRunAgentPurposeContributions =
@@ -131,6 +144,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
         add(values: readonly string[]): void;
         close(): void;
     }>;
+    clearTerminalCleanupReceipt: (runKey: string) => Promise<void>;
 }>;
 
 export type ExecutionRunConnectedServicesBridge = Readonly<{
@@ -141,6 +155,12 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
         runnerPid: number;
         sessionId: string;
         persistedLaunch: unknown;
+    }>) => Promise<boolean>;
+    cleanupTerminalMaterialization: (input: Readonly<{
+        runId: string;
+        runnerPid: number;
+        sessionId: string | null;
+        receipt: unknown;
     }>) => Promise<boolean>;
     releaseForRunnerExit: (input: Readonly<{
         runnerPid: number;
@@ -246,6 +266,7 @@ export function createExecutionRunConnectedServicesBridge(
         options: Readonly<{
             beforeAdmission?: boolean;
             skipFilesystem?: boolean;
+            clearTerminalReceipt?: boolean;
         }> = {},
     ): Promise<boolean> => {
         entry.cleanupPromise ??= (async () => {
@@ -304,6 +325,9 @@ export function createExecutionRunConnectedServicesBridge(
                     ? entry.cleanupOnFailure ?? entry.cleanupOnExit
                     : entry.cleanupOnExit;
                 await cleanupFilesystem?.();
+                if (options.clearTerminalReceipt !== false) {
+                    await deps.clearTerminalCleanupReceipt(entry.runKey);
+                }
             }
         })();
         try {
@@ -740,6 +764,22 @@ export function createExecutionRunConnectedServicesBridge(
                 if (entry) {
                     // The entry owns the lease once `prepareEntry` returns it.
                     await cleanupEntry(entry, { skipFilesystem: true });
+                    // `prepareEntry` temporarily replaces the cleanup-only
+                    // incumbent while authority is staged. If target
+                    // registration fails, restore that exact root custody;
+                    // no authority survives, but release/runner-exit must still
+                    // delete the already-materialized root exactly once.
+                    if (
+                        cleanupOnlyEntry
+                        && !cleanupOnlyEntry.retiring
+                        && runner.isCurrent()
+                        && !retainedCleanupByRunKey.has(registration.runKey)
+                    ) {
+                        retainedCleanupByRunKey.set(
+                            registration.runKey,
+                            cleanupOnlyEntry,
+                        );
+                    }
                 } else {
                     await contributionLease.release().catch(() => undefined);
                 }
@@ -830,7 +870,22 @@ export function createExecutionRunConnectedServicesBridge(
                                 bindings,
                                 contributions: contributionLease.contributions,
                             }),
-                    } as Parameters<ResolveAuthForSpawn>[0]);
+                        activateQualifiedPurposeBindings: (snapshot) =>
+                            deps.purposeBindingOwner.activatePurposeBindings({
+                                subject: {
+                                    kind: 'execution_run',
+                                    runId: runKey,
+                                    runnerPid: input.runnerPid,
+                                    agentId,
+                                    isCurrent: () => (
+                                        runner.isCurrent()
+                                        && contributionLease.isCurrent()
+                                    ),
+                                },
+                                purposes: snapshot.purposes,
+                                bindings: snapshot.bindings,
+                            }),
+                    });
                 } catch (error) {
                     await cleanupUnadmittedMaterialization({
                         runKey,
@@ -871,7 +926,12 @@ export function createExecutionRunConnectedServicesBridge(
                 }
 
                 let cleanupOnFailure: (() => void | Promise<void>) | null =
-                    resolved.cleanupOnFailure;
+                    resolved.materializationPurposeLease
+                        ? async () => {
+                            await Promise.resolve(resolved.cleanupOnFailure?.());
+                            await resolved.materializationPurposeLease?.dispose();
+                        }
+                        : resolved.cleanupOnFailure;
                 let entry: RunReleaseEntry | null = null;
                 try {
                     const env: Record<string, string> = { ...resolved.env };
@@ -907,6 +967,7 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupOnExit,
                         contributionLease,
                     });
+                    await resolved.materializationPurposeLease?.dispose();
                     const registration: ExecutionRunConnectedServicesRegistrationV1 = {
                         v: 1,
                         activationId,
@@ -962,6 +1023,82 @@ export function createExecutionRunConnectedServicesBridge(
                 ) {
                     pendingMaterializationByRunKey.delete(runKey);
                 }
+            }
+        });
+    };
+
+    const cleanupTerminalMaterialization: ExecutionRunConnectedServicesBridge[
+        'cleanupTerminalMaterialization'
+    ] = async (input) => {
+        const parsed = ExecutionRunConnectedServicesCleanupReceiptV1Schema
+            .safeParse(input.receipt);
+        if (!parsed.success || parsed.data.runKey !== input.runId) return false;
+        if (!isCatalogAgentId(parsed.data.agentId)) return false;
+        return await withRunKeyMutation(parsed.data.runKey, async () => {
+            const current = retainedCleanupByRunKey.get(parsed.data.runKey);
+            if (current) {
+                if (current.activationId !== parsed.data.activationId) {
+                    return false;
+                }
+                return await cleanupEntry(current, {
+                    clearTerminalReceipt: false,
+                });
+            }
+            const materializedRoot = deps.resolveRunMaterializedRoot({
+                runKey: parsed.data.runKey,
+                agentId: parsed.data.agentId,
+            });
+            if (!materializedRoot) return true;
+            const cleanup = deps.createAdoptedRootCleanup({
+                runKey: parsed.data.runKey,
+                agentId: parsed.data.agentId,
+                materializedRoot,
+            });
+            if (!cleanup) return false;
+            const runner = input.sessionId
+                ? deps.captureRunnerIdentity({
+                    runnerPid: input.runnerPid,
+                    expectedParentSessionId: input.sessionId,
+                })
+                : null;
+            if (runner?.isCurrent()) {
+                const cleanupOnlyEntry: RunReleaseEntry = {
+                    activationId: parsed.data.activationId,
+                    authorityActive: false,
+                    runKey: parsed.data.runKey,
+                    runnerPid: input.runnerPid,
+                    runnerIdentity: runner.identity,
+                    agentId: parsed.data.agentId,
+                    cleanupOnFailure: null,
+                    cleanupOnExit: cleanup,
+                    cleanupPromise: null,
+                    retiring: false,
+                    targetsMayBeRegistered: false,
+                    purposeBindingLease: null,
+                    requestAuthCapability: null,
+                    requestAuthCapabilityRetired: false,
+                    redactionLease: null,
+                    redactionLeaseClosed: false,
+                    contributionLease: null,
+                    contributionLeaseReleased: false,
+                };
+                retainedCleanupByRunKey.set(parsed.data.runKey, cleanupOnlyEntry);
+                return await cleanupEntry(cleanupOnlyEntry, {
+                    clearTerminalReceipt: false,
+                });
+            }
+            try {
+                await cleanup();
+                return true;
+            } catch (error) {
+                logger.debug(
+                    '[DAEMON RUN] Terminal execution-run materialized-root cleanup failed',
+                    {
+                        runId: parsed.data.runKey,
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                );
+                return false;
             }
         });
     };
@@ -1022,6 +1159,7 @@ export function createExecutionRunConnectedServicesBridge(
         materialize,
         release,
         adoptLiveMaterialization,
+        cleanupTerminalMaterialization,
         releaseForRunnerExit,
     };
 }

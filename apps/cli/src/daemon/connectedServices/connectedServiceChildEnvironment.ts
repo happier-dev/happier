@@ -1,7 +1,7 @@
 import {
   ConnectedServiceBindingsV1Schema,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceBindingSelectionV1,
-  type ConnectedServiceId,
   type ConnectedServiceProfileId,
   type ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol';
@@ -17,13 +17,13 @@ export const HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY =
 type SerializedConnectedServiceSelection =
   | Readonly<{
       kind: 'profile';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string;
       credentialRevision?: ConnectedServiceCredentialRevisionV1;
     }>
   | Readonly<{
       kind: 'group';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       activeProfileId: string;
       fallbackProfileId: string;
@@ -35,7 +35,7 @@ type SerializedConnectedServiceSelection =
 export type ConnectedServiceChildSelection = SerializedConnectedServiceSelection;
 
 export type ConnectedServiceRuntimeAuthContext = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string | null;
   groupId: string | null;
   groupGeneration?: number | null;
@@ -85,7 +85,7 @@ function readNonnegativeInteger(value: unknown): number | null {
 function parseSelection(value: unknown): SerializedConnectedServiceSelection | null {
   if (!isRecord(value)) return null;
   const kind = value.kind;
-  const serviceId = readTrimmedString(value.serviceId) as ConnectedServiceId;
+  const serviceId = readTrimmedString(value.serviceId) as ConnectedAccountServiceKey;
   const credentialRevision = readTrimmedString(value.credentialRevision) as ConnectedServiceCredentialRevisionV1;
   if (!serviceId) return null;
   if (kind === 'profile') {
@@ -125,7 +125,7 @@ export function serializeConnectedServiceChildSelectionValues(
 }
 
 export function serializeConnectedServiceChildSelections(
-  selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> | undefined,
+  selectionsByServiceId: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection> | undefined,
 ): string | null {
   if (!selectionsByServiceId || selectionsByServiceId.size === 0) return null;
   return JSON.stringify([...selectionsByServiceId.values()].map(serializeSelection));
@@ -133,7 +133,7 @@ export function serializeConnectedServiceChildSelections(
 
 export function readConnectedServiceChildSelectionsFromEnv(
   env: Readonly<Record<string, string | undefined>>,
-): Map<ConnectedServiceId, SerializedConnectedServiceSelection> | null {
+): Map<ConnectedAccountServiceKey, SerializedConnectedServiceSelection> | null {
   const raw = env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
   if (!raw) return null;
   let parsed: unknown;
@@ -143,7 +143,7 @@ export function readConnectedServiceChildSelectionsFromEnv(
     return null;
   }
   if (!Array.isArray(parsed)) return null;
-  const selections = new Map<ConnectedServiceId, SerializedConnectedServiceSelection>();
+  const selections = new Map<ConnectedAccountServiceKey, SerializedConnectedServiceSelection>();
   for (const item of parsed) {
     const selection = parseSelection(item);
     if (selection) selections.set(selection.serviceId, selection);
@@ -180,19 +180,19 @@ export function readConnectedServiceMaterializedEnvKeysFromEnv(
 
 export function findConnectedServiceChildSelection(
   env: Readonly<Record<string, string | undefined>>,
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
 ): ConnectedServiceChildSelection | null {
   return readConnectedServiceChildSelectionsFromEnv(env)?.get(serviceId) ?? null;
 }
 
 export function resolveConnectedServiceRuntimeAuthContextFromSelection(
   selection: unknown,
-  fallbackServiceId: ConnectedServiceId,
+  fallbackServiceId: ConnectedAccountServiceKey,
 ): ConnectedServiceRuntimeAuthContext {
   if (!isRecord(selection)) {
     return { serviceId: fallbackServiceId, profileId: null, groupId: null };
   }
-  const serviceId = (readTrimmedString(selection.serviceId) || fallbackServiceId) as ConnectedServiceId;
+  const serviceId = (readTrimmedString(selection.serviceId) || fallbackServiceId) as ConnectedAccountServiceKey;
   if (selection.kind === 'group') {
     const groupGeneration = readNonnegativeInteger(selection.generation);
     return {
@@ -218,7 +218,7 @@ export function resolveConnectedServiceRuntimeAuthContextFromSelection(
 
 export function resolveConnectedServiceRuntimeAuthContextFromEnv(
   env: Readonly<Record<string, string | undefined>>,
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
 ): ConnectedServiceRuntimeAuthContext {
   return resolveConnectedServiceRuntimeAuthContextFromSelection(
     readConnectedServiceChildSelectionsFromEnv(env)?.get(serviceId),
@@ -228,7 +228,7 @@ export function resolveConnectedServiceRuntimeAuthContextFromEnv(
 
 export function findConnectedServiceBindingSelectionFromSessionMetadata(
   session: ConnectedServiceRuntimeAuthMetadataSession,
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
 ): ConnectedServiceBindingSelectionV1 | null {
   const metadata = typeof session.getMetadataSnapshot === 'function' ? session.getMetadataSnapshot() : null;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -241,7 +241,7 @@ export function findConnectedServiceBindingSelectionFromSessionMetadata(
 
 export function resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
   session: ConnectedServiceRuntimeAuthMetadataSession,
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
 ): ConnectedServiceRuntimeAuthContext {
   const binding = findConnectedServiceBindingSelectionFromSessionMetadata(session, serviceId);
   if (!binding || binding.source !== 'connected') {

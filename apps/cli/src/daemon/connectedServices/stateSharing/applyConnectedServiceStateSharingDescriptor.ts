@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
 import type { ConnectedServiceStateSharingDescriptor, ConnectedServiceStateSharingDescriptorEntry } from '@/agent/catalog/types';
+import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
 import type {
   ConnectedServiceStateSharingManifestV1,
   ConnectedServiceStateSharingSessionFileMappingV1,
@@ -19,16 +20,6 @@ import {
 import { createConnectedServiceSharedStateLink, ConnectedServiceSharedStateLinkUnavailableError } from './createSharedStateLink';
 import { importConnectedServiceSessionFiles, type ConnectedServiceSessionFileImportDetail, type ConnectedServiceSessionFileImportRoot } from './importConnectedServiceSessionFiles';
 import { removeConnectedServiceStateSharingManifestEntries } from './connectedServiceStateSharingManifest';
-
-type ConnectedServicesMaterializationDiagnostic = Readonly<{
-  code: string;
-  providerId: string;
-  serviceId?: string;
-  requestedStateMode?: string;
-  effectiveStateMode?: string;
-  entryName?: string;
-  reason?: string;
-}>;
 
 export type NativeSourceContext = Readonly<{
   sourceRoot: string;
@@ -118,6 +109,27 @@ function isPathWithin(path: string, root: string): boolean {
     return !rel.startsWith('..') && !win32.isAbsolute(rel) && !rel.includes(`..${win32.sep}`);
   }
   return !rel.startsWith('..') && !isAbsolute(rel) && !rel.includes(`..${sep}`);
+}
+
+/** Resolves one public native-home declaration without exposing path custody. */
+export function resolveConnectedServiceNativeHomeRoot(input: Readonly<{
+  nativeHome: NonNullable<ConnectedServiceStateSharingDescriptor['nativeHome']>;
+  sourceEnvironment: Readonly<Record<string, string | undefined>>;
+  homeDir: string;
+}>): string {
+  const explicit = input.sourceEnvironment[input.nativeHome.environmentKey]?.trim();
+  if (explicit) {
+    if (!isAbsolute(explicit)) {
+      throw new Error('connected_service_native_home_environment_must_be_absolute');
+    }
+    return resolve(explicit);
+  }
+  const homeRoot = resolve(input.homeDir);
+  const sourceRoot = resolve(homeRoot, input.nativeHome.defaultRelativePath);
+  if (sourceRoot === homeRoot || !isPathWithin(sourceRoot, homeRoot)) {
+    throw new Error('connected_service_native_home_default_must_be_home_relative');
+  }
+  return sourceRoot;
 }
 
 function normalizeRelativePath(path: string): string {

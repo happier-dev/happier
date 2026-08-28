@@ -11,17 +11,33 @@ import type {
 
 import type { ProviderProbeCredential } from './client';
 import type { ProviderOperationLifetime } from '../operationLifetime';
-import type { ProviderContributionRegistryView } from '../registry/types';
+import type {
+  ProviderContributionRegistryView,
+  ProviderEndpointDnsEvidence,
+} from '../registry/types';
+import type { readProviderSettingsForCli } from '../settings/read';
 
-/** Exact registry projection and wall budget for one admitted probe operation. */
+/** One already-parsed Account settings generation owned by a bulk operation. */
+export type ProviderProbeAccountSettingsBasis = Readonly<{
+  scopeKey: string;
+  settingsVersion: number;
+  accountSettings: unknown;
+  settingsRead: ReturnType<typeof readProviderSettingsForCli>;
+}>;
+
+/** Exact immutable facts and wall budget for one admitted probe operation. */
 export type ProviderProbeOperationScope = Readonly<{
   registry?: ProviderContributionRegistryView;
+  accountSettingsBasis?: ProviderProbeAccountSettingsBasis;
+  /** Fresh evidence owned by this immutable bulk operation, never a cache. */
+  dnsEvidenceByConnectionId?: ReadonlyMap<string, ProviderEndpointDnsEvidence>;
   lifetime: ProviderOperationLifetime;
 }>;
 
 export type ProviderProbeCredentialLease = Readonly<{
   credential: ProviderProbeCredential;
   redact(value: string): string;
+  containsSensitiveValue(value: string): boolean;
   close(): void;
 }>;
 
@@ -50,7 +66,7 @@ export type ProviderManagedProbeAuthorizationRequest = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
-  sourceRegistryVersion?: string;
+  sourceRegistryVersion: string;
   path: string;
   parser: ProviderCatalogParserV1;
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;

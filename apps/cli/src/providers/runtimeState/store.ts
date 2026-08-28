@@ -10,6 +10,7 @@ import {
   parseProviderRuntimeStateFileV1,
   type ProviderRuntimeStateFileV1,
   type ProviderRuntimeStateParseFailureReasonV1,
+  type ProviderEndpointRuntimeStateRecordV1,
 } from '@happier-dev/protocol';
 
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
@@ -33,6 +34,18 @@ export type ProviderRuntimeStateStore = Readonly<{
     transform: (current: ProviderRuntimeStateFileV1) => ProviderRuntimeStateFileV1 | Promise<ProviderRuntimeStateFileV1>,
     pruneContext?: ProviderRuntimeStatePruneContext,
   ): Promise<ProviderRuntimeStateFileV1>;
+  /**
+   * Publishes the process-local endpoint activity overlay without rewriting
+   * the durable catalog file. `refreshDurable` is reserved for retirement:
+   * it merges a concurrently committed endpoint verdict before clearing this
+   * process's transient activity, but still performs no durable write.
+   */
+  updateTransientEndpointHealth(
+    transform: (
+      current: readonly ProviderEndpointRuntimeStateRecordV1[],
+    ) => readonly ProviderEndpointRuntimeStateRecordV1[] | Promise<readonly ProviderEndpointRuntimeStateRecordV1[]>,
+    options?: Readonly<{ refreshDurable?: boolean }>,
+  ): Promise<void>;
 }>;
 
 export function resolveProviderRuntimeStatePath(happyHomeDir: string): string {
@@ -122,20 +135,33 @@ function withLiveEndpointActivity(
   durable: ProviderRuntimeStateFileV1,
   live: ProviderRuntimeStateFileV1,
 ): ProviderRuntimeStateFileV1 {
-  const activityByKey = new Map(live.endpointHealth.map((record) => [
+  const liveByKey = new Map(live.endpointHealth.map((record) => [
     serializeProviderRuntimeStateRecordKey('endpointHealth', record),
-    record.state.activity,
+    record,
   ] as const));
+  const durableKeys = new Set(durable.endpointHealth.map((record) =>
+    serializeProviderRuntimeStateRecordKey('endpointHealth', record)));
   return {
     ...durable,
-    endpointHealth: durable.endpointHealth.map((record) => {
-      const activity = activityByKey.get(
-        serializeProviderRuntimeStateRecordKey('endpointHealth', record),
-      );
-      return activity === undefined || activity === record.state.activity
-        ? record
-        : { ...record, state: { ...record.state, activity } };
-    }),
+    endpointHealth: [
+      ...durable.endpointHealth.map((record) => {
+        const liveRecord = liveByKey.get(
+          serializeProviderRuntimeStateRecordKey('endpointHealth', record),
+        );
+        const activity = liveRecord?.state.activity;
+        return activity === undefined || activity === record.state.activity
+          ? record
+          : { ...record, state: { ...record.state, activity } };
+      }),
+      // A newly admitted probe has no durable endpoint row yet. Preserve that
+      // exact process-local overlay across unrelated locked commits while
+      // still excluding it from the file written by commitUnlocked().
+      ...live.endpointHealth.filter((record) =>
+        record.state.activity === 'checking'
+        && !durableKeys.has(
+          serializeProviderRuntimeStateRecordKey('endpointHealth', record),
+        )),
+    ],
   };
 }
 
@@ -242,6 +268,20 @@ export function createProviderRuntimeStateStore(input: Readonly<{
   return {
     path,
     read: () => enqueue(async () => cloneState(await loadUnlocked())),
+    updateTransientEndpointHealth: (transform, options = {}) => enqueue(async () => {
+      const apply = async (): Promise<void> => {
+        const current = await loadUnlocked();
+        const endpointHealth = ProviderRuntimeStateFileV1Schema.shape.endpointHealth.parse(
+          await transform(structuredClone(current.endpointHealth)),
+        );
+        memory = { ...current, endpointHealth };
+      };
+      if (options.refreshDurable) {
+        await mutateLocked(apply);
+        return;
+      }
+      await apply();
+    }),
     update: (transform, pruneContext = {}) => enqueue(async () => await mutateLocked(async () => {
       const current = await loadUnlocked();
       const candidate = await transform(cloneState(current));

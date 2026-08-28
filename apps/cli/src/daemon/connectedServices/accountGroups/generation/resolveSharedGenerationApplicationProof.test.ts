@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
+vi.mock('@/daemon/connectedServices/catalogHooks', () => ({
+  getConnectedServiceStateSharingDescriptor: async () => ({
+    authIsolation: {
+      secretEntries: [
+        '.credentials.json',
+        '.happier-claude-connected-service-home.json',
+      ],
+    },
+  }),
+}));
+
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../../runtimeAuth/types';
 import { resolveSharedGenerationApplicationProof } from './resolveSharedGenerationApplicationProof';
 
 const record: ConnectedServiceCredentialRecordV1 = {
@@ -42,7 +54,9 @@ function committedGeneration(credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa') 
 
 describe('resolveSharedGenerationApplicationProof', () => {
   it('relays provider-owned exact generation provenance without strengthening desired bytes', async () => {
-    const verifyActiveAccount = vi.fn(async () => ({
+    const verifyActiveAccount = vi.fn<
+      NonNullable<ConnectedServiceProviderRuntimeAuthAdapter['verifyActiveAccount']>
+    >(async () => ({
       status: 'verified' as const,
       providerAccountId: 'team-account',
       activeAccountId: 'team@example.com',
@@ -94,10 +108,15 @@ describe('resolveSharedGenerationApplicationProof', () => {
         profileId: 'team',
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
-        record,
+      },
+      credential: record,
+      nativeHome: {
+        readFiles: expect.any(Function),
+        replaceFiles: expect.any(Function),
       },
       targetMaterializedEnv: { CLAUDE_CONFIG_DIR: '/tmp/claude-coders' },
     });
+    expect(verifyActiveAccount.mock.calls[0]?.[0]).not.toHaveProperty('nativeHome.root');
   });
 
   it('does not upgrade weak byte equality to the requested generation epoch', async () => {

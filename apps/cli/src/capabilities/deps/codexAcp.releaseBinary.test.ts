@@ -108,9 +108,14 @@ describe('codexAcp release-binary installer', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { codexAcpBinPath, getCodexAcpDepStatus, installCodexAcp } = await import('./codexAcp');
+    const { codexAcpBinPath, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { CODEX_ACP_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/plugins-codex/agent/installables/codexAcp');
+    const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
+      '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
+    );
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(CODEX_ACP_INSTALLABLE_DESCRIPTOR);
 
-    await expect(installCodexAcp()).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(adapter?.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
 
     const binPath = codexAcpBinPath();
     await expect(readFile(binPath, 'utf8')).resolves.toContain('codex-acp');
@@ -221,7 +226,12 @@ describe('codexAcp release-binary installer', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { codexAcpInstallDir, installCodexAcp } = await import('./codexAcp');
+    const { codexAcpInstallDir } = await import('./codexAcp');
+    const { CODEX_ACP_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/plugins-codex/agent/installables/codexAcp');
+    const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
+      '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
+    );
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(CODEX_ACP_INSTALLABLE_DESCRIPTOR);
     const installDir = codexAcpInstallDir();
     await mkdir(join(installDir, 'node_modules', '.bin'), { recursive: true });
     await writeFile(join(installDir, 'node_modules', '.bin', 'codex-acp'), '#!/bin/sh\necho legacy\n', {
@@ -231,7 +241,7 @@ describe('codexAcp release-binary installer', () => {
     await writeFile(join(installDir, 'package.json'), '{"name":"legacy"}', 'utf8');
     await writeFile(join(installDir, 'package-lock.json'), '{"lockfileVersion":3}', 'utf8');
 
-    await expect(installCodexAcp()).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(adapter?.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
 
     await expect(stat(join(installDir, 'current', 'bin', 'codex-acp'))).resolves.toEqual(
       expect.objectContaining({ isFile: expect.any(Function) }),

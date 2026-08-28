@@ -248,7 +248,10 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       }
       const registryProjection = runtimeRegistryLease && typeof registryGeneration === 'number'
         ? Object.freeze({
-            registry: resolveProviderContributionRegistryView(runtimeRegistryLease.registry.contributes),
+            registry: resolveProviderContributionRegistryView(
+              runtimeRegistryLease.registry.contributes,
+              registryGeneration,
+            ),
             generation: String(registryGeneration),
           })
         : undefined;

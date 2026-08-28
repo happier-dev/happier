@@ -1,6 +1,6 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -107,6 +107,7 @@ describe('provider catalog service', () => {
       lease: {
         credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret-value' },
         redact: (value: string) => value,
+        containsSensitiveValue: (value: string) => value.includes('secret-value'),
         close: vi.fn(),
       },
     }));
@@ -209,6 +210,7 @@ describe('provider catalog service', () => {
           lease: {
             credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret-value' },
             redact,
+            containsSensitiveValue: (value: string) => value.includes('secret-value'),
             close,
           },
         }),
@@ -226,6 +228,61 @@ describe('provider catalog service', () => {
     })).resolves.toMatchObject({ status: 'success' });
     expect(leaseClosedDuringTransport).toBe(false);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a raw credential reflected by a bearer-authenticated response before catalog persistence', async () => {
+    const rawSecret = 'raw-catalog-secret';
+    const close = vi.fn();
+    const runtimeStore = await store();
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport: async () => ({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify({
+            data: [{ id: 'safe-model', name: `echo ${rawSecret}` }],
+          })),
+        }),
+      }),
+      authorization: {
+        ...authPort(),
+        authorize: async () => ({
+          ok: true as const,
+          ticket: { id: 1 },
+          observationAuthorizationFingerprint,
+          credentialRef: { id: 'secret-a' },
+        }),
+        resolveCredential: async () => ({
+          ok: true as const,
+          lease: {
+            credential: {
+              kind: 'httpHeader' as const,
+              name: 'authorization',
+              value: `Bearer ${rawSecret}`,
+            },
+            redact: (value: string) => value.replaceAll(rawSecret, '[REDACTED]'),
+            containsSensitiveValue: (value: string) => value.includes(rawSecret),
+            close,
+          },
+        }),
+      },
+      runtimeStore,
+      now: () => 10_000,
+      createObservationId: () => 'must-not-be-persisted',
+    });
+
+    await expect(service.refresh({
+      connectionId,
+      machineId,
+      endpoints,
+      probes: [{ endpointTemplateId: 'openai', path: '/models', parser: 'openai-models' }],
+    })).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_probe_response_invalid' },
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect((await runtimeStore.read()).catalogs).toEqual([]);
   });
 
   it('does not materialize a credential when authorization changes while publishing checking activity', async () => {
@@ -254,6 +311,7 @@ describe('provider catalog service', () => {
           lease: {
             credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret-value' },
             redact: (value: string) => value.replaceAll('secret-value', '[REDACTED]'),
+            containsSensitiveValue: (value: string) => value.includes('secret-value'),
             close,
           },
         }),
@@ -681,6 +739,13 @@ describe('provider catalog service', () => {
 
     const checking = await runtimeStore.read();
     expect(checking.endpointHealth[0]?.state).toEqual({ status: 'not_checked', activity: 'checking' });
+    // Checking is a process-local overlay. A fresh process must not observe a
+    // synthetic durable endpoint row before the probe has a real verdict.
+    const durableDuringProbe = await createProviderRuntimeStateStore({
+      happyHomeDir: dirname(dirname(runtimeStore.path)),
+      machineId,
+    }).read();
+    expect(durableDuringProbe.endpointHealth).toEqual([]);
 
     releaseTransport();
     await refresh;
@@ -713,7 +778,9 @@ describe('provider catalog service', () => {
     });
     const launch = vi.fn(async () => ({
       ok: true as const,
-      endpointUrl: 'http://127.0.0.1:45123/v1',
+      endpointUrl: (endpointTemplateId: string) => endpointTemplateId === managedSource.endpointTemplateId
+        ? 'http://127.0.0.1:45123/v1'
+        : null,
       access: { request: managedRequest },
       isCurrent: () => true,
       close,
@@ -744,7 +811,7 @@ describe('provider catalog service', () => {
         path: '/v1/models',
         parser: 'openai-models',
       }],
-      managedSource,
+      managedSources: [managedSource],
     })).resolves.toMatchObject({
       status: 'success',
       models: [{ id: 'gpt-5-codex' }],
@@ -760,6 +827,22 @@ describe('provider catalog service', () => {
   });
 
   it('runs ordered managed probes and the declared fallback through one launch-local service', async () => {
+    const multiEndpointRuntime: ProviderManagedCatalogSource['managedRuntime'] = {
+      ...managedSource.managedRuntime,
+      endpointTemplateIds: [
+        managedSource.endpointTemplateId,
+        'cliproxyapi-chat',
+      ],
+    };
+    const managedSources = [
+      { ...managedSource, managedRuntime: multiEndpointRuntime },
+      {
+        ...managedSource,
+        managedRuntime: multiEndpointRuntime,
+        endpointTemplateId: 'cliproxyapi-chat',
+        protocol: 'openai-chat' as const,
+      },
+    ] satisfies readonly ProviderManagedCatalogSource[];
     const close = vi.fn(async () => {});
     const managedRequest = vi.fn(async (request: Readonly<{
       pathAndQuery: string;
@@ -772,7 +855,11 @@ describe('provider catalog service', () => {
     }));
     const launch = vi.fn(async () => ({
       ok: true as const,
-      endpointUrl: 'http://127.0.0.1:45123/v1',
+      endpointUrl: (endpointTemplateId: string) => endpointTemplateId === managedSource.endpointTemplateId
+        ? 'http://127.0.0.1:45123/v1'
+        : endpointTemplateId === 'cliproxyapi-chat'
+          ? 'http://127.0.0.1:45123/chat'
+          : null,
       access: { request: managedRequest },
       isCurrent: () => true,
       close,
@@ -799,7 +886,7 @@ describe('provider catalog service', () => {
     });
     const probes: readonly ProviderCatalogProbeV1[] = [
       {
-        endpointTemplateId: 'cliproxyapi-openai-responses',
+        endpointTemplateId: 'cliproxyapi-chat',
         path: '/v1/models-primary',
         parser: 'openai-models',
       },
@@ -823,7 +910,7 @@ describe('provider catalog service', () => {
       endpoints: [],
       probes,
       catalogFallback,
-      managedSource,
+      managedSources,
     })).resolves.toMatchObject({
       status: 'success',
       models: [{ id: 'local-model', name: 'Local model' }],
@@ -868,7 +955,9 @@ describe('provider catalog service', () => {
       managedCatalogRuntime: {
         launch: async () => ({
           ok: true as const,
-          endpointUrl: 'http://127.0.0.1:45123/v1',
+          endpointUrl: (endpointTemplateId: string) => endpointTemplateId === managedSource.endpointTemplateId
+            ? 'http://127.0.0.1:45123/v1'
+            : null,
           access: {
             request: async () => ({
               status: 200,
@@ -896,7 +985,7 @@ describe('provider catalog service', () => {
         path: '/v1/models',
         parser: 'openai-models',
       }],
-      managedSource,
+      managedSources: [managedSource],
     })).resolves.toMatchObject({
       status: 'error',
       error: { code: 'provider_authorization_changed' },
@@ -1002,20 +1091,20 @@ describe('managed provider catalog refresh fingerprint', () => {
       endpoints,
       probes,
       catalogFallback,
-      managedSource,
+      managedSources: [managedSource],
     });
     expect(fingerprint).toEqual(expect.any(String));
     expect(createProviderCatalogRefreshFingerprint({
       endpoints,
       probes,
       catalogFallback: { ...catalogFallback, fixedArgs: ['alternate-models'] },
-      managedSource,
+      managedSources: [managedSource],
     })).not.toBe(fingerprint);
     expect(createProviderCatalogRefreshFingerprint({
       endpoints,
       probes,
       catalogFallback,
-      managedSource: { ...managedSource, sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.96' },
+      managedSources: [{ ...managedSource, sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.96' }],
     })).not.toBe(fingerprint);
   });
 });

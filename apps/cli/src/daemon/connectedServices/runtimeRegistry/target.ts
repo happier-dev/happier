@@ -1,6 +1,6 @@
 import type {
+  ConnectedAccountServiceKey,
   ConnectedServiceCredentialRevisionV1,
-  ConnectedServiceId,
   ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
 
@@ -8,7 +8,7 @@ import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
 
 export type ConnectedServiceRuntimeBoundProfile = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string;
 }>;
 
@@ -61,7 +61,7 @@ export type ConnectedServiceRuntimeRefreshTarget = Readonly<Omit<ConnectedServic
   agentId: CatalogAgentId;
   materializationKey: string;
   bindings: ReadonlyArray<ConnectedServiceRuntimeBoundProfile>;
-  childSelectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceChildSelection> | null;
+  childSelectionsByServiceId: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceChildSelection> | null;
 }>;
 
 export type ConnectedServiceRuntimeQuotaTarget = Readonly<Omit<ConnectedServiceRuntimeTarget, 'bindings'> & {

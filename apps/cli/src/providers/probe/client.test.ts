@@ -30,9 +30,28 @@ function credentialResolver(
     name: string;
     value: string;
   }>,
+  sensitiveValues: readonly string[] = [credential.value],
 ) {
-  return async () => ({ credential, close: () => {} });
+  return async () => ({
+    credential,
+    containsSensitiveValue: (value: string) => sensitiveValues.some((candidate) => value.includes(candidate)),
+    close: () => {},
+  });
 }
+
+type MutableProbeModelFixture = {
+  id: string;
+  name: string;
+  modelOptions: Array<{
+    id: string;
+    name: string;
+    description: string;
+    type: string;
+    currentValue: string;
+    options: Array<{ value: string; name: string; description: string }>;
+    overridesWhenOn: { optionIds: string[]; forcedValue: string };
+  }>;
+};
 
 describe('provider probe HTTP client', () => {
   it('parses a Provider-contributed catalog format and reports an unimplemented one typed', async () => {
@@ -79,6 +98,7 @@ describe('provider probe HTTP client', () => {
       events.push('credential');
       return {
         credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret' },
+        containsSensitiveValue: (value: string) => value.includes('secret'),
         close,
       };
     });
@@ -127,6 +147,73 @@ describe('provider probe HTTP client', () => {
     expect(resolveCredential).not.toHaveBeenCalled();
     expect(transport).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
+  });
+
+  it('spends the admitted wall deadline on credential acquisition and closes a late lease', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      let settleCredential!: (lease: Readonly<{
+        credential: { kind: 'httpHeader'; name: string; value: string };
+        containsSensitiveValue: (value: string) => boolean;
+        close: () => void;
+      }>) => void;
+      const close = vi.fn();
+      const transport = vi.fn<ProviderProbeTransport>(async () => response());
+      const client = createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport,
+      });
+      const pending = client.getCatalog({
+        endpointUrl: 'https://models.example/v1',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+        wallDeadlineAtMs: 20,
+        ...authorizedDestination,
+        resolveCredential: () => new Promise((resolve) => { settleCredential = resolve; }),
+      }).catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(21);
+      await expect(pending).resolves.toMatchObject({ code: 'provider_endpoint_unreachable' });
+      expect(transport).not.toHaveBeenCalled();
+
+      settleCredential({
+        credential: { kind: 'httpHeader', name: 'authorization', value: 'Bearer late' },
+        containsSensitiveValue: (value: string) => value.includes('late'),
+        close,
+      });
+      await vi.runAllTicks();
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('spends the admitted wall deadline on destination authorization', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const transport = vi.fn<ProviderProbeTransport>(async () => response());
+      const client = createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport,
+      });
+      const pending = client.getCatalog({
+        endpointUrl: 'https://models.example/v1',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+        wallDeadlineAtMs: 20,
+        authorizeDestination: async () => new Promise<never>(() => {}),
+      }).catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(21);
+      await expect(pending).resolves.toMatchObject({ code: 'provider_endpoint_unreachable' });
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('validates every DNS answer and pins the validated set into transport', async () => {
@@ -593,6 +680,93 @@ describe('provider probe HTTP client', () => {
     })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
   });
 
+  it.each([
+    ['model id', (model: MutableProbeModelFixture, secret: string) => { model.id = secret; }],
+    ['model name', (model: MutableProbeModelFixture, secret: string) => { model.name = secret; }],
+    ['option id', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.id = secret; }],
+    ['option name', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.name = secret; }],
+    ['option description', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.description = secret; }],
+    ['option type', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.type = secret; }],
+    ['option current value', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.currentValue = secret; }],
+    ['choice value', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.options[0]!.value = secret; }],
+    ['choice name', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.options[0]!.name = secret; }],
+    ['choice description', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.options[0]!.description = secret; }],
+    ['override option id', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.overridesWhenOn.optionIds[0] = secret; }],
+    ['override forced value', (model: MutableProbeModelFixture, secret: string) => { model.modelOptions[0]!.overridesWhenOn.forcedValue = secret; }],
+  ] as const)('rejects a credential reflected in the probe catalog %s', async (_label, placeSecret) => {
+    const rawSecret = 'raw-probe-secret';
+    const model: MutableProbeModelFixture = {
+      id: 'safe-model',
+      name: 'Safe model',
+      modelOptions: [{
+        id: 'mode',
+        name: 'Mode',
+        description: 'Safe description',
+        type: 'boolean',
+        currentValue: 'off',
+        options: [{ value: 'off', name: 'Off', description: 'Safe choice' }],
+        overridesWhenOn: { optionIds: ['effort'], forcedValue: 'high' },
+      }],
+    };
+    placeSecret(model, rawSecret);
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response({ body: Buffer.from('{}') }),
+    });
+
+    await expect(client.getCatalog({
+      endpointUrl: 'https://models.example',
+      path: '/models',
+      parser: 'fixture-model-options',
+      contributedCatalogParsers: {
+        'fixture-model-options': () => ({ models: [model] }),
+      },
+      publicHeaders: {},
+      resolveCredential: credentialResolver(
+        { kind: 'httpHeader', name: 'authorization', value: `Bearer ${rawSecret}` },
+        [rawSecret, `Bearer ${rawSecret}`],
+      ),
+      ...authorizedDestination,
+    })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+  });
+
+  it.each([
+    ['raw', 'raw-probe-secret', 'raw-probe-secret'],
+    ['bearer raw value', 'Bearer raw-probe-secret', 'raw-probe-secret'],
+    ['template rendered value', 'Token raw-probe-secret suffix', 'Token raw-probe-secret suffix'],
+  ] as const)('rejects a %s credential reflection through its opaque lease predicate', async (
+    _label,
+    renderedCredential,
+    reflectedValue,
+  ) => {
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response({ body: Buffer.from('{}') }),
+    });
+
+    await expect(client.getCatalog({
+      endpointUrl: 'https://models.example',
+      path: '/models',
+      parser: 'fixture-reflection',
+      contributedCatalogParsers: {
+        'fixture-reflection': () => ({
+          models: [{ id: 'safe-model', modelOptions: [{
+            id: 'mode',
+            name: 'Mode',
+            type: 'string',
+            currentValue: reflectedValue,
+          }] }],
+        }),
+      },
+      publicHeaders: {},
+      resolveCredential: credentialResolver(
+        { kind: 'httpHeader', name: 'authorization', value: renderedCredential },
+        ['raw-probe-secret', renderedCredential],
+      ),
+      ...authorizedDestination,
+    })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+  });
+
   it('rejects catalog fields that echo any plugin or user supplied public-header value', async () => {
     const publicHeaderValue = 'tenant-routing-value-that-must-not-be-rendered';
     const client = createProviderProbeHttpClient({
@@ -608,6 +782,40 @@ describe('provider probe HTTP client', () => {
       endpointUrl: 'https://models.example',
       path: '/models',
       parser: 'openai-models',
+      publicHeaders: { 'x-tenant-routing': publicHeaderValue },
+      ...authorizedDestination,
+    })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+  });
+
+  it('applies public-header reflection checks to nested probe option fields', async () => {
+    const publicHeaderValue = 'tenant-routing-value-that-must-not-be-rendered';
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response({ body: Buffer.from('{}') }),
+    });
+
+    await expect(client.getCatalog({
+      endpointUrl: 'https://models.example',
+      path: '/models',
+      parser: 'fixture-public-header-reflection',
+      contributedCatalogParsers: {
+        'fixture-public-header-reflection': () => ({
+          models: [{
+            id: 'safe-model',
+            modelOptions: [{
+              id: 'mode',
+              name: 'Mode',
+              type: 'string',
+              currentValue: 'safe',
+              options: [{
+                value: 'safe',
+                name: 'Safe',
+                description: publicHeaderValue,
+              }],
+            }],
+          }],
+        }),
+      },
       publicHeaders: { 'x-tenant-routing': publicHeaderValue },
       ...authorizedDestination,
     })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });

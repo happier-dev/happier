@@ -144,6 +144,7 @@ describe('runtime provider model-management composition', () => {
     });
     const agentDefinitionsById = new Map([['codex', agentDefinition(support)]]);
     const executable = {
+      generation: 7,
       contributes: {
         providersByContributionKey: registry.providersByContributionKey,
         agentDefinitionsById,
@@ -249,6 +250,9 @@ describe('runtime provider model-management composition', () => {
     });
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json', read: vi.fn(async () => state),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => transform(state)),
     };
     let accountSettings = AccountSettingsSchema.parse({ providerSettingsV1: settings });
@@ -590,6 +594,7 @@ describe('runtime provider model-management composition', () => {
       supportsFreeformModelIds: false,
     } as const;
     const executable = {
+      generation: 7,
       contributes: {
         providersByContributionKey: registry.providersByContributionKey,
         agentDefinitionsById: new Map([['codex', {
@@ -626,6 +631,9 @@ describe('runtime provider model-management composition', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json',
       read: vi.fn(async () => state),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => {
         state = await transform(state);
         return state;
@@ -801,6 +809,7 @@ describe('runtime provider model-management composition', () => {
       supportsFreeformModelIds: false,
     } as const;
     const executable = {
+      generation: 7,
       contributes: {
         providersByContributionKey: registry.providersByContributionKey,
         agentDefinitionsById: new Map([['codex', {
@@ -837,6 +846,9 @@ describe('runtime provider model-management composition', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json',
       read: vi.fn(async () => state),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => {
         state = await transform(state);
         return state;
@@ -858,11 +870,12 @@ describe('runtime provider model-management composition', () => {
         body: Buffer.from(JSON.stringify({ data: [{ id: 'model-a' }] }), 'utf8'),
       };
     });
+    const resolveAddresses = vi.fn(async (_hostname: string) => ['1.1.1.1']);
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a',
       registry,
       runtimeStore,
-      resolveAddresses: async () => ['1.1.1.1'],
+      resolveAddresses,
       acquireRuntimeLease: async () => lease,
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['1.1.1.1'],
@@ -890,13 +903,17 @@ describe('runtime provider model-management composition', () => {
       // Every identity is submitted immediately, so the sole scheduler holds
       // its four active operations and queues its pending maximum while the
       // transport is blocked. One identity is beyond both and is refused.
-      await vi.waitFor(() => expect(releases.length).toBe(4));
+      await vi.waitFor(
+        () => expect(releases.length).toBe(4),
+        { timeout: 5_000 },
+      );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       releaseAll = true;
       for (const release of releases.splice(0)) release();
 
       await expect(projection).resolves.toMatchObject({ status: 'success', groups: expect.any(Array) });
+      expect(lease.release).toHaveBeenCalledTimes(1);
       await vi.waitFor(
         () => expect(catalogHosts.size).toBe(schedulerAdmittedCapacity),
         { timeout: 5_000 },
@@ -906,6 +923,13 @@ describe('runtime provider model-management composition', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(catalogHosts.size).toBe(schedulerAdmittedCapacity);
       expect(schedulerAdmittedCapacity).toBeLessThan(connectionCount);
+      // DNS belongs to the immutable picker operation: each unique hostname is
+      // resolved once and the same evidence is reused after cold demand.
+      const resolvedHostnames = resolveAddresses.mock.calls.map(([hostname]) => hostname);
+      const duplicateHostnames = resolvedHostnames.filter((hostname, index) =>
+        resolvedHostnames.indexOf(hostname) !== index);
+      expect(duplicateHostnames).toEqual([]);
+      expect(resolveAddresses).toHaveBeenCalledTimes(connectionCount * 2);
     } finally {
       releaseAll = true;
       for (const release of releases.splice(0)) release();
@@ -935,10 +959,13 @@ describe('runtime provider model-management composition', () => {
   });
 
   it('returns the exact runtime-state owner supplied to the one shared probe composition', () => {
-    const state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json',
       read: vi.fn(async () => state),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => transform(state)),
     };
     const services = createRuntimeProviderModelManagementServices({

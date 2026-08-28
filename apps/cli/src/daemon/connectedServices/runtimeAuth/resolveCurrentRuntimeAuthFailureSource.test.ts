@@ -49,7 +49,7 @@ function currentCredential() {
 
 function exactLiveIdentity() {
   return {
-    serviceId: 'openai-codex' as const,
+    serviceId: 'happier.agent.codex/openai-codex' as const,
     proofStrength: 'exact' as const,
     providerAccountId: 'acct_work',
     profileId: 'work',
@@ -68,7 +68,7 @@ describe('resolveCurrentRuntimeAuthFailureSource', () => {
       resolveCurrentCredential: vi.fn(async () => currentCredential()),
       resolveLegacySourceRevision,
     })).resolves.toEqual({
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'main',
       profileId: 'work',
       generation: 7,
@@ -121,7 +121,7 @@ describe('resolveCurrentRuntimeAuthFailureSource', () => {
       resolveCurrentCredential,
       resolveLegacySourceRevision,
     })).resolves.toEqual({
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'main',
       profileId: 'backup',
       generation: 8,

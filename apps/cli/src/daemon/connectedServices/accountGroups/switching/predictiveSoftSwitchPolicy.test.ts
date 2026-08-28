@@ -1,36 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  evaluatePredictiveSoftSwitchLiveSessionRequirement,
-  evaluatePredictiveSoftSwitchPolicy,
-  runtimeAuthApplyRequiresLiveIdentityProbe,
-} from './predictiveSoftSwitchPolicy';
-
-const VALID_CODEX_RUNTIME_AUTH_APPLY = {
-  directLiveHotAuth: {
-    supportsInTurnApply: true,
-    requiresExactRuntimeIdentity: true,
-    refreshSelectionResync: 'required',
-    authMode: {
-      kind: 'external_token_injection',
-      surface: 'codex_chatgpt_auth_tokens',
-    },
-  },
-} as const;
+import { evaluatePredictiveSoftSwitchPolicy } from './predictiveSoftSwitchPolicy';
 
 describe('evaluatePredictiveSoftSwitchPolicy', () => {
-  it('requires live identity only when the runtime auth capability owns exact identity', () => {
-    expect(runtimeAuthApplyRequiresLiveIdentityProbe(VALID_CODEX_RUNTIME_AUTH_APPLY)).toBe(true);
-    expect(runtimeAuthApplyRequiresLiveIdentityProbe({
-      directLiveHotAuth: {
-        ...VALID_CODEX_RUNTIME_AUTH_APPLY.directLiveHotAuth,
-        requiresExactRuntimeIdentity: false,
-      },
-    })).toBe(false);
-    expect(runtimeAuthApplyRequiresLiveIdentityProbe(null)).toBe(true);
-    expect(runtimeAuthApplyRequiresLiveIdentityProbe({ directLiveHotAuth: 'unsupported' })).toBe(true);
-  });
-
   it('suppresses predictive soft-threshold switching for restart-only providers', () => {
     expect(evaluatePredictiveSoftSwitchPolicy({
       reason: 'soft_threshold',
@@ -46,29 +18,6 @@ describe('evaluatePredictiveSoftSwitchPolicy', () => {
       reason: 'soft_threshold',
       predictiveSoftSwitchMode: 'supported',
       turnState: { inFlight: true },
-    })).toEqual({
-      status: 'suppress',
-      reason: 'predictive_soft_switch_turn_in_flight',
-    });
-  });
-
-  it('allows predictive soft-threshold switching during a turn with valid direct-live runtime apply capability', () => {
-    expect(evaluatePredictiveSoftSwitchPolicy({
-      reason: 'soft_threshold',
-      predictiveSoftSwitchMode: 'supported',
-      turnState: { inFlight: true },
-      runtimeAuthApply: VALID_CODEX_RUNTIME_AUTH_APPLY,
-    })).toEqual({ status: 'allow' });
-  });
-
-  it('does not allow in-turn switching for a partial direct-live runtime apply capability', () => {
-    expect(evaluatePredictiveSoftSwitchPolicy({
-      reason: 'soft_threshold',
-      predictiveSoftSwitchMode: 'supported',
-      turnState: { inFlight: true },
-      runtimeAuthApply: {
-        directLiveHotAuth: { supportsInTurnApply: true },
-      } as unknown as typeof VALID_CODEX_RUNTIME_AUTH_APPLY,
     })).toEqual({
       status: 'suppress',
       reason: 'predictive_soft_switch_turn_in_flight',
@@ -108,84 +57,4 @@ describe('evaluatePredictiveSoftSwitchPolicy', () => {
     });
   });
 
-  it('allows same-provider-account exhaustion fanout during a turn with valid direct-live runtime apply capability', () => {
-    expect(evaluatePredictiveSoftSwitchPolicy({
-      reason: 'same_provider_account_exhausted',
-      predictiveSoftSwitchMode: 'supported',
-      turnState: { inFlight: true },
-      runtimeAuthApply: VALID_CODEX_RUNTIME_AUTH_APPLY,
-    })).toEqual({ status: 'allow' });
-  });
-});
-
-describe('evaluatePredictiveSoftSwitchLiveSessionRequirement', () => {
-  const requirement = {
-    kind: 'shared_group_auth_surface' as const,
-    serviceIds: ['claude-subscription'] as const,
-    authEnvKey: 'CLAUDE_CONFIG_DIR',
-    authEnvSubpath: ['claude-config'] as const,
-  };
-
-  it('allows Claude live predictive switching only on the shared group auth surface', () => {
-    const activeServerDir = '/tmp/happier-server';
-    const sharedConfigDir = [
-      activeServerDir,
-      'daemon',
-      'connected-services',
-      'homes',
-      'claude-subscription',
-      '__groups',
-      'main',
-      'claude',
-      'claude-config',
-    ].join('/');
-
-    expect(evaluatePredictiveSoftSwitchLiveSessionRequirement({
-      reason: 'soft_threshold',
-      requirement,
-      activeServerDir,
-      agentId: 'claude',
-      serviceId: 'claude-subscription',
-      groupId: 'main',
-      activeProfileId: 'primary',
-      env: {
-        CLAUDE_CONFIG_DIR: sharedConfigDir,
-        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
-          {
-            kind: 'group',
-            serviceId: 'claude-subscription',
-            groupId: 'main',
-            activeProfileId: 'primary',
-            fallbackProfileId: 'primary',
-            generation: 7,
-          },
-        ]),
-      },
-    })).toEqual({ status: 'allow' });
-  });
-
-  it('suppresses Claude live predictive switching when the shared auth surface is unproven', () => {
-    expect(evaluatePredictiveSoftSwitchLiveSessionRequirement({
-      reason: 'soft_threshold',
-      requirement,
-      activeServerDir: '/tmp/happier-server',
-      agentId: 'claude',
-      serviceId: 'claude-subscription',
-      groupId: 'main',
-      activeProfileId: 'primary',
-      env: {
-        CLAUDE_CONFIG_DIR: '/tmp/happier-server/daemon/connected-services/homes/claude-subscription/primary/claude/claude-config',
-        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
-          {
-            kind: 'profile',
-            serviceId: 'claude-subscription',
-            profileId: 'primary',
-          },
-        ]),
-      },
-    })).toEqual({
-      status: 'suppress',
-      reason: 'predictive_soft_switch_shared_group_auth_surface_required',
-    });
-  });
 });

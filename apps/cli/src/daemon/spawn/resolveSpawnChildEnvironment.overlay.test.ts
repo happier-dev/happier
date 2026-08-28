@@ -149,15 +149,6 @@ describe('resolveSpawnChildEnvironment provider overlay composition', () => {
         { name: 'PROVIDER_KEY', value: 'secret', source: 'invalid-source' },
       ],
     },
-    {
-      name: 'throwing generic augment hook',
-      daemonSpawnHooks: {
-        augmentEnv: () => {
-          throw new Error('augment failed');
-        },
-      },
-      providerEnvironmentOverlay: undefined,
-    },
   ])('cleans connected-service materialization exactly once when $name throws', async ({
     daemonSpawnHooks,
     providerEnvironmentOverlay,
@@ -183,6 +174,36 @@ describe('resolveSpawnChildEnvironment provider overlay composition', () => {
 
     expect(cleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(cleanupOnExit).not.toHaveBeenCalled();
+  });
+
+  it('returns a typed no-spawn result when environment augmentation throws', async () => {
+    const cleanupOnFailure = vi.fn();
+    const result = await resolveSpawnChildEnvironment({
+      options: { directory: '/repo' },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: {
+        augmentEnv: () => {
+          throw new Error('plugin-private failure');
+        },
+      },
+      processEnv: {},
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: {
+        env: { CONNECTED_SECRET: 'materialized' },
+        cleanupOnFailure,
+        cleanupOnExit: null,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Agent daemon spawn environment hook failed.',
+    });
+    expect(cleanupOnFailure).not.toHaveBeenCalled();
+    expect(result.cleanupOnFailure).toBe(cleanupOnFailure);
   });
 
   it.each(['spoofed-profile', null])(

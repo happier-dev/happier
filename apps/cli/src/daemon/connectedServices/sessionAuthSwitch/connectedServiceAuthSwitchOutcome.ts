@@ -1,12 +1,12 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceExecutionAuthorityV1,
-  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 export type ConnectedServiceAuthGroupGenerationTarget = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   profileId: string;
   generation: number;

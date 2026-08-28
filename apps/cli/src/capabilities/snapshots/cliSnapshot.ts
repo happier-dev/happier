@@ -5,6 +5,7 @@ import { join, delimiter as PATH_DELIMITER } from 'path';
 import { AGENTS } from '@/agent/catalog/registry';
 import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthSpec, CliAuthStatus } from '@/capabilities/cliAuth/types';
+import { normalizeCliAuthStatusDraft } from '@/capabilities/cliAuth/normalizeCliAuthStatusDraft';
 import { resolveAgentCliCommandForRuntime } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { AsyncTtlCache } from '@happier-dev/protocol';
@@ -529,7 +530,10 @@ async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: 
         const spec = await resolveCliAuthSpec(params.name);
         if (!spec?.detectAuthStatus) return null;
         const checkedAt = Date.now();
-        const draft = await spec.detectAuthStatus({ resolvedPath: params.resolvedPath });
+        const draft = normalizeCliAuthStatusDraft(
+            await spec.detectAuthStatus({ resolvedPath: params.resolvedPath }),
+        );
+        if (!draft) return null;
         return {
             checkedAt,
             state: draft.state,

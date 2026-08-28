@@ -55,6 +55,7 @@ describe('managed Provider catalog launch identity', () => {
       purposeBindings: bindings,
       endpointTemplateId: 'responses',
       protocol: 'openai-responses' as const,
+      sourceRegistryVersion: 'example-registry:v1',
       publicHeaders: {},
     };
     const fingerprint = createProviderManagedProbeRequestFingerprintV1({
@@ -79,6 +80,7 @@ describe('managed Provider catalog launch identity', () => {
         purposeBindings: reorderedBindings,
         endpointTemplateId: 'responses',
         protocol: 'openai-responses',
+        sourceRegistryVersion: source.sourceRegistryVersion,
         path: '/models',
         parser: 'openai-models',
         probeRequestFingerprint: fingerprint,
@@ -98,6 +100,7 @@ describe('managed Provider catalog launch identity', () => {
         purposeBindings: bindings,
         endpointTemplateId: 'responses',
         protocol: 'openai-responses',
+        sourceRegistryVersion: source.sourceRegistryVersion,
         path: '/models',
         parser: 'openai-models',
         probeRequestFingerprint: fingerprint,

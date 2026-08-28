@@ -1,21 +1,21 @@
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
+  ConnectedAccountServiceKeySchema,
   ConnectedServiceBindingsV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceUxDiagnosticCodeV1Schema,
-  ConnectedServiceIdSchema,
   ConnectedServiceMaterializationIdentityV1Schema,
   isConnectedServiceCredentialHealthStatusReconnectRequired,
   isConnectedServiceCredentialHealthStatusUsable,
   normalizeConnectedServiceCredentialHealthStatus,
   type ConnectedServiceUxDiagnosticV1,
   type ConnectedServiceBindingsV1,
-  type ConnectedServiceId,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceMaterializationIdentityV1,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
+  parseQualifiedPluginContributionKey,
 } from '@happier-dev/protocol';
-import { AGENTS_CORE } from '@happier-dev/agents';
 
 import type { CatalogAgentId, ConnectedServiceResumeContinuityDiagnostics } from '@/agent/catalog/types';
 import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
@@ -64,14 +64,11 @@ import {
   type RuntimeAuthSelectionsByServiceId,
 } from './verification/runPostSwitchVerification';
 import type { ConnectedServiceQualifiedAuthGroupApi } from '../resolveConnectedServiceAuthForSpawn';
-import { resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+
+type ConnectedServiceId = ConnectedAccountServiceKey;
 
 type ConnectedServiceBinding = ConnectedServiceBindingsV1['bindingsByServiceId'][string];
-type AgentConnectedServiceSupport = Readonly<{
-  connectedServices?: Readonly<{
-    supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
-  }> | null;
-}>;
 type SessionConnectedServiceAuthSwitchFailure = Extract<
   SessionConnectedServiceAuthSwitchResult,
   Readonly<{ ok: false }>
@@ -770,7 +767,7 @@ function readMaterializationDiagnostics(value: unknown): readonly ConnectedServi
     const providerId = readNonEmptyString(record.providerId) || undefined;
     const serviceIdParsed = record.serviceId === undefined
       ? null
-      : ConnectedServiceIdSchema.safeParse(record.serviceId);
+      : ConnectedAccountServiceKeySchema.safeParse(record.serviceId);
     const serviceId = serviceIdParsed?.success ? serviceIdParsed.data : undefined;
     const entryName = readNonEmptyString(record.entryName) || undefined;
     const reason = readNonEmptyString(record.reason) || undefined;
@@ -1058,7 +1055,7 @@ function buildTrackedSessionEnvironmentVariables(input: Readonly<{
 
   for (const [serviceIdRaw, binding] of Object.entries(input.normalizedBindings.bindingsByServiceId)) {
     if (binding.source !== 'connected') continue;
-    const serviceIdParsed = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
+    const serviceIdParsed = ConnectedAccountServiceKeySchema.safeParse(serviceIdRaw);
     if (!serviceIdParsed.success) continue;
     const nextSelection = buildConnectedServiceChildSelection({
       serviceId: serviceIdParsed.data,
@@ -1393,16 +1390,16 @@ async function normalizeRequestedBindings(input: Readonly<{
   const effectiveByServiceId = new Map<ConnectedServiceId, EffectiveBinding>();
   const groupMetadataByServiceId = new Map<ConnectedServiceId, ConnectedServiceGroupRuntimeMetadata>();
   const normalizedBindingsByServiceId: ConnectedServiceBindingsV1['bindingsByServiceId'] = {};
+  const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(input.agentId);
 
   for (const [serviceIdRaw, binding] of Object.entries(parsed.data.bindingsByServiceId)) {
-    const serviceIdParsed = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
+    const serviceIdParsed = ConnectedAccountServiceKeySchema.safeParse(serviceIdRaw);
     if (!serviceIdParsed.success) {
       return { ok: false, errorCode: 'unsupported_service', serviceId: serviceIdRaw };
     }
     const serviceId = serviceIdParsed.data;
-    const agent = (AGENTS_CORE as Partial<Record<CatalogAgentId, AgentConnectedServiceSupport>>)[input.agentId] ?? null;
-    const supportedServiceIds = agent?.connectedServices?.supportedServiceIds ?? [];
     if (!supportedServiceIds.includes(serviceId)) {
+      if (binding.source === 'native') continue;
       return { ok: false, errorCode: 'unsupported_service', serviceId };
     }
     if (binding.source === 'native') {
@@ -1418,9 +1415,7 @@ async function normalizeRequestedBindings(input: Readonly<{
     }
 
     if (binding.selection === 'group') {
-      const qualifiedService = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
-        serviceId,
-      );
+      const qualifiedService = parseQualifiedPluginContributionKey(serviceId);
       if (!qualifiedService) {
         return { ok: false, errorCode: 'group_missing', serviceId };
       }
@@ -1513,10 +1508,13 @@ async function normalizeRequestedBindings(input: Readonly<{
       continue;
     }
 
-    const profileError = await validateConnectedProfile({
-      api: input.api,
+    const listedAccounts = await input.qualifiedConnectedAccountApi.listAccounts({
+      service: parseQualifiedPluginContributionKey(serviceId)!,
+    });
+    const profileError = validateQualifiedConnectedProfile({
       serviceId,
       profileId: binding.profileId,
+      profiles: listedAccounts.accounts,
     });
     if (profileError) return profileError;
     normalizedBindingsByServiceId[serviceId] = {
@@ -1742,7 +1740,7 @@ function resolveUnchangedRematerializeServiceId(input: Readonly<{
     .find((serviceId): serviceId is ConnectedServiceId => {
       const expectedGeneration = expectedGenerations[serviceId];
       if (typeof expectedGeneration !== 'number' || !Number.isFinite(expectedGeneration)) return false;
-      const next = input.nextByServiceId.get(serviceId as ConnectedServiceId);
+      const next = input.nextByServiceId.get(serviceId);
       return next?.source === 'connected' && next.selection === 'group';
     });
 }

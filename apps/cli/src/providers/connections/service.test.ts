@@ -76,7 +76,12 @@ function localContribution(): ResolvedProviderContribution {
         localUrlCandidates: ['http://127.0.0.1:11434/v1', 'http://127.0.0.1:1234/v1'],
         capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' },
       }],
-      catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'chat', path: '/v1/models', parser: 'openai-models' }] },
+      catalog: {
+        source: 'probe',
+        manualModelPolicy: 'allowed',
+        sourceRegistryVersion: 'local-test:v1',
+        probes: [{ endpointTemplateId: 'chat', path: '/v1/models', parser: 'openai-models' }],
+      },
       discovery: {
         v: 1,
         listener: { executableBasenames: ['local-server'], defaultPorts: [11434] },
@@ -1474,6 +1479,44 @@ describe('provider connection service', () => {
     expect(local.updateAccountSettings).not.toHaveBeenCalled();
   });
 
+  it('never admits a malformed Provider-shaped dependency failure into the service result', async () => {
+    const local = harness();
+    const localKey = 'acme.gateway/local-preview-malformed-error';
+    local.providersByContributionKey.set(localKey, localContribution());
+    local.discoveryCandidates.mockRejectedValue({
+      v: 1,
+      code: 'provider_endpoint_unavailable',
+      secret: 'must-not-escape',
+    });
+
+    await expect(local.service.describe({
+      machineId: 'machine-a',
+      authoringPreview: {
+        connectionId: ProviderConnectionIdSchema.parse('pc_local_preview_malformed_error'),
+        contributionKey: localKey,
+        displayName: null,
+        selectedCandidateId: null,
+      },
+    })).resolves.toMatchObject({
+      status: 'error',
+      error: {
+        code: 'provider_endpoint_unavailable',
+        retryable: true,
+        action: 'retry',
+      },
+    });
+    const result = await local.service.describe({
+      machineId: 'machine-a',
+      authoringPreview: {
+        connectionId: ProviderConnectionIdSchema.parse('pc_local_preview_malformed_error'),
+        contributionKey: localKey,
+        displayName: null,
+        selectedCandidateId: null,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('must-not-escape');
+  });
+
   it('describes a canonical-key connection with endpoint, credential, and compatibility facts', async () => {
     const h = harness();
     await h.service.create({
@@ -1891,6 +1934,7 @@ describe('provider connection service', () => {
     const revalidatedProjection = h.loadSnapshot.mock.calls[1]?.[0];
     expect(revalidatedProjection).toBe(initialProjection);
     expect(initialProjection).toMatchObject({ generation: '7' });
+    expect(initialProjection?.registry.runtimeRegistryGeneration).toBe(7);
     expect(initialProjection?.registry.providersByContributionKey)
       .toBe(admittedProvidersByContributionKey);
   });

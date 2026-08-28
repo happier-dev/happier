@@ -162,10 +162,10 @@ describe('executionRunsCapability', () => {
     expect(res.backends.copilot).toBeTruthy();
   });
 
-  it('marks catalog-defined ACP backends available even when the CLI snapshot does not report them', async () => {
+  it('does not treat a detected CLI as an execution-run capability declaration', async () => {
     const res = await executionRunsCapability.detect({
       context: {
-        cliSnapshot: makeCliSnapshot({}),
+        cliSnapshot: makeCliSnapshot({ qwen: { available: true } }),
       },
       request: { id: 'tool.executionRuns' },
     }) as {
@@ -175,7 +175,7 @@ describe('executionRunsCapability', () => {
 
     expect(res.available).toBe(true);
     expect(res.backends.customAcp).toMatchObject({ available: true });
-    expect(res.backends.ohMyPi).toMatchObject({ available: true });
+    expect(res.backends.qwen).toMatchObject({ available: false });
   });
 
   it('does not synthesize a CodeRabbit backend from env overrides or PATH probes', async () => {

@@ -1,12 +1,8 @@
-import type { Capability, CapabilitiesDetectContext } from '../service';
+import type { Capability } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import {
   AGENT_IDS,
-  hasBuiltInAcpConfig,
-  isBundledAgentId,
 } from '@happier-dev/agents';
-import {
-} from '@happier-dev/protocol';
 import {
   buildExecutionRunProfileCatalog,
   listExecutionRunProfileContributionDescriptors,
@@ -24,30 +20,12 @@ import {
   listEngineRuntimeContributionIds,
 } from '../../agent/runtime/registry/engineRegistry/contributions';
 
-function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): boolean {
-  const clis = context?.cliSnapshot?.clis;
-  if (!clis || !Object.prototype.hasOwnProperty.call(clis, agentId)) {
-    return false;
-  }
-
-  const entry = clis[agentId as keyof typeof clis];
-  return entry?.available === true;
-}
-
 function resolveExecutionRunBackendAvailability(params: Readonly<{
-  context: CapabilitiesDetectContext;
   backendId: string;
-  isKnownBuiltInAgentId: boolean;
   agentContribution?: ResolvedAgentContribution;
 }>): boolean {
   if (params.backendId === 'customAcp') {
     // Compatibility backend id used as the UI "configured ACP" entrypoint.
-    return true;
-  }
-
-  if (params.isKnownBuiltInAgentId && hasBuiltInAcpConfig(params.backendId)) {
-    // Built-in ACP backends are catalog-defined and do not rely on CLI snapshot probing for
-    // UI discovery in this wave.
     return true;
   }
 
@@ -57,7 +35,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     return true;
   }
 
-  return isCliAvailable(params.context, params.backendId);
+  return false;
 }
 
 export const executionRunsCapability: Capability = {
@@ -144,11 +122,8 @@ export const executionRunsCapability: Capability = {
     const backends = Object.fromEntries(
       backendIds.map((backendId) => {
         const agentContribution = cliEngineRegistry.contributions.agentDefinitionsById.get(backendId);
-        const isKnownBuiltInAgentId = isBundledAgentId(backendId);
         const available = resolveExecutionRunBackendAvailability({
-          context,
           backendId,
-          isKnownBuiltInAgentId,
           agentContribution,
         });
         return [

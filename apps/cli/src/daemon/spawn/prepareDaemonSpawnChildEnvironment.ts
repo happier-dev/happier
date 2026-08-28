@@ -33,6 +33,7 @@ import {
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     options: SpawnSessionOptions;
+    resolvedAgentId?: string | null;
     effectiveModelSelection: SpawnSessionOptions['modelSelection'];
     terminal: SpawnSessionOptions['terminal'];
     profileEnvironmentVariables: Readonly<Record<string, string>>;
@@ -77,6 +78,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
         options: input.options,
+        resolvedAgentId: input.resolvedAgentId,
         profileEnvironmentVariables: input.profileEnvironmentVariables,
         daemonSpawnHooks: input.daemonSpawnHooks,
         processEnv: input.processEnv,

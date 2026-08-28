@@ -338,6 +338,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 update: async ({
                     serviceId,
                     groupId,
+                    expectedGeneration,
                     expectedIncarnation,
                     expectedRuntimeStateRevision,
                     runtimeState,
@@ -346,6 +347,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     patch: {
                         service: serviceId,
                         groupId,
+                        expectedGeneration,
                         expectedIncarnation,
                         expectedRuntimeStateRevision,
                         runtimeState,

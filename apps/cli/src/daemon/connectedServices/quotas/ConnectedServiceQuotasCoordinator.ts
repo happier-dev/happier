@@ -7,11 +7,14 @@ import {
   isConnectedServiceCredentialHealthStatusUsable,
   openConnectedServiceQuotaSnapshotCiphertext,
   openQualifiedConnectedAccountQuotaResponseV4,
+  parseQualifiedPluginContributionKey,
   parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
   projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   ProviderAccountUsageSnapshotV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   sealProviderAccountUsageSnapshotCiphertext,
   type BuiltInLegacyConnectedAccountOperation,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceAuthGroupMemberStateV1,
   type ConnectedServiceCredentialHealthV1,
   type ConnectedServiceCredentialRecordV1,
@@ -42,9 +45,6 @@ import {
 import {
   canonicalizeAgentAccountUsageSnapshot,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
-import type {
-  ConnectedServiceRuntimeAuthApplyCapability,
-} from '@/agent/catalog/types';
 import type {
   ConnectedServiceCredentialPlainResponse,
   ConnectedServiceCredentialSealedResponse,
@@ -130,7 +130,6 @@ import {
 } from './types';
 import { RuntimeAccountIdentityIndex } from './identity/RuntimeAccountIdentityIndex';
 import { resolveSessionsSharingProviderAccount } from './identity/resolveSessionsSharingProviderAccount';
-import { runtimeAuthApplyRequiresLiveIdentityProbe } from '../accountGroups/switching/predictiveSoftSwitchPolicy';
 import {
   normalizeConnectedServiceSameAccountFanoutStrategy,
   type ConnectedServiceSameAccountFanoutStrategy,
@@ -179,6 +178,7 @@ import type {
   QualifiedConnectedAccountV4Support,
 } from '../qualifiedConnectedAccountV4Support';
 import {
+  resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey,
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
@@ -222,6 +222,7 @@ export type QualifiedConnectedAccountQuotaRuntime = Readonly<{
   updateGroupRuntimeState?(input: Readonly<{
     service: QualifiedConnectedAccountServiceRef;
     groupId: string;
+    expectedGeneration: number;
     expectedIncarnation: string;
     expectedRuntimeStateRevision: number;
     runtimeState: Readonly<{
@@ -236,7 +237,7 @@ export type QualifiedConnectedAccountQuotaRuntime = Readonly<{
 }>;
 
 type ScalarQualifiedConnectedAccountGroup = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   group: QualifiedConnectedAccountGroupV4;
 }>;
 
@@ -467,14 +468,14 @@ export type ConnectedServiceQuotaRecoveryCreditConsumeResult =
 type SpawnTarget = ConnectedServiceRuntimeQuotaTarget;
 
 type ActiveConnectedServiceBinding = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string;
   groupId?: string;
   groupGeneration?: number | null;
 }>;
 type ActiveGroupQuotaSwitchTarget = Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   activeProfileId: string;
   groupGeneration: number | null;
@@ -660,27 +661,18 @@ type SameAccountFanoutCandidateIdentity = Readonly<{
 type SameAccountFanoutStrategyResolver = (
   input: Readonly<{
     agentId?: string | null;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     sourceSessionId: string;
     groupId: string;
   }>,
 ) => ConnectedServiceSameAccountFanoutStrategy | Promise<ConnectedServiceSameAccountFanoutStrategy>;
-type RuntimeAuthApplyCapabilityResolver = (
-  input: Readonly<{
-    sessionId: string;
-    agentId?: string | null;
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    reason: 'same_provider_account_exhausted';
-  }>,
-) => ConnectedServiceRuntimeAuthApplyCapability | Promise<ConnectedServiceRuntimeAuthApplyCapability>;
 type PredictiveSwitchGuardResult =
   | Readonly<{ status: 'allow' }>
   | Readonly<{ status: 'suppress' | 'fold'; reason: string }>;
 export type ConnectedServiceQuotaPredictiveSwitchGuard = (
   input: Readonly<{
     sessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     activeProfileId: string;
     reason: 'soft_threshold';
@@ -688,7 +680,7 @@ export type ConnectedServiceQuotaPredictiveSwitchGuard = (
 ) => PredictiveSwitchGuardResult | Promise<PredictiveSwitchGuardResult>;
 export type ConnectedServiceQuotaLifecycleTransition = Readonly<{
   phase: 'blocked' | 'recovered';
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   activeProfileId: string | null;
   sessionIds: ReadonlyArray<string>;
@@ -709,7 +701,7 @@ function buildResolvedSelectionProfilesByServiceId(
 
 function resolveProfileIdFromSelection(input: Readonly<{
   binding: Record<string, unknown>;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   selectionsByServiceId: ReturnType<typeof buildResolvedSelectionProfilesByServiceId>;
 }>): string {
   const explicitProfileId = typeof input.binding.profileId === 'string' ? String(input.binding.profileId).trim() : '';
@@ -732,19 +724,19 @@ function extractActiveBindings(
   const selectionsByServiceId = buildResolvedSelectionProfilesByServiceId(connectedServiceSelectionsEnv);
   const bindings = raw?.bindingsByServiceId ?? {};
   for (const [serviceId, binding] of Object.entries(bindings)) {
-    const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceId);
-    if (!parsedServiceId.success) continue;
+    const parsedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+    if (!parsedServiceId) continue;
     const bindingObj = binding && typeof binding === 'object' ? (binding as Record<string, unknown>) : null;
     const source = typeof bindingObj?.source === 'string' ? String(bindingObj.source) : '';
     if (source !== 'connected') continue;
     if (!bindingObj) continue;
     const profileId = resolveProfileIdFromSelection({
       binding: bindingObj,
-      serviceId: parsedServiceId.data,
+      serviceId: parsedServiceId,
       selectionsByServiceId,
     });
     if (!profileId.trim()) continue;
-    const selection = selectionsByServiceId?.get(parsedServiceId.data);
+    const selection = selectionsByServiceId?.get(parsedServiceId);
     const groupId = selection?.kind === 'group' && selection.activeProfileId === profileId
       ? selection.groupId.trim()
       : '';
@@ -752,7 +744,7 @@ function extractActiveBindings(
       ? normalizeNullableGeneration(selection.generation)
       : null;
     out.push({
-      serviceId: parsedServiceId.data,
+      serviceId: parsedServiceId,
       profileId,
       ...(groupId ? { groupId } : {}),
       ...(groupId ? { groupGeneration } : {}),
@@ -764,7 +756,7 @@ function extractActiveBindings(
 function activeBindingMatchesRuntimeIdentity(
   binding: ActiveConnectedServiceBinding,
   identity: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string | null;
     profileId: string;
     groupGeneration: number | null;
@@ -1028,7 +1020,6 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly consumeCommittedAuthGroupGeneration: ConsumeCommittedAuthGroupGeneration | null;
   private readonly predictiveSwitchGuard: ConnectedServiceQuotaPredictiveSwitchGuard | null;
   private readonly sameAccountFanoutStrategyResolver: SameAccountFanoutStrategyResolver;
-  private readonly runtimeAuthApplyCapabilityResolver: RuntimeAuthApplyCapabilityResolver | null;
   private readonly groupSwitchCheckMinIntervalMs: number;
   private readonly groupSwitchCheckJitterMs: number;
   private readonly sameAccountFanoutMinIntervalMs: number;
@@ -1085,7 +1076,6 @@ export class ConnectedServiceQuotasCoordinator {
     consumeCommittedAuthGroupGeneration?: ConsumeCommittedAuthGroupGeneration | null;
     predictiveSwitchGuard?: ConnectedServiceQuotaPredictiveSwitchGuard | null;
     sameAccountFanoutStrategyResolver?: SameAccountFanoutStrategyResolver;
-    runtimeAuthApplyCapabilityResolver?: RuntimeAuthApplyCapabilityResolver | null;
     readRuntimeAccountIdentityForFanout?: RuntimeAccountIdentityFanoutReader | null;
     /**
      * Durable same-account fanout fallback proof source. When the live probe is UNAVAILABLE or INEXACT
@@ -1163,7 +1153,6 @@ export class ConnectedServiceQuotasCoordinator {
     this.predictiveSwitchGuard = params.predictiveSwitchGuard ?? null;
     this.sameAccountFanoutStrategyResolver = params.sameAccountFanoutStrategyResolver
       ?? (() => 'none');
-    this.runtimeAuthApplyCapabilityResolver = params.runtimeAuthApplyCapabilityResolver ?? null;
     this.readRuntimeAccountIdentityForFanout = params.readRuntimeAccountIdentityForFanout ?? null;
     this.readPersistedSessionAccountIdentity = params.readPersistedSessionAccountIdentity ?? null;
     this.groupSwitchCheckMinIntervalMs =
@@ -1521,8 +1510,8 @@ export class ConnectedServiceQuotasCoordinator {
     this.runtimeQuotaSnapshots?.recordProfileSnapshot(input);
   }
 
-  private async readQualifiedGroupForScalarContext(input: Readonly<{
-    serviceId: ConnectedServiceId;
+  private async readQualifiedGroupForServiceKey(input: Readonly<{
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     signal?: AbortSignal;
   }>): Promise<ScalarQualifiedConnectedAccountGroup | null> {
@@ -1533,10 +1522,7 @@ export class ConnectedServiceQuotasCoordinator {
     ) {
       return null;
     }
-    const service =
-      resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
-        input.serviceId,
-      );
+    const service = parseQualifiedPluginContributionKey(input.serviceId);
     if (!service) return null;
     const groupId = input.groupId.trim();
     if (!groupId) return null;
@@ -1651,6 +1637,7 @@ export class ConnectedServiceQuotasCoordinator {
           return await runtime.updateGroupRuntimeState!({
             service: patch.serviceId,
             groupId: patch.groupId,
+            expectedGeneration: patch.expectedGeneration,
             expectedIncarnation: patch.expectedIncarnation,
             expectedRuntimeStateRevision:
               patch.expectedRuntimeStateRevision,
@@ -2442,7 +2429,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   private async resolveSameAccountFanoutStrategy(input: Readonly<{
     sourceSessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): Promise<ConnectedServiceSameAccountFanoutStrategy> {
     const sourceTarget = this.findSpawnTargetForSession(input.sourceSessionId);
@@ -2456,7 +2443,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   private resolveGroupGenerationForSession(input: Readonly<{
     sessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): number | null {
     const target = this.findSpawnTargetForSession(input.sessionId);
@@ -2468,7 +2455,7 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private buildCurrentGroupGenerationBySessionId(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): Map<string, number | null> {
     const generations = new Map<string, number | null>();
@@ -2551,7 +2538,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   private listActiveSameGroupFanoutCandidates(input: Readonly<{
     sourceSessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): ActiveSameAccountFanoutCandidate[] {
     const candidates: ActiveSameAccountFanoutCandidate[] = [];
@@ -2596,25 +2583,6 @@ export class ConnectedServiceQuotasCoordinator {
       case 'missing':
       case 'unavailable':
         return 'same_account_fanout_no_live_identity';
-    }
-  }
-
-  private async resolveRuntimeAuthApplyCapabilityForFanoutCandidate(
-    candidate: ActiveSameAccountFanoutCandidate,
-  ): Promise<ConnectedServiceRuntimeAuthApplyCapability> {
-    if (!this.runtimeAuthApplyCapabilityResolver) {
-      return { directLiveHotAuth: 'unsupported' };
-    }
-    try {
-      return await this.runtimeAuthApplyCapabilityResolver({
-        sessionId: candidate.sessionId,
-        agentId: candidate.agentId ?? null,
-        serviceId: candidate.serviceId,
-        groupId: candidate.groupId,
-        reason: 'same_provider_account_exhausted',
-      });
-    } catch {
-      return { directLiveHotAuth: 'unsupported' };
     }
   }
 
@@ -2791,7 +2759,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   private async resolveSameAccountFanoutCandidates(input: Readonly<{
     sourceSessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     strategy: ConnectedServiceSameAccountFanoutStrategy;
     providerAccountId?: string | null;
@@ -2828,11 +2796,6 @@ export class ConnectedServiceQuotasCoordinator {
         matches.push(candidate);
         continue;
       }
-      const runtimeAuthApply = await this.resolveRuntimeAuthApplyCapabilityForFanoutCandidate(candidate.candidate);
-      if (!runtimeAuthApplyRequiresLiveIdentityProbe(runtimeAuthApply)) {
-        matches.push(candidate);
-        continue;
-      }
       if (this.liveIdentityProbeUnsupportedSessionIds.has(candidate.candidate.sessionId)) {
         this.runtimeAccountIdentities.invalidateSession(candidate.candidate.sessionId);
         continue;
@@ -2862,7 +2825,7 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private makeSameAccountFanoutKey(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     providerAccountId: string;
     resetAtMs: number | null;
@@ -2922,7 +2885,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   public async recordAccountExhaustionAndFanout(input: Readonly<{
     sourceSessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     exhaustedProfileId: string;
     providerAccountId?: string | null;
@@ -3014,20 +2977,20 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private listCommittedGenerationTargetsForGroup(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     sourceSessionId: string;
     sourceProfileId: string;
     includeSource: boolean;
   }>): ReadonlyArray<Readonly<{
     sessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     fromProfileId: string;
   }>> {
     const targetsBySessionId = new Map<string, Readonly<{
       sessionId: string;
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       fromProfileId: string;
     }>>();
@@ -3063,7 +3026,7 @@ export class ConnectedServiceQuotasCoordinator {
     observedProfileId: string;
     targets: ReadonlyArray<Readonly<{
       sessionId: string;
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       fromProfileId: string;
     }>>;
@@ -3127,7 +3090,7 @@ export class ConnectedServiceQuotasCoordinator {
     reason: 'soft_threshold' | 'same_provider_account_exhausted';
     targets: ReadonlyArray<Readonly<{
       sessionId: string;
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       fromProfileId: string;
     }>>;
@@ -3167,7 +3130,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   public async recordRuntimeUsageLimitExhaustionAndFanout(input: Readonly<{
     sourceSessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string | null;
     exhaustedProfileId: string | null;
     resetAtMs: number | null;
@@ -3325,10 +3288,10 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private async resolveSoftSwitchTargetEligibility(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): Promise<GroupSwitchTargetEligibility> {
-    const scalarGroup = await this.readQualifiedGroupForScalarContext({
+    const scalarGroup = await this.readQualifiedGroupForServiceKey({
       serviceId: input.serviceId,
       groupId: input.groupId,
     }).catch(() => null);
@@ -3440,7 +3403,7 @@ export class ConnectedServiceQuotasCoordinator {
     return false;
   }
 
-  private resolveActiveSessionIdsForGroup(serviceId: ConnectedServiceId, groupId: string): string[] {
+  private resolveActiveSessionIdsForGroup(serviceId: ConnectedAccountServiceKey, groupId: string): string[] {
     const sessionIds: string[] = [];
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
@@ -3476,13 +3439,13 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private async evaluateGroupQuotaLifecycleForGroup(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     changedProfileId?: string;
     now: number;
   }>): Promise<void> {
     if (!this.onQuotaLifecycleTransition) return;
-    const group = await this.readQualifiedGroupForScalarContext({
+    const group = await this.readQualifiedGroupForServiceKey({
       serviceId: input.serviceId,
       groupId: input.groupId,
     }).catch(() => null);
@@ -3513,21 +3476,21 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private makeQuotaLifecycleGroupKey(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): string {
     return `${input.serviceId}\u0000${input.groupId}`;
   }
 
   private readQuotaLifecycleState(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
   }>): ConnectedServiceAuthGroupQuotaLifecycleState {
     return this.quotaLifecycleStateByGroupKey.get(this.makeQuotaLifecycleGroupKey(input)) ?? { status: 'unblocked' };
   }
 
   private recordQuotaLifecycleEvaluationState(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     nextState: ConnectedServiceAuthGroupQuotaLifecycleState;
   }>): void {
@@ -3818,7 +3781,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   public async handleAccountUsageChanged(input: Readonly<{
     sessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     groupId: string;
     groupGeneration: number;
@@ -3831,7 +3794,7 @@ export class ConnectedServiceQuotasCoordinator {
     if (!this.accountUsageStore) return;
     const groupId = input.groupId.trim();
     if (!groupId) return;
-    const group = await this.readQualifiedGroupForScalarContext({
+    const group = await this.readQualifiedGroupForServiceKey({
       serviceId: input.serviceId,
       groupId,
     }).catch(() => null);
@@ -4475,7 +4438,7 @@ export class ConnectedServiceQuotasCoordinator {
       const key = `${target.serviceId}\u0000${target.groupId}`;
       const existing = authGroupByKey.get(key);
       if (existing) return existing;
-      const promise = this.readQualifiedGroupForScalarContext({
+      const promise = this.readQualifiedGroupForServiceKey({
           serviceId: target.serviceId,
           groupId: target.groupId,
         }).catch(() => null);
@@ -4520,16 +4483,19 @@ export class ConnectedServiceQuotasCoordinator {
       for (const entry of extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv)) {
         const profileId = String(entry.profileId ?? '').trim();
         if (!profileId) continue;
-        const existing = bindingsByServiceId.get(entry.serviceId);
+        const legacyServiceId =
+          resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(entry.serviceId);
+        if (!legacyServiceId) continue;
+        const existing = bindingsByServiceId.get(legacyServiceId);
         if (existing) {
           existing.add(profileId);
         } else {
-          bindingsByServiceId.set(entry.serviceId, new Set([profileId]));
+          bindingsByServiceId.set(legacyServiceId, new Set([profileId]));
         }
         const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
         const groupId = typeof entry.groupId === 'string' ? entry.groupId.trim() : '';
         if (sessionId && groupId) {
-          const bindingKey = this.makeBindingKey({ serviceId: entry.serviceId, profileId });
+          const bindingKey = this.makeBindingKey({ serviceId: legacyServiceId, profileId });
           const targets = groupSwitchTargetsByBindingKey.get(bindingKey) ?? [];
           if (!targets.some((candidate) =>
             candidate.sessionId === sessionId
@@ -4545,7 +4511,7 @@ export class ConnectedServiceQuotasCoordinator {
               groupGeneration: entry.groupGeneration ?? null,
             };
             targets.push(groupTarget);
-            const serviceTargets = activeGroupTargetsByServiceId.get(entry.serviceId) ?? [];
+            const serviceTargets = activeGroupTargetsByServiceId.get(legacyServiceId) ?? [];
             if (!serviceTargets.some((candidate) =>
               candidate.sessionId === groupTarget.sessionId
               && candidate.serviceId === groupTarget.serviceId
@@ -4553,7 +4519,7 @@ export class ConnectedServiceQuotasCoordinator {
               && candidate.activeProfileId === groupTarget.activeProfileId
             )) {
               serviceTargets.push(groupTarget);
-              activeGroupTargetsByServiceId.set(entry.serviceId, serviceTargets);
+              activeGroupTargetsByServiceId.set(legacyServiceId, serviceTargets);
             }
           }
           groupSwitchTargetsByBindingKey.set(bindingKey, targets);

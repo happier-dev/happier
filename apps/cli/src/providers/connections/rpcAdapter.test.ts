@@ -38,4 +38,16 @@ describe('createProviderConnectionRpcAdapter', () => {
     }))).resolves.toMatchObject({ status: 'success', action: 'createContribution', connection: { connectionId: 'pc_a' } });
     expect(service.create).toHaveBeenCalledTimes(1);
   });
+
+  it('refuses to serialize a malformed Provider-shaped service error', async () => {
+    const service = {
+      describe: vi.fn(async () => ({
+        status: 'error' as const,
+        error: { v: 1, code: 'provider_endpoint_unavailable', secret: 'must-not-escape' },
+      })),
+    };
+    const adapter = createProviderConnectionRpcAdapter(service as never);
+
+    await expect(adapter.describeConnections({ machineId: 'machine-a' })).rejects.toThrow();
+  });
 });

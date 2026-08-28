@@ -1,4 +1,4 @@
-import type { BackendTargetRefV2, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1, BackendTargetRefV2, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
@@ -16,6 +16,7 @@ import {
   resolveConcreteCompatBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { readSessionHandoffAgentId } from '@/session/handoff/metadata/sessionHandoffMetadataV1';
+import { resolveCurrentExternalSessionAgentRoutingId } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 
 function isConcreteBuiltInCatalogAgentId(value: string): value is CatalogAgentId {
   return value !== 'customAcp' && isCatalogAgentId(value);
@@ -120,14 +121,52 @@ type ResolveSpawnBackendIdentityFailure = Readonly<{
 export async function resolveSpawnBackendIdentity(params: Readonly<{
   existingSessionId: string;
   resume: string;
+  agentTarget: AgentExecutionTargetV1 | undefined;
   backendTarget: BackendTargetRefV2 | undefined;
   credentials: StoredCredentials | null;
   loadLocalHandoffMetadataByVendorResumeId: (vendorResumeId: string) => Promise<Record<string, unknown> | null>;
 }>): Promise<ResolveSpawnBackendIdentitySuccess | ResolveSpawnBackendIdentityFailure> {
   const normalizedExistingSessionId = params.existingSessionId.trim();
   let effectiveResume = params.resume.trim();
+  const resolvedAgentRoutingId = params.agentTarget
+    ? await resolveCurrentExternalSessionAgentRoutingId(params.agentTarget.identity)
+    : null;
+  if (params.agentTarget && !resolvedAgentRoutingId) {
+    return {
+      ok: false,
+      error: {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Selected Agent is not installed or unavailable',
+      },
+    };
+  }
   const hasBackendTargetInput = params.backendTarget !== undefined;
-  let effectiveBackendTargetV2 = normalizeDaemonBackendTargetV2Input(params.backendTarget);
+  const compatibilityBackendTarget = normalizeDaemonBackendTargetV2Input(params.backendTarget);
+  if (
+    resolvedAgentRoutingId
+    && compatibilityBackendTarget
+    && (
+      compatibilityBackendTarget.sourceKind === 'configured'
+      || compatibilityBackendTarget.backendId !== resolvedAgentRoutingId
+    )
+  ) {
+    return {
+      ok: false,
+      error: {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Agent target does not match compatibility backend target',
+      },
+    };
+  }
+  let effectiveBackendTargetV2 = resolvedAgentRoutingId
+    ? {
+        kind: 'backend' as const,
+        backendId: resolvedAgentRoutingId,
+        sourceKind: 'built_in' as const,
+      }
+    : compatibilityBackendTarget;
   let sessionAttachPayload: SessionAttachFilePayload | null = null;
   let ownerMetadata: SessionOwnerMetadataV1 | null = null;
   let existingSessionWorkspacePath: string | null = null;
@@ -154,7 +193,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     ownerMetadata = attachContext.ownerMetadata ?? null;
     existingSessionWorkspacePath =
       attachContext.existingSessionWorkspacePath ?? null;
-    if (attachContext.backendTarget) {
+    if (!params.agentTarget && attachContext.backendTarget) {
       const attachedBackendTarget = resolveConcreteCompatBackendTargetRefs(attachContext.backendTarget);
       if (attachedBackendTarget) {
         effectiveBackendTargetV2 = attachedBackendTarget.backendTargetV2;
@@ -171,7 +210,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
         effectiveResume = derivedResume;
       }
     }
-    if (!effectiveBackendTargetV2 && effectiveResume) {
+    if (!params.agentTarget && !effectiveBackendTargetV2 && effectiveResume) {
       const localHandoffMetadataOverlay = await params.loadLocalHandoffMetadataByVendorResumeId(effectiveResume).catch(() => null);
       const localHandoffBackendTarget = resolveBackendTargetFromLocalHandoffOverlay(localHandoffMetadataOverlay);
       if (localHandoffBackendTarget) {
@@ -187,8 +226,8 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
         errorMessage: hasBackendTargetInput || normalizedExistingSessionId
-          ? 'Unknown backend target'
-          : 'Backend target is required for fresh session spawn.',
+          ? 'Unknown Agent or backend target'
+          : 'Agent target is required for fresh session spawn.',
       },
     };
   }

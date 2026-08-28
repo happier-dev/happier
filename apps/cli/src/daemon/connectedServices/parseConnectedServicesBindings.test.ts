@@ -6,6 +6,22 @@ import {
 } from './parseConnectedServicesBindings';
 
 describe('parseConnectedServicesBindings', () => {
+  it('preserves a novel external qualified Connected Account service key', () => {
+    expect(parseConnectedServiceBindingSelections({
+      v: 1,
+      bindingsByServiceId: {
+        'acme.accounts/session-auth': {
+          source: 'connected',
+          profileId: 'work',
+        },
+      },
+    })).toEqual([{
+      kind: 'profile',
+      serviceId: 'acme.accounts/session-auth',
+      profileId: 'work',
+    }]);
+  });
+
   it('returns connected bindings with profile ids', () => {
     const parsed = parseConnectedServicesBindings({
       v: 1,
@@ -14,7 +30,7 @@ describe('parseConnectedServicesBindings', () => {
         anthropic: { source: 'native' },
       },
     });
-    expect(parsed).toEqual([{ serviceId: 'openai-codex', profileId: 'work' }]);
+    expect(parsed).toEqual([{ serviceId: 'happier.agent.codex/openai-codex', profileId: 'work' }]);
   });
 
   it('returns an empty list for invalid payloads', () => {
@@ -38,7 +54,7 @@ describe('parseConnectedServicesBindings', () => {
     expect(parsed).toEqual([
       {
         kind: 'group',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'codex-main',
         fallbackProfileId: 'work',
       },
@@ -53,7 +69,7 @@ describe('parseConnectedServicesBindings', () => {
           profileId: 'work',
         },
       },
-    })).toEqual([{ serviceId: 'openai-codex', profileId: 'work' }]);
+    })).toEqual([{ serviceId: 'happier.agent.codex/openai-codex', profileId: 'work' }]);
   });
 
   it('accepts group selections without fallback profile ids', () => {
@@ -71,7 +87,7 @@ describe('parseConnectedServicesBindings', () => {
     expect(parsed).toEqual([
       {
         kind: 'group',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'codex-main',
       },
     ]);

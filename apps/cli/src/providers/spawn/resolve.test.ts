@@ -119,6 +119,10 @@ const managedContribution: ResolvedProviderContribution = {
   source: { kind: 'bundled' },
   definition: ProviderContributionV1Schema.parse({
     ...definition,
+    catalog: {
+      ...definition.catalog,
+      sourceRegistryVersion: 'gateway-registry:v1',
+    },
     managedRuntime: {
       kind: 'managed',
       endpointTemplateIds: ['responses'],
@@ -2264,6 +2268,7 @@ describe('shared provider probe authorization resolver', () => {
       purposeBindings,
       endpointTemplateId: 'responses',
       protocol: 'openai-responses' as const,
+      sourceRegistryVersion: 'gateway-registry:v1',
       path: '/models',
       parser: 'openai-models' as const,
       probeRequestFingerprint: createProviderManagedProbeRequestFingerprintV1({
@@ -2272,6 +2277,7 @@ describe('shared provider probe authorization resolver', () => {
         purposeBindings,
         endpointTemplateId: 'responses',
         protocol: 'openai-responses',
+        sourceRegistryVersion: 'gateway-registry:v1',
         method: 'GET',
         path: '/models',
         parser: 'openai-models',
@@ -2355,6 +2361,7 @@ describe('shared provider probe authorization resolver', () => {
       purposeBindings,
       endpointTemplateId: 'responses',
       protocol: 'openai-responses' as const,
+      sourceRegistryVersion: 'gateway-registry:v1',
       path: '/models',
       parser: 'openai-models' as const,
       probeRequestFingerprint: createProviderManagedProbeRequestFingerprintV1({
@@ -2363,6 +2370,7 @@ describe('shared provider probe authorization resolver', () => {
         purposeBindings,
         endpointTemplateId: 'responses',
         protocol: 'openai-responses',
+        sourceRegistryVersion: 'gateway-registry:v1',
         method: 'GET',
         path: '/models',
         parser: 'openai-models',

@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type {
   RuntimeAccountIdentityEntry,
@@ -79,7 +79,7 @@ export class RuntimeAccountIdentityIndex {
   }
 
   public listByProviderAccount(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     providerAccountId: string;
     groupId?: string | null;
     excludeSessionId?: string | null;

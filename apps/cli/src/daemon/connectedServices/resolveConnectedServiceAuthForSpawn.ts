@@ -8,6 +8,7 @@ import {
   type QualifiedConnectedAccountProfileV4,
   type QualifiedConnectedAccountServiceRef,
   type QualifiedConnectedAccountPurposeBindingV1,
+  type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -37,6 +38,7 @@ import {
   ConnectedServiceMaterializationBlockedError,
   materializeConnectedServicesForSpawn,
 } from './materialize/materializeConnectedServicesForSpawn';
+import { isExactV021GeminiOauthLaunchProjection } from './compatibility/exactV021ConnectedServiceMaterialization';
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
 import type {
@@ -236,6 +238,7 @@ export class ConnectedServiceLegacyUnfencedAuthorityError extends Error {
 }
 
 function supportsLegacyUnfencedOneShotMaterialization(
+  agentId: CatalogAgentId,
   resolutions: ReadonlyMap<
     ConnectedServiceId,
     ConnectedServiceCredentialResolution
@@ -251,22 +254,32 @@ function supportsLegacyUnfencedOneShotMaterialization(
         resolution.record.serviceId as keyof
           typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID
       ] as BuiltInLegacyConnectedAccountCompatibility | undefined;
-    if (
-      !compatibility
-      || compatibility.authenticationModeByCredentialKind[
-        resolution.record.kind
-      ] === undefined
-    ) {
+    if (!compatibility) {
       return false;
     }
+    const projectionOnlyGeminiOauth =
+      isExactV021GeminiOauthLaunchProjection({
+        agentId,
+        record: resolution.record,
+      });
+    if (
+      compatibility.authenticationModeByCredentialKind[
+        resolution.record.kind
+      ] === undefined
+      && !projectionOnlyGeminiOauth
+    ) return false;
     const authenticationModeCardinality =
-      new Set(
-        Object.values(
-          compatibility.authenticationModeByCredentialKind,
-        ),
-      ).size > 1
-        ? 'multiple' as const
-        : 'single' as const;
+      projectionOnlyGeminiOauth
+        ? 'single' as const
+        : (
+            new Set(
+              Object.values(
+                compatibility.authenticationModeByCredentialKind,
+              ),
+            ).size > 1
+              ? 'multiple' as const
+              : 'single' as const
+          );
     try {
       const transport =
         resolveQualifiedConnectedAccountOperationTransport({
@@ -1109,11 +1122,13 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
   connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
+  qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
+  exactPurposeBindingSubjectId?: string;
   accountSettings: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv: NodeJS.ProcessEnv;
   vendorResumeId: string | null;
   resumeReachabilityRequired: boolean;
-  candidatePersistedSessionFile: string | null;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>): Promise<ConnectedServicesMaterialization | null> {
   const materialized = await materializeConnectedServicesForSpawn({
     agentId: params.agentId,
@@ -1125,20 +1140,30 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     selectionsByServiceId: params.selectionsByServiceId,
     connectedAccountMaterializationAuthority:
       params.connectedAccountMaterializationAuthority,
+    qualifiedPurposeBindingSnapshot:
+      params.qualifiedPurposeBindingSnapshot ?? null,
+    ...(params.exactPurposeBindingSubjectId
+      ? { exactPurposeBindingSubjectId: params.exactPurposeBindingSubjectId }
+      : {}),
     accountSettings: params.accountSettings,
     processEnv: params.processEnv,
   });
 
   if (!materialized) return null;
 
-  await assertSpawnResumeReachable({
-    agentId: params.agentId,
-    materializedEnv: materialized.env,
-    vendorResumeId: params.vendorResumeId,
-    cwd: params.sessionDirectory,
-    resumeReachabilityRequired: params.resumeReachabilityRequired,
-    candidatePersistedSessionFile: params.candidatePersistedSessionFile,
-  });
+  try {
+    await assertSpawnResumeReachable({
+      agentId: params.agentId,
+      materializedEnv: materialized.env,
+      vendorResumeId: params.vendorResumeId,
+      cwd: params.sessionDirectory,
+      resumeReachabilityRequired: params.resumeReachabilityRequired,
+      ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
+    });
+  } catch (error) {
+    await Promise.resolve(materialized.cleanupOnFailure?.());
+    throw error;
+  }
   return materialized;
 }
 
@@ -1175,14 +1200,20 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
    */
   resumeReachabilityRequired?: boolean;
   /**
-   * A persisted absolute vendor session-file hint, when known. Per D8 this is a fast-path hint only:
-   * a stale/cross-machine path that fails to stat must degrade to the id+cwd native search, never
-   * hard-fail.
+   * Host-owned current resume evidence. The strict spawn gate deliberately
+   * proves the materialized target instead of exposing this path to the Agent.
    */
   candidatePersistedSessionFile?: string | null;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
   resolveQualifiedPurposeBindingSnapshot?: (
     bindings: ConnectedServicesBindingsV1,
   ) => AgentSpawnQualifiedPurposeBindingSnapshot | null;
+  activateQualifiedPurposeBindings?: (
+    snapshot: AgentSpawnQualifiedPurposeBindingSnapshot,
+  ) => Readonly<{
+    subjectId: string;
+    dispose(): void | Promise<void>;
+  }>;
   /**
    * Allows the ordinary Agent spawn owner to downgrade an exact-old-server
    * profile selection to its bounded legacy materializer. The resolved
@@ -1194,14 +1225,18 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     SessionSyncPendingInputServerContractResult | null;
 }>): Promise<Readonly<{
   env: Record<string, string>;
-  cleanupOnFailure: (() => void) | null;
-  cleanupOnExit: (() => void) | null;
+  cleanupOnFailure: (() => void | Promise<void>) | null;
+  cleanupOnExit: (() => void | Promise<void>) | null;
   connectedServicesBindings: ConnectedServicesBindingsV1;
   targetMaterializedRoot?: string | null;
   requestAuthMaterializedRoot?: string | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
   requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
   qualifiedPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
+  materializationPurposeLease?: Readonly<{
+    subjectId: string;
+    dispose(): void | Promise<void>;
+  }>;
   ongoingRuntimeRegistrationAllowed?: false;
 }> | null> {
   const selections = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
@@ -1268,6 +1303,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     && (
       !exactLegacyUnfencedServer
       || !supportsLegacyUnfencedOneShotMaterialization(
+        params.agentId,
         credentialResolutionsByServiceId,
         serverFeatures,
         params.serverContract,
@@ -1375,26 +1411,33 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       selections,
       groupSelections,
     });
-    const qualifiedPurposeBindingSnapshot = hasLegacyUnfencedCredential
-      ? null
-      : params.resolveQualifiedPurposeBindingSnapshot?.(
-          connectedServicesBindings,
-        ) ?? null;
+    const qualifiedPurposeBindingSnapshot =
+      params.resolveQualifiedPurposeBindingSnapshot?.(
+        connectedServicesBindings,
+      ) ?? null;
     if (!hasLegacyUnfencedCredential) {
       assertQualifiedPurposeAuthorityForSelections({
         selections,
         snapshot: qualifiedPurposeBindingSnapshot,
       });
     }
-    const requestAuthPurposeBindings =
-      resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
-        qualifiedPurposeBindingSnapshot,
-      );
+    const requestAuthPurposeBindings = hasLegacyUnfencedCredential
+      ? Object.freeze([])
+      : resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
+          qualifiedPurposeBindingSnapshot,
+        );
     assertRequestAuthCredentialRevisions({
       purposeBindings: requestAuthPurposeBindings,
       credentialResolutionsByServiceId,
     });
 
+    const materializationPurposeLease = !hasLegacyUnfencedCredential
+      && qualifiedPurposeBindingSnapshot
+      ? params.activateQualifiedPurposeBindings?.(
+          qualifiedPurposeBindingSnapshot,
+        ) ?? null
+      : null;
+    let retainMaterializationPurposeLease = false;
     try {
       const materialized = await materializeAndVerifyConnectedServiceAuthForSpawn({
         agentId: params.agentId,
@@ -1413,18 +1456,29 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
                 ?? Object.freeze([]),
               requestAuthPurposeBindings,
             },
+        qualifiedPurposeBindingSnapshot,
+        ...(materializationPurposeLease
+          ? {
+              exactPurposeBindingSubjectId:
+                materializationPurposeLease.subjectId,
+            }
+          : {}),
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
         vendorResumeId: params.vendorResumeId ?? null,
         resumeReachabilityRequired: params.resumeReachabilityRequired ?? false,
-        candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
+        ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
       });
       if (materialized === null) return null;
+      retainMaterializationPurposeLease = materializationPurposeLease !== null;
       return {
         ...materialized,
         connectedServicesBindings,
         requestAuthPurposeBindings,
         qualifiedPurposeBindingSnapshot,
+        ...(materializationPurposeLease
+          ? { materializationPurposeLease }
+          : {}),
         ...(hasLegacyUnfencedCredential
           ? { ongoingRuntimeRegistrationAllowed: false as const }
           : {}),
@@ -1444,6 +1498,10 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         nowMs,
       });
       if (!recovered) throw error;
+    } finally {
+      if (!retainMaterializationPurposeLease) {
+        await materializationPurposeLease?.dispose();
+      }
     }
   }
 
@@ -1461,9 +1519,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
  * cross-machine fallback is preserved by the provider probe itself (a stale absolute hint degrades to
  * the id+cwd native search), so this gate only fires when state is genuinely unreachable.
  *
- * When reachability IS required and a resume reference is present but a required gate input (`cwd`) is
- * missing, the gate FAILS CLOSED with `resume_reachability_inputs_missing` rather than silently
- * skipping — a plumbing fault must not be able to disable the hard gate for a continuity resume.
  */
 async function assertSpawnResumeReachable(params: Readonly<{
   agentId: CatalogAgentId;
@@ -1471,7 +1526,7 @@ async function assertSpawnResumeReachable(params: Readonly<{
   vendorResumeId: string | null;
   cwd: string | null;
   resumeReachabilityRequired: boolean;
-  candidatePersistedSessionFile: string | null;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>): Promise<void> {
   if (!params.resumeReachabilityRequired) return;
   const vendorResumeId = typeof params.vendorResumeId === 'string' ? params.vendorResumeId.trim() : '';
@@ -1479,37 +1534,18 @@ async function assertSpawnResumeReachable(params: Readonly<{
   // apply (see the `vendorResumeId` param contract). A fresh spawn is never gated.
   if (!vendorResumeId) return;
 
-  // A RESUME is requested and reachability is REQUIRED, but a gate input (cwd) is missing. This is a
-  // plumbing fault, not a fresh spawn: returning here would SILENTLY disable the hard gate and let the
-  // vendor launch resuming a path we never proved. Fail closed with the structured continuity reason
-  // (same taxonomy as a genuine miss) instead of passing.
-  const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
-  if (!cwd) {
-    throw new ConnectedServiceSpawnResumeUnreachableError({
-      agentId: params.agentId,
-      vendorResumeId,
-      cwd: '',
-      targetMaterializedRoot: resolveConnectedServiceTargetMaterializedRoot({
-        agentId: params.agentId,
-        targetMaterializedEnv: params.materializedEnv,
-      }),
-      reason: 'resume_reachability_inputs_missing',
-    });
-  }
-
   const reachability = await verifySpawnResumeReachability({
     agentId: params.agentId,
     vendorResumeId,
-    cwd,
     materializedEnv: params.materializedEnv,
-    candidatePersistedSessionFile: params.candidatePersistedSessionFile,
+    ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
   });
   if (reachability.ok) return;
 
   throw new ConnectedServiceSpawnResumeUnreachableError({
     agentId: params.agentId,
     vendorResumeId,
-    cwd,
+    cwd: typeof params.cwd === 'string' ? params.cwd.trim() : '',
     targetMaterializedRoot: resolveConnectedServiceTargetMaterializedRoot({
       agentId: params.agentId,
       targetMaterializedEnv: params.materializedEnv,

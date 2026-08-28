@@ -22,6 +22,7 @@ import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { getProviderContribution } from '@/providers/registry/lookup';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { createProviderProbeHttpClient } from '@/providers/probe/client';
+import { ProviderProbeAdmissionCapacityError } from '@/providers/probe/scheduler';
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
 import type {
   RuntimeProviderOperationScope,
@@ -57,8 +58,12 @@ import {
 import {
   resolveProviderRuntimeCatalogSelectionObservation,
 } from '@/providers/spawn/runtimeCatalog';
-import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import {
+  collectProviderConnectionDnsEvidence,
+  collectProviderConnectionsDnsEvidence,
+} from '@/providers/registry/dnsEvidence';
+import {
+  awaitWithinProviderOperation,
   createProviderOperationLifetime,
   ProviderOperationAbandonedError,
 } from '@/providers/operationLifetime';
@@ -227,7 +232,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
         });
     try {
-      return resolveProviderContributionRegistryView(lease.registry.contributes);
+      if (typeof lease.registry.generation !== 'number') {
+        throw new TypeError('Authoritative Provider registry is missing its generation');
+      }
+      return resolveProviderContributionRegistryView(
+        lease.registry.contributes,
+        lease.registry.generation,
+      );
     } finally {
       await lease.release();
     }
@@ -260,26 +271,118 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     }
 
     const target = parseBackendTargetKeyV2(request.agentTargetKey);
+    const operationLifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+    });
     const snapshot = input.getAccountSettingsSnapshot?.() ?? getActiveAccountSettingsSnapshot();
     if (!snapshot) {
       return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: request.machineId }) };
     }
-    const lease = input.acquireRuntimeLease
-      ? await input.acquireRuntimeLease()
-      : await acquireAuthoritativePluginRuntimeRegistryLease({
+    const pendingLease = input.acquireRuntimeLease
+      ? input.acquireRuntimeLease()
+      : acquireAuthoritativePluginRuntimeRegistryLease({
           happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
         });
+    let lease: Awaited<typeof pendingLease>;
     try {
-      await activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId);
+      lease = await awaitWithinProviderOperation(pendingLease, operationLifetime);
+    } catch (error) {
+      void pendingLease.then((lateLease) => lateLease.release(), () => {});
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          status: 'error',
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            machineId: request.machineId,
+          }),
+        };
+      }
+      throw error;
+    }
+    try {
+      if (typeof lease.registry.generation !== 'number') {
+        return {
+          status: 'error',
+          error: createProviderErrorV1('provider_endpoint_unavailable', {
+            machineId: request.machineId,
+          }),
+        };
+      }
+      try {
+        await awaitWithinProviderOperation(
+          activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId),
+          operationLifetime,
+        );
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+              machineId: request.machineId,
+            }),
+          };
+        }
+        throw error;
+      }
       const adapter = readLeasedAgentProviderBindingAdapter({ lease, agentId: target.backendId });
       if (!adapter) return { status: 'success', agentTargetKey: request.agentTargetKey, groups: [] };
       const settingsRead = readProviderSettingsForCli(snapshot.settings);
-      const registry = resolveProviderContributionRegistryView(lease.registry.contributes);
+      const registry = resolveProviderContributionRegistryView(
+        lease.registry.contributes,
+        lease.registry.generation,
+      );
+      let dnsEvidenceByConnectionId;
+      try {
+        dnsEvidenceByConnectionId = await collectProviderConnectionsDnsEvidence({
+          connectionIds: settingsRead.settings.connections.map((connection) => connection.id),
+          machineId: request.machineId,
+          providerSettings: settingsRead.settings,
+          registry,
+          ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+          admitResolution: sharedRuntime.probeInfrastructure.scheduler.runDns,
+          lifetime: operationLifetime,
+        });
+      } catch (error) {
+        if (error instanceof ProviderProbeAdmissionCapacityError) {
+          return {
+            status: 'error',
+            error: createProviderErrorV1('provider_probe_capacity_exhausted', {
+              machineId: request.machineId,
+            }),
+          };
+        }
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+              machineId: request.machineId,
+            }),
+          };
+        }
+        throw error;
+      }
       const operationScope: RuntimeProviderOperationScope = {
         registry,
-        lifetime: createProviderOperationLifetime({
-          wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-        }),
+        dnsEvidenceByConnectionId,
+        ...(snapshot.scopeKey
+          ? {
+              accountSettingsBasis: {
+                scopeKey: snapshot.scopeKey,
+                settingsVersion: snapshot.settingsVersion,
+                accountSettings: snapshot.settings,
+                settingsRead,
+              },
+            }
+          : {}),
+        resolveContributedCatalogParsers: async (identity) => {
+          const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
+          return acquired
+            ? Object.freeze({
+                parsersByFormat: acquired.parsersByFormat,
+                isCurrent: () => acquired.isCurrent(),
+              })
+            : null;
+        },
+        lifetime: operationLifetime,
       };
       // One picker projection is a point-in-time Account-settings read. Reuse
       // its already-parsed Provider settings through the canonical resolver;
@@ -290,6 +393,52 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         settingsRead,
       });
       const assemble = async (runtimeState: ProviderRuntimeStateFileV1) => {
+        // This projection is a single point-in-time read. Index the immutable
+        // runtime snapshot once, then give each connection only its own rows.
+        // The canonical selectors and assemblers still make every semantic
+        // decision; this only avoids rescanning machine-wide collections for
+        // every connection.
+        const endpointHealthByConnectionId = new Map<string, typeof runtimeState.endpointHealth>();
+        const catalogsByConnectionId = new Map<string, typeof runtimeState.catalogs>();
+        const modelLoadStatesByConnectionId = new Map<string, typeof runtimeState.modelLoadStates>();
+        const append = <T>(index: Map<string, T[]>, connectionId: string, value: T) => {
+          const rows = index.get(connectionId);
+          if (rows) rows.push(value);
+          else index.set(connectionId, [value]);
+        };
+        for (const row of runtimeState.endpointHealth) {
+          append(endpointHealthByConnectionId, row.key.connectionId, row);
+        }
+        for (const row of runtimeState.catalogs) {
+          append(catalogsByConnectionId, row.key.connectionId, row);
+        }
+        for (const row of runtimeState.modelLoadStates) {
+          append(modelLoadStatesByConnectionId, row.key.connectionId, row);
+        }
+        const runtimeStateForConnection = (connectionId: string): ProviderRuntimeStateFileV1 => ({
+          ...runtimeState,
+          endpointHealth: endpointHealthByConnectionId.get(connectionId) ?? [],
+          catalogs: catalogsByConnectionId.get(connectionId) ?? [],
+          // Installation checks are contribution-wide and are not consumed by
+          // picker catalog assembly.
+          installationChecks: [],
+          modelLoadStates: modelLoadStatesByConnectionId.get(connectionId) ?? [],
+        });
+        // DNS and canonical connection resolution are independent across this
+        // immutable settings basis. Resolve them together; Promise.all retains
+        // settings order, and no consumer queue competes with the sole probe
+        // scheduler that owns later refresh admission.
+        const resolvedContexts = await Promise.all(settingsRead.settings.connections.map(async (connection) => {
+          const connectionRuntimeState = runtimeStateForConnection(connection.id);
+          return {
+            connection,
+            connectionRuntimeState,
+            context: await sharedRuntime.resolvePresentationCatalogContext({
+              connectionId: connection.id,
+              machineId: request.machineId,
+            }, connectionRuntimeState, operationScope, presentationSettingsBasis),
+          };
+        }));
         const catalogs: ProviderConnectionCatalog[] = [];
         const modelLoadProjectionByConnectionId = new Map<string, Readonly<{
           action: 'available' | 'descriptor_absent' | 'feature_disabled';
@@ -298,11 +447,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         const confirmedByRef = new Map<string, boolean>();
         const pickerDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
         const coldDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
-        for (const connection of settingsRead.settings.connections) {
-          const context = await sharedRuntime.resolvePresentationCatalogContext({
-            connectionId: connection.id,
-            machineId: request.machineId,
-          }, runtimeState, operationScope, presentationSettingsBasis);
+        for (const { connection, connectionRuntimeState, context } of resolvedContexts) {
           if (context.status === 'error') continue;
           const authorizedForDemand = context.connection.authorization.authorized;
           if (authorizedForDemand) {
@@ -336,7 +481,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             agentTargetKey: request.agentTargetKey,
             connection: context.connection,
             providerSettings: context.providerSettings,
-            runtimeState,
+            runtimeState: connectionRuntimeState,
             catalogRuntimeKey: context.catalogRuntimeKey,
             ...recoveryInput,
           });
@@ -361,14 +506,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             connectionId: connection.id,
             expectedEndpoints: context.expectedEndpointObservations,
             allowedObservationAuthorizationFingerprints: context.allowedObservationAuthorizationFingerprints,
-            endpointHealth: runtimeState.endpointHealth.filter((record) =>
-              record.key.machineId === request.machineId && record.key.connectionId === connection.id),
+            endpointHealth: connectionRuntimeState.endpointHealth,
           });
           const assembled = assembleProviderConnectionCatalog({
             agentTargetKey: request.agentTargetKey,
             connection: context.connection,
             providerSettings: context.providerSettings,
-            runtimeState,
+            runtimeState: connectionRuntimeState,
             catalogRuntimeKey: context.catalogRuntimeKey,
             compatibilityByModelId,
             currentEndpointHealthByTemplateId,
@@ -406,12 +550,16 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         mode: request.mode ?? 'picker',
         ...(request.currentSelection ? { currentSelection: request.currentSelection } : {}),
       });
+      const catalogByConnectionId = new Map(
+        catalogs.map((catalog) => [catalog.connectionId, catalog] as const),
+      );
+      const connectionById = new Map(
+        settingsRead.settings.connections.map((connection) => [connection.id, connection] as const),
+      );
       const groups = projection.groups.map((group) => {
-          const catalog = catalogs.find((candidate) => candidate.connectionId === group.connectionId);
+          const catalog = catalogByConnectionId.get(group.connectionId);
           if (!catalog) throw new TypeError('Projected Provider catalog is absent');
-          const connection = settingsRead.settings.connections.find(
-            (candidate) => candidate.id === group.connectionId,
-          );
+          const connection = connectionById.get(group.connectionId);
           if (!connection) throw new TypeError('Projected Provider connection is absent');
           return {
             connectionId: group.connectionId,
@@ -567,14 +715,52 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       };
     }
     const target = parseBackendTargetKeyV2(request.agentTargetKey);
-    const lease = input.acquireRuntimeLease
-      ? await input.acquireRuntimeLease()
-      : await acquireAuthoritativePluginRuntimeRegistryLease({
-          happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
+    const operationLifetime = createProviderOperationLifetime({
+      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
     });
+    const pendingLease = input.acquireRuntimeLease
+      ? input.acquireRuntimeLease()
+      : acquireAuthoritativePluginRuntimeRegistryLease({
+          happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir,
+        });
+    let lease: Awaited<typeof pendingLease>;
     try {
-      await activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId);
-      const registry = resolveProviderContributionRegistryView(lease.registry.contributes);
+      lease = await awaitWithinProviderOperation(pendingLease, operationLifetime);
+    } catch (error) {
+      void pendingLease.then((lateLease) => lateLease.release(), () => {});
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          status: 'incompatible',
+          error: createProviderErrorV1('provider_endpoint_unavailable', errorContext),
+        };
+      }
+      throw error;
+    }
+    try {
+      if (typeof lease.registry.generation !== 'number') {
+        return {
+          status: 'incompatible',
+          error: createProviderErrorV1('provider_endpoint_unavailable', errorContext),
+        };
+      }
+      try {
+        await awaitWithinProviderOperation(
+          activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId),
+          operationLifetime,
+        );
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            status: 'incompatible',
+            error: createProviderErrorV1('provider_endpoint_unavailable', errorContext),
+          };
+        }
+        throw error;
+      }
+      const registry = resolveProviderContributionRegistryView(
+        lease.registry.contributes,
+        lease.registry.generation,
+      );
       const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
       let dnsEvidenceByEndpointUrl;
       try {
@@ -584,11 +770,16 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           providerSettings,
           registry,
           ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-          lifetime: createProviderOperationLifetime({
-            wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-          }),
+          admitResolution: sharedRuntime.probeInfrastructure.scheduler.runDns,
+          lifetime: operationLifetime,
         });
       } catch (error) {
+        if (error instanceof ProviderProbeAdmissionCapacityError) {
+          return {
+            status: 'incompatible',
+            error: createProviderErrorV1('provider_probe_capacity_exhausted', errorContext),
+          };
+        }
         if (error instanceof ProviderOperationAbandonedError) {
           const unavailable = createProviderErrorV1('provider_endpoint_unavailable', errorContext);
           return { status: 'incompatible', error: unavailable };

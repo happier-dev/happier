@@ -20,7 +20,7 @@ import type {
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
-import type { ConnectedServicesMaterializer } from '@/agent/catalog/types';
+import type { materializeConnectedServicesForSpawn } from '../materialize/materializeConnectedServicesForSpawn';
 import { logger } from '@/ui/logger';
 import {
   resolveQualifiedConnectedAccountPeerOperationTransport,
@@ -30,9 +30,8 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServic
 import {
   computeClaudeSubscriptionAccessTokenFingerprint,
 } from '@happier-dev/plugins-claude/agent/auth/services/cloud/refreshBridge';
-import { writeClaudeCodeCredentialsFile } from '@happier-dev/plugins-claude/agent/auth/services/native/credentials';
 import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
-import { resolveConnectedServiceGroupHomeDir, resolveConnectedServiceHomeDir } from '../homes/resolveConnectedServiceHomeDir';
+import { resolveConnectedServiceGroupHomeDir } from '../homes/resolveConnectedServiceHomeDir';
 import {
   classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh,
   ConnectedServiceRefreshCoordinator,
@@ -43,23 +42,30 @@ import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestA
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
 const {
-  getConnectedServicesMaterializerOverride,
+  materializeConnectedServicesForSpawnOverride,
   getConnectedServiceMaterializedHomeFreshnessOverride,
 } = vi.hoisted(() => ({
-  getConnectedServicesMaterializerOverride: vi.fn(),
+  materializeConnectedServicesForSpawnOverride: vi.fn(),
   getConnectedServiceMaterializedHomeFreshnessOverride: vi.fn(),
 }));
+
+async function writeClaudeCodeCredentialsFile(input: Readonly<{
+  claudeConfigDir: string;
+  payload: unknown;
+}>): Promise<void> {
+  await mkdir(input.claudeConfigDir, { recursive: true });
+  await writeFile(
+    join(input.claudeConfigDir, '.credentials.json'),
+    `${JSON.stringify(input.payload)}\n`,
+    { mode: 0o600 },
+  );
+}
 
 vi.mock('@/daemon/connectedServices/catalogHooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/daemon/connectedServices/catalogHooks')>();
   return {
     ...actual,
-    getConnectedServicesMaterializer: vi.fn(async (agentId: Parameters<typeof actual.getConnectedServicesMaterializer>[0]) => {
-      const override = getConnectedServicesMaterializerOverride(agentId);
-      if (override !== undefined) return override;
-      return await actual.getConnectedServicesMaterializer(agentId);
-    }),
-    getConnectedServiceMaterializedHomeFreshness: vi.fn(async (agentId: Parameters<typeof actual.getConnectedServicesMaterializer>[0]) => {
+    getConnectedServiceMaterializedHomeFreshness: vi.fn(async (agentId: CatalogAgentId) => {
       const override = getConnectedServiceMaterializedHomeFreshnessOverride(agentId);
       if (override !== undefined) return override;
       return await actual.getConnectedServiceMaterializedHomeFreshness(agentId);
@@ -67,8 +73,30 @@ vi.mock('@/daemon/connectedServices/catalogHooks', async (importOriginal) => {
   };
 });
 
+vi.mock('../materialize/materializeConnectedServicesForSpawn', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../materialize/materializeConnectedServicesForSpawn')>();
+  return {
+    ...actual,
+    materializeConnectedServicesForSpawn: vi.fn(async (
+      params: Parameters<typeof actual.materializeConnectedServicesForSpawn>[0],
+    ) => {
+      const override = materializeConnectedServicesForSpawnOverride(params.agentId);
+      if (override === undefined) {
+        return null;
+      }
+      const { resolveConnectedServiceMaterializedRootDir } = await import(
+        '../materialize/resolveConnectedServiceMaterializedRootDir'
+      );
+      return await override({
+        ...params,
+        rootDir: resolveConnectedServiceMaterializedRootDir(params),
+      });
+    }),
+  };
+});
+
 afterEach(() => {
-  getConnectedServicesMaterializerOverride.mockReset();
+  materializeConnectedServicesForSpawnOverride.mockReset();
   getConnectedServiceMaterializedHomeFreshnessOverride.mockReset();
 });
 
@@ -2030,8 +2058,13 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       cleanupOnFailure: true,
       cleanupOnExit: true,
     }));
-    getConnectedServicesMaterializerOverride.mockImplementation((agentId) =>
+    materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
       agentId === 'claude' ? materializer : undefined,
+    );
+    getConnectedServiceMaterializedHomeFreshnessOverride.mockImplementation((agentId) =>
+      agentId === 'claude'
+        ? { isMaterializedHomeStale: vi.fn(async () => true) }
+        : undefined,
     );
     const onAuthUpdated = vi.fn();
     const coordinator = createRefreshCoordinator({
@@ -2064,6 +2097,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(materializer).toHaveBeenCalledWith(expect.objectContaining({
       rootDir: expect.any(String),
       recordsByServiceId: expect.any(Map),
+      purposeBindingSessionId: 'happy-session-1',
     }));
     expect(onAuthUpdated).toHaveBeenCalledWith(expect.objectContaining({
       binding: { serviceId: 'claude-subscription', profileId: 'work' },
@@ -2292,30 +2326,6 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(harness.onAuthUpdated).not.toHaveBeenCalled();
   });
 
-  it('removes a stale shared Claude group credential before signaling the runner-owned materializer', async () => {
-    const harness = await buildClaudeGroupHomeOwnershipHarness();
-    await writeClaudeCodeCredentialsFile({
-      claudeConfigDir: harness.groupConfigDir,
-      payload: {
-        claudeAiOauth: {
-          accessToken: 'dead-old-access',
-          expiresAt: harness.now + 60 * 60_000,
-          scopes: ['user:inference', 'user:profile', 'user:sessions:claude_code'],
-        },
-      },
-    });
-
-    await harness.coordinator.tickOnce();
-
-    await expect(readFile(join(harness.groupConfigDir, '.credentials.json'), 'utf8'))
-      .rejects.toMatchObject({ code: 'ENOENT' });
-    expect(harness.onAuthUpdated).toHaveBeenCalledTimes(2);
-    expect(harness.onAuthUpdated.mock.calls.map(([event]) => event.binding.profileId)).toEqual([
-      'workA',
-      'workB',
-    ]);
-  });
-
   it('fails closed when canonical Claude group state is unreadable during stale-home repair', async () => {
     const harness = await buildClaudeGroupHomeOwnershipHarness();
     harness.readGroup.mockRejectedValue(new Error('group reader unavailable'));
@@ -2394,7 +2404,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       cleanupOnExit: true,
     }));
     const isMaterializedHomeStale = vi.fn(async () => true);
-    getConnectedServicesMaterializerOverride.mockImplementation((agentId) =>
+    materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
       agentId === 'codex' ? materializer : undefined,
     );
     getConnectedServiceMaterializedHomeFreshnessOverride.mockImplementation((agentId) =>
@@ -2432,12 +2442,11 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(api.acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
     expect(isMaterializedHomeStale).toHaveBeenCalledWith({
       serviceId: 'openai-codex',
-      materializedRootDir: join(resolveConnectedServiceHomeDir({
-        activeServerDir,
-        serviceId: 'openai-codex',
-        profileId: 'work',
+      materializedRootDir: resolveConnectedServiceMaterializedRootDir({
+        baseDir,
         agentId: 'codex',
-      }), 'codex-home'),
+        materializationKey,
+      }),
       record: expect.objectContaining({
         kind: 'oauth',
         oauth: expect.objectContaining({ accessToken: 'fresh-store-access' }),
@@ -2510,8 +2519,13 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       cleanupOnFailure: true,
       cleanupOnExit: true,
     }));
-    getConnectedServicesMaterializerOverride.mockImplementation((agentId) =>
+    materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
       agentId === 'codex' ? materializer : undefined,
+    );
+    getConnectedServiceMaterializedHomeFreshnessOverride.mockImplementation((agentId) =>
+      agentId === 'codex'
+        ? { isMaterializedHomeStale: vi.fn(async () => true) }
+        : undefined,
     );
     getConnectedServiceMaterializedHomeFreshnessOverride.mockImplementation((agentId) =>
       agentId === 'codex'
@@ -2740,14 +2754,21 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     } as unknown as ApiClient;
     completeCredentialAuthorityBoundaryFixture(api);
 
-    const materializer = vi.fn<ConnectedServicesMaterializer>(async (params) => ({
+    const materializer = vi.fn(async (
+      params: Parameters<typeof materializeConnectedServicesForSpawn>[0] & Readonly<{ rootDir: string }>,
+    ) => ({
       env: { CODEX_HOME: params.rootDir },
       diagnostics: [],
       cleanupOnFailure: null,
       cleanupOnExit: null,
     }));
-    getConnectedServicesMaterializerOverride.mockImplementation((agentId) =>
+    materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
       agentId === 'codex' ? materializer : undefined,
+    );
+    getConnectedServiceMaterializedHomeFreshnessOverride.mockImplementation((agentId) =>
+      agentId === 'codex'
+        ? { isMaterializedHomeStale: vi.fn(async () => true) }
+        : undefined,
     );
 
     const fetchMock = vi.fn(async () => ({
@@ -4631,7 +4652,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
         cleanupOnFailure: null,
         cleanupOnExit: null,
       }));
-      getConnectedServicesMaterializerOverride.mockImplementation((agentId) =>
+      materializeConnectedServicesForSpawnOverride.mockImplementation((agentId) =>
         agentId === 'codex' ? materializer : undefined,
       );
       const onAuthUpdated = vi.fn();
@@ -4739,7 +4760,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     let materializerCalls = 0;
     let releaseFirstMaterialization: () => void = () => {};
     const firstMaterializationStarted = new Promise<void>((resolve) => {
-      getConnectedServicesMaterializerOverride.mockImplementation(() => async (params: Readonly<{ rootDir: string }>) => {
+      materializeConnectedServicesForSpawnOverride.mockImplementation(() => async (params: Readonly<{ rootDir: string }>) => {
         materializerCalls += 1;
         const callNumber = materializerCalls;
         await mkdir(params.rootDir, { recursive: true });

@@ -1,5 +1,9 @@
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol';
+
 export type ProviderRedactionLease = Readonly<{
   redact: (value: string) => string;
+  /** Host-private egress check over the same registered values as redaction. */
+  containsSensitiveValue: (value: string) => boolean;
   values: () => readonly string[];
   add: (values: readonly string[]) => void;
   snapshotRedactor: () => (value: string) => string;
@@ -83,6 +87,8 @@ export function createProviderRedactionLease(input: Readonly<{
   let closed = false;
   return Object.freeze({
     redact: (value: string) => activeRedactor(value),
+    containsSensitiveValue: (value: string) =>
+      containsProviderRegisteredSensitiveValue(value, active),
     values: () => Object.freeze([...active]),
     add: (values: readonly string[]) => {
       if (closed) throw new Error('Provider redaction lease is closed');

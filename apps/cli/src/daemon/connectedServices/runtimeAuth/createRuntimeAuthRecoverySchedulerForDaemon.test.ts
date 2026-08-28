@@ -24,6 +24,13 @@ const classification: ConnectedServiceRuntimeFailureClassification = {
 
 const predecessorRecoveryKey =
   'runtime-auth:v1:WyJzZXNzaW9uLXByZWRlY2Vzc29yIiwib3BlbmFpLWNvZGV4IixudWxsLCJ0ZWFtIl0';
+const currentRecoveryKey = buildRuntimeAuthRecoveryKey({
+  sessionId: 'session-predecessor',
+  serviceId: 'openai-codex',
+  profileId: 'primary',
+  groupId: 'team',
+  failingAccessTokenFingerprint: 'sha256:abcdef12',
+});
 const predecessorCredentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
 const predecessorAttemptId = 'runtime-auth-attempt:predecessor';
 
@@ -41,8 +48,9 @@ function buildPredecessorRecoveryKey(input: Readonly<{
   ]), 'utf8').toString('base64url')}`;
 }
 
-// Exact V2 intent shape and four-part key emitted by the remote-dev predecessor at
-// 6e6ecb42e7f9ab8607b5710547563bbc9c232728.
+// Exact V2 intent shape and four-part key introduced at
+// 6e6ecb42e7f9ab8607b5710547563bbc9c232728 and revalidated against the moving
+// predecessor origin/dev@fbdd5d9cb07391eb839eab313c5ba60fe77ce20b.
 function predecessorV2Intent(overrides: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> {
   return {
     v: 2,
@@ -165,7 +173,7 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
 
       const scheduler = createRuntimeAuthRecoverySchedulerForDaemon({
         activeServerDir,
-        nowMs: () => 1_500,
+        nowMs: () => -60_000,
         recover,
       });
 
@@ -201,12 +209,13 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
       const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
         intentsBySessionId: Record<string, { pendingVisibleEvents?: unknown }>;
       };
-      expect(persisted.intentsBySessionId[predecessorRecoveryKey]).not.toHaveProperty('pendingVisibleEvents');
+      expect(persisted.intentsBySessionId[currentRecoveryKey]).not.toHaveProperty('pendingVisibleEvents');
+      expect(persisted.intentsBySessionId).not.toHaveProperty(predecessorRecoveryKey);
       scheduler.dispose();
 
       const replacement = createRuntimeAuthRecoverySchedulerForDaemon({
         activeServerDir,
-        nowMs: () => 1_600,
+        nowMs: () => -59_900,
         recover,
       });
       expect(replacement.readForSession('session-predecessor')).toHaveLength(1);
@@ -389,8 +398,8 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
         expect(persisted.intentsBySessionId[occupiedOwnerKey]).toEqual(occupiedIntent);
         expect(persisted.effectClaimsByRecoveryKey?.[occupiedOwnerKey]).toBe('future-effect-owner');
         expect(persisted.intentsBySessionId['opaque-unrelated-key']).toEqual(unrelatedFutureIntent);
-        expect(persisted.intentsBySessionId).not.toHaveProperty(unrelatedCurrentKey);
-        expect(persisted.intentsBySessionId[unrelatedPredecessorKey]).toMatchObject({ v: 1 });
+        expect(persisted.intentsBySessionId[unrelatedCurrentKey]).toMatchObject({ v: 1 });
+        expect(persisted.intentsBySessionId).not.toHaveProperty(unrelatedPredecessorKey);
         expect(recover).not.toHaveBeenCalled();
       } finally {
         scheduler?.dispose();
@@ -464,7 +473,7 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
     }
   });
 
-  it('chooses and mutates one physical owner when predecessor state lands after the current-key probe', async () => {
+  it('atomically adopts predecessor state under the canonical current key before mutation', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-owner-interleaving-'));
     const recover = vi.fn(async () => ({ status: 'credential_refreshed' as const }));
     const currentOwnerKey = buildRuntimeAuthRecoveryKey({
@@ -521,13 +530,13 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
         intentsBySessionId: Record<string, unknown>;
         effectClaimsByRecoveryKey?: Record<string, string>;
       };
-      expect(persisted.intentsBySessionId).not.toHaveProperty(currentOwnerKey);
-      expect(persisted.intentsBySessionId[predecessorRecoveryKey]).toMatchObject({
+      expect(persisted.intentsBySessionId[currentOwnerKey]).toMatchObject({
         v: 1,
         sessionId: 'session-predecessor',
       });
+      expect(persisted.intentsBySessionId).not.toHaveProperty(predecessorRecoveryKey);
       expect(persisted.effectClaimsByRecoveryKey).toEqual({
-        [predecessorRecoveryKey]: 'predecessor-effect-owner',
+        [currentOwnerKey]: 'predecessor-effect-owner',
       });
       expect(recover).not.toHaveBeenCalled();
     } finally {
@@ -537,7 +546,7 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
     }
   });
 
-  it('keeps one predecessor physical owner when the predecessor writes after the current mutation', async () => {
+  it('keeps current writes on the canonical key even if an unsupported predecessor later writes', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-owner-inverse-'));
     const recover = vi.fn(async () => ({ status: 'credential_refreshed' as const }));
     const currentOwnerKey = buildRuntimeAuthRecoveryKey({
@@ -577,8 +586,15 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
       const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
         intentsBySessionId: Record<string, unknown>;
       };
-      expect(persisted.intentsBySessionId).not.toHaveProperty(currentOwnerKey);
+      expect(persisted.intentsBySessionId[currentOwnerKey]).toMatchObject({
+        v: 1,
+        sessionId: 'session-predecessor',
+      });
       expect(persisted.intentsBySessionId).toEqual({
+        [currentOwnerKey]: expect.objectContaining({
+          v: 1,
+          sessionId: 'session-predecessor',
+        }),
         [predecessorRecoveryKey]: predecessorV2Intent(),
       });
       expect(recover).not.toHaveBeenCalled();
@@ -733,14 +749,14 @@ describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
       const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
         intentsBySessionId: Record<string, unknown>;
       };
-      expect(persisted.intentsBySessionId).not.toHaveProperty(currentOwnerKeyA);
-      expect(persisted.intentsBySessionId).not.toHaveProperty(currentOwnerKeyB);
-      expect(persisted.intentsBySessionId[predecessorOwnerKey]).toMatchObject({
+      expect(persisted.intentsBySessionId[currentOwnerKeyA]).toMatchObject({
         v: 1,
         classification: expect.objectContaining({
           failingAccessTokenFingerprint: fingerprintA,
         }),
       });
+      expect(persisted.intentsBySessionId).not.toHaveProperty(currentOwnerKeyB);
+      expect(persisted.intentsBySessionId).not.toHaveProperty(predecessorOwnerKey);
       expect(recover).not.toHaveBeenCalled();
     } finally {
       scheduler?.dispose();

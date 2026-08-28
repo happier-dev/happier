@@ -12,7 +12,7 @@ import {
 
 import {
   requireAccountSettingsMutationSuccess,
-  updateAccountSettingsV2WithRetry,
+  updateAccountSettingsV2OnceAgainstLatest,
   type AccountSettingsUpdateV2Deps,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
@@ -21,13 +21,11 @@ export async function previewLegacyProfileMigrationWithRetry(params: Readonly<{
   sourceProfileId: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
   deps?: AccountSettingsUpdateV2Deps;
-  maxAttempts?: number;
 }>): Promise<Readonly<{ version: number; sourceFingerprint: string }>> {
   let sourceFingerprint: string | null = null;
-  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
+  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2OnceAgainstLatest({
     credentials: params.credentials,
     deps: params.deps,
-    maxAttempts: params.maxAttempts,
     mutate: (settings) => {
       sourceFingerprint = createLegacyProfileMigrationSourceFingerprintV1({
         rawSettings: settings,
@@ -63,12 +61,10 @@ export async function confirmLegacyProfileMigrationWithRetry(params: Readonly<{
   reviewedMapping: LegacyProfileReviewedMappingV1;
   migratedAt: number;
   deps?: AccountSettingsUpdateV2Deps;
-  maxAttempts?: number;
 }>): Promise<Readonly<{ version: number; settings: AccountSettings }>> {
-  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
+  const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2OnceAgainstLatest({
     credentials: params.credentials,
     deps: params.deps,
-    maxAttempts: params.maxAttempts,
     mutate: (settings) => {
       const migrated = confirmLegacyAiLaunchProfileMigrationV1({
         rawSettings: settings,
@@ -95,7 +91,6 @@ export async function migrateProviderSettingsWithRetry(params: Readonly<{
     acceptedRegistry: unknown,
   ) => ProviderAccountSettingsMigrationContextV1 | Promise<ProviderAccountSettingsMigrationContextV1>;
   deps?: AccountSettingsUpdateV2Deps;
-  maxAttempts?: number;
 }>): Promise<Readonly<{
   version: number;
   settings?: AccountSettings;
@@ -104,10 +99,9 @@ export async function migrateProviderSettingsWithRetry(params: Readonly<{
   let outcomes: readonly ProviderSettingsMigrationSourceOutcomeV1[] = [];
   const lease = await params.acquireRegistryLease();
   try {
-    const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2WithRetry({
+    const result = requireAccountSettingsMutationSuccess(await updateAccountSettingsV2OnceAgainstLatest({
       credentials: params.credentials,
       deps: params.deps,
-      maxAttempts: params.maxAttempts,
       mutate: async (settings) => {
         const context = await params.deriveContext(settings, lease.registry);
         const migrated = migrateLegacyAiLaunchProfilesV1(settings, context);

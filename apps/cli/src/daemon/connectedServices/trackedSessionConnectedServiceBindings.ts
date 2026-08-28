@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { TrackedSession } from '@/daemon/types';
 
@@ -17,7 +17,7 @@ export function resolveTrackedConnectedServiceBindingsRaw(
 
 export function hasTrackedConnectedServiceGroupBinding(input: Readonly<{
   tracked: TrackedConnectedServiceBindingSource;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
 }>): boolean {
   return parseConnectedServiceBindingSelections(resolveTrackedConnectedServiceBindingsRaw(input.tracked))

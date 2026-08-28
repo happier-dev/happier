@@ -11,18 +11,47 @@ import {
   type ConnectedServiceBindingsV1,
   type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
-import { CODEX_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
+import { CODEX_PLUGIN } from '@happier-dev/plugins-codex/manifest';
+import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { TrackedSession } from '@/daemon/types';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
 import { ConnectedServiceSessionAuthSwitchLockRegistry, createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
+import { projectAgentConnectedAccountLaunchCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import {
   switchSessionConnectedServiceAuth as switchSessionConnectedServiceAuthImpl,
   type SwitchSessionConnectedServiceAuthInput,
 } from './switchSessionConnectedServiceAuth';
 import type { ConnectedServiceQualifiedAuthGroupApi } from '../resolveConnectedServiceAuthForSpawn';
 import { resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../runtimeAuth/types';
+
+async function readCodexRuntimeAuthAdapterRegistration() {
+  let captured: unknown;
+  const ignoreRegistration = vi.fn();
+  const api = new Proxy({
+    agents: new Proxy({
+      register: (_id: string, _factory: unknown, options: unknown) => {
+        captured = options;
+      },
+    }, { get: (target, property) => Reflect.get(target, property) ?? ignoreRegistration }),
+  }, {
+    get: (target, property) => Reflect.get(target, property) ?? new Proxy({}, { get: () => ignoreRegistration }),
+  });
+  await CODEX_PLUGIN.activate(api as never);
+  const launch = (captured as Readonly<{
+    connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+  }> | undefined)?.connectedAccountLaunch;
+  if (!launch) return undefined;
+  return await projectAgentConnectedAccountLaunchCatalogEntry({
+    agentId: 'codex',
+    connectedAccountLaunch: launch,
+    hostAccess: CODEX_PLUGIN.manifest.hostAccess,
+    isCurrent: () => true,
+  }).getConnectedServiceRuntimeAuthAdapter?.();
+}
 
 type RuntimeAuthSelectionContinuityInput = Parameters<SwitchSessionConnectedServiceAuthInput['resolveContinuity']>[0];
 type RecoverAfterRuntimeAuthSwitch = (input: Readonly<{
@@ -314,6 +343,82 @@ function expectMaterializationIdentity(value: unknown): ConnectedServiceMaterial
 }
 
 describe('switchSessionConnectedServiceAuth', () => {
+  it('preserves a qualified Connected Account service through inactive Session switching', async () => {
+    const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' } as const;
+    const serviceKey = 'happier.agent.claude/anthropic';
+    const requested = {
+      v: 1 as const,
+      bindingsByServiceId: {
+        [serviceKey]: {
+          source: 'connected' as const,
+          selection: 'profile' as const,
+          profileId: 'new-profile',
+        },
+      },
+    };
+    const persistSessionBindings = vi.fn(async () => {});
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [],
+      resolveInactiveSession: async () => ({
+        agentId: 'claude',
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            [serviceKey]: {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'old-profile',
+            },
+          },
+        },
+      }),
+      api: {
+        listConnectedServiceProfiles: async () => ({ serviceId: 'anthropic', profiles: [] }),
+      },
+      qualifiedConnectedAccountApi: {
+        listAccounts: async () => QualifiedConnectedAccountListResponseV4Schema.parse({
+          service,
+          accounts: [{
+            ref: {
+              service: { pluginId: service.pluginId, localId: service.localId },
+              accountId: 'new-profile',
+            },
+            status: 'connected',
+            authenticationModeId: null,
+            configurationReady: true,
+            configurationRevision: null,
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+            scopes: [],
+          }],
+        }),
+        readGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession: vi.fn(async () => {}),
+      persistSessionBindings,
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: () => {},
+      request: {
+        sessionId: 'sess_external_qualified',
+        agentId: 'claude',
+        bindings: requested,
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'metadata_updated',
+      normalizedBindings: requested,
+    });
+
+    expect(persistSessionBindings).toHaveBeenCalledWith(expect.objectContaining({
+      normalizedBindings: requested,
+    }));
+  });
+
   it('rejects a missing session without mutating or restarting', async () => {
     const restartSession = vi.fn();
 
@@ -3526,10 +3631,11 @@ describe('switchSessionConnectedServiceAuth', () => {
         idToken: 'id',
         scope: 'model.read',
         tokenType: 'Bearer',
-        providerAccountId: null,
-        providerEmail: null,
+        providerAccountId: 'acct-backup',
+        providerEmail: 'backup@example.com',
       },
     });
+    let nativeAuthFiles: Readonly<Record<string, Uint8Array>> = {};
     const runtimeAuthSelection = {
       serviceId: 'openai-codex',
       profileId: 'backup',
@@ -3538,7 +3644,13 @@ describe('switchSessionConnectedServiceAuth', () => {
       fallbackProfileId: 'fallback',
       generation: 7,
       credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
-      record,
+      credential: record,
+      nativeHome: {
+        readFiles: vi.fn(async () => nativeAuthFiles),
+        replaceFiles: vi.fn(async (files: Readonly<Record<string, Uint8Array>>) => {
+          nativeAuthFiles = files;
+        }),
+      },
       client: {
         request: vi.fn(async () => ({ ok: true })),
       },
@@ -3574,15 +3686,20 @@ describe('switchSessionConnectedServiceAuth', () => {
         },
       },
     });
-    const codexRuntimeAuthAdapter = CODEX_AGENT_RUNTIME_CONTRIBUTION.connectedServices.runtimeAuthAdapter;
+    const codexRuntimeAuthAdapter = (await readCodexRuntimeAuthAdapterRegistration()) as
+      ConnectedServiceProviderRuntimeAuthAdapter;
     const hotApply = createSessionConnectedServiceAuthHotApply({
       resolveRuntimeAuthAdapter: async () => codexRuntimeAuthAdapter,
+      validateGroupMutationCurrentness: async () => ({ current: true }),
     });
     const resolveContinuity = vi.fn(async (input: RuntimeAuthSelectionContinuityInput) => {
-      const hotApplySupport = codexRuntimeAuthAdapter.canHotApply({
-        target: { agentId: input.agentId },
-        selection: input.runtimeAuthSelection,
-      });
+      const hotApplySupport = codexRuntimeAuthAdapter.canHotApply(
+        projectConnectedServiceRuntimeAuthTargetInput({
+          agentId: input.agentId,
+          materializedSelection: input.runtimeAuthSelection,
+          fallbackSelection: {},
+        }),
+      );
       if (hotApplySupport.supported === true) return { mode: 'hot_apply' as const };
       throw new Error('Expected native Codex hot_apply continuity');
     });
@@ -3966,6 +4083,12 @@ describe('switchSessionConnectedServiceAuth', () => {
       ok: true,
       action: 'hot_applied',
       continuityByServiceId: { 'openai-codex': 'hot_apply' },
+      normalizedBindings: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'happier' },
+        },
+      },
     });
 
     expect(resolveContinuity).toHaveBeenCalledOnce();

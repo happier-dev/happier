@@ -1,4 +1,7 @@
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  type ConnectedAccountServiceKey,
+} from '@happier-dev/protocol';
 
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServiceChildEnvironment';
 import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
@@ -7,12 +10,12 @@ import type { ConnectedServiceRuntimeFailureClassification } from './types';
 export type RuntimeRecoverySelection =
     | Readonly<{
         kind: 'profile';
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         profileId: string;
     }>
     | Readonly<{
         kind: 'group';
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string;
         activeProfileId?: string;
         fallbackProfileId?: string;
@@ -33,9 +36,10 @@ function normalizeNonEmptyString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-function parseConnectedServiceId(value: unknown): ConnectedServiceId | null {
-    const parsed = ConnectedServiceIdSchema.safeParse(normalizeNonEmptyString(value));
-    return parsed.success ? parsed.data as ConnectedServiceId : null;
+function parseConnectedServiceId(value: unknown): ConnectedAccountServiceKey | null {
+    // Canonical qualified keys pass through; released bundled scalars normalize
+    // through the sole legacy ingress normalizer; everything else rejects.
+    return readBuiltInLegacyConnectedAccountServiceKeyIngress(value);
 }
 
 function mapParsedBindingSelectionToRuntimeRecoverySelection(

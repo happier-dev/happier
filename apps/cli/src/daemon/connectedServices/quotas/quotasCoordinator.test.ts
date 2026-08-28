@@ -28,11 +28,9 @@ import type {
 } from '@happier-dev/protocol';
 import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import {
@@ -1837,15 +1835,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       expect(invokeWithReceipt).not.toHaveBeenCalled();
       expect(writeProviderAccountUsage).not.toHaveBeenCalled();
     }
-  });
-
-  it('does not keep the obsolete account-usage-to-runtime-quota switch projection path active', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('./ConnectedServiceQuotasCoordinator.ts', import.meta.url)),
-      'utf8',
-    );
-
-    expect(source).not.toContain('buildSwitchRuntimeQuotaSnapshotsFromAccountUsage');
   });
 
   it('opens predecessor-rich V2 quota ciphertext through the legacy boundary codec', () => {
@@ -7262,7 +7251,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
   });
 
-  it('hot-applies a cold direct-live-capable sibling proven busy on the exhausted account', async () => {
+  it('hot-applies a cold sibling only after the host proves its exhausted account identity', async () => {
     const now = 1_000_000;
     const credentials: Credentials = {
       token: 'happy-token',
@@ -7276,17 +7265,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     } as unknown as QuotaApi;
     const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
-    const runtimeAuthApplyCapabilityResolver = vi.fn(async () => ({
-      directLiveHotAuth: {
-        supportsInTurnApply: true,
-        requiresExactRuntimeIdentity: true,
-        refreshSelectionResync: 'required' as const,
-        authMode: {
-          kind: 'external_token_injection' as const,
-          surface: 'codex_chatgpt_auth_tokens',
-        },
-      },
-    }));
     const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
       status: 'exact' as const,
       providerAccountId: 'acct-a',
@@ -7309,13 +7287,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       sameAccountFanoutMinIntervalMs: 0,
       sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
       readRuntimeAccountIdentityForFanout,
-      runtimeAuthApplyCapabilityResolver,
       recordDiagnostic: (event) => diagnostics.push(event),
     } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
       sameAccountFanoutMinIntervalMs: number;
       sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
       readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
-      runtimeAuthApplyCapabilityResolver: typeof runtimeAuthApplyCapabilityResolver;
     }) as RuntimeIdentityFanoutCoordinator;
     for (const [sessionId, pid] of [['source', 601], ['busy-sibling', 602]] as const) {
       coordinator.registerSpawnTarget({
@@ -7368,7 +7344,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
   });
 
-  it('does not let quota-local capability policy defer a committed busy-runtime generation', async () => {
+  it('does not let quota fanout defer a committed busy-runtime generation', async () => {
     const now = 1_000_000;
     const credentials: Credentials = {
       token: 'happy-token',
@@ -7382,7 +7358,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     } as unknown as QuotaApi;
     const switchBeforeTurn = vi.fn(async () => ({ status: 'deferred' as const, reason: 'defer_until_turn_boundary' }));
-    const runtimeAuthApplyCapabilityResolver = vi.fn(async () => ({ directLiveHotAuth: 'unsupported' as const }));
     const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
       status: 'exact' as const,
       providerAccountId: 'acct-a',
@@ -7407,13 +7382,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       sameAccountFanoutMinIntervalMs: 0,
       sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
       readRuntimeAccountIdentityForFanout,
-      runtimeAuthApplyCapabilityResolver,
       recordDiagnostic: (event) => diagnostics.push(event),
     } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
       sameAccountFanoutMinIntervalMs: number;
       sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
       readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
-      runtimeAuthApplyCapabilityResolver: typeof runtimeAuthApplyCapabilityResolver;
     }) as RuntimeIdentityFanoutCoordinator;
     for (const [sessionId, pid] of [['source', 651], ['busy-sibling', 652]] as const) {
       coordinator.registerSpawnTarget({
@@ -7457,7 +7430,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       fanoutRequests: 0,
     });
 
-    expect(runtimeAuthApplyCapabilityResolver).not.toHaveBeenCalled();
     expect(diagnostics).not.toContainEqual(expect.objectContaining({
       event: 'quota_work_deferred',
       phase: 'same_account_fanout',

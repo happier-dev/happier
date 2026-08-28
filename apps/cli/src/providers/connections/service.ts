@@ -1,5 +1,4 @@
 import {
-  ProviderErrorV1Schema,
   ProviderSettingsLimitError,
   createProviderErrorV1,
 } from '@happier-dev/protocol';
@@ -13,7 +12,7 @@ import { createProviderLocalOperations } from './service/localOperations';
 import { createProviderModelSettingsOperations } from './service/modelSettingsOperations';
 import {
   ProviderConnectionValidationError,
-  isProviderError,
+  parseProviderError,
 } from './service/settings';
 import type {
   ProviderConnectionServiceDeps,
@@ -52,7 +51,8 @@ export function createProviderConnectionService(deps: ProviderConnectionServiceD
     try {
       return await operation();
     } catch (error) {
-      if (isProviderError(error)) return { status: 'error', error };
+      const providerError = parseProviderError(error);
+      if (providerError) return { status: 'error', error: providerError };
       if (error instanceof ProviderSettingsLimitError) {
         return { status: 'error', error: createProviderErrorV1('provider_settings_limit_exceeded', {
           connectionId, machineId: deps.machineId,
@@ -74,8 +74,8 @@ export function createProviderConnectionService(deps: ProviderConnectionServiceD
     try {
       return await modelSettings.mutate(input);
     } catch (error) {
-      const providerError = ProviderErrorV1Schema.safeParse(error);
-      if (providerError.success) return { status: 'error' as const, error: providerError.data };
+      const providerError = parseProviderError(error);
+      if (providerError) return { status: 'error' as const, error: providerError };
       return {
         status: 'error' as const,
         error: createProviderErrorV1(

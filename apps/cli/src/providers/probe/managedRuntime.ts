@@ -195,6 +195,15 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
         ));
       }
       const registry = registryLease.registry;
+      if (
+        launchInput.expectedRuntimeRegistryGeneration !== undefined
+        && registry.generation !== launchInput.expectedRuntimeRegistryGeneration
+      ) {
+        return await fail(createProviderErrorV1(
+          'provider_authorization_changed',
+          { connectionId: ticket.connectionId, machineId: ticket.machineId },
+        ));
+      }
       const acquireRuntime = registry.acquireManagedProviderRuntime;
       const createInvocationServices =
         registry.createManagedProviderRuntimeInvocationServices;
@@ -256,10 +265,10 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
           error: managedCatalogLaunchError({ ticket, code: started.code }),
         };
       }
-      const endpointUrl = started.access.endpointUrl(
+      const admittedEndpointUrl = started.access.endpointUrl(
         launchInput.source.endpointTemplateId,
       );
-      if (!endpointUrl) {
+      if (!admittedEndpointUrl) {
         return await fail(createProviderErrorV1(
           'provider_endpoint_unavailable',
           { connectionId: ticket.connectionId, machineId: ticket.machineId },
@@ -273,7 +282,8 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
       }
       return Object.freeze({
         ok: true as const,
-        endpointUrl,
+        endpointUrl: (endpointTemplateId: string) =>
+          started.access.endpointUrl(endpointTemplateId),
         access: Object.freeze({
           request: (async (request) => {
             const response = await started.access.request(request);

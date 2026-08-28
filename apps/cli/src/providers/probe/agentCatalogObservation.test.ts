@@ -110,6 +110,7 @@ function harness(transport: ProviderProbeTransport) {
     requestAuth,
     createRedactionLease: () => ({
       add: (values: readonly string[]) => redacted.push(...values),
+      containsSensitiveValue: (value: string) => redacted.some((secret) => value.includes(secret)),
       close: () => { redacted.length = 0; },
     }),
     client: createProviderProbeHttpClient({

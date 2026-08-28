@@ -9,7 +9,14 @@ import {
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 
 import { ProviderOperationAbandonedError } from '../operationLifetime';
-import { collectProviderConnectionDnsEvidence } from './dnsEvidence';
+import {
+  PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
+  createProviderProbeScheduler,
+} from '../probe/scheduler';
+import {
+  collectProviderConnectionDnsEvidence,
+  collectProviderConnectionsDnsEvidence,
+} from './dnsEvidence';
 import type { ProviderContributionRegistryView } from './types';
 
 function customConnectionSettings(): ProviderSettingsV1 {
@@ -162,5 +169,132 @@ describe('provider connection DNS evidence', () => {
       lifetime: { wallDeadlineAtMs: Date.now() + 60_000 },
     })).resolves.toEqual(new Map());
     expect(resolveAddresses).not.toHaveBeenCalled();
+  });
+
+  it('resolves each hostname once, bounds active lookups, and projects evidence to every connection URL', async () => {
+    const base = customConnectionSettings();
+    const baseConnection = base.connections[0]!;
+    if (baseConnection.source.kind !== 'custom') throw new Error('Expected custom fixture');
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...base,
+      connections: Array.from({ length: 12 }, (_, index) => ({
+        ...baseConnection,
+        id: `pc_custom_${index}`,
+        source: {
+          kind: 'custom',
+          template: {
+            ...baseConnection.source.template,
+            v: 1,
+            name: `Custom ${index}`,
+            endpointTemplates: [{
+              id: 'responses',
+              protocol: 'openai-responses',
+              baseUrl: index < 6
+                ? `https://shared.example/v${index}`
+                : `https://unique-${index}.example/v1`,
+              capabilities: {
+                streaming: 'unknown',
+                toolRoundTrips: 'unknown',
+                statefulResponses: 'unknown',
+                reasoningControls: 'unknown',
+              },
+            }],
+            catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+          },
+        },
+      })),
+    });
+    let active = 0;
+    let peak = 0;
+    const calls: string[] = [];
+    const releases: Array<() => void> = [];
+    const resolveAddresses = vi.fn(async (hostname: string) => {
+      calls.push(hostname);
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return ['1.1.1.1'];
+    });
+
+    const collected = collectProviderConnectionsDnsEvidence({
+      connectionIds: providerSettings.connections.map((connection) => connection.id),
+      machineId: 'machine-a',
+      providerSettings,
+      registry,
+      resolveAddresses,
+      lifetime: { wallDeadlineAtMs: Date.now() + 60_000 },
+    });
+
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
+    while (releases.length > 0 || active > 0) {
+      for (const release of releases.splice(0)) release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const evidenceByConnectionId = await collected;
+
+    expect(calls.filter((hostname) => hostname === 'shared.example')).toHaveLength(1);
+    expect(new Set(calls).size).toBe(calls.length);
+    expect(peak).toBeLessThanOrEqual(
+      PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
+    );
+    for (const connection of providerSettings.connections) {
+      expect(evidenceByConnectionId.get(connection.id)?.size).toBe(1);
+    }
+  });
+
+  it('does not admit another hostname after the operation is abandoned', async () => {
+    const base = customConnectionSettings();
+    const baseConnection = base.connections[0]!;
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...base,
+      connections: Array.from({ length: 10 }, (_, index) => ({
+        ...baseConnection,
+        id: `pc_cancel_${index}`,
+        source: {
+          kind: 'custom',
+          template: {
+            v: 1,
+            name: `Cancel ${index}`,
+            endpointTemplates: [{
+              id: 'responses',
+              protocol: 'openai-responses',
+              baseUrl: `https://cancel-${index}.example/v1`,
+              capabilities: {
+                streaming: 'unknown',
+                toolRoundTrips: 'unknown',
+                statefulResponses: 'unknown',
+                reasoningControls: 'unknown',
+              },
+            }],
+            catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+          },
+        },
+      })),
+    });
+    const controller = new AbortController();
+    const scheduler = createProviderProbeScheduler();
+    const calls: string[] = [];
+    const collected = collectProviderConnectionsDnsEvidence({
+      connectionIds: providerSettings.connections.map((connection) => connection.id),
+      machineId: 'machine-a',
+      providerSettings,
+      registry,
+      resolveAddresses: async (hostname) => {
+        calls.push(hostname);
+        controller.abort();
+        return ['1.1.1.1'];
+      },
+      admitResolution: scheduler.runDns,
+      lifetime: { signal: controller.signal, wallDeadlineAtMs: Date.now() + 60_000 },
+    });
+
+    await expect(collected).rejects.toMatchObject({ reason: 'cancelled' });
+    expect(calls.length).toBeLessThanOrEqual(
+      PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
+    );
+    const callsAtSettlement = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toHaveLength(callsAtSettlement);
   });
 });

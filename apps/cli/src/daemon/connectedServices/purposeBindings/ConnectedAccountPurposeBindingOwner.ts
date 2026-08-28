@@ -89,6 +89,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     serviceRefs: readonly PluginContributionRef[];
     currentSession?: HostCurrentSessionUiServices;
     permissionOwner?: PermissionRequestOwner;
+    assertGenerationCurrent(): void;
     reason: string;
     signal: AbortSignal;
   }>): Promise<QualifiedConnectedAccountPurposeBindingTargetV1>;
@@ -1535,6 +1536,7 @@ export function createConnectedAccountPurposeBindingOwner(
           serviceRefs: input.serviceRefs,
           ...(input.currentSession ? { currentSession: input.currentSession } : {}),
           ...(input.permissionOwner ? { permissionOwner: input.permissionOwner } : {}),
+          assertGenerationCurrent: input.assertGenerationCurrent,
           reason: input.reason,
           signal: input.signal,
         }),

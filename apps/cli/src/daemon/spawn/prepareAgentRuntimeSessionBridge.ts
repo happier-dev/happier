@@ -121,7 +121,9 @@ async function resolveRunnerAgentSessionDescriptorForLease(
     v: 1,
     pluginId: registration.pluginId,
     pluginVersion: registration.pluginVersion,
-    agentId: registration.agentId,
+    agentId: agent.provenance === 'first_party'
+      ? registration.agentId
+      : `${registration.pluginId}/agents/${registration.localAgentId}`,
     backendId: backend.id,
     generation: registration.generation,
     ...(registration.immutableGenerationId

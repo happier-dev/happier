@@ -355,6 +355,7 @@ describe('provider spawn runtime catalog bridge', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
+        sourceRegistryVersion: 'gateway-registry:v1',
         probes: [{
           endpointTemplateId: 'responses',
           path: '/v1/models',
@@ -474,7 +475,11 @@ describe('provider spawn runtime catalog bridge', () => {
     ) {
       throw new Error('Expected authorized managed Provider resolution');
     }
-    if (!('probes' in definition.catalog)) {
+    if (
+      !('probes' in definition.catalog)
+      || !('sourceRegistryVersion' in definition.catalog)
+      || definition.catalog.sourceRegistryVersion === undefined
+    ) {
       throw new Error('Expected probe catalog');
     }
     const probe = definition.catalog.probes[0]!;
@@ -488,6 +493,7 @@ describe('provider spawn runtime catalog bridge', () => {
           authorizedResolution.record.deployment.purposeBindingIntents,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
+        sourceRegistryVersion: definition.catalog.sourceRegistryVersion,
         method: 'GET',
         path: probe.path,
         parser: probe.parser,

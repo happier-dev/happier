@@ -81,6 +81,7 @@ export async function resolveRuntimeProviderCredential(
       lease: Object.freeze({
         credential,
         redact: redaction.redact,
+        containsSensitiveValue: redaction.containsSensitiveValue,
         close: redaction.close,
       }),
     };

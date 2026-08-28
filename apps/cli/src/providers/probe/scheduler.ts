@@ -1,3 +1,9 @@
+import {
+  awaitWithinProviderOperation,
+  ProviderOperationAbandonedError,
+  type ProviderOperationLifetime,
+} from '../operationLifetime';
+
 export const PROVIDER_PROBE_REFRESH_TRIGGERS = [
   'enable',
   'detail_open',
@@ -12,6 +18,14 @@ export type ProviderHealthRefreshTrigger = ProviderProbeRefreshTrigger;
 export const PROVIDER_CATALOG_REFRESH_TTL_MS = 5 * 60_000;
 export const PROVIDER_HEALTH_REFRESH_TTL_MS = 30_000;
 export const PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS = 4;
+
+/** No DNS work started: the canonical Provider admission owner was full. */
+export class ProviderProbeAdmissionCapacityError extends Error {
+  constructor() {
+    super('Provider probe admission capacity exhausted');
+    this.name = 'ProviderProbeAdmissionCapacityError';
+  }
+}
 
 export type ProviderProbeScheduledResult = Readonly<{
   status: string;
@@ -541,6 +555,45 @@ export function createProviderProbeScheduler(input: Readonly<{
     admission,
   });
 
+  /**
+   * Admits one DNS resolver job through the same global Provider controller as
+   * catalog and health work. There is deliberately no cache/lane here: DNS
+   * evidence remains fresh and operation-local, while this owner supplies the
+   * shared active and pending resource bounds.
+   */
+  const runDns = async <T>(
+    operation: () => Promise<T>,
+    lifetime: ProviderOperationLifetime,
+  ): Promise<T> => {
+    let started = false;
+    let rejectPending: ((error: unknown) => void) | undefined;
+    let work: AdmissionWork | undefined;
+    const admitted = new Promise<T>((resolve, reject) => {
+      rejectPending = reject;
+      work = {
+        pending: false,
+        queued: false,
+        start: () => {
+          started = true;
+          void Promise.resolve().then(operation).then(resolve, reject)
+            .finally(() => admission.release());
+        },
+      };
+      if (!admission.admit(work, false)) {
+        reject(new ProviderProbeAdmissionCapacityError());
+      }
+    });
+    try {
+      return await awaitWithinProviderOperation(admitted, lifetime, now);
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError && !started) {
+        if (work) admission.cancel(work);
+        rejectPending?.(error);
+      }
+      throw error;
+    }
+  };
+
   function runCatalog<T extends ProviderProbeScheduledResult>(
     key: string,
     trigger: ProviderCatalogRefreshTrigger,
@@ -593,6 +646,7 @@ export function createProviderProbeScheduler(input: Readonly<{
   }
 
   return {
+    runDns,
     runCatalog,
     runCatalogAfter,
     runHealth,

@@ -77,6 +77,49 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
     }
   }, 20_000);
 
+  it('does not project a malformed Agent CLI auth callback result as login status', async () => {
+    vi.resetModules();
+
+    vi.doMock('@/agent/catalog/registry', () => ({
+      AGENTS: {
+        codex: {
+          id: 'codex',
+          getCliAuthSpec: async () => ({
+            binaryNames: ['codex'],
+            detectAuthStatus: async () => ({ state: 'authenticated' }),
+          }),
+        },
+      },
+    }));
+
+    const fixture = await createProbeTempDir('happier-cli-snapshot-malformed-auth-status');
+    const binDir = resolve(join(fixture.dir, 'bin'));
+    await mkdir(binDir, { recursive: true });
+    await writeExecutableScript(
+      resolve(join(binDir, process.platform === 'win32' ? 'codex.cmd' : 'codex')),
+      process.platform === 'win32'
+        ? '@echo off\r\necho codex 0.0.0-test\r\n'
+        : '#!/bin/sh\necho "codex 0.0.0-test"\n',
+    );
+
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
+    try {
+      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
+      const snapshot = await detectCliSnapshotOnDaemonPath({
+        includeLoginStatus: true,
+        bypassCache: true,
+        requestedCliNames: ['codex'],
+      });
+
+      expect(snapshot.clis.codex.authStatus).toBeNull();
+      expect(snapshot.clis.codex.isLoggedIn).toBeNull();
+    } finally {
+      process.env.PATH = prevPath;
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
   it('only probes auth for requested CLI names when the request is provider-scoped', async () => {
     vi.resetModules();
 

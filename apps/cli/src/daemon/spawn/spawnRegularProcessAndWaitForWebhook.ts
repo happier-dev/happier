@@ -100,6 +100,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
       args: Array.from(params.args),
       daemonPid: process.pid,
+      environment: params.processEnv,
       launchOptions: params.runnerLaunchOptions ?? { preferWindowsPackagedBinary: true },
     })
     : null;

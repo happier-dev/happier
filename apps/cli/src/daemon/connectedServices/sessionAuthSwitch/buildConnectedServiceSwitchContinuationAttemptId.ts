@@ -1,11 +1,11 @@
 import type {
+    ConnectedAccountServiceKey,
     ConnectedServiceBindingsV1,
-    ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 export function buildConnectedServiceSwitchContinuationAttemptId(input: Readonly<{
     action: 'hot_applied' | 'restart_requested';
-    serviceIds: ReadonlySet<ConnectedServiceId>;
+    serviceIds: ReadonlySet<ConnectedAccountServiceKey>;
     normalizedBindings: ConnectedServiceBindingsV1;
     expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
 }>): string {

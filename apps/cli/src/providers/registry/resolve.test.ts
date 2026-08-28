@@ -64,8 +64,13 @@ function contribution(baseUrl?: string): ResolvedProviderContribution {
 function managedContribution(
   dependency = 'gateway-managed',
 ): ResolvedProviderContribution {
+  const baseDefinition = providerDefinition();
   const definition = ProviderContributionV1Schema.parse({
-    ...providerDefinition(),
+    ...baseDefinition,
+    catalog: {
+      ...baseDefinition.catalog,
+      sourceRegistryVersion: 'gateway-model-registry/v1',
+    },
     managedRuntime: {
       kind: 'managed',
       dependencies: [dependency],

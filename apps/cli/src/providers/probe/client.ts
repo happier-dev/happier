@@ -63,6 +63,8 @@ export type ProviderProbeCredential =
 
 export type ProviderProbeHttpCredentialLease = Readonly<{
   credential: ProviderProbeCredential;
+  /** Opaque host-private predicate; credential source values never escape. */
+  containsSensitiveValue(value: string): boolean;
   close(): void;
 }>;
 
@@ -214,15 +216,35 @@ function decodeResponseBody(body: Uint8Array, encoding: string, maxDecodedBodyBy
   return decoded;
 }
 
+function providerProbeModelFreeFormStrings(
+  model: ParsedProviderCatalogResponse['models'][number],
+): readonly string[] {
+  const values: string[] = [model.id];
+  if (model.name) values.push(model.name);
+  for (const option of model.modelOptions ?? []) {
+    values.push(option.id, option.name, option.type, option.currentValue);
+    if (option.description) values.push(option.description);
+    for (const choice of option.options ?? []) {
+      values.push(choice.value, choice.name);
+      if (choice.description) values.push(choice.description);
+    }
+    if (option.overridesWhenOn) {
+      values.push(...option.overridesWhenOn.optionIds);
+      if (option.overridesWhenOn.forcedValue) values.push(option.overridesWhenOn.forcedValue);
+    }
+  }
+  return values;
+}
+
 function catalogContainsSensitiveRequestValue(
   catalog: ParsedProviderCatalogResponse,
-  values: readonly (string | undefined)[],
+  credentialLease: ProviderProbeHttpCredentialLease | undefined,
+  publicHeaderValues: readonly string[],
 ): boolean {
-  const sensitiveValues = [...new Set(values.filter((value): value is string => Boolean(value)))];
-  if (sensitiveValues.length === 0) return false;
-  return catalog.models.some((model) =>
-    containsProviderRegisteredSensitiveValue(model.id, sensitiveValues)
-    || (model.name ? containsProviderRegisteredSensitiveValue(model.name, sensitiveValues) : false));
+  const sensitivePublicHeaderValues = [...new Set(publicHeaderValues.filter(Boolean))];
+  return catalog.models.some((model) => providerProbeModelFreeFormStrings(model).some((value) =>
+    (credentialLease?.containsSensitiveValue(value) ?? false)
+    || containsProviderRegisteredSensitiveValue(value, sensitivePublicHeaderValues)));
 }
 
 async function defaultResolveAddresses(hostname: string): Promise<readonly string[]> {
@@ -416,7 +438,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     managedRequest?: ProviderProbeManagedServiceRequest;
   }>): Promise<Readonly<{
     response: ProviderProbeTransportResponse;
-    credential: ProviderProbeCredential | undefined;
+    credentialLease: ProviderProbeHttpCredentialLease | undefined;
   }>> {
     let assessed: AssessedProviderEndpoint;
     // Destination re-resolution is inside this hop's remaining budget: an
@@ -446,11 +468,50 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       }
       throw new ProviderProbeClientError('provider_endpoint_unreachable');
     }
-    await input.authorizeDestination(assessed);
+    const operationLifetime = {
+      ...(input.signal ? { signal: input.signal } : {}),
+      wallDeadlineAtMs: hopDeadlineAtMs,
+    };
+    try {
+      await awaitWithinProviderOperation(
+        input.authorizeDestination(assessed),
+        operationLifetime,
+        now,
+      );
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError && error.reason === 'cancelled') {
+        throw new ProviderProbeCancelledError();
+      }
+      if (error instanceof ProviderOperationAbandonedError) {
+        throw new ProviderProbeClientError('provider_endpoint_unreachable');
+      }
+      throw error;
+    }
     throwIfCancelled(input.signal);
     let credentialLease: ProviderProbeHttpCredentialLease | undefined;
     try {
-      credentialLease = input.resolveCredential ? await input.resolveCredential() : undefined;
+      if (input.resolveCredential) {
+        const pendingCredentialLease = input.resolveCredential();
+        try {
+          credentialLease = await awaitWithinProviderOperation(
+            pendingCredentialLease,
+            operationLifetime,
+            now,
+          );
+        } catch (error) {
+          // Acquisition can be backed by an unabortable external credential
+          // owner. If it settles after this operation retires, close the late
+          // lease immediately instead of leaking secret/redaction custody.
+          void pendingCredentialLease.then((lateLease) => lateLease.close(), () => {});
+          if (error instanceof ProviderOperationAbandonedError && error.reason === 'cancelled') {
+            throw new ProviderProbeCancelledError();
+          }
+          if (error instanceof ProviderOperationAbandonedError) {
+            throw new ProviderProbeClientError('provider_endpoint_unreachable');
+          }
+          throw error;
+        }
+      }
       throwIfCancelled(input.signal);
       const credential = credentialLease?.credential;
       const remainingWallTimeMs = hopDeadlineAtMs - now();
@@ -494,15 +555,16 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
               maxResponseBodyBytes: input.maxResponseBodyBytes,
             });
-        return { response, credential };
+        return { response, credentialLease };
       } catch (error) {
         if (input.signal?.aborted || error instanceof ProviderProbeCancelledError) {
           throw new ProviderProbeCancelledError();
         }
         throw new ProviderProbeClientError('provider_endpoint_unreachable');
       }
-    } finally {
+    } catch (error) {
       credentialLease?.close();
+      throw error;
     }
   }
 
@@ -535,6 +597,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           ...(resolveCredential ? { resolveCredential } : {}),
           method: 'GET',
           wallTimeMs: remainingWallTimeMs,
+          wallDeadlineAtMs,
           maxResponseBodyBytes: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
           ...(input.signal ? { signal: input.signal } : {}),
           authorizeDestination: input.authorizeDestination,
@@ -542,100 +605,110 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
             ? { managedRequest: input.managedRequest }
             : {}),
         });
-        const { response, credential } = dispatched;
-        throwIfCancelled(input.signal);
-        if ([301, 302, 303, 307, 308].includes(response.status)) {
-          const location = headerValue(response.headers, 'location');
-          if (!location || redirects >= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxRedirects) {
+        const { response, credentialLease } = dispatched;
+        const credential = credentialLease?.credential;
+        try {
+          throwIfCancelled(input.signal);
+          if ([301, 302, 303, 307, 308].includes(response.status)) {
+            const location = headerValue(response.headers, 'location');
+            if (!location || redirects >= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxRedirects) {
+              throw new ProviderProbeClientError('provider_probe_response_invalid');
+            }
+            let redirected: URL;
+            try {
+              redirected = new URL(location, currentUrl);
+            } catch {
+              throw new ProviderProbeClientError('provider_probe_response_invalid');
+            }
+            const redirectTarget = redirected.toString();
+            if (
+              (credentialLease?.containsSensitiveValue(redirectTarget) ?? false)
+              || containsProviderRegisteredSensitiveValue(
+                redirectTarget,
+                Object.values(publicHeaders),
+              )
+            ) {
+              throw new ProviderProbeClientError('provider_probe_response_invalid');
+            }
+            if (redirected.origin !== new URL(currentUrl).origin) {
+              resolveCredential = undefined;
+              redirectPublicHeaders = {};
+            }
+            currentUrl = redirectTarget;
+            redirects += 1;
+            continue;
+          }
+          if (response.status === 401 || response.status === 403) {
+            if (input.credentialPolicy === 'none') {
+              throw new ProviderProbeClientError('provider_probe_response_invalid');
+            }
+            throw new ProviderProbeClientError(
+              credential ? 'provider_endpoint_unauthorized' : 'provider_endpoint_auth_required',
+              { httpStatus: response.status },
+            );
+          }
+          if (response.status === 429) {
+            throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
+              retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
+            });
+          }
+          if (response.status >= 500 && response.status <= 599) {
+            throw new ProviderProbeClientError('provider_endpoint_unavailable');
+          }
+          if (response.status < 200 || response.status >= 300) {
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          let redirected: URL;
+          let metadata;
           try {
-            redirected = new URL(location, currentUrl);
+            metadata = validateProviderProbeResponseMetadata({
+              contentType: headerValue(response.headers, 'content-type'),
+              contentEncoding: headerValue(response.headers, 'content-encoding'),
+            });
           } catch {
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          if (containsProviderRegisteredSensitiveValue(redirected.toString(), [
-            credential?.value ?? '',
-            ...Object.values(publicHeaders),
-          ])) {
+          const decoded = decodeResponseBody(
+            response.body,
+            metadata.encoding,
+            PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
+          );
+          let json: unknown;
+          try {
+            json = JSON.parse(decoded.toString('utf8')) as unknown;
+          } catch {
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          if (redirected.origin !== new URL(currentUrl).origin) {
-            resolveCredential = undefined;
-            redirectPublicHeaders = {};
-          }
-          currentUrl = redirected.toString();
-          redirects += 1;
-          continue;
-        }
-        if (response.status === 401 || response.status === 403) {
-          if (input.credentialPolicy === 'none') {
+          let catalog: ParsedProviderCatalogResponse;
+          try {
+            catalog = parseProviderCatalogResponse(
+              input.parser,
+              json,
+              input.contributedCatalogParsers,
+            );
+          } catch (error) {
+            // A declared format with no reachable implementation is a plugin
+            // availability fact, not a malformed response from the endpoint.
+            if (error instanceof ProviderCatalogFormatUnavailableError) {
+              throw new ProviderProbeClientError('provider_contribution_unavailable');
+            }
             throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          throw new ProviderProbeClientError(
-            credential ? 'provider_endpoint_unauthorized' : 'provider_endpoint_auth_required',
-            { httpStatus: response.status },
-          );
-        }
-        if (response.status === 429) {
-          throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
-            retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
-          });
-        }
-        if (response.status >= 500 && response.status <= 599) {
-          throw new ProviderProbeClientError('provider_endpoint_unavailable');
-        }
-        if (response.status < 200 || response.status >= 300) {
-          throw new ProviderProbeClientError('provider_probe_response_invalid');
-        }
-        let metadata;
-        try {
-          metadata = validateProviderProbeResponseMetadata({
-            contentType: headerValue(response.headers, 'content-type'),
-            contentEncoding: headerValue(response.headers, 'content-encoding'),
-          });
-        } catch {
-          throw new ProviderProbeClientError('provider_probe_response_invalid');
-        }
-        const decoded = decodeResponseBody(
-          response.body,
-          metadata.encoding,
-          PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
-        );
-        let json: unknown;
-        try {
-          json = JSON.parse(decoded.toString('utf8')) as unknown;
-        } catch {
-          throw new ProviderProbeClientError('provider_probe_response_invalid');
-        }
-        let catalog: ParsedProviderCatalogResponse;
-        try {
-          catalog = parseProviderCatalogResponse(
-            input.parser,
-            json,
-            input.contributedCatalogParsers,
-          );
-        } catch (error) {
-          // A declared format with no reachable implementation is a plugin
-          // availability fact, not a malformed response from the endpoint.
-          if (error instanceof ProviderCatalogFormatUnavailableError) {
-            throw new ProviderProbeClientError('provider_contribution_unavailable');
+          if (catalogContainsSensitiveRequestValue(
+            catalog,
+            credentialLease,
+            Object.values(publicHeaders),
+          )) {
+            throw new ProviderProbeClientError('provider_probe_response_invalid');
           }
-          throw new ProviderProbeClientError('provider_probe_response_invalid');
+          return {
+            requestFingerprint,
+            finalUrl: currentUrl,
+            compatibilityDiagnostic: metadata.compatibilityDiagnostic,
+            catalog,
+          };
+        } finally {
+          credentialLease?.close();
         }
-        if (catalogContainsSensitiveRequestValue(catalog, [
-          credential?.value,
-          ...Object.values(publicHeaders),
-        ])) {
-          throw new ProviderProbeClientError('provider_probe_response_invalid');
-        }
-        return {
-          requestFingerprint,
-          finalUrl: currentUrl,
-          compatibilityDiagnostic: metadata.compatibilityDiagnostic,
-          catalog,
-        };
       }
     },
     async postModelLoad(input: ProviderModelLoadPostRequest): Promise<ProviderModelLoadPostResult> {
@@ -665,30 +738,35 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
         authorizeDestination: input.authorizeDestination,
       });
-      const { response, credential } = dispatched;
-      throwIfCancelled(input.signal);
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        throw new ProviderProbeClientError('provider_probe_response_invalid');
+      const { response, credentialLease } = dispatched;
+      const credential = credentialLease?.credential;
+      try {
+        throwIfCancelled(input.signal);
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          throw new ProviderProbeClientError('provider_probe_response_invalid');
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new ProviderProbeClientError(
+            credential ? 'provider_endpoint_unauthorized' : 'provider_endpoint_auth_required',
+          );
+        }
+        if (response.status === 429) {
+          throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
+            retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
+          });
+        }
+        if (response.status >= 500 && response.status <= 599) {
+          throw new ProviderProbeClientError('provider_endpoint_unavailable');
+        }
+        if (response.status < 200 || response.status >= 300) {
+          throw new ProviderProbeClientError('provider_probe_response_invalid');
+        }
+        const encoding = headerValue(response.headers, 'content-encoding')?.trim().toLowerCase() || 'identity';
+        decodeResponseBody(response.body, encoding, PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes);
+        return { statusCode: response.status };
+      } finally {
+        credentialLease?.close();
       }
-      if (response.status === 401 || response.status === 403) {
-        throw new ProviderProbeClientError(
-          credential ? 'provider_endpoint_unauthorized' : 'provider_endpoint_auth_required',
-        );
-      }
-      if (response.status === 429) {
-        throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
-          retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
-        });
-      }
-      if (response.status >= 500 && response.status <= 599) {
-        throw new ProviderProbeClientError('provider_endpoint_unavailable');
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new ProviderProbeClientError('provider_probe_response_invalid');
-      }
-      const encoding = headerValue(response.headers, 'content-encoding')?.trim().toLowerCase() || 'identity';
-      decodeResponseBody(response.body, encoding, PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes);
-      return { statusCode: response.status };
     },
   };
 }

@@ -118,7 +118,10 @@ function schedulerError(error: unknown): Readonly<{ retryAfterMs?: number }> | u
 export function createAgentProviderCatalogObservationService(dependencies: Readonly<{
   activatePurposeBindings: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
   requestAuth: Pick<ConnectedAccountRequestAuthService, 'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
-  createRedactionLease: () => Pick<ProviderRedactionLease, 'add' | 'close'>;
+  createRedactionLease: () => Pick<
+    ProviderRedactionLease,
+    'add' | 'containsSensitiveValue' | 'close'
+  >;
   client: ClientPort;
   scheduler: ReturnType<typeof createProviderProbeScheduler>;
   now?: () => number;
@@ -181,7 +184,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       const endpointUrl = endpoint.baseUrl;
       if (!endpointUrl) return staticResult(catalog);
       const publicHeaders = endpoint.publicHeaders ?? Object.freeze({});
-      let redaction: Pick<ProviderRedactionLease, 'add' | 'close'> | null = null;
+      let redaction: Pick<
+        ProviderRedactionLease,
+        'add' | 'containsSensitiveValue' | 'close'
+      > | null = null;
       let requestAuthReady = false;
       const activateLease = (isCurrent: () => boolean) => dependencies.activatePurposeBindings({
         subject: {
@@ -256,7 +262,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           async (): Promise<AgentCatalogScheduledResult> => {
             let operationCurrent = true;
             const sharedLease = activateLease(() => operationCurrent);
-            let sharedRedaction: Pick<ProviderRedactionLease, 'add' | 'close'> | null = null;
+            let sharedRedaction: Pick<
+              ProviderRedactionLease,
+              'add' | 'containsSensitiveValue' | 'close'
+            > | null = null;
             try {
               const assertSharedWorkCurrent = (): void => assertLeaseCurrent(sharedLease);
               assertSharedWorkCurrent();
@@ -287,6 +296,8 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                       name: 'authorization',
                       value: `Bearer ${current.accessToken}`,
                     },
+                    containsSensitiveValue: (value) =>
+                      sharedRedaction?.containsSensitiveValue(value) ?? false,
                     close: () => {},
                   }),
                   authorizeDestination: async (destination) => {

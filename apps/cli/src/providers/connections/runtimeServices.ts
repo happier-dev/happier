@@ -10,7 +10,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
-  updateAccountSettingsV2WithRetry,
+  updateAccountSettingsV2OnceAgainstLatest,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
 import {
@@ -98,7 +98,10 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
             throw new Error('Authoritative Provider registry is missing its immutable generation tag');
           }
           return Object.freeze({
-            registry: resolveProviderContributionRegistryView(lease.registry.contributes),
+            registry: resolveProviderContributionRegistryView(
+              lease.registry.contributes,
+              lease.registry.generation,
+            ),
             generation: String(lease.registry.generation),
           });
         } finally {
@@ -138,7 +141,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     },
     updateAccountSettings: async (mutate) => {
       const result = requireProviderConnectionAccountSettingsMutationSuccess(
-        await updateAccountSettingsV2WithRetry({ credentials: input.credentials, mutate }),
+        await updateAccountSettingsV2OnceAgainstLatest({ credentials: input.credentials, mutate }),
         { machineId: input.machineId },
       );
       const refreshed = await refreshAccountSettingsForMinimumVersion({

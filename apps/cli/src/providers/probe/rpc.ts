@@ -45,7 +45,7 @@ export type ResolvedProviderProbeRpcRequest = Readonly<{
   endpoints: readonly ProviderProbeEndpoint[];
   probes: readonly ProviderCatalogProbeV1[];
   catalogFallback?: ProviderCatalogCommandFallbackV1;
-  managedSource?: ProviderManagedCatalogSource;
+  managedSources?: readonly ProviderManagedCatalogSource[];
   /**
    * Implementations of the catalog wire formats the resolved Provider's plugin
    * contributes, bound to the activation generation that owns them. Host-private

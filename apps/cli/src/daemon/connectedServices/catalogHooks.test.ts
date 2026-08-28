@@ -1,84 +1,39 @@
-import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import {
+  resolveExecutablePluginRuntimeRegistry,
+  type ResolvedExecutablePluginRuntimeRegistry,
+} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+
+const acquireAuthoritativePluginRuntimeRegistryLease = vi.hoisted(() => vi.fn());
+vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
+  acquireAuthoritativePluginRuntimeRegistryLease,
+}));
 
 import {
   getConnectedServiceRuntimeAuthAdapter,
-  getConnectedServiceRecoveryCapabilities,
-  getConnectedServicesMaterializer,
   getConnectedServiceStateSharingDescriptor,
-  buildConnectedServicePersistedSessionMetadata,
-  resolveConnectedServiceCandidatePersistedSessionFile,
   resolveConnectedServiceSwitchContinuity,
-  resolveConnectedServiceGenerationApplicationScope,
-  resolveConnectedServiceRuntimeAuthApplyCapability,
 } from './catalogHooks';
 
-const EXPECTED_CLAUDE_RECOVERY_CAPABILITIES = {
-  predictiveSoftSwitch: {
-    mode: 'supported',
-    liveSessionRequirement: {
-      kind: 'shared_group_auth_surface',
-      serviceIds: ['claude-subscription'],
-      authEnvKey: 'CLAUDE_CONFIG_DIR',
-      authEnvSubpath: ['claude-config'],
-    },
-  },
-  sameAccountFanoutStrategy: 'shared_group_auth_surface',
-  generationApplicationScope: 'shared_group_auth_surface',
-  sharedGenerationApplicationServiceIds: ['claude-subscription'],
-  runtimeAuthApply: {
-    directLiveHotAuth: {
-      supportsInTurnApply: false,
-      requiresExactRuntimeIdentity: false,
-      refreshSelectionResync: 'not_applicable',
-      authMode: {
-        kind: 'provider_owned',
-        name: 'claude_shared_group_auth_surface',
-      },
-    },
-  },
-} as const;
-
-const EXPECTED_CODEX_RECOVERY_CAPABILITIES = {
-  predictiveSoftSwitch: { mode: 'supported' },
-  sameAccountFanoutStrategy: 'provider_account_id',
-  generationApplicationScope: 'per_session_runtime',
-  runtimeAuthApply: {
-    directLiveHotAuth: {
-      supportsInTurnApply: true,
-      requiresExactRuntimeIdentity: true,
-      refreshSelectionResync: 'required',
-      authMode: {
-        kind: 'external_token_injection',
-        surface: 'codex_chatgpt_auth_tokens',
-      },
-    },
-  },
-} as const;
-
 describe('connected-service catalog hooks', () => {
-  it('passes only persisted-session lookup fields to Connected Service leaves', () => {
-    expect(buildConnectedServicePersistedSessionMetadata({
-      piSessionFile: '/tmp/pi-session.jsonl',
-      codexBackendMode: 'appServer',
-      codexSessionId: 'codex-session',
-      externalSessionOperation: { operationClaimId: 'claim-private' },
-      externalSessionOperationPresentationV1: { operationId: 'operation-private' },
-      ownerProjection: { custody: 'private' },
-      runtime: { host: 'private' },
-    })).toEqual({
-      piSessionFile: '/tmp/pi-session.jsonl',
-      codexBackendMode: 'appServer',
-      codexSessionId: 'codex-session',
-    });
+  let runtime!: ResolvedExecutablePluginRuntimeRegistry;
+
+  beforeAll(async () => {
+    runtime = await resolveExecutablePluginRuntimeRegistry();
+    acquireAuthoritativePluginRuntimeRegistryLease.mockImplementation(async () => ({
+      registry: runtime,
+      source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1,
+      release: async () => {},
+    }));
   });
 
-  it('loads provider-owned connected-service hooks from the catalog owner', async () => {
-    await expect(getConnectedServicesMaterializer('codex')).resolves.toBeTypeOf('function');
+  afterAll(async () => {
+    await runtime.dispose();
+  });
+
+  it('loads focused Agent-auth hooks from the authoritative runtime catalog', async () => {
     await expect(getConnectedServiceRuntimeAuthAdapter('codex')).resolves.toMatchObject({
       classifyRuntimeAuthFailure: expect.any(Function),
       canHotApply: expect.any(Function),
@@ -87,36 +42,6 @@ describe('connected-service catalog hooks', () => {
       providerId: 'codex',
       providerSupportStatus: 'supported',
     });
-    await expect(getConnectedServiceRecoveryCapabilities('claude')).resolves.toEqual(
-      EXPECTED_CLAUDE_RECOVERY_CAPABILITIES,
-    );
-    await expect(getConnectedServiceRecoveryCapabilities('codex')).resolves.toEqual(
-      EXPECTED_CODEX_RECOVERY_CAPABILITIES,
-    );
-  });
-
-  it('resolves generation application scope independently from quota identity fanout', async () => {
-    await expect(resolveConnectedServiceGenerationApplicationScope('claude-subscription', 'claude')).resolves.toEqual({
-      status: 'supported', scope: 'shared_group_auth_surface', ownerId: 'claude',
-    });
-    await expect(resolveConnectedServiceGenerationApplicationScope('openai-codex', 'codex')).resolves.toEqual({
-      status: 'supported', scope: 'per_session_runtime', ownerId: 'codex',
-    });
-    await expect(resolveConnectedServiceGenerationApplicationScope('openai', 'opencode')).resolves.toEqual({
-      status: 'supported', scope: 'request_time_auth', ownerId: 'opencode',
-    });
-  });
-
-  it('keeps a capability load outage distinct from a loaded unsupported provider', async () => {
-    await expect(resolveConnectedServiceRuntimeAuthApplyCapability(
-      async () => {
-        throw new Error('provider capability catalog temporarily unavailable');
-      },
-    )).rejects.toThrow('provider capability catalog temporarily unavailable');
-
-    await expect(resolveConnectedServiceRuntimeAuthApplyCapability(
-      async () => ({ predictiveSoftSwitch: { mode: 'unsupported' } }),
-    )).resolves.toEqual({ directLiveHotAuth: 'unsupported' });
   });
 
   it('keeps unsupported continuity fail-closed when no provider hook exists', async () => {
@@ -151,13 +76,43 @@ describe('connected-service catalog hooks', () => {
     });
   });
 
-  it('loads connected-service materializers for supporting providers', async () => {
-    await expect(getConnectedServicesMaterializer('claude')).resolves.toBeTypeOf('function');
-    await expect(getConnectedServicesMaterializer('codex')).resolves.toBeTypeOf('function');
-    await expect(getConnectedServicesMaterializer('gemini')).resolves.toBeTypeOf('function');
-    await expect(getConnectedServicesMaterializer('opencode')).resolves.toBeTypeOf('function');
-    await expect(getConnectedServicesMaterializer('pi')).resolves.toBeTypeOf('function');
-    await expect(getConnectedServicesMaterializer('ohMyPi')).resolves.toBeTypeOf('function');
+  it('resolves switch continuity from an external Agent current catalog declaration', async () => {
+    acquireAuthoritativePluginRuntimeRegistryLease.mockImplementationOnce(async () => ({
+      registry: {
+        acquireAgentCatalogEntry: async () => ({
+          id: 'acme.example-agent',
+          cliSubcommand: 'acme.example-agent',
+          connectedAccountServiceIds: ['com.acme.agent/acme-service'],
+          connectedAccountSwitchContinuity: {
+            continuityMode: 'restart_same_home',
+            supportedTransitions: ['native_to_connected'],
+          },
+        }),
+      },
+      release: async () => {},
+    }));
+
+    await expect(resolveConnectedServiceSwitchContinuity('acme.example-agent' as never, {
+      sessionId: 'session-external',
+      agentId: 'acme.example-agent' as never,
+      serviceId: 'com.acme.agent/acme-service' as never,
+      previousBinding: {
+        source: 'native',
+        selection: 'native',
+        serviceId: 'com.acme.agent/acme-service' as never,
+        profileId: null,
+        groupId: null,
+      },
+      nextBinding: {
+        source: 'connected',
+        selection: 'profile',
+        serviceId: 'com.acme.agent/acme-service' as never,
+        profileId: 'work',
+        groupId: null,
+      },
+      fromBindings: { v: 1, bindingsByServiceId: {} },
+      toBindings: { v: 1, bindingsByServiceId: {} },
+    })).resolves.toEqual({ mode: 'restart_same_home' });
   });
 
   it('resolves provider state sharing descriptors from provider-owned hooks', async () => {
@@ -231,7 +186,7 @@ describe('connected-service catalog hooks', () => {
     await expect(getConnectedServiceStateSharingDescriptor('kilo')).resolves.toBeNull();
   });
 
-  it('resolves provider-owned existing-session auth switch continuity through catalog hooks', async () => {
+  it('resolves existing-session auth switch continuity from the public Agent declaration', async () => {
     const baseParams = {
       sessionId: 'sess_1',
       agentId: 'gemini' as const,
@@ -256,7 +211,6 @@ describe('connected-service catalog hooks', () => {
 
     await expect(resolveConnectedServiceSwitchContinuity('gemini', baseParams)).resolves.toEqual({
       mode: 'restart_same_home',
-      reason: 'gemini_auth_environment_rematerialization_required',
     });
     const claudeParams = {
       ...baseParams,
@@ -269,29 +223,8 @@ describe('connected-service catalog hooks', () => {
     };
     await expect(resolveConnectedServiceSwitchContinuity('claude', claudeParams)).resolves.toEqual({
       mode: 'restart_shared_state_required',
-      reason: 'claude_session_state_sharing_required',
     });
 
-    const codexRuntimeAuthSelection = {
-      record: buildConnectedServiceCredentialRecord({
-        now: 1,
-        serviceId: 'openai-codex',
-        profileId: 'work',
-        kind: 'oauth',
-        expiresAt: 2,
-        oauth: {
-          accessToken: 'access',
-          refreshToken: 'refresh',
-          idToken: 'id',
-          scope: null,
-          tokenType: null,
-          providerAccountId: 'acct',
-          providerEmail: null,
-        },
-      }),
-      applyConnectedServiceAuthGeneration: async () => ({ ok: true }),
-      invalidateTransports: async () => {},
-    };
     const codexNativeToConnectedParams = {
       ...baseParams,
       agentId: 'codex' as const,
@@ -300,11 +233,9 @@ describe('connected-service catalog hooks', () => {
       nextBinding: { ...baseParams.nextBinding, serviceId: 'openai-codex' as const },
       fromBindings: { v: 1 as const, bindingsByServiceId: { 'openai-codex': { source: 'native' as const } } },
       toBindings: { v: 1 as const, bindingsByServiceId: { 'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' } } },
-      runtimeAuthSelection: codexRuntimeAuthSelection,
     };
     await expect(resolveConnectedServiceSwitchContinuity('codex', codexNativeToConnectedParams)).resolves.toEqual({
       mode: 'restart_shared_state_required',
-      reason: 'codex_shared_state_required',
     });
     await expect(resolveConnectedServiceSwitchContinuity('codex', {
       ...codexNativeToConnectedParams,
@@ -316,10 +247,10 @@ describe('connected-service catalog hooks', () => {
         groupId: null,
       },
       fromBindings: { v: 1 as const, bindingsByServiceId: { 'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'old' } } },
-    })).resolves.toEqual({ mode: 'hot_apply' });
+    })).resolves.toEqual({ mode: 'restart_shared_state_required' });
   });
 
-  it('loads runtime auth adapters and predictive recovery capabilities from provider hooks', async () => {
+  it('loads focused runtime auth adapters from Agent registration', async () => {
     await expect(getConnectedServiceRuntimeAuthAdapter('claude')).resolves.toMatchObject({
       classifyRuntimeAuthFailure: expect.any(Function),
       canHotApply: expect.any(Function),
@@ -351,80 +282,13 @@ describe('connected-service catalog hooks', () => {
         credentialRevision: 'csr_abcdefghijklmnopqrstuv',
       })],
     });
-    await expect(getConnectedServiceRuntimeAuthAdapter('antigravity')).resolves.toMatchObject({
-      classifyRuntimeAuthFailure: expect.any(Function),
-      verifyProviderOutcome: expect.any(Function),
-    });
+    await expect(getConnectedServiceRuntimeAuthAdapter('antigravity')).resolves.toBeNull();
     await expect(getConnectedServiceRuntimeAuthAdapter('opencode')).resolves.toBeNull();
     await expect(getConnectedServiceRuntimeAuthAdapter('pi')).resolves.toMatchObject({
       classifyRuntimeAuthFailure: expect.any(Function),
       canHotApply: expect.any(Function),
     });
-    await expect(getConnectedServiceRuntimeAuthAdapter('ohMyPi')).resolves.toMatchObject({
-      classifyRuntimeAuthFailure: expect.any(Function),
-      canHotApply: expect.any(Function),
-      verifyProviderOutcome: expect.any(Function),
-    });
-    await expect(getConnectedServiceRecoveryCapabilities('claude')).resolves.toEqual(
-      EXPECTED_CLAUDE_RECOVERY_CAPABILITIES,
-    );
-    await expect(getConnectedServiceRecoveryCapabilities('pi')).resolves.toEqual({
-      predictiveSoftSwitch: { mode: 'unsupported' },
-      generationApplicationScope: 'request_time_auth',
-    });
-    await expect(getConnectedServiceRecoveryCapabilities('gemini')).resolves.toEqual({
-      predictiveSoftSwitch: { mode: 'unsupported' },
-      generationApplicationScope: 'per_session_runtime',
-    });
-    await expect(getConnectedServiceRecoveryCapabilities('opencode')).resolves.toEqual({
-      predictiveSoftSwitch: { mode: 'unsupported' },
-      generationApplicationScope: 'request_time_auth',
-    });
-    await expect(getConnectedServiceRecoveryCapabilities('codex')).resolves.toEqual(
-      EXPECTED_CODEX_RECOVERY_CAPABILITIES,
-    );
+    await expect(getConnectedServiceRuntimeAuthAdapter('ohMyPi')).resolves.toBeNull();
   });
 
-  it('resolves provider-owned connected-service persisted session-file candidates', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-catalog-candidate-'));
-    const previousCodexHome = process.env.CODEX_HOME;
-    try {
-      const piSessionFile = join(root, 'pi-agent-dir', 'sessions', '--tmp-project--', 'pi-session.jsonl');
-      const codexSessionsRoot = join(root, 'codex-home', 'sessions');
-      const codexRolloutFile = join(
-        codexSessionsRoot,
-        '2026',
-        '06',
-        '01',
-        'rollout-2026-06-01T10-00-00-019e7cfd-2e3d-74f0-be76-b7459424f0a8.jsonl',
-      );
-      await mkdir(join(root, 'pi-agent-dir', 'sessions', '--tmp-project--'), { recursive: true });
-      await mkdir(join(codexSessionsRoot, '2026', '06', '01'), { recursive: true });
-      await writeFile(piSessionFile, '{}\n');
-      await writeFile(codexRolloutFile, '{}\n');
-      process.env.CODEX_HOME = join(root, 'codex-home');
-
-      expect(resolveConnectedServiceCandidatePersistedSessionFile('pi', {
-        piSessionFile,
-      })).toBe(piSessionFile);
-      expect(resolveConnectedServiceCandidatePersistedSessionFile('codex', {
-        codexBackendMode: 'appServer',
-        codexSessionId: '019e7cfd-2e3d-74f0-be76-b7459424f0a8',
-      })).toBe(codexRolloutFile);
-      expect(resolveConnectedServiceCandidatePersistedSessionFile('codex', {
-        codexBackendMode: 'mcp',
-        codexSessionId: '019e7cfd-2e3d-74f0-be76-b7459424f0a8',
-      })).toBeNull();
-      expect(resolveConnectedServiceCandidatePersistedSessionFile('claude', {
-        piSessionFile,
-      })).toBeNull();
-    } finally {
-      if (previousCodexHome === undefined) {
-        delete process.env.CODEX_HOME;
-      } else {
-        process.env.CODEX_HOME = previousCodexHome;
-      }
-      await rm(root, { recursive: true, force: true });
-    }
-  });
 });

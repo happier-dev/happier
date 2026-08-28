@@ -47,7 +47,7 @@ describe('trackedSessionConnectedServiceBindings', () => {
     expect(resolveTrackedConnectedServiceBindingsRaw(tracked)).toBe(metadataBindings);
     expect(hasTrackedConnectedServiceGroupBinding({
       tracked,
-      serviceId: 'anthropic',
+      serviceId: 'happier.agent.claude/anthropic',
       groupId: 'work',
     })).toBe(true);
   });
@@ -59,7 +59,7 @@ describe('trackedSessionConnectedServiceBindings', () => {
         connectedServices: {
           v: 1,
           bindingsByServiceId: {
-            anthropic: {
+            'happier.agent.claude/anthropic': {
               source: 'connected',
               selection: 'group',
               profileId: 'profile_live',
@@ -91,12 +91,12 @@ describe('trackedSessionConnectedServiceBindings', () => {
 
     expect(hasTrackedConnectedServiceGroupBinding({
       tracked,
-      serviceId: 'anthropic',
+      serviceId: 'happier.agent.claude/anthropic',
       groupId: 'live',
     })).toBe(true);
     expect(hasTrackedConnectedServiceGroupBinding({
       tracked,
-      serviceId: 'anthropic',
+      serviceId: 'happier.agent.claude/anthropic',
       groupId: 'stale',
     })).toBe(false);
   });

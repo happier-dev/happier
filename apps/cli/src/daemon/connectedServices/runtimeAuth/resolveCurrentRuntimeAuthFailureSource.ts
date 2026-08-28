@@ -1,8 +1,8 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import type {
@@ -16,7 +16,7 @@ type CurrentCredential = Readonly<{
 }>;
 
 type ExactRuntimeIdentity = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   proofStrength: 'exact' | 'weak' | 'diagnostic' | 'none' | 'unknown';
   providerAccountId: string | null;
   profileId: string | null;
@@ -43,7 +43,7 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export type CurrentRuntimeAuthFailureSource = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   profileId: string;
   generation: number;
@@ -58,20 +58,20 @@ export type CurrentRuntimeAuthFailureSource = Readonly<{
 export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
   classification: ConnectedServiceRuntimeFailureClassification;
   readRuntimeIdentity: (request: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     profileId: string;
     generation: number;
     credentialRevision: string | null;
   }>) => Promise<RuntimeIdentityReadResult | null>;
   resolveCurrentCredential: (
-    serviceId: ConnectedServiceId,
+    serviceId: ConnectedAccountServiceKey,
     profileId: string,
   ) => Promise<CurrentCredential | null>;
   resolveLegacySourceRevision?:
     LegacyConnectedServiceRuntimeAuthFailureSourceRevisionResolver | null;
 }>): Promise<CurrentRuntimeAuthFailureSource | null> {
-  const serviceId = ConnectedServiceIdSchema.safeParse(input.classification.serviceId);
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.classification.serviceId);
   const groupId = readNonEmptyString(input.classification.groupId);
   const profileId = readNonEmptyString(input.classification.profileId);
   const generation = typeof input.classification.groupGeneration === 'number'
@@ -83,10 +83,10 @@ export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
   );
   const reportCarriesRevision = input.classification.expectedCredentialRevision !== null
     && input.classification.expectedCredentialRevision !== undefined;
-  if (!serviceId.success || !groupId || !profileId || generation === null) return null;
+  if (!serviceId || !groupId || !profileId || generation === null) return null;
 
   const liveIdentityResult = await input.readRuntimeIdentity({
-    serviceId: serviceId.data,
+    serviceId: serviceId,
     groupId,
     profileId,
     generation,
@@ -110,7 +110,7 @@ export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
   );
   if (
     !liveIdentity
-    || liveIdentity.serviceId !== serviceId.data
+    || liveIdentity.serviceId !== serviceId
     || liveIdentity.proofStrength !== 'exact'
     || !liveGroupId
     || !liveProfileId
@@ -120,7 +120,7 @@ export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
   if (reportCarriesRevision) {
     if (!reportedRevision.success || !liveRevision.success) return null;
     return {
-      serviceId: serviceId.data,
+      serviceId: serviceId,
       groupId: liveGroupId,
       profileId: liveProfileId,
       generation: liveGeneration,
@@ -130,7 +130,7 @@ export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
 
   const resolveLegacySourceRevision = input.resolveLegacySourceRevision;
   if (!resolveLegacySourceRevision) return null;
-  const currentCredential = await input.resolveCurrentCredential(serviceId.data, liveProfileId);
+  const currentCredential = await input.resolveCurrentCredential(serviceId, liveProfileId);
   if (!currentCredential) return null;
   const legacyRevision = resolveLegacySourceRevision({
     reportedCredentialRevision: null,
@@ -147,7 +147,7 @@ export async function resolveCurrentRuntimeAuthFailureSource(input: Readonly<{
   if (legacyRevision !== currentCredential.credentialRevision) return null;
 
   return {
-    serviceId: serviceId.data,
+    serviceId: serviceId,
     groupId: liveGroupId,
     profileId: liveProfileId,
     generation: liveGeneration,

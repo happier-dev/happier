@@ -18,6 +18,11 @@ import type {
 
 export type ProviderContributionRegistryView = Readonly<{
   providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution>;
+  /**
+   * Host-private executable registry generation that authored this projection.
+   * Present for authoritative daemon leases; omitted only by static test seams.
+   */
+  runtimeRegistryGeneration?: number;
 }>;
 
 export type ProviderEndpointDnsEvidence = ReadonlyMap<string, readonly string[]>;

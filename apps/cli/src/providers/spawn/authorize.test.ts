@@ -831,6 +831,7 @@ describe('provider spawn authorization lifecycle', () => {
       sessionId: 'session-settings-revalidation',
       createRedactionLease: () => ({
         redact: (value) => value,
+        containsSensitiveValue: (value) => value.includes('secret-value'),
         values: () => ['secret-value'],
         add: () => {},
         snapshotRedactor: () => (value) => value,
@@ -880,6 +881,7 @@ describe('provider spawn authorization lifecycle', () => {
       sessionId: 'session-account-scope-change',
       createRedactionLease: () => ({
         redact: (value) => value,
+        containsSensitiveValue: (value) => value.includes('secret-value'),
         values: () => ['secret-value'],
         add: () => {},
         snapshotRedactor: () => (value) => value,

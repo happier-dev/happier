@@ -1,5 +1,6 @@
 import {
   AccountSettingsSavedSecretMutationError,
+  ProviderErrorV1Schema,
   SavedSecretSchema,
   applyAccountSettingsSavedSecretMutation,
   createProviderErrorV1,
@@ -91,7 +92,7 @@ export function addPreparedSavedSecret(
   }
 }
 
-export function isProviderError(value: unknown): value is ProviderErrorV1 {
-  return value !== null && typeof value === 'object' && (value as { v?: unknown }).v === 1
-    && typeof (value as { code?: unknown }).code === 'string';
+export function parseProviderError(value: unknown): ProviderErrorV1 | null {
+  const parsed = ProviderErrorV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

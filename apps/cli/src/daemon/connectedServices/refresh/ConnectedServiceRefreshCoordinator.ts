@@ -3310,6 +3310,10 @@ export class ConnectedServiceRefreshCoordinator {
               qualifiedPurposeBindingSnapshot?.bindings ?? Object.freeze([]),
             requestAuthPurposeBindings,
           },
+          qualifiedPurposeBindingSnapshot,
+          ...(target.sessionId
+            ? { purposeBindingSessionId: target.sessionId }
+            : {}),
           ...(target.childSelectionsByServiceId
             ? { selectionsByServiceId: this.buildResolvedSelectionsByServiceId(target.childSelectionsByServiceId, records) }
             : {}),

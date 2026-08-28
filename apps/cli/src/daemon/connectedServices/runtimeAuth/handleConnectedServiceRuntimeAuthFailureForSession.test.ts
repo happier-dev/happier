@@ -5,7 +5,6 @@ import {
     authorizeConnectedServiceRuntimeAuthFailureSource,
     handleConnectedServiceRuntimeAuthFailureForSession,
 } from './handleConnectedServiceRuntimeAuthFailureForSession';
-import type { ConnectedServiceRuntimeAuthApplyCapability } from '@/agent/catalog/types';
 import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
@@ -28,7 +27,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         await expect(authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [tracked],
             sessionId: tracked.happySessionId,
-            runtimeAuthApplyCapability: runtimeAuthCapability(false),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'claude-subscription',
@@ -56,22 +54,11 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         expect(resolveProviderQualifiedRuntimeAuthFailureSource).toHaveBeenCalledOnce();
     });
 
-    const runtimeAuthCapability = (requiresExactRuntimeIdentity: boolean): ConnectedServiceRuntimeAuthApplyCapability => ({
-        directLiveHotAuth: {
-            supportsInTurnApply: true,
-            requiresExactRuntimeIdentity,
-            refreshSelectionResync: 'not_applicable',
-            authMode: { kind: 'managed_provider_session' },
-        },
-    });
-
     it.each([
-        ['openai-codex', false, 'authorized'],
-        ['claude-subscription', true, 'recovery_superseded'],
-    ] as const)('uses the typed provider capability, not service id, for %s source authorization', async (
+        'openai-codex',
+        'claude-subscription',
+    ] as const)('uses generic host currentness, not service id, for %s source authorization', async (
         serviceId,
-        requiresExactRuntimeIdentity,
-        expectedStatus,
     ) => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
@@ -81,7 +68,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_capability',
-            runtimeAuthApplyCapability: runtimeAuthCapability(requiresExactRuntimeIdentity),
             classification: {
                 kind: 'usage_limit',
                 serviceId,
@@ -96,7 +82,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             },
         });
 
-        expect(result.status).toBe(expectedStatus);
+        expect(result.status).toBe('recovery_superseded');
     });
 
     it('authorizes an exact quota report from a reattached live runtime when spawn selections are absent', async () => {
@@ -109,7 +95,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_reattached_exact_runtime',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -170,7 +155,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [tracked],
             sessionId: tracked.happySessionId,
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -218,7 +202,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_registered_mismatch',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -266,7 +249,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_exact_current_disproves_registry',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -315,7 +297,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_stale_bootstrap',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -359,7 +340,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_registry_unavailable',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'auth_expired',
                 serviceId: 'openai-codex',
@@ -409,7 +389,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [tracked],
             sessionId: tracked.happySessionId,
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'auth_expired',
                 serviceId: 'openai-codex',
@@ -446,7 +425,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_reattached_auth_expired',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'auth_expired',
                 serviceId: 'openai-codex',
@@ -491,7 +469,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_reattached_predecessor',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -533,7 +510,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_predecessor_generation',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -610,7 +586,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             sessionId: 'sess_scheduler_reattached_predecessor',
             switchesThisTurn: 0,
             recoveryInvocationSource: 'scheduler_retry',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -664,7 +639,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
             }],
             sessionId: 'sess_newer_registered_generation',
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
             classification: {
                 kind: 'usage_limit',
                 serviceId: 'openai-codex',
@@ -764,7 +738,6 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 recoveryAction: { kind: 'quota_recovery_required' as const },
                 ...overrides,
             },
-            runtimeAuthApplyCapability: runtimeAuthCapability(true),
         });
 
         expect(result).toMatchObject({ status: 'recovery_superseded' });

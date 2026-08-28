@@ -6,7 +6,7 @@ import { ConnectedServiceRuntimeRegistry } from './registry';
 const connectedBindings = {
   v: 1,
   bindingsByServiceId: {
-    openai: {
+    'acme.accounts/session-auth': {
       source: 'connected',
       selection: 'group',
       groupId: 'codex-team',
@@ -18,7 +18,7 @@ const connectedBindings = {
 const connectedSelections = JSON.stringify([
   {
     kind: 'group',
-    serviceId: 'openai',
+    serviceId: 'acme.accounts/session-auth',
     groupId: 'codex-team',
     activeProfileId: 'active-profile',
     fallbackProfileId: 'fallback-profile',
@@ -31,7 +31,7 @@ const connectedSelections = JSON.stringify([
 function connectedSelectionsWithCredentialRevision(credentialRevision: string): string {
   return JSON.stringify([{
     kind: 'group',
-    serviceId: 'openai',
+    serviceId: 'acme.accounts/session-auth',
     groupId: 'codex-team',
     activeProfileId: 'active-profile',
     fallbackProfileId: 'fallback-profile',
@@ -68,7 +68,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
 
     expect(target?.bindings).toEqual([
       {
-        serviceId: 'openai',
+        serviceId: 'acme.accounts/session-auth',
         profileId: 'active-profile',
         groupId: 'codex-team',
         groupGeneration: 4,
@@ -136,7 +136,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
 
     const settled = registry.adoptExactGroupApplicationForSession({
       sessionId: 'session-1',
-      serviceId: 'openai',
+      serviceId: 'acme.accounts/session-auth',
       groupId: 'codex-team',
       profileId: 'replacement-profile',
       generation: 5,
@@ -144,7 +144,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     });
 
     expect(settled?.activeBindings).toEqual([{
-      serviceId: 'openai',
+      serviceId: 'acme.accounts/session-auth',
       profileId: 'replacement-profile',
       groupId: 'codex-team',
       groupGeneration: 5,

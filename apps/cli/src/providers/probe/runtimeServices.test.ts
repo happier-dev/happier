@@ -23,6 +23,7 @@ import {
   createProviderProbeHttpClient,
   type ProviderProbeTransportRequest,
 } from './client';
+import { PROVIDER_HEALTH_REFRESH_TTL_MS } from './scheduler';
 
 const temporaryPaths: string[] = [];
 afterEach(async () => {
@@ -258,6 +259,9 @@ describe('runtime provider services', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-revoked-queue.json',
       read: vi.fn(async () => runtimeState),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
@@ -492,6 +496,9 @@ describe('runtime provider services', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-model-load-frontier.json',
       read: vi.fn(async () => runtimeState),
+      updateTransientEndpointHealth: vi.fn(async (transform) => {
+        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
+      }),
       update: vi.fn(async (transform) => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
@@ -722,6 +729,9 @@ describe('runtime provider services', () => {
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json',
       read: async () => runtimeState,
+      updateTransientEndpointHealth: async (transform) => {
+        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
+      },
       update: async (transform) => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
@@ -873,8 +883,6 @@ describe('runtime provider services', () => {
   });
 
   it('refreshes declared endpoint health on picker demand without replacing fresher catalog or load state', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(1_000);
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-health-'));
     temporaryPaths.push(happyHomeDir);
     const localConnectionId = ProviderConnectionIdSchema.parse('pc_lmstudio_health');
@@ -986,16 +994,26 @@ describe('runtime provider services', () => {
     expect(transport).toHaveBeenCalledTimes(1);
     const baseline = await services.runtimeStore.read();
     expect(baseline).toMatchObject({
-      endpointHealth: [{ state: { status: 'available', observedAt: 1_000 } }],
+      endpointHealth: [{ state: { status: 'available', observedAt: expect.any(Number) } }],
       catalogs: [{ state: { snapshot: { models: [{ id: 'publisher/model-a' }] } } }],
       modelLoadStates: [{ key: { modelId: 'publisher/model-a' }, loadState: 'loaded' }],
     });
+
+    // Age only the health observation through the real store. Faking the wall
+    // clock here compromises the store's owner-lock lease timers and tests the
+    // lock implementation instead of picker-demand freshness.
+    const staleHealthObservedAt = Date.now() - PROVIDER_HEALTH_REFRESH_TTL_MS - 1;
+    await services.runtimeStore.update((state) => ({
+      ...state,
+      endpointHealth: state.endpointHealth.map((row) => 'observedAt' in row.state
+        ? { ...row, state: { ...row.state, observedAt: staleHealthObservedAt } }
+        : row),
+    }));
 
     transport.mockClear();
     nativeModels = [{
       key: 'publisher/health-only', type: 'llm', loaded_instances: [],
     }];
-    vi.setSystemTime(32_001);
     expect(transport).not.toHaveBeenCalled();
 
     const [modelsResult, summaryResult] = await Promise.all([
@@ -1014,9 +1032,9 @@ describe('runtime provider services', () => {
       ]);
       expect(state.endpointHealth[0]?.state).toMatchObject({ observedAt: expect.any(Number) });
       if (state.endpointHealth[0]?.state.status !== 'available') throw new Error('Expected available endpoint health');
-      expect(state.endpointHealth[0].state.observedAt).toBeGreaterThan(31_000);
-      expect(state.endpointHealth[0].state.observedAt).toBeLessThan(5 * 60_000);
-    });
+      expect(state.endpointHealth[0].state.observedAt).toBeGreaterThan(staleHealthObservedAt);
+      expect(state.endpointHealth[0].state.observedAt).toBeLessThanOrEqual(Date.now());
+    }, { timeout: 10_000 });
     expect(transport).toHaveBeenCalledTimes(1);
     expect(transport.mock.calls[0]?.[0].url).toBe('http://127.0.0.1:1234/api/v1/models');
     const refreshed = await services.runtimeStore.read();

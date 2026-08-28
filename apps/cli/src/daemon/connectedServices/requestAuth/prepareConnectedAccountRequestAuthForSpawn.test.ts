@@ -73,7 +73,7 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                             connectedAccounts: [{
                                 purpose: 'primary',
                                 service: 'openai-codex',
-                                materializationKinds: ['httpHeaders'],
+                                materializationKinds: ['httpHeaders', 'files', 'environment'],
                             }, {
                                 purpose: 'realtime_upstream',
                                 service: {
@@ -95,6 +95,15 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                                 ],
                             },
                         }],
+                        connectedAccountFileEnvironmentUses: [{
+                            purpose: 'primary',
+                            fileId: 'auth.json',
+                            environmentKey: 'CODEX_AUTH_FILE',
+                        }],
+                        connectedAccountEnvironmentUses: [{
+                            purpose: 'primary',
+                            environmentKey: 'OPENAI_API_KEY',
+                        }],
                     },
                 }]]),
             },
@@ -111,6 +120,31 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                     localId: 'codex',
                 },
                 purpose: 'realtime_upstream',
+            }],
+            authorizedPurposes: [{
+                purpose: {
+                    consumer: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    purpose: 'primary',
+                },
+                serviceRefs: [{
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                }],
+            }, {
+                purpose: {
+                    consumer: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    purpose: 'realtime_upstream',
+                },
+                serviceRefs: [{
+                    pluginId: 'happier.voice.openai',
+                    localId: 'openai',
+                }],
             }],
             bindings: [{
                 purpose: {
@@ -147,6 +181,48 @@ describe('ordinary Agent request-auth spawn preparation', () => {
                         'chatgpt-account-id',
                     ],
                 },
+            }],
+            fileEnvironmentUses: [{
+                purpose: {
+                    consumer: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    purpose: 'primary',
+                },
+                serviceRefs: [{
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                }],
+                fileId: 'auth.json',
+                environmentKey: 'CODEX_AUTH_FILE',
+            }],
+            fileMaterializationPurposes: [{
+                purpose: {
+                    consumer: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    purpose: 'primary',
+                },
+                serviceRefs: [{
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                }],
+            }],
+            environmentUses: [{
+                purpose: {
+                    consumer: {
+                        pluginId: 'happier.agent.codex',
+                        localId: 'codex',
+                    },
+                    purpose: 'primary',
+                },
+                serviceRefs: [{
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                }],
+                environmentKey: 'OPENAI_API_KEY',
             }],
         });
     });

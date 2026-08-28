@@ -89,7 +89,7 @@ describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
     });
   });
 
-  it('falls back to durable metadata for identity, resume id, and provider-owned persisted file candidate', () => {
+  it('falls back to durable metadata for identity and resume id without interpreting provider file fields', () => {
     const baseDir = '/tmp/happier-connected-services';
     const piSessionFile = join(
       baseDir,
@@ -157,11 +157,11 @@ describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
       },
       vendorResumeId: 'pi-session-from-metadata',
       cwd: '/tmp/project',
-      candidatePersistedSessionFile: piSessionFile,
+      candidatePersistedSessionFile: null,
     });
   });
 
-  it('uses latest persisted metadata when the live tracked webhook metadata has not received PI resume state yet', () => {
+  it('uses latest persisted metadata when the live tracked webhook metadata has not received resume state yet', () => {
     const baseDir = '/tmp/happier-connected-services';
     const piSessionFile = join(
       baseDir,
@@ -221,7 +221,7 @@ describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
       },
       vendorResumeId: 'pi-session-latest',
       cwd: '/tmp/project',
-      candidatePersistedSessionFile: piSessionFile,
+      candidatePersistedSessionFile: null,
     });
   });
 
@@ -297,7 +297,7 @@ describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
       },
       targetMaterializedRoot: expectedRoot,
       vendorResumeId: 'pi-session-latest',
-      candidatePersistedSessionFile: latestPiSessionFile,
+      candidatePersistedSessionFile: null,
     });
   });
 

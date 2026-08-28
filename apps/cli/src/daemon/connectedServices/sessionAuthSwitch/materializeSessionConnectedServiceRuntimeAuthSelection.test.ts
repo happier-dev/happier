@@ -1,5 +1,3 @@
-import { join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
@@ -7,7 +5,6 @@ import type { ApiClient } from '@/api/api';
 import type { TrackedSession } from '@/daemon/types';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
 
 const CREDENTIAL_REVISION = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -78,15 +75,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     });
 
-    expect(selection).toMatchObject({ record, credentialRevision });
-    const adapter = await getConnectedServiceRuntimeAuthAdapter('codex');
-    expect(adapter?.canHotApply({
-      target: { agentId: 'codex' },
-      selection,
-    })).toEqual({
-      supported: true,
-      mode: 'codex_chatgpt_auth_tokens',
-    });
+    expect(selection).toMatchObject({ credential: record, credentialRevision });
+    expect(selection).not.toHaveProperty('targetMaterializedRoot');
   });
 
   it('preserves group fallback profile and generation from the current session selection env', async () => {
@@ -183,7 +173,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 7,
-      record,
+      credential: record,
     });
   });
 
@@ -275,7 +265,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 8,
-      record,
+      credential: record,
     });
     expect(api.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
       serviceId: 'anthropic',
@@ -376,7 +366,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'primary',
       fallbackProfileId: 'fallback',
       generation: 7,
-      record,
+      credential: record,
     });
   });
 
@@ -479,7 +469,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fresh-fallback',
       generation: 8,
-      record,
+      credential: record,
     });
   });
 
@@ -602,19 +592,9 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 3,
-      record,
-      targetMaterializedRoot: join(
-        activeServerDir,
-        'daemon',
-        'connected-services',
-        'homes',
-        'claude-subscription',
-        '__groups',
-        'work',
-        'claude',
-        'claude-config',
-      ),
+      credential: record,
     });
+    expect(result).not.toHaveProperty('targetMaterializedRoot');
     expect(result).not.toHaveProperty('targetMaterializedEnv');
   });
 });

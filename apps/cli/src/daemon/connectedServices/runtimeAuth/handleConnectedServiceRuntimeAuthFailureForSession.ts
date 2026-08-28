@@ -1,9 +1,8 @@
 import type { TrackedSession } from '@/daemon/types';
-import type { ConnectedServiceRuntimeAuthApplyCapability } from '@/agent/catalog/types';
 import {
-  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceBindingsV1,
-  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import {
@@ -43,19 +42,19 @@ type RuntimeAuthSwitchContinuation = (input: Readonly<{
   sessionId: string;
   attemptId: string;
   normalizedBindings: ConnectedServiceBindingsV1;
-  serviceIds: ReadonlySet<ConnectedServiceId>;
+  serviceIds: ReadonlySet<ConnectedAccountServiceKey>;
   action: 'hot_applied' | 'restart_requested';
   switchReason?: ConnectedServiceSessionAuthSwitchReason;
 }>) => Promise<void> | void;
 type RuntimeAuthSupersedingGenerationSettlement = (input: Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   fromProfileId: string | null;
   result: Extract<ConnectedServiceAuthGroupSwitchResult, Readonly<{ status: 'superseded_after_apply' }>>;
 }>) => Promise<void>;
 type RuntimeAuthCredentialRefresh = (input: Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string;
   sessionId: string;
 }>) => Promise<ConnectedServiceRuntimeAuthCredentialRefreshResult>;
@@ -69,7 +68,7 @@ type InactiveRuntimeAuthSession = Readonly<{
   candidatePersistedSessionFile?: string | null;
 }>;
 type RuntimeAuthFailureSourceBinding = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string | null;
   profileId: string;
   generation: number | null;
@@ -166,7 +165,6 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
   resolveProviderQualifiedRuntimeAuthFailureSource?: ProviderQualifiedRuntimeAuthFailureSourceResolver | null;
   sessionId: string;
   classification: ConnectedServiceRuntimeFailureClassification | null;
-  runtimeAuthApplyCapability?: ConnectedServiceRuntimeAuthApplyCapability | null;
 }>): Promise<RuntimeAuthFailureSourceAuthorization> {
   const tracked = findTrackedSession(input.getChildren(), input.sessionId);
   const inactive = tracked ? null : await input.resolveInactiveSession?.({ sessionId: input.sessionId }) ?? null;
@@ -188,7 +186,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
       && resolvedClassification.profileId !== classification.profileId
     ) {
       providerQualifiedSourceBinding = {
-        serviceId: resolvedClassification.serviceId as ConnectedServiceId,
+        serviceId: resolvedClassification.serviceId,
         groupId: resolvedClassification.groupId,
         profileId: resolvedClassification.profileId,
         generation: resolvedClassification.groupGeneration ?? null,
@@ -197,9 +195,14 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     }
     classification = resolvedClassification;
   }
-  const directLiveHotAuth = input.runtimeAuthApplyCapability?.directLiveHotAuth;
-  const requiresExactRuntimeIdentity = typeof directLiveHotAuth === 'object'
-    && directLiveHotAuth.requiresExactRuntimeIdentity === true;
+  if (providerQualifiedSourceBinding) {
+    return {
+      status: 'authorized',
+      tracked,
+      inactive,
+      sourceBinding: providerQualifiedSourceBinding,
+    };
+  }
   const completeReportedBinding = classification !== null
     && classification.groupId !== null
     && classification.profileId !== null
@@ -208,8 +211,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
   // A complete modern report identifies the credential actually used by the provider
   // operation. Hot apply can make that identity newer than immutable spawn metadata.
   // Reattached/untracked and quota reports additionally require exact current authority.
-  const requiresCurrentSource = requiresExactRuntimeIdentity
-    && classification !== null
+  const requiresCurrentSource = classification !== null
     && classification.groupId !== null
     && (
       completeReportedBinding
@@ -218,15 +220,13 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
       || !tracked
     );
   if (!requiresCurrentSource) {
-    return providerQualifiedSourceBinding
-      ? { status: 'authorized', tracked, inactive, sourceBinding: providerQualifiedSourceBinding }
-      : { status: 'authorized', tracked, inactive };
+    return { status: 'authorized', tracked, inactive };
   }
   if (classification === null) {
     return { status: 'authorized', tracked, inactive };
   }
-  const serviceId = ConnectedServiceIdSchema.safeParse(classification.serviceId);
-  if (!serviceId.success) {
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(classification.serviceId);
+  if (!serviceId) {
     return {
       status: 'recovery_superseded',
       reason: 'source_tuple_unavailable',
@@ -336,7 +336,7 @@ type RuntimeRecoveryActionRequired = Readonly<{
   status: 'recovery_action_required';
   action: Readonly<{
     kind: 'reconnect_profile';
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string | null;
     groupId: string | null;
     reason: ConnectedServiceRuntimeFailureClassification['kind'];
@@ -344,7 +344,7 @@ type RuntimeRecoveryActionRequired = Readonly<{
 }>;
 type RuntimeCredentialRefreshed = Readonly<{
   status: 'credential_refreshed';
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string;
   groupId: string | null;
   refresh: ConnectedServiceCredentialRefreshResult;
@@ -422,7 +422,7 @@ async function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
 async function maybeContinueAfterRuntimeGroupGeneration(input: Readonly<{
   tracked: TrackedSession | null;
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   failedProfileId: string | null;
   failedCredentialRevision: string | null;
@@ -457,7 +457,7 @@ async function maybeContinueAfterRuntimeGroupGeneration(input: Readonly<{
       },
     },
   } satisfies ConnectedServiceBindingsV1;
-  const serviceIds = new Set<ConnectedServiceId>([input.serviceId]);
+  const serviceIds = new Set<ConnectedAccountServiceKey>([input.serviceId]);
 
   await input.continueAfterRuntimeAuthSwitch({
     tracked: input.tracked,
@@ -490,7 +490,7 @@ async function maybeContinueAfterRuntimeGroupGeneration(input: Readonly<{
 async function continueAfterRuntimeCredentialRefresh(input: Readonly<{
   tracked: TrackedSession | null;
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   profileId: string;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
@@ -507,7 +507,7 @@ async function continueAfterRuntimeCredentialRefresh(input: Readonly<{
       },
     },
   } satisfies ConnectedServiceBindingsV1;
-  const serviceIds = new Set<ConnectedServiceId>([input.serviceId]);
+  const serviceIds = new Set<ConnectedAccountServiceKey>([input.serviceId]);
 
   await input.continueAfterRuntimeAuthSwitch({
     tracked: input.tracked,
@@ -547,7 +547,7 @@ function requiresProfileReconnectWithoutGroupSwitch(
 }
 
 function reconnectProfileAction(input: Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string | null;
   groupId: string | null;
   reason: ConnectedServiceRuntimeFailureClassification['kind'];
@@ -608,7 +608,6 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   recoveryInvocationSource?: RuntimeAuthRecoveryInvocationSource;
   classification: ConnectedServiceRuntimeFailureClassification | null;
   sourceAuthorization?: RuntimeAuthFailureSourceAuthorization;
-  runtimeAuthApplyCapability?: ConnectedServiceRuntimeAuthApplyCapability | null;
 }>): Promise<
   | Awaited<ReturnType<typeof handleConnectedServiceRuntimeAuthFailure>>
   | Readonly<{ status: 'session_not_found' }>
@@ -622,7 +621,6 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
 > {
   const sourceAuthorization = input.sourceAuthorization ?? await authorizeConnectedServiceRuntimeAuthFailureSource({
     ...input,
-    runtimeAuthApplyCapability: input.runtimeAuthApplyCapability ?? null,
   });
   if (sourceAuthorization.status !== 'authorized') {
     if (sourceAuthorization.status === 'session_not_found') {

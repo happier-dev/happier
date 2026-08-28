@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   TranscriptRawAgentEventV1Schema,
   buildAgentEventLocalId,
   normalizeConnectedServiceUxDiagnosticV1,
@@ -62,8 +62,9 @@ function readNonNegativeNumber(value: unknown): number | null {
 function normalizeTranscriptServiceId(
   value: string,
 ): ConnectedServiceRuntimeAuthRecoveryTranscriptEventV1['serviceId'] | null {
-  const parsed = ConnectedServiceIdSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  // Transcript events are written with canonical qualified service keys;
+  // released bundled scalars normalize through the sole legacy ingress.
+  return readBuiltInLegacyConnectedAccountServiceKeyIngress(value);
 }
 
 function normalizeRuntimeAuthRecoveryTranscriptEvent(

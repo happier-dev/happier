@@ -1,4 +1,5 @@
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   applyProviderCatalogRefreshV1,
   createProviderCatalogFingerprintV1,
   createProviderEndpointFingerprintV1,
@@ -40,6 +41,10 @@ import {
 } from './client';
 import type { ProviderProbeManagedServiceRequest } from './client';
 import { providerProbeFailureHealthState, providerProbeSuccessHealthState } from './health';
+import {
+  awaitWithinProviderOperation,
+  ProviderOperationAbandonedError,
+} from '../operationLifetime';
 
 export type ProviderProbeEndpoint = Readonly<{
   endpointTemplateId: string;
@@ -64,6 +69,8 @@ export type ProviderManagedCatalogRuntimePort<TTicket> = Readonly<{
     source: ProviderManagedCatalogSource;
     request: ProviderProbeAuthorizationRequest;
     ticket: TTicket;
+    /** Exact executable-registry generation that authorized the source. */
+    expectedRuntimeRegistryGeneration?: number;
     signal?: AbortSignal;
     revalidateBeforeEffect: () => Promise<
       Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>
@@ -313,6 +320,33 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
     }
   }
 
+  async function updateTransientEndpointHealthAuthorized(
+    authorizations: readonly Readonly<{ ticket: TTicket; request: ProviderProbeAuthorizationRequest }>[],
+    transform: (
+      current: readonly ProviderRuntimeStateFileV1['endpointHealth'][number][],
+    ) => readonly ProviderRuntimeStateFileV1['endpointHealth'][number][],
+    operationScope?: ProviderProbeOperationScope,
+    options: Readonly<{ refreshDurable?: boolean }> = {},
+  ): Promise<ProviderErrorV1 | null> {
+    try {
+      await dependencies.runtimeStore.updateTransientEndpointHealth(async (endpointHealth) => {
+        for (const authorization of authorizations) {
+          const validation = await dependencies.authorization.revalidate(
+            authorization.ticket,
+            authorization.request,
+            operationScope,
+          );
+          if (!validation.ok) throw new ProviderProbeCommitAuthorizationError(validation.error);
+        }
+        return transform([...endpointHealth]);
+      }, options);
+      return null;
+    } catch (error) {
+      if (error instanceof ProviderProbeCommitAuthorizationError) return error.error;
+      throw error;
+    }
+  }
+
   return {
     async refresh(input: Readonly<{
       connectionId: string;
@@ -440,13 +474,49 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           }
           return { ok: true as const };
         };
-        const launched = await dependencies.managedCatalogRuntime.launch({
+        const launchPromise = dependencies.managedCatalogRuntime.launch({
           source: sources.first,
           request: firstAuthorization.request,
           ticket: firstAuthorization.ticket,
+          ...(operationScope?.registry?.runtimeRegistryGeneration === undefined
+            ? {}
+            : {
+                expectedRuntimeRegistryGeneration:
+                  operationScope.registry.runtimeRegistryGeneration,
+              }),
           ...(input.signal ? { signal: input.signal } : {}),
           revalidateBeforeEffect: revalidateAll,
         });
+        let launched: Awaited<typeof launchPromise>;
+        try {
+          launched = await awaitWithinProviderOperation(
+            launchPromise,
+            operationScope?.lifetime ?? {
+              ...(input.signal ? { signal: input.signal } : {}),
+              wallDeadlineAtMs: input.wallDeadlineAtMs
+                ?? now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+            },
+            now,
+          );
+        } catch (error) {
+          // A managed start may pass an unabortable process boundary. If it
+          // finishes after the admitted operation retires, release the exact
+          // launch rather than abandoning SVC09 custody.
+          void launchPromise.then(async (late) => {
+            if (late.ok) await late.close();
+          }, () => {});
+          if (error instanceof ProviderOperationAbandonedError) {
+            if (error.reason === 'cancelled') throw new ProviderProbeCancelledError();
+            return {
+              status: 'error',
+              error: createProviderErrorV1('provider_endpoint_unavailable', {
+                connectionId,
+                machineId,
+              }),
+            };
+          }
+          throw error;
+        }
         if (!launched.ok) return { status: 'error', error: launched.error };
         try {
           const commitManagedCatalog = async (
@@ -689,10 +759,10 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         const checkingAt = now();
         let createdCheckingRecord = false;
         let checkingCommitError: ProviderErrorV1 | null;
-        checkingCommitError = await updateAuthorized(
+        checkingCommitError = await updateTransientEndpointHealthAuthorized(
           [{ ticket: authorization.ticket, request: authorizationRequest }],
-          (state) => {
-            const previous = state.endpointHealth.find((candidate) =>
+          (endpointHealth) => {
+            const previous = endpointHealth.find((candidate) =>
               serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) === serializedEndpointKey);
             createdCheckingRecord = previous === undefined;
             const checkingRecord = {
@@ -702,10 +772,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                 : { status: 'not_checked' as const, activity: 'checking' as const },
               lastAccessedAt: checkingAt,
             };
-            return {
-              ...state,
-              endpointHealth: [...replaceProviderRuntimeStateRecord('endpointHealth', state.endpointHealth, checkingRecord)],
-            };
+            return [...replaceProviderRuntimeStateRecord('endpointHealth', endpointHealth, checkingRecord)];
           },
           operationScope,
         );
@@ -714,11 +781,11 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         }
 
         const clearCheckingActivity = async (): Promise<void> => {
-          await dependencies.runtimeStore.update((state) => {
-            const previous = state.endpointHealth.find((candidate) =>
+          await dependencies.runtimeStore.updateTransientEndpointHealth((endpointHealth) => {
+            const previous = endpointHealth.find((candidate) =>
               serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) === serializedEndpointKey);
-            if (!previous) return state;
-            if (previous.state.activity === 'idle') return state;
+            if (!previous) return endpointHealth;
+            if (previous.state.activity === 'idle') return endpointHealth;
             // Another process can commit a real observation for this same semantic key
             // while this probe is in flight. The durable file carries no `activity`, so
             // the live overlay makes that newer row look like this process's transient
@@ -729,21 +796,15 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               && previous.state.status === 'not_checked'
               && previous.lastAccessedAt === checkingAt;
             if (ownsSyntheticRecord) {
-              return {
-                ...state,
-                endpointHealth: state.endpointHealth.filter((candidate) =>
-                  serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) !== serializedEndpointKey),
-              };
+              return endpointHealth.filter((candidate) =>
+                serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) !== serializedEndpointKey);
             }
-            return {
-              ...state,
-              endpointHealth: [...replaceProviderRuntimeStateRecord('endpointHealth', state.endpointHealth, {
+            return [...replaceProviderRuntimeStateRecord('endpointHealth', endpointHealth, {
                 ...previous,
                 state: { ...previous.state, activity: 'idle' as const },
                 lastAccessedAt: now(),
-              })],
-            };
-          });
+              })];
+          }, { refreshDurable: true });
         };
         try {
           const credentialRef = authorization.credentialRef;

@@ -38,9 +38,7 @@ import type { ConnectedServiceCredentialRefreshResult } from './refresh/Connecte
 import {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
 } from '@happier-dev/plugins-claude/agent';
-import {
-  CODEX_AGENT_RUNTIME_CONTRIBUTION,
-} from '@happier-dev/plugins-codex/agent/contributions/runtime';
+import { CODEX_PLUGIN } from '@happier-dev/plugins-codex/manifest';
 import {
   getResolvedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -49,6 +47,23 @@ import {
   resolveQualifiedPurposeBindingsForAgentSpawn,
   type AgentSpawnPurposeContributions,
 } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+
+async function readCodexConnectedAccountLaunchRegistration() {
+  let captured: unknown;
+  const ignoreRegistration = vi.fn();
+  const api = new Proxy({
+    agents: new Proxy({
+      register: (_id: string, _factory: unknown, options: unknown) => {
+        captured = options;
+      },
+    }, { get: (target, property) => Reflect.get(target, property) ?? ignoreRegistration }),
+  }, {
+    get: (target, property) => Reflect.get(target, property) ?? new Proxy({}, { get: () => ignoreRegistration }),
+  });
+  await CODEX_PLUGIN.activate(api as never);
+  return (captured as Readonly<{ connectedAccountLaunch?: Readonly<{ requestAuthUses?: unknown }> }> | undefined)
+    ?.connectedAccountLaunch;
+}
 
 type SpawnPreflightRefreshService = Readonly<{
   refreshConnectedServiceCredentialForSpawnPreflight(params: Readonly<{
@@ -976,11 +991,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         };
       },
     } as unknown as ApiClient;
-    const actualCodexRequestAuthUses = (
-      CODEX_AGENT_RUNTIME_CONTRIBUTION.connectedServices as Readonly<{
-        requestAuthUses?: unknown;
-      }>
-    ).requestAuthUses;
+    const actualCodexRequestAuthUses = (await readCodexConnectedAccountLaunchRegistration())
+      ?.requestAuthUses;
     expect(actualCodexRequestAuthUses).toBeUndefined();
     const codexContributions = getResolvedContributionRegistry();
 

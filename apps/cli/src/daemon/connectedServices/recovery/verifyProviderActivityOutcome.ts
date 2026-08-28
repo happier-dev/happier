@@ -1,6 +1,6 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceId,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
@@ -89,7 +89,7 @@ export async function verifyProviderActivityOutcome(input: Readonly<{
   if (result.targets.length === 0) {
     return { status: 'unavailable', reason: 'provider_outcome_target_missing' };
   }
-  const expectedByServiceId = new Map<ConnectedServiceId, ConnectedServiceProviderOutcomeTarget>();
+  const expectedByServiceId = new Map<ConnectedAccountServiceKey, ConnectedServiceProviderOutcomeTarget>();
   for (const selection of input.target.connectedServiceSelections) {
     const expected = expectedTarget(selection);
     if (!expected) {
@@ -99,7 +99,7 @@ export async function verifyProviderActivityOutcome(input: Readonly<{
   }
   const seen = new Set<string>();
   for (const actual of result.targets) {
-    const expected = expectedByServiceId.get(actual.serviceId as ConnectedServiceId);
+    const expected = expectedByServiceId.get(actual.serviceId);
     if (!expected || seen.has(actual.serviceId) || !sameTarget(expected, actual)) {
       return { status: 'unavailable', reason: 'provider_outcome_target_mismatch' };
     }

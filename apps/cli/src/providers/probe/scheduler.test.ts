@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
   PROVIDER_PROBE_REFRESH_TRIGGERS,
+  ProviderProbeAdmissionCapacityError,
   createProviderProbeScheduler,
 } from './scheduler';
 
@@ -23,6 +25,61 @@ const noCancellation = {
 } as const;
 
 describe('provider probe scheduler', () => {
+  it('globally bounds DNS resolver work across concurrent picker operations', async () => {
+    const scheduler = createProviderProbeScheduler();
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    const resolveAddress = async (value: string) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return value;
+    };
+    const lifetime = { wallDeadlineAtMs: Date.now() + 60_000 };
+    const runPickerOperation = (prefix: string) => Promise.all(
+      Array.from({ length: 8 }, (_, index) => scheduler.runDns(
+        () => resolveAddress(`${prefix}-${index}`),
+        lifetime,
+      )),
+    );
+
+    const first = runPickerOperation('first');
+    const second = runPickerOperation('second');
+    await vi.waitFor(() => expect(active).toBe(
+      PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
+    ));
+    while (releases.length > 0 || active > 0) {
+      for (const release of releases.splice(0)) release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(peak).toBe(PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS);
+  });
+
+  it('refuses DNS work when the shared Provider admission owner is full', async () => {
+    const scheduler = createProviderProbeScheduler({
+      maxConcurrentOperations: 1,
+      maxPendingOperations: 1,
+    });
+    const lifetime = { wallDeadlineAtMs: Date.now() + 60_000 };
+    const releases: Array<() => void> = [];
+    const operation = () => new Promise<string>((resolve) => releases.push(() => resolve('ok')));
+    const active = scheduler.runDns(operation, lifetime);
+    const queued = scheduler.runDns(operation, lifetime);
+
+    await expect(scheduler.runDns(operation, lifetime))
+      .rejects.toBeInstanceOf(ProviderProbeAdmissionCapacityError);
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()?.();
+    await expect(active).resolves.toBe('ok');
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()?.();
+    await expect(queued).resolves.toBe('ok');
+  });
+
   it('single-flights identical work and releases the successful payload once its callers settle', async () => {
     let resolve!: (value: { status: 'success' }) => void;
     const operation = vi.fn(() => new Promise<{ status: 'success' }>((done) => { resolve = done; }));

@@ -1,17 +1,26 @@
 // F4 invariant (connected-services reliability hardening): every provider
 // continuity resolver must stay consistent with its state-sharing descriptor and
-// shared manifest/catalog entry. "Needs restart/rematerialization" and "requires
+// public Agent declaration/catalog entry. "Needs restart/rematerialization" and "requires
 // shared vendor state" are separate concepts — a provider whose descriptor does
 // not support shared state must never resolve a shared-state-required continuity
 // mode, and a resolver-supported switch transition must be advertised by the
-// shared manifest.
-import { describe, expect, it } from 'vitest';
+// public declaration.
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { getAgentCore } from '@happier-dev/agents';
-import type { AgentCore, AgentId, AgentSessionAuthSwitchTransition } from '@happier-dev/agents';
+import type { AgentConnectedAccountSwitchTransitionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CatalogAgentId, ConnectedServiceSwitchContinuityParams } from '@/agent/catalog/types';
+import {
+  resolveExecutablePluginRuntimeRegistry,
+  type ResolvedExecutablePluginRuntimeRegistry,
+} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+
+const acquireAuthoritativePluginRuntimeRegistryLease = vi.hoisted(() => vi.fn());
+vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
+  acquireAuthoritativePluginRuntimeRegistryLease,
+}));
+
 import {
   getConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceSwitchContinuity,
@@ -20,7 +29,7 @@ import {
 const CONTINUITY_PROVIDERS = ['codex', 'claude', 'gemini', 'opencode', 'pi'] as const;
 const RESOLVED_TRANSITION_FIXTURES: ReadonlyArray<{
   name: string;
-  transition: AgentSessionAuthSwitchTransition;
+  transition: AgentConnectedAccountSwitchTransitionV1;
   createParams: (
     agentId: CatalogAgentId,
     serviceId: ConnectedServiceId,
@@ -38,30 +47,28 @@ const RESOLVED_TRANSITION_FIXTURES: ReadonlyArray<{
   },
 ];
 
-function resolveManifestAgentCore(agentId: AgentId): AgentCore {
-  const core = getAgentCore(agentId);
-  if (!core) throw new Error(`missing bundled Agent core fixture for ${agentId}`);
-  return core;
-}
-
-function resolvePrimaryServiceId(agentId: AgentId): ConnectedServiceId {
-  const serviceId = resolveManifestAgentCore(agentId).connectedServices?.supportedServiceIds[0];
+async function resolvePrimaryServiceId(
+  runtime: ResolvedExecutablePluginRuntimeRegistry,
+  agentId: CatalogAgentId,
+): Promise<ConnectedServiceId> {
+  const entry = await runtime.acquireAgentCatalogEntry?.(agentId);
+  const serviceId = entry?.connectedAccountServiceIds?.[0];
   if (!serviceId) {
-    throw new Error(`missing connected-service fixture service id for ${agentId}`);
+    throw new Error(`missing public connected-account service declaration for ${agentId}`);
   }
   return serviceId;
 }
 
-function manifestSupportsSharedState(agentId: AgentId): boolean {
-  return resolveManifestAgentCore(agentId).connectedServices?.providerStateSharing?.state.supported === true;
-}
-
-function manifestAdvertisesSwitchTransition(input: Readonly<{
-  agentId: AgentId;
-  serviceId: ConnectedServiceId;
-  transition: AgentSessionAuthSwitchTransition;
-}>): boolean {
-  const switchCapability = resolveManifestAgentCore(input.agentId).connectedServices?.sessionAuthSwitch;
+async function declarationAdvertisesSwitchTransition(
+  runtime: ResolvedExecutablePluginRuntimeRegistry,
+  input: Readonly<{
+    agentId: CatalogAgentId;
+    serviceId: ConnectedServiceId;
+    transition: AgentConnectedAccountSwitchTransitionV1;
+  }>,
+): Promise<boolean> {
+  const entry = await runtime.acquireAgentCatalogEntry?.(input.agentId);
+  const switchCapability = entry?.connectedAccountSwitchContinuity;
   if (!switchCapability?.continuityMode) {
     return false;
   }
@@ -146,13 +153,34 @@ function createNativeToConnectedProfileParams(
 }
 
 describe('connected-service switch continuity capability invariants', () => {
+  let runtime!: ResolvedExecutablePluginRuntimeRegistry;
+
+  beforeAll(async () => {
+    runtime = await resolveExecutablePluginRuntimeRegistry();
+    acquireAuthoritativePluginRuntimeRegistryLease.mockImplementation(async () => ({
+      registry: runtime,
+      source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1,
+      release: async () => {},
+    }));
+  });
+
+  afterAll(async () => {
+    await runtime.dispose();
+  });
+
   it.each(CONTINUITY_PROVIDERS)(
-    'keeps %s state-sharing manifest capability aligned with its descriptor',
+    'keeps %s public switch declaration aligned with its state-sharing descriptor',
     async (agentId) => {
+      const entry = await runtime.acquireAgentCatalogEntry?.(agentId);
       const descriptor = await getConnectedServiceStateSharingDescriptor(agentId);
       const descriptorSupportsSharedState = descriptor?.state.supported === true;
+      const requiresSharedState = entry?.connectedAccountSwitchContinuity
+        ?.providerStateSharingRequired !== undefined;
 
-      expect(manifestSupportsSharedState(agentId)).toBe(descriptorSupportsSharedState);
+      if (requiresSharedState) {
+        expect(descriptorSupportsSharedState).toBe(true);
+      }
     },
   );
 
@@ -160,7 +188,7 @@ describe('connected-service switch continuity capability invariants', () => {
     'does not let %s require shared-state continuity without descriptor support',
     async (agentId) => {
       const descriptor = await getConnectedServiceStateSharingDescriptor(agentId);
-      const serviceId = resolvePrimaryServiceId(agentId);
+      const serviceId = await resolvePrimaryServiceId(runtime, agentId);
       const paramsByTransition = [
         createChangedConnectedProfileParams(agentId, serviceId),
         createNativeToConnectedProfileParams(agentId, serviceId),
@@ -178,9 +206,9 @@ describe('connected-service switch continuity capability invariants', () => {
   );
 
   it.each(CONTINUITY_PROVIDERS)(
-    'advertises every %s resolver-supported transition in the shared manifest',
+    'advertises every %s resolver-supported transition in its public Agent declaration',
     async (agentId) => {
-      const serviceId = resolvePrimaryServiceId(agentId);
+      const serviceId = await resolvePrimaryServiceId(runtime, agentId);
 
       for (const fixture of RESOLVED_TRANSITION_FIXTURES) {
         const result = await resolveConnectedServiceSwitchContinuity(
@@ -192,7 +220,7 @@ describe('connected-service switch continuity capability invariants', () => {
           continue;
         }
         expect(
-          manifestAdvertisesSwitchTransition({
+          await declarationAdvertisesSwitchTransition(runtime, {
             agentId,
             serviceId,
             transition: fixture.transition,

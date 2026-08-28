@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ConnectedServiceCredentialRecordV1Schema,
   FeaturesResponseSchema,
+  MAX_INTERACTION_TRANSIENT_CHOICES_V1,
   PluginConnectedAccountAuthenticationV2Schema,
   sealQualifiedConnectedAccountContentEnvelope,
   type PluginConnectedAccountAuthenticationV2,
@@ -1596,6 +1597,337 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         },
       }],
     });
+  });
+
+  it.each([64, 65, 256, 501])(
+    'pages %i authorized targets through bounded transient questions',
+    async (candidateCount) => {
+      const store = emptyStore();
+      const seenRequests: HostSessionQuestionsRequest[] = [];
+      const interactions = new TestInteractions(async (request) => {
+        if (request.kind !== 'questions') throw new Error('questions expected');
+        seenRequests.push(request);
+        const question = request.questions[0];
+        if (!question || question.type !== 'singleChoice') {
+          throw new Error('single choice expected');
+        }
+        expect(question.choices.length).toBeLessThanOrEqual(
+          MAX_INTERACTION_TRANSIENT_CHOICES_V1,
+        );
+        const target = question.choices.find(
+          (choice) => choice.label === `Account ${candidateCount - 1}`,
+        );
+        const choice = target ?? question.choices.find((candidate) => candidate.label === 'Next page');
+        if (!choice) throw new Error('target or next-page choice expected');
+        return {
+          requestId: `test-request-${seenRequests.length}`,
+          kind: 'questions',
+          status: 'answered',
+          answers: {
+            [question.id]: {
+              kind: 'singleChoice',
+              answer: { kind: 'choice', choiceId: choice.id },
+            },
+          },
+        };
+      });
+      const runtimeOwner = createSelectionRuntime(
+        store,
+        'advertised',
+        testQualifiedApi({
+          accounts: Array.from({ length: candidateCount }, (_, index) =>
+            testQualifiedProfile({
+              accountId: `account-${index}`,
+              displayName: `Account ${index}`,
+            })),
+        }),
+      );
+
+      await expect(runtimeOwner.owner.requestSelection({
+        purpose,
+        serviceRefs: [openAiService],
+        currentSession: { interactions },
+        assertGenerationCurrent: () => undefined,
+        reason: 'Choose realtime auth',
+        signal: new AbortController().signal,
+      })).resolves.toMatchObject({
+        account: { accountId: `account-${candidateCount - 1}` },
+      });
+
+      expect(seenRequests).toHaveLength(
+        candidateCount <= MAX_INTERACTION_TRANSIENT_CHOICES_V1
+          ? 1
+          : Math.ceil(candidateCount / (MAX_INTERACTION_TRANSIENT_CHOICES_V1 - 2)),
+      );
+      expect(store.current().bindings).toEqual([{
+        purpose,
+        target: {
+          kind: 'account',
+          account: {
+            service: openAiService,
+            accountId: `account-${candidateCount - 1}`,
+          },
+        },
+      }]);
+    },
+  );
+
+  it('supports previous and next navigation without changing candidate authority', async () => {
+    const store = emptyStore();
+    const visitedPages: string[][] = [];
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
+      visitedPages.push(question.choices.map((choice) => choice.label));
+      const desiredLabel = visitedPages.length === 1
+        ? 'Next page'
+        : visitedPages.length === 2
+          ? 'Previous page'
+          : visitedPages.length === 3
+            ? 'Next page'
+            : 'Account 64';
+      const choice = question.choices.find((candidate) => candidate.label === desiredLabel);
+      if (!choice) throw new Error(`${desiredLabel} choice expected`);
+      return {
+        requestId: `test-request-${visitedPages.length}`,
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: choice.id },
+          },
+        },
+      };
+    });
+    const runtimeOwner = createSelectionRuntime(
+      store,
+      'advertised',
+      testQualifiedApi({
+        accounts: Array.from({ length: 65 }, (_, index) => testQualifiedProfile({
+          accountId: `account-${index}`,
+          displayName: `Account ${index}`,
+        })),
+      }),
+    );
+
+    await expect(runtimeOwner.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose realtime auth',
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ account: { accountId: 'account-64' } });
+    expect(visitedPages).toHaveLength(4);
+  });
+
+  it('rejects a choice id replayed from a different page', async () => {
+    const store = emptyStore();
+    let firstPageTargetId: string | null = null;
+    let requestCount = 0;
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
+      requestCount += 1;
+      if (requestCount === 1) {
+        firstPageTargetId = question.choices[0]?.id ?? null;
+        const next = question.choices.find((choice) => choice.label === 'Next page');
+        if (!next) throw new Error('next-page choice expected');
+        return {
+          requestId: 'test-request-1',
+          kind: 'questions',
+          status: 'answered',
+          answers: {
+            [question.id]: {
+              kind: 'singleChoice',
+              answer: { kind: 'choice', choiceId: next.id },
+            },
+          },
+        };
+      }
+      if (!firstPageTargetId) throw new Error('first-page target id expected');
+      return {
+        requestId: 'test-request-2',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: firstPageTargetId },
+          },
+        },
+      };
+    });
+    const runtimeOwner = createSelectionRuntime(
+      store,
+      'advertised',
+      testQualifiedApi({
+        accounts: Array.from({ length: 65 }, (_, index) => testQualifiedProfile({
+          accountId: `account-${index}`,
+          displayName: `Account ${index}`,
+        })),
+      }),
+    );
+
+    await expect(runtimeOwner.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose realtime auth',
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'plugin_connected_account_binding_out_of_scope',
+    } satisfies Partial<PluginError>);
+    expect(store.current().bindings).toEqual([]);
+  });
+
+  it('preserves typed cancellation on a later selection page', async () => {
+    const store = emptyStore();
+    let requestCount = 0;
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      requestCount += 1;
+      if (requestCount === 2) {
+        return { requestId: 'test-request-2', kind: 'questions', status: 'userCancelled' };
+      }
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
+      const next = question.choices.find((choice) => choice.label === 'Next page');
+      if (!next) throw new Error('next-page choice expected');
+      return {
+        requestId: 'test-request-1',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: next.id },
+          },
+        },
+      };
+    });
+    const runtimeOwner = createSelectionRuntime(
+      store,
+      'advertised',
+      testQualifiedApi({
+        accounts: Array.from({ length: 65 }, (_, index) => testQualifiedProfile({
+          accountId: `account-${index}`,
+        })),
+      }),
+    );
+
+    await expect(runtimeOwner.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose realtime auth',
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'plugin_ui_cancelled' } satisfies Partial<PluginError>);
+    expect(requestCount).toBe(2);
+    expect(store.current().bindings).toEqual([]);
+  });
+
+  it('stops paging with the exact generation-retirement failure', async () => {
+    const store = emptyStore();
+    let current = true;
+    let requestCount = 0;
+    const retired = new PluginError({
+      code: 'plugin_final_generation_retired',
+      message: 'Plugin generation is no longer current',
+    });
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      requestCount += 1;
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
+      const next = question.choices.find((choice) => choice.label === 'Next page');
+      if (!next) throw new Error('next-page choice expected');
+      current = false;
+      return {
+        requestId: 'test-request-1',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: next.id },
+          },
+        },
+      };
+    });
+    const runtimeOwner = createSelectionRuntime(
+      store,
+      'advertised',
+      testQualifiedApi({
+        accounts: Array.from({ length: 65 }, (_, index) => testQualifiedProfile({
+          accountId: `account-${index}`,
+        })),
+      }),
+    );
+
+    await expect(runtimeOwner.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => {
+        if (!current) throw retired;
+      },
+      reason: 'Choose realtime auth',
+      signal: new AbortController().signal,
+    })).rejects.toBe(retired);
+    expect(requestCount).toBe(1);
+    expect(store.current().bindings).toEqual([]);
+  });
+
+  it('preserves requester abort while advancing pages', async () => {
+    const store = emptyStore();
+    const abort = new AbortController();
+    let requestCount = 0;
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      requestCount += 1;
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
+      const next = question.choices.find((choice) => choice.label === 'Next page');
+      if (!next) throw new Error('next-page choice expected');
+      abort.abort();
+      return {
+        requestId: 'test-request-1',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: next.id },
+          },
+        },
+      };
+    });
+    const runtimeOwner = createSelectionRuntime(
+      store,
+      'advertised',
+      testQualifiedApi({
+        accounts: Array.from({ length: 65 }, (_, index) => testQualifiedProfile({
+          accountId: `account-${index}`,
+        })),
+      }),
+    );
+
+    await expect(runtimeOwner.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose realtime auth',
+      signal: abort.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(requestCount).toBe(1);
+    expect(store.current().bindings).toEqual([]);
   });
 
   it('does not offer an expired account through the incumbent interactive selection path', async () => {

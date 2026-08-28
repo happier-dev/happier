@@ -7,6 +7,7 @@ import type {
   ConnectedServiceAccountTransitionVerificationResult,
   ConnectedServiceProviderRuntimeAuthAdapter,
 } from '../runtimeAuth/types';
+import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
 
 export type ConnectedServiceAccountAdoptionVerificationInput = Readonly<{
   tracked: TrackedSession;
@@ -45,14 +46,15 @@ export function createSessionConnectedServiceAccountAdoptionVerifier(deps?: Read
       };
     }
     const binding = input.normalizedBindings.bindingsByServiceId[input.serviceId];
-    return await adapter.verifyActiveAccount({
-      target: { agentId: input.agentId },
-      selection: input.runtimeAuthSelection ?? {
+    return await adapter.verifyActiveAccount(projectConnectedServiceRuntimeAuthTargetInput({
+      agentId: input.agentId,
+      materializedSelection: input.runtimeAuthSelection,
+      fallbackSelection: {
         serviceId: input.serviceId,
         binding,
         profileId: input.target.profileId,
         ...(input.target.groupId ? { groupId: input.target.groupId, activeProfileId: input.target.profileId } : {}),
       },
-    });
+    }));
   };
 }

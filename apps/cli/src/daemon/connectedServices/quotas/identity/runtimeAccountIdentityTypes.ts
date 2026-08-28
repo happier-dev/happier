@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 export type RuntimeAccountIdentityProofStrength = 'exact' | 'weak';
 
@@ -20,7 +20,7 @@ export type RuntimeAccountIdentitySource =
  */
 export type PersistedSessionAccountIdentity = Readonly<{
   providerAccountId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string | null;
   profileId: string;
   groupGeneration: number | null;
@@ -28,7 +28,7 @@ export type PersistedSessionAccountIdentity = Readonly<{
 
 export type PersistedSessionAccountIdentityReader = (input: Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   profileId: string;
   expectedGroupGeneration: number | null;
@@ -36,7 +36,7 @@ export type PersistedSessionAccountIdentityReader = (input: Readonly<{
 
 export type RuntimeAccountIdentityRecordInput = Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string | null;
   profileId: string;
   providerAccountId: string;
@@ -49,7 +49,7 @@ export type RuntimeAccountIdentityRecordInput = Readonly<{
 
 export type RuntimeAccountIdentityEntry = Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string | null;
   profileId: string;
   providerAccountId: string;
@@ -96,7 +96,7 @@ export type RuntimeAccountIdentityFanoutReader = (
   input: Readonly<{
     sessionId: string;
     agentId?: string | null;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     expectedProfileId: string;
     expectedGroupGeneration: number | null;

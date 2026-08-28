@@ -8,9 +8,12 @@ import type {
   ConnectedServiceAuthGroupCommittedGenerationFact,
   ConnectedServiceProviderAdoptedGenerationTarget,
 } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { resolveConnectedServiceTargetMaterializedRoot } from '../../materialize/resolveConnectedServiceTargetMaterializedRoot';
+import { createConnectedServiceRuntimeAuthNativeHome } from '../../runtimeAuth/createRuntimeAuthNativeHome';
 
 export async function resolveSharedGenerationApplicationProof(input: Readonly<{
-  agentId: string;
+  agentId: CatalogAgentId;
   targetMaterializedEnv: Readonly<Record<string, string>>;
   committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
   resolveCredentialResolution(input: Readonly<{
@@ -43,6 +46,16 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
     return null;
   }
   if (!adapter?.verifyActiveAccount) return null;
+  const targetMaterializedRoot = resolveConnectedServiceTargetMaterializedRoot({
+    agentId: input.agentId,
+    targetMaterializedEnv: input.targetMaterializedEnv,
+  });
+  const nativeHome = targetMaterializedRoot
+    ? await createConnectedServiceRuntimeAuthNativeHome({
+        agentId: input.agentId,
+        root: targetMaterializedRoot,
+      })
+    : null;
   let verification: Awaited<ReturnType<NonNullable<typeof adapter.verifyActiveAccount>>>;
   try {
     verification = await adapter.verifyActiveAccount({
@@ -54,8 +67,9 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
         profileId: target.profileId,
         groupGeneration: target.generation,
         credentialRevision: target.credentialRevision,
-        record: resolution.record,
       },
+      credential: resolution.record,
+      ...(nativeHome ? { nativeHome } : {}),
       targetMaterializedEnv: input.targetMaterializedEnv,
     });
   } catch {

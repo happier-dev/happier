@@ -1,18 +1,15 @@
 import { accessSync, constants as fsConstants, existsSync } from 'node:fs';
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { access, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { configuration } from '../../configuration';
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
-import {
-  createManagedToolScratchDir,
-  downloadGitHubReleaseAsset,
-  extractGitHubReleaseAsset,
-  promoteManagedCurrentInstall,
-} from '@happier-dev/cli-common/agents';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
-import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '@/packagedRuntime/managedTools/agents/codexAcpRelease';
+import {
+  resolveCodexAcpReleaseAsset,
+  CODEX_ACP_GITHUB_REPO,
+} from '@happier-dev/plugins-codex/agent/installables/codexAcp';
 
 type CodexAcpState = Readonly<{
   installedVersion: string | null;
@@ -93,11 +90,6 @@ async function readCodexAcpState(): Promise<CodexAcpState> {
   }
 }
 
-async function writeCodexAcpState(next: CodexAcpState): Promise<void> {
-  await mkdir(codexAcpInstallDir(), { recursive: true });
-  await writeFile(codexAcpStatePath(), JSON.stringify(next, null, 2), 'utf8');
-}
-
 async function detectLatestVersionCheck(): Promise<LatestVersionCheck> {
   try {
     const release = await fetchGitHubLatestRelease({
@@ -113,103 +105,6 @@ async function detectLatestVersionCheck(): Promise<LatestVersionCheck> {
       ok: false,
       errorMessage: error instanceof Error ? error.message : 'Failed to resolve latest codex-acp release',
     };
-  }
-}
-
-async function writeInstallLog(params: Readonly<{
-  logPath: string;
-  lines: string[];
-}>): Promise<void> {
-  await mkdir(dirname(params.logPath), { recursive: true });
-  await writeFile(params.logPath, `${params.lines.join('\n')}\n`, 'utf8');
-}
-
-async function installLatestCodexAcpRelease(logPath: string): Promise<Readonly<{
-  version: string | null;
-}>> {
-  const release = await fetchGitHubLatestRelease({
-    githubRepo: CODEX_ACP_GITHUB_REPO,
-    userAgent: 'happier-cli',
-    githubToken: process.env.GITHUB_TOKEN,
-    ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
-  });
-  const asset = resolveCodexAcpReleaseAsset(release);
-
-  const installRoot = codexAcpInstallDir();
-  const scratchDir = await createManagedToolScratchDir({
-    installDir: installRoot,
-    prefix: 'codex-acp',
-  });
-  try {
-    const archivePath = join(scratchDir, basename(asset.name));
-    const extractDir = join(scratchDir, 'extract');
-    const candidateDir = join(scratchDir, 'candidate');
-    const candidateBinPath = join(candidateDir, 'bin', process.platform === 'win32' ? 'codex-acp.exe' : 'codex-acp');
-
-    await downloadGitHubReleaseAsset({
-      url: asset.url,
-      destinationPath: archivePath,
-      digest: asset.digest,
-      userAgent: 'happier-cli',
-    });
-
-    await mkdir(dirname(candidateBinPath), { recursive: true });
-    await extractGitHubReleaseAsset({
-      archivePath,
-      archiveName: asset.name,
-      extractDir,
-      outputPath: candidateBinPath,
-    });
-
-    await writeInstallLog({
-      logPath,
-      lines: [
-        `# source: github_release_binary`,
-        `# repo: ${CODEX_ACP_GITHUB_REPO}`,
-        `# asset: ${asset.name}`,
-        `# releaseTag: ${asset.tag ?? 'unknown'}`,
-        `# version: ${asset.version ?? 'unknown'}`,
-      ],
-    });
-    await rm(join(installRoot, 'node_modules'), { recursive: true, force: true });
-    await rm(join(installRoot, 'package.json'), { force: true });
-    await rm(join(installRoot, 'package-lock.json'), { force: true });
-    await promoteManagedCurrentInstall({
-      installRoot,
-      candidatePath: candidateDir,
-    });
-    return { version: asset.version };
-  } finally {
-    await rm(scratchDir, { recursive: true, force: true });
-  }
-}
-
-export async function installCodexAcp(): Promise<
-  | { ok: true; logPath: string }
-  | { ok: false; errorMessage: string; logPath: string }
-> {
-  const logPath = join(configuration.logsDir, `install-dep-codex-acp-${Date.now()}.log`);
-  try {
-    const installed = await installLatestCodexAcpRelease(logPath);
-    await writeCodexAcpState({
-      installedVersion: installed.version,
-      lastInstallLogPath: logPath,
-    });
-    return { ok: true, logPath };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Install failed';
-    try {
-      await writeInstallLog({
-        logPath,
-        lines: [errorMessage],
-      });
-      await writeCodexAcpState({
-        installedVersion: (await readCodexAcpState()).installedVersion,
-        lastInstallLogPath: logPath,
-      });
-    } catch {
-    }
-    return { ok: false, errorMessage, logPath };
   }
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { buildPluginSessionInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
+
 import {
   HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY,
   clearPendingFirstInputFromEnv,
@@ -45,6 +47,36 @@ describe('pendingFirstInput', () => {
 
     clearPendingFirstInputFromEnv(env);
     expect(env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeUndefined();
+  });
+
+  it('preserves the host-sealed structured payload until the child commits it', async () => {
+    const inputAdmission = buildPluginSessionInputAdmissionV1({
+      caller: {
+        kind: 'plugin',
+        pluginId: 'happier.triage',
+        contributionLocalId: 'start-session',
+      },
+      surface: 'agent',
+    });
+    const meta = { happierStructuredInputV1: { v: 1, composerAttachments: [] } };
+    const env: NodeJS.ProcessEnv = {
+      [HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]: serializePendingFirstInputForEnv({
+        text: '',
+        localId: 'spawn-first-turn:structured',
+        meta,
+        inputAdmission,
+      }),
+    };
+    const enqueueSessionUserMessage = vi.fn(async () => undefined);
+
+    await createPendingFirstInputCommitter({ env }).commit({ enqueueSessionUserMessage });
+
+    expect(enqueueSessionUserMessage).toHaveBeenCalledWith({
+      text: '',
+      localId: 'spawn-first-turn:structured',
+      meta: { source: 'ui', sentFrom: 'cli', ...meta },
+      inputAdmission,
+    });
   });
 
   it('retains custody after a failed commit and clears the handoff only after a retry succeeds', async () => {

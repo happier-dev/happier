@@ -262,7 +262,11 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         options: {
           directory: '/repo',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          codexBackendMode: 'appServer',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer' },
+          },
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
@@ -314,7 +318,11 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
       const options: SpawnSessionOptions = {
         directory: '/repo',
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer' },
+        },
       };
 
       const result = await resolveSpawnChildEnvironment({
@@ -451,7 +459,11 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         options: {
           directory: '/repo',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          codexBackendMode: 'appServer',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer' },
+          },
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
@@ -507,7 +519,11 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         options: {
           directory: '/repo',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          codexBackendMode: 'appServer',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer' },
+          },
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,
@@ -562,7 +578,11 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
         options: {
           directory: '/repo',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-          codexBackendMode: 'appServer',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer' },
+          },
         },
         profileEnvironmentVariables: {},
         daemonSpawnHooks: null,

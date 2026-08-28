@@ -21,10 +21,11 @@ import { readProviderSettingsForCli } from '../settings/read';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import {
+  awaitWithinProviderOperation,
   createProviderOperationLifetime,
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
-import { resolveProviderConnectionForMachine } from '../registry/resolve';
+import { resolveProviderConnectionForMachineFromSettingsRead } from '../registry/resolve';
 import {
   resolveManagedProviderPurposeBindingSnapshot,
   type ResolveManagedProviderPurposeBindingIntent,
@@ -128,6 +129,7 @@ export function revalidateProviderProbeAuthorizationTicket(
         })
       && ticket.endpointTemplateId === current.endpointTemplateId
       && ticket.protocol === current.protocol
+      && ticket.sourceRegistryVersion === current.sourceRegistryVersion
       && ticket.path === current.path
       && ticket.parser === current.parser
       && ticket.probeRequestFingerprint === current.probeRequestFingerprint
@@ -203,7 +205,26 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     scope?: ProviderProbeOperationScope,
   ): Promise<ProviderProbeHostAuthorizationResult> => {
     const operationScope = startProbeOperationScope(scope);
-    const registry = operationScope.registry ?? (input.resolveRegistry ? await input.resolveRegistry() : input.registry);
+    let registry = operationScope.registry ?? input.registry;
+    if (!registry && input.resolveRegistry) {
+      try {
+        registry = await awaitWithinProviderOperation(
+          Promise.resolve().then(() => input.resolveRegistry!()),
+          operationScope.lifetime,
+        );
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            ok: false,
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+              connectionId: request.connectionId,
+              machineId: request.machineId,
+            }),
+          };
+        }
+        throw error;
+      }
+    }
     if (!registry) throw new TypeError('Provider probe authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {
@@ -215,28 +236,73 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         }),
       };
     }
-    const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
-    let dnsEvidenceByEndpointUrl;
-    try {
-      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-        connectionId: request.connectionId,
-        machineId: request.machineId,
-        providerSettings,
-        registry,
-        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-        lifetime: operationScope.lifetime,
-      });
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_endpoint_unavailable', {
-            connectionId: request.connectionId,
-            machineId: request.machineId,
-          }),
-        };
+    const admittedSettingsBasis = operationScope.accountSettingsBasis;
+    const settingsBasisIsCurrent = admittedSettingsBasis !== undefined
+      && admittedSettingsBasis.scopeKey === snapshot.scopeKey
+      && admittedSettingsBasis.settingsVersion === snapshot.settingsVersion;
+    if (admittedSettingsBasis && !settingsBasisIsCurrent) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_authorization_changed', {
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      };
+    }
+    const accountSettings = settingsBasisIsCurrent
+      ? admittedSettingsBasis.accountSettings
+      : snapshot.settings;
+    const settingsRead = settingsBasisIsCurrent
+      ? admittedSettingsBasis.settingsRead
+      : readProviderSettingsForCli(snapshot.settings);
+    const providerSettings = settingsRead.settings;
+    if (
+      settingsBasisIsCurrent
+      && operationScope.dnsEvidenceByConnectionId
+      && !operationScope.dnsEvidenceByConnectionId.has(request.connectionId)
+    ) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_authorization_changed', {
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      };
+    }
+    let dnsEvidenceByEndpointUrl = settingsBasisIsCurrent
+      ? operationScope.dnsEvidenceByConnectionId?.get(request.connectionId)
+      : undefined;
+    if (!operationScope.dnsEvidenceByConnectionId) {
+      try {
+        dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+          providerSettings,
+          registry,
+          ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+          lifetime: operationScope.lifetime,
+        });
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            ok: false,
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+              connectionId: request.connectionId,
+              machineId: request.machineId,
+            }),
+          };
+        }
+        throw error;
       }
-      throw error;
+    }
+    if (!dnsEvidenceByEndpointUrl) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_authorization_changed', {
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      };
     }
     if (destination) {
       dnsEvidenceByEndpointUrl = bindExactDispatchAddressEvidence(
@@ -247,10 +313,9 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     let managedPurposeBindingResolution:
       QualifiedConnectedAccountPurposeBindingsV1 | undefined;
     if (request.deployment === 'managedLocal') {
-      const resolution = resolveProviderConnectionForMachine({
+      const resolution = resolveProviderConnectionForMachineFromSettingsRead({
         connectionId: request.connectionId,
         machineId: request.machineId,
-        accountSettings: snapshot.settings,
         registry,
         dnsEvidenceByEndpointUrl,
         ...(input.localCandidateUrlsByConnectionId
@@ -259,7 +324,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
                 input.localCandidateUrlsByConnectionId,
             }
           : {}),
-      });
+      }, settingsRead);
       if (
         resolution.status !== 'resolved'
         || resolution.record.deployment.kind !== 'managedLocal'
@@ -274,8 +339,8 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         };
       }
       try {
-        managedPurposeBindingResolution =
-          await resolveManagedProviderPurposeBindingSnapshot({
+        managedPurposeBindingResolution = await awaitWithinProviderOperation(
+          resolveManagedProviderPurposeBindingSnapshot({
             implementationIdentity:
               resolution.record.deployment.implementationIdentity,
             connectedAccounts:
@@ -283,11 +348,16 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
             purposeBindingIntents:
               resolution.record.deployment.purposeBindingIntents,
             resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
-          });
-      } catch {
+          }),
+          operationScope.lifetime,
+        );
+      } catch (error) {
         return {
           ok: false,
-          error: createProviderErrorV1('provider_probe_authorization_invalid', {
+          error: createProviderErrorV1(
+            error instanceof ProviderOperationAbandonedError
+              ? 'provider_endpoint_unavailable'
+              : 'provider_probe_authorization_invalid', {
             connectionId: request.connectionId,
             machineId: request.machineId,
           }),
@@ -296,8 +366,9 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     }
     return resolveProviderProbeAuthorization({
       request,
-      accountSettings: snapshot.settings,
+      accountSettings,
       providerSettings,
+      settingsRead,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(managedPurposeBindingResolution
@@ -375,7 +446,26 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
     scope?: ProviderModelLoadOperationScope,
   ): Promise<ProviderModelLoadHostAuthorizationResult> => {
     const operationScope = startModelLoadOperationScope(scope);
-    const registry = operationScope.registry ?? (input.resolveRegistry ? await input.resolveRegistry() : input.registry);
+    let registry = operationScope.registry ?? input.registry;
+    if (!registry && input.resolveRegistry) {
+      try {
+        registry = await awaitWithinProviderOperation(
+          Promise.resolve().then(() => input.resolveRegistry!()),
+          operationScope.lifetime,
+        );
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+              connectionId: request.connectionId,
+              machineId: request.machineId,
+            }),
+          };
+        }
+        throw error;
+      }
+    }
     if (!registry) throw new TypeError('Provider model-load authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
     if (!snapshot) {

@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
@@ -32,64 +27,6 @@ function buildAccountSettingsWithConfiguredBackend(params: Readonly<{
       ],
     },
   };
-}
-
-async function writePluginFixture(rootDir: string): Promise<void> {
-  const manifestDir = join(rootDir, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      createPluginManifestV2Fixture({
-        id: 'acme.probe.variant.plugin',
-        displayName: 'Probe Variant Plugin',
-        description: 'Contributes an ACP backend used for probe cache variants',
-        uses: ['agents'],
-        contributes: {
-          agents: [
-          {
-            id: 'acme.probe.variant.backend',
-            runtime: {
-              kind: 'acp',
-              transport: {
-                kind: 'stdio',
-                executable: { kind: 'systemTool', id: 'plugin-variant-cli' },
-                args: ['acp'],
-                env: {
-                  REGION: 'eu',
-                },
-              },
-              ux: {
-                title: 'Plugin Variant Backend',
-              },
-              capabilities: {
-                supportsResume: false,
-                supportsModes: true,
-                supportsModels: true,
-                supportsConfigOptions: 'unknown',
-                supportsPromptImages: false,
-              },
-            },
-            capabilities: {
-              externalSessions: true,
-            },
-          },
-          ],
-          systemTools: [{
-            toolId: 'plugin-variant-cli',
-            displayName: 'Plugin Variant CLI',
-            lookupNames: ['plugin-variant-cli'],
-            defaultArgs: [],
-          }],
-        },
-      }),
-      null,
-      2,
-    ),
-    'utf8',
-  );
-
-  await writeFile(join(rootDir, 'daemon.mjs'), 'export default async function activate() { return null; }\n', 'utf8');
 }
 
 describe('resolveConfiguredAcpProbeCacheVariant', () => {
@@ -141,48 +78,13 @@ describe('resolveConfiguredAcpProbeCacheVariant', () => {
     }));
   });
 
-  it('derives a digest variant for plugin-contributed configured ACP backends', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-configured-acp-variant-home-'));
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-configured-acp-variant-plugin-'));
-    const store = createPluginStateStore({ happyHomeDir });
-
-    await writePluginFixture(pluginRoot);
-    await store.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        'acme.probe.variant.plugin': {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
-          },
-          compatibility: {
-            status: 'unknown',
-            diagnostics: [],
-          },
-          install: {
-            mode: 'link',
-            manifestVersion: '1.0.0',
-            installedPath: null,
-          },
-          state: {
-            enabled: true,
-          },
-        },
-      },
-    });
+  it('does not treat a plugin Agent id as an account-configured ACP backend', async () => {
     const variant = await resolveConfiguredAcpProbeCacheVariant({
       agentId: 'customAcp',
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'acme.probe.variant.backend' },
       accountSettings: {},
-      happyHomeDir,
     });
 
-    expect(variant).toMatch(/^configuredAcp:acme\.probe\.variant\.backend:[A-Za-z0-9_-]+$/);
-    expect(variant).not.toContain('missing-backend');
+    expect(variant).toBe('configuredAcp:acme.probe.variant.backend:missing-backend');
   });
 });

@@ -14,12 +14,12 @@ export type CanResumeFromMaterializedStateInput = Readonly<{
   agentId: CatalogAgentId;
   serviceId: string;
   targetMaterializedRoot: string;
-  targetMaterializedEnv: Readonly<Record<string, string>>;
   effectiveStateMode: StateMode;
   requestedStateMode: StateMode;
   materializationIdentity: Readonly<{ v: 1; id: string }>;
   vendorResumeId: string;
   cwd: string;
+  runtimeDescriptorV1?: CanResumeFromMaterializedStateCoreInput['runtimeDescriptorV1'];
   candidatePersistedSessionFile?: string | null;
   manifest?: ConnectedServiceStateSharingManifestV1 | null;
 }>;
@@ -31,12 +31,12 @@ export async function canResumeFromMaterializedState(
 ): Promise<CanResumeFromMaterializedStateResult> {
   return await canResumeFromMaterializedStateCore({
     targetMaterializedRoot: input.targetMaterializedRoot,
-    targetMaterializedEnv: input.targetMaterializedEnv,
     requestedStateMode: input.requestedStateMode,
     effectiveStateMode: input.effectiveStateMode,
     materializationIdentity: input.materializationIdentity,
     vendorResumeId: input.vendorResumeId,
     cwd: input.cwd,
+    ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
     candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
     manifest: input.manifest,
     verifyResumeReachable: async (providerInput) => await verifyResumeReachabilityByAgent({

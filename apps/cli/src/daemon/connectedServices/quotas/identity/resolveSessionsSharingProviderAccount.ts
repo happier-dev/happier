@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { RuntimeAccountIdentityEntry } from './runtimeAccountIdentityTypes';
 import type { RuntimeAccountIdentityIndex } from './RuntimeAccountIdentityIndex';
@@ -6,7 +6,7 @@ import type { RuntimeAccountIdentityIndex } from './RuntimeAccountIdentityIndex'
 export function resolveSessionsSharingProviderAccount(
   index: RuntimeAccountIdentityIndex,
   input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     providerAccountId: string;
     groupId?: string | null;
     excludeSessionId?: string | null;

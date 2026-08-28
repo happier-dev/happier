@@ -86,6 +86,7 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
     }));
     const registerRunTargets = vi.fn();
     const unregisterRunTargets = vi.fn();
+    const clearTerminalCleanupReceipt = vi.fn(async () => undefined);
     const runnerIdentity = Object.freeze({ kind: 'tracked-runner' });
     const bridge = createExecutionRunConnectedServicesBridge({
         resolveAuthForSpawn: resolveAuthForSpawn as never,
@@ -116,6 +117,7 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
             add: vi.fn(),
             close: vi.fn(),
         }),
+        clearTerminalCleanupReceipt,
         ...overrides,
     });
     return {
@@ -123,12 +125,46 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
         resolveAuthForSpawn,
         registerRunTargets,
         unregisterRunTargets,
+        clearTerminalCleanupReceipt,
         cleanupOnExit,
         runnerIdentity,
     };
 }
 
 describe('createExecutionRunConnectedServicesBridge', () => {
+    it('retries exact terminal cleanup custody after a failed root removal', async () => {
+        const cleanup = vi.fn()
+            .mockRejectedValueOnce(new Error('busy'))
+            .mockResolvedValueOnce(undefined);
+        const createAdoptedRootCleanup = vi.fn(() => cleanup);
+        const { bridge, clearTerminalCleanupReceipt } = createBridge({
+            createAdoptedRootCleanup,
+        });
+        const receipt = {
+            v: 1 as const,
+            activationId: '33333333-3333-4333-8333-333333333333',
+            runKey: MATERIALIZE_INPUT.runId,
+            agentId: MATERIALIZE_INPUT.agentId,
+        };
+
+        await expect(bridge.cleanupTerminalMaterialization({
+            runId: MATERIALIZE_INPUT.runId,
+            runnerPid: MATERIALIZE_INPUT.runnerPid,
+            sessionId: 'session-1',
+            receipt,
+        })).resolves.toBe(false);
+        await expect(bridge.cleanupTerminalMaterialization({
+            runId: MATERIALIZE_INPUT.runId,
+            runnerPid: MATERIALIZE_INPUT.runnerPid,
+            sessionId: 'session-1',
+            receipt,
+        })).resolves.toBe(true);
+
+        expect(createAdoptedRootCleanup).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(2);
+        expect(clearTerminalCleanupReceipt).not.toHaveBeenCalled();
+    });
+
     it.each([
         {
             caseName: 'contributed Agent stays on qualified request-auth authority',
@@ -512,7 +548,12 @@ describe('createExecutionRunConnectedServicesBridge', () => {
     });
 
     it('release unregisters run targets and runs the retained cleanup exactly once', async () => {
-        const { bridge, unregisterRunTargets, cleanupOnExit } = createBridge();
+        const {
+            bridge,
+            unregisterRunTargets,
+            cleanupOnExit,
+            clearTerminalCleanupReceipt,
+        } = createBridge();
 
         const result = await bridge.materialize(MATERIALIZE_INPUT);
         if (!result.ok) throw new Error('expected materialization to succeed');
@@ -531,6 +572,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
 
         expect(unregisterRunTargets).toHaveBeenCalledWith('run_abc');
         expect(cleanupOnExit).toHaveBeenCalledTimes(1);
+        expect(clearTerminalCleanupReceipt).toHaveBeenCalledOnce();
+        expect(clearTerminalCleanupReceipt).toHaveBeenCalledWith('run_abc');
     });
 
     it('does not let a stale runner PID release the current run authority or targets', async () => {
@@ -693,7 +736,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         const cleanupOnExit = vi.fn();
         const contributionRelease = vi.fn(async () => undefined);
         const unregisterRunTargets = vi.fn();
-        const { bridge } = createBridge({
+        const { bridge, clearTerminalCleanupReceipt } = createBridge({
             resolveAuthForSpawn: (async () => ({
                 env: { CODEX_HOME: '/materialized/run_abc/codex-home' },
                 cleanupOnFailure,
@@ -876,7 +919,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         const cleanup = vi.fn()
             .mockImplementationOnce(() => first)
             .mockResolvedValueOnce(undefined);
-        const { bridge } = createBridge({
+        const { bridge, clearTerminalCleanupReceipt } = createBridge({
             resolveAuthForSpawn: (async () => ({
                 env: { CODEX_HOME: '/materialized/run_abc/codex-home' },
                 cleanupOnFailure: null,
@@ -903,6 +946,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         await expect(bridge.release(releaseInput))
             .resolves.toEqual({ ok: true, released: false });
         expect(cleanup).toHaveBeenCalledTimes(2);
+        expect(clearTerminalCleanupReceipt).toHaveBeenCalledOnce();
+        expect(clearTerminalCleanupReceipt).toHaveBeenCalledWith('run_abc');
     });
 
     it('passively adopts exact cleanup state without running it', async () => {
@@ -1241,6 +1286,48 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(adoptedCleanup).toHaveBeenCalledOnce();
     });
 
+    it('restores cleanup-only custody when target registration rejects staged authority', async () => {
+        const adoptedCleanup = vi.fn(async () => undefined);
+        const registerRunTargets = vi.fn(() => {
+            throw new Error('registry unavailable');
+        });
+        const { bridge, unregisterRunTargets } = createBridge({
+            registerRunTargets,
+            createAdoptedRootCleanup: () => adoptedCleanup,
+        });
+        const registration = {
+            v: 1 as const,
+            activationId: '55555555-5555-4555-8555-555555555555',
+            runKey: 'run_abc',
+            agentId: 'codex' as const,
+            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
+            materializationKey: 'run_abc',
+            connectedServicesBindings: RUN_BINDINGS,
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
+            },
+            sessionDirectory: '/tmp/project',
+            materializedRoot: '/materialized/run_abc/codex',
+        };
+
+        await expect(bridge.adoptLiveMaterialization({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            sessionId: 'session-1',
+            persistedLaunch: registration,
+        })).resolves.toBe(false);
+        expect(registerRunTargets).toHaveBeenCalledOnce();
+        expect(adoptedCleanup).not.toHaveBeenCalled();
+
+        await expect(bridge.release({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            activationId: registration.activationId,
+        })).resolves.toEqual({ ok: true, released: true });
+        expect(unregisterRunTargets).toHaveBeenCalledOnce();
+        expect(adoptedCleanup).toHaveBeenCalledOnce();
+    });
+
     it('refuses a conflicting live run key without displacing incumbent cleanup custody', async () => {
         const incumbentCleanup = vi.fn(async () => undefined);
         const createAdoptedRootCleanup = vi.fn(() =>
@@ -1269,6 +1356,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                 cleanupOnExit: incumbentCleanup,
                 connectedServicesBindings: RUN_BINDINGS,
                 targetMaterializedRoot: null,
+                requestAuthPurposeBindings: [],
+                qualifiedPurposeBindingSnapshot: null,
             }),
         });
         const incumbent = await bridge.materialize(MATERIALIZE_INPUT);

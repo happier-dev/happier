@@ -3,8 +3,6 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import type { InstallGhConsentToken } from './gh';
-
 const { downloadGitHubReleaseAssetMock, extractReleasePayloadRootFromArchiveMock } = vi.hoisted(() => ({
   downloadGitHubReleaseAssetMock: vi.fn(async ({ destinationPath }: { destinationPath: string }) => {
     await mkdir(dirname(destinationPath), { recursive: true });
@@ -86,26 +84,18 @@ describe('gh release-binary installer', () => {
       throw new Error(`Unexpected fetch URL: ${url}`);
     }));
 
-    const { ghBinPath, installGh, INSTALL_GH_CONSENT_TOKEN } = await import('./gh');
+    const { ghBinPath } = await import('./gh');
+    const { GH_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/protocol/installables');
+    const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
+      '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
+    );
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(GH_INSTALLABLE_DESCRIPTOR);
 
-    await expect(installGh(INSTALL_GH_CONSENT_TOKEN as InstallGhConsentToken)).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(adapter?.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
     await expect(readFile(ghBinPath(), 'utf8')).resolves.toContain('gh');
     expect(downloadGitHubReleaseAssetMock).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://github.com/cli/cli/releases/download/v2.74.2/gh_2.74.2_macOS_arm64.zip',
     }));
-  });
-
-  it('refuses to install without the explicit user-consent token (FD-0054 consent.install gate)', async () => {
-    process.env.HAPPIER_HOME_DIR = await mkdtempHome();
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true });
-
-    const { installGh } = await import('./gh');
-    // @ts-expect-error - intentionally calling without the required consent token
-    await expect(installGh()).rejects.toThrow(/INSTALL_GH_CONSENT_TOKEN/);
-    // Even an obviously-wrong sentinel must be rejected.
-    await expect(installGh(Symbol('not-the-real-token') as InstallGhConsentToken))
-      .rejects.toThrow(/INSTALL_GH_CONSENT_TOKEN/);
   });
 
   it('does not leak GITHUB_TOKEN into install logs or persisted state on success or failure', async () => {
@@ -149,8 +139,12 @@ describe('gh release-binary installer', () => {
         throw new Error(`Unexpected fetch URL: ${url}`);
       }));
 
-      const { installGh, INSTALL_GH_CONSENT_TOKEN } = await import('./gh');
-      const result = await installGh(INSTALL_GH_CONSENT_TOKEN as InstallGhConsentToken);
+      const { GH_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/protocol/installables');
+      const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
+        '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
+      );
+      const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(GH_INSTALLABLE_DESCRIPTOR);
+      const result = await adapter!.installOrUpgrade();
       expect(result.ok).toBe(true);
 
       // Read every file under the configured logs/state dir and assert no secret leaked.

@@ -82,6 +82,7 @@ function harness(input: Readonly<{
     ok: true as const,
     lease: {
       credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret' },
+      containsSensitiveValue: (value: string) => value.includes('secret'),
       close: vi.fn(),
     },
   }));
@@ -134,6 +135,7 @@ describe('provider model-load safe-client adapter', () => {
     body: { model: 'model-a' },
     resolveCredential: async () => ({
       credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer secret' },
+      containsSensitiveValue: (value: string) => value.includes('secret'),
       close: () => {},
     }),
     authorizeDestination: async () => {},

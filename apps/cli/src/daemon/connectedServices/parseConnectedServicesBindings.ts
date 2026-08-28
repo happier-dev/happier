@@ -7,21 +7,21 @@
  */
 
 import {
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
   ConnectedServiceBindingsV1Schema,
-  ConnectedServiceIdSchema,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceBindingsV1 as ProtocolConnectedServicesBindingsV1,
-  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 export type ConnectedServiceBindingSelection =
   | Readonly<{
       kind: 'profile';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string;
     }>
   | Readonly<{
       kind: 'group';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       fallbackProfileId?: string;
     }>;
@@ -34,13 +34,15 @@ function readTrimmedString(value: unknown): string {
 
 export function parseConnectedServiceBindingSelections(raw: unknown): ConnectedServiceBindingSelection[] {
   const parsed = ConnectedServiceBindingsV1Schema.safeParse(raw);
-  if (!parsed.success) return [];
-  const bindings = parsed.data.bindingsByServiceId;
+  const admitted = parsed.success
+    ? parsed
+    : BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse(raw);
+  if (!admitted.success) return [];
+  const bindings = admitted.data.bindingsByServiceId;
 
   const out: ConnectedServiceBindingSelection[] = [];
   for (const [serviceIdRaw, bindingRaw] of Object.entries(bindings)) {
-    const parsedId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
-    if (!parsedId.success) continue;
+    const serviceId = serviceIdRaw as ConnectedAccountServiceKey;
     const source = bindingRaw.source;
     if (source !== 'connected') continue;
     const profileId = readTrimmedString(bindingRaw.profileId);
@@ -50,19 +52,19 @@ export function parseConnectedServiceBindingSelections(raw: unknown): ConnectedS
       if (!groupId) continue;
       out.push({
         kind: 'group',
-        serviceId: parsedId.data,
+        serviceId,
         groupId,
         ...(profileId ? { fallbackProfileId: profileId } : {}),
       });
       continue;
     }
     if (!profileId) continue;
-    out.push({ kind: 'profile', serviceId: parsedId.data, profileId });
+    out.push({ kind: 'profile', serviceId, profileId });
   }
   return out;
 }
 
-export function parseConnectedServicesBindings(raw: unknown): Array<{ serviceId: ConnectedServiceId; profileId: string }> {
+export function parseConnectedServicesBindings(raw: unknown): Array<{ serviceId: ConnectedAccountServiceKey; profileId: string }> {
   return parseConnectedServiceBindingSelections(raw).flatMap((selection) => {
     if (selection.kind === 'profile') {
       return [{ serviceId: selection.serviceId, profileId: selection.profileId }];

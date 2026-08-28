@@ -29,6 +29,7 @@ import {
   resolveProviderConnectionForMachine,
   resolveProviderConnectionForMachineFromSettingsRead,
   type ProviderContributionRegistryView,
+  type ProviderEndpointDnsEvidence,
   type ResolvedProviderConnectionRecord,
 } from '@/providers/registry';
 import {
@@ -41,9 +42,9 @@ import { createProviderRuntimeStateStore, type ProviderRuntimeStateStore } from 
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import {
+  awaitWithinProviderOperation,
   createProviderOperationLifetime,
   ProviderOperationAbandonedError,
-  type ProviderOperationLifetime,
 } from '@/providers/operationLifetime';
 import {
   providerConnectionResolutionError,
@@ -82,6 +83,7 @@ import {
   PROVIDER_CATALOG_REFRESH_TTL_MS,
   PROVIDER_HEALTH_REFRESH_TTL_MS,
   createProviderProbeScheduler,
+  ProviderProbeAdmissionCapacityError,
 } from './scheduler';
 import {
   createProviderDraftProbeSchedulerKey,
@@ -94,6 +96,7 @@ import type {
   ProviderConnectionRuntimeSummaryInput,
 } from '@/providers/connections/service/types';
 import type { ProviderLocalCatalogFallbackResult } from './localCommand';
+import type { ProviderProbeOperationScope } from './authorization';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
@@ -106,6 +109,8 @@ type SavedResolution = Readonly<{
   connection: ResolvedProviderConnectionRecord;
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
+  dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
+  accountSettingsBasis?: ProviderProbeOperationScope['accountSettingsBasis'];
 }>;
 
 type SavedResolutionResult =
@@ -120,9 +125,9 @@ type RuntimeProviderIdentity = Readonly<{
 }>;
 
 /** Exact facts carried by a single live Provider operation. */
-export type RuntimeProviderOperationScope = Readonly<{
-  registry?: ProviderContributionRegistryView;
-  lifetime: ProviderOperationLifetime;
+export type RuntimeProviderOperationScope = ProviderProbeOperationScope & Readonly<{
+  /** Exact executable-registry generation admitted for this operation. */
+  resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
 }>;
 
 /** Exact Account settings basis for one bulk presentation pass. */
@@ -240,7 +245,7 @@ function catalogMembershipPolicy(catalog: ReturnType<typeof sourceCatalog>) {
 }
 
 function expectedEndpointObservations(request: ResolvedProviderProbeRpcRequest) {
-  if (request.managedSource) return [];
+  if (request.managedSources) return [];
   return request.probes.map((probe) => {
     const endpoint = request.endpoints.find((candidate) =>
       candidate.endpointTemplateId === probe.endpointTemplateId);
@@ -314,7 +319,13 @@ export function createRuntimeProviderServices(input: Readonly<{
     : async () => {
         const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir });
         try {
-          return resolveProviderContributionRegistryView(lease.registry.contributes);
+          if (typeof lease.registry.generation !== 'number') {
+            throw new TypeError('Authoritative Provider registry is missing its generation');
+          }
+          return resolveProviderContributionRegistryView(
+            lease.registry.contributes,
+            lease.registry.generation,
+          );
         } finally {
           await lease.release();
         }
@@ -424,32 +435,102 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!settingsBasis && !snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
-    const accountSettings = settingsBasis?.accountSettings ?? snapshot!.settings;
+    const scopedAccountSettingsBasisIsCurrent = !settingsBasis
+      && scope.accountSettingsBasis !== undefined
+      && scope.accountSettingsBasis.scopeKey === snapshot!.scopeKey
+      && scope.accountSettingsBasis.settingsVersion === snapshot!.settingsVersion;
+    if (!settingsBasis && scope.accountSettingsBasis && !scopedAccountSettingsBasisIsCurrent) {
+      return {
+        ok: false as const,
+        error: createProviderErrorV1('provider_authorization_changed', identity),
+      };
+    }
+    const accountSettings = settingsBasis?.accountSettings
+      ?? (scopedAccountSettingsBasisIsCurrent
+        ? scope.accountSettingsBasis!.accountSettings
+        : snapshot!.settings);
     const settingsRead = settingsBasis?.settingsRead
-      ?? readProviderSettingsForCli(accountSettings);
+      ?? (scopedAccountSettingsBasisIsCurrent
+        ? scope.accountSettingsBasis!.settingsRead
+        : readProviderSettingsForCli(accountSettings));
+    const admittedAccountSettingsBasis = settingsBasis
+      ? scope.accountSettingsBasis
+      : scopedAccountSettingsBasisIsCurrent
+        ? scope.accountSettingsBasis
+        : snapshot?.scopeKey
+          ? {
+              scopeKey: snapshot.scopeKey,
+              settingsVersion: snapshot.settingsVersion,
+              accountSettings: snapshot.settings,
+              settingsRead,
+            }
+          : undefined;
     const providerSettings = settingsRead.settings;
-    const registry = scope?.registry ?? await resolveRegistry();
+    let registry = scope.registry;
+    if (!registry) {
+      try {
+        registry = await awaitWithinProviderOperation(
+          Promise.resolve().then(() => resolveRegistry()),
+          scope.lifetime,
+        );
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            ok: false as const,
+            error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+          };
+        }
+        throw error;
+      }
+    }
+    if (!registry) {
+      throw new TypeError('Provider contribution registry resolution returned no registry');
+    }
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    let dnsEvidenceByEndpointUrl;
-    try {
-      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-        connectionId: identity.connectionId,
-        machineId: identity.machineId,
-        providerSettings,
-        registry,
-        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-        lifetime: scope.lifetime,
-      });
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          ok: false as const,
-          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
-        };
+    if (
+      scope.dnsEvidenceByConnectionId
+      && !scope.dnsEvidenceByConnectionId.has(identity.connectionId)
+    ) {
+      return {
+        ok: false as const,
+        error: createProviderErrorV1('provider_authorization_changed', identity),
+      };
+    }
+    let dnsEvidenceByEndpointUrl = scope.dnsEvidenceByConnectionId?.get(identity.connectionId);
+    if (!scope.dnsEvidenceByConnectionId) {
+      try {
+        dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+          connectionId: identity.connectionId,
+          machineId: identity.machineId,
+          providerSettings,
+          registry,
+          ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+          admitResolution: scheduler.runDns,
+          lifetime: scope.lifetime,
+        });
+      } catch (error) {
+        if (error instanceof ProviderProbeAdmissionCapacityError) {
+          return {
+            ok: false as const,
+            error: createProviderErrorV1('provider_probe_capacity_exhausted', identity),
+          };
+        }
+        if (error instanceof ProviderOperationAbandonedError) {
+          return {
+            ok: false as const,
+            error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+          };
+        }
+        throw error;
       }
-      throw error;
+    }
+    if (!dnsEvidenceByEndpointUrl) {
+      return {
+        ok: false as const,
+        error: createProviderErrorV1('provider_authorization_changed', identity),
+      };
     }
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
@@ -474,6 +555,16 @@ export function createRuntimeProviderServices(input: Readonly<{
         accountSettings,
         registry,
         dnsEvidenceByEndpointUrl,
+        ...(admittedAccountSettingsBasis
+          ? { accountSettingsBasis: admittedAccountSettingsBasis }
+          : {}),
+        ...(scope.resolveContributedCatalogParsers
+          ? {
+              resolveContributedCatalogParsers:
+                scope.resolveContributedCatalogParsers,
+            }
+          : {}),
+        lifetime: scope.lifetime,
       },
     };
   }
@@ -490,6 +581,9 @@ export function createRuntimeProviderServices(input: Readonly<{
       accountSettings,
       registry,
       dnsEvidenceByEndpointUrl,
+      resolveContributedCatalogParsers: operationParserResolver,
+      accountSettingsBasis,
+      lifetime,
     } = context;
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
@@ -532,10 +626,13 @@ export function createRuntimeProviderServices(input: Readonly<{
         // vocabulary, so a plugin whose only contributed format serves the
         // fallback must still reach its own implementation.
         || (catalogFallback ? contributedFormats.includes(catalogFallback.parser) : false))
-      ? await resolveContributedCatalogParsers({
-          pluginId: connection.source.pluginId,
-          localId: connection.source.definition.id,
-        })
+      ? await awaitWithinProviderOperation(
+          (operationParserResolver ?? resolveContributedCatalogParsers)({
+            pluginId: connection.source.pluginId,
+            localId: connection.source.definition.id,
+          }),
+          lifetime,
+        )
       : null;
     if (connection.deployment.kind === 'managedLocal') {
       if (mode === 'health') {
@@ -545,6 +642,8 @@ export function createRuntimeProviderServices(input: Readonly<{
             connection,
             providerSettings,
             registry,
+            dnsEvidenceByEndpointUrl,
+            ...(accountSettingsBasis ? { accountSettingsBasis } : {}),
             request: {
               ...identity,
               endpoints: [],
@@ -559,18 +658,31 @@ export function createRuntimeProviderServices(input: Readonly<{
           },
         };
       }
-      const contribution = connection.source.kind === 'contribution'
-        ? registry.providersByContributionKey.get(connection.source.contributionKey)
-        : undefined;
-      const probe = probes.length === 1 ? probes[0] : undefined;
+      if (connection.source.kind !== 'contribution') {
+        return {
+          ok: false,
+          error: createProviderErrorV1('provider_probe_authorization_invalid', identity),
+        };
+      }
+      const contributionSource = connection.source;
+      const managedDeployment = connection.deployment;
+      const contribution = registry.providersByContributionKey.get(
+        contributionSource.contributionKey,
+      );
       const sourceRegistryVersion = 'sourceRegistryVersion' in catalog
         ? catalog.sourceRegistryVersion
         : undefined;
-      const endpointTemplate = probe && connection.source.kind === 'contribution'
-        ? connection.source.definition.endpointTemplates.find(
-            (candidate) => candidate.id === probe.endpointTemplateId,
-          )
-        : undefined;
+      const managedEndpointTemplateIds = new Set(
+        probes.map((probe) => probe.endpointTemplateId),
+      );
+      if (catalogFallback) {
+        managedEndpointTemplateIds.add(catalogFallback.endpointTemplateId);
+      }
+      const endpointTemplates = [...managedEndpointTemplateIds].map(
+        (endpointTemplateId) => contributionSource.definition.endpointTemplates.find(
+          (candidate) => candidate.id === endpointTemplateId,
+        ),
+      );
       const contributionManagedRuntime =
         contribution?.definition.managedRuntime
           ? resolveProviderManagedRuntimeDeclarationV1({
@@ -579,22 +691,23 @@ export function createRuntimeProviderServices(input: Readonly<{
             })
           : null;
       if (
-        connection.source.kind !== 'contribution'
-        || !contribution
+        !contribution
         || !contribution.definition.managedRuntime
         || !contributionManagedRuntime
-        || !probe
-        || !endpointTemplate
-        || !connection.deployment.managedRuntime.endpointTemplateIds.includes(
-          endpointTemplate.id,
-        )
+        || probes.length === 0
+        || sourceRegistryVersion === undefined
+        || endpointTemplates.some((endpointTemplate) => !endpointTemplate)
+        || endpointTemplates.some((endpointTemplate) =>
+          !managedDeployment.managedRuntime.endpointTemplateIds.includes(
+            endpointTemplate!.id,
+          ))
         || createProviderManagedRuntimeDeclarationEqualityKeyV1({
           implementationIdentity: contribution.identity,
           managedRuntime: contributionManagedRuntime,
         })
           !== createProviderManagedRuntimeDeclarationEqualityKeyV1({
-            implementationIdentity: connection.deployment.implementationIdentity,
-            managedRuntime: connection.deployment.managedRuntime,
+            implementationIdentity: managedDeployment.implementationIdentity,
+            managedRuntime: managedDeployment.managedRuntime,
           })
       ) {
         return {
@@ -616,11 +729,11 @@ export function createRuntimeProviderServices(input: Readonly<{
         purposeBindingResolution =
           await resolveManagedProviderPurposeBindingSnapshot({
           implementationIdentity:
-            connection.deployment.implementationIdentity,
+            managedDeployment.implementationIdentity,
           connectedAccounts:
-            connection.deployment.managedRuntime.connectedAccounts ?? [],
+            managedDeployment.managedRuntime.connectedAccounts ?? [],
           purposeBindingIntents:
-            connection.deployment.purposeBindingIntents,
+            managedDeployment.purposeBindingIntents,
           resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
         });
       } catch {
@@ -635,48 +748,63 @@ export function createRuntimeProviderServices(input: Readonly<{
       if (!isProviderFeatureEnabled()) {
         return { ok: false, error: providerFeatureDisabled(identity).error };
       }
-      const managedSource = {
-        implementationIdentity: connection.deployment.implementationIdentity,
-        managedRuntime: connection.deployment.managedRuntime,
+      const managedSources = endpointTemplates.map((endpointTemplate) => ({
+        implementationIdentity: managedDeployment.implementationIdentity,
+        managedRuntime: managedDeployment.managedRuntime,
         purposeBindings: purposeBindingResolution,
-        endpointTemplateId: endpointTemplate.id,
-        protocol: endpointTemplate.protocol,
+        endpointTemplateId: endpointTemplate!.id,
+        protocol: endpointTemplate!.protocol,
         sourceRegistryVersion,
-        publicHeaders: endpointTemplate.publicHeaders ?? {},
-      } as const;
-      const probeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
-        ...managedSource,
-        method: 'GET',
-        path: probe.path,
-        parser: probe.parser,
-      });
-      const resolvedAuthorization = resolveProviderProbeAuthorization({
-        request: {
-          deployment: 'managedLocal',
-          ...identity,
-          implementationIdentity: managedSource.implementationIdentity,
-          managedRuntime: managedSource.managedRuntime,
-          purposeBindings: managedSource.purposeBindings,
-          endpointTemplateId: managedSource.endpointTemplateId,
-          protocol: managedSource.protocol,
-          sourceRegistryVersion: managedSource.sourceRegistryVersion,
+        publicHeaders: endpointTemplate!.publicHeaders ?? {},
+      } as const));
+      const managedSourceByEndpointTemplateId = new Map(
+        managedSources.map((source) => [source.endpointTemplateId, source] as const),
+      );
+      const authorizationFingerprints = new Set<ProviderObservationAuthorizationFingerprintV1>();
+      for (const probe of probes) {
+        const managedSource = managedSourceByEndpointTemplateId.get(probe.endpointTemplateId);
+        if (!managedSource) {
+          return {
+            ok: false,
+            error: createProviderErrorV1('provider_probe_authorization_invalid', identity),
+          };
+        }
+        const probeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
+          ...managedSource,
+          method: 'GET',
           path: probe.path,
           parser: probe.parser,
-          probeRequestFingerprint,
-        },
-        managedPurposeBindingSnapshot:
-          purposeBindingResolution,
-        accountSettings,
-        providerSettings,
-        settingsRead,
-        registry,
-        dnsEvidenceByEndpointUrl,
-        ...(input.localCandidateUrlsByConnectionId
-          ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
-          : {}),
-      });
-      if (!resolvedAuthorization.ok) {
-        return { ok: false, error: resolvedAuthorization.error };
+        });
+        const resolvedAuthorization = resolveProviderProbeAuthorization({
+          request: {
+            deployment: 'managedLocal',
+            ...identity,
+            implementationIdentity: managedSource.implementationIdentity,
+            managedRuntime: managedSource.managedRuntime,
+            purposeBindings: managedSource.purposeBindings,
+            endpointTemplateId: managedSource.endpointTemplateId,
+            protocol: managedSource.protocol,
+            sourceRegistryVersion: managedSource.sourceRegistryVersion,
+            path: probe.path,
+            parser: probe.parser,
+            probeRequestFingerprint,
+          },
+          managedPurposeBindingSnapshot: purposeBindingResolution,
+          accountSettings,
+          providerSettings,
+          settingsRead,
+          registry,
+          dnsEvidenceByEndpointUrl,
+          ...(input.localCandidateUrlsByConnectionId
+            ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
+            : {}),
+        });
+        if (!resolvedAuthorization.ok) {
+          return { ok: false, error: resolvedAuthorization.error };
+        }
+        authorizationFingerprints.add(
+          resolvedAuthorization.observationAuthorizationFingerprint,
+        );
       }
       return {
         ok: true,
@@ -684,15 +812,15 @@ export function createRuntimeProviderServices(input: Readonly<{
           connection,
           providerSettings,
           registry,
+          dnsEvidenceByEndpointUrl,
+          ...(accountSettingsBasis ? { accountSettingsBasis } : {}),
           request: {
             ...identity,
             endpoints: [],
             probes,
-            managedSource,
+            managedSources,
             ...(contributedCatalogParsers ? { contributedCatalogParsers } : {}),
-            observationAuthorizationFingerprints: [
-              resolvedAuthorization.observationAuthorizationFingerprint,
-            ],
+            observationAuthorizationFingerprints: [...authorizationFingerprints].sort(),
             authorizationGrant: {
               kind: connection.authorization.grantKind,
               fingerprint: connection.authorization.grantFingerprint,
@@ -753,6 +881,8 @@ export function createRuntimeProviderServices(input: Readonly<{
         connection,
         providerSettings,
         registry,
+        dnsEvidenceByEndpointUrl,
+        ...(accountSettingsBasis ? { accountSettingsBasis } : {}),
         request: {
           ...identity,
           endpoints,
@@ -778,13 +908,33 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
-    const context = await resolveConnectionContext(identity, scope);
+    let context;
+    try {
+      context = await resolveConnectionContext(identity, scope);
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          ok: false,
+          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+        };
+      }
+      throw error;
+    }
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
-    return context.ok
-      ? resolveSavedFromConnectionContext(identity, context.value, mode)
-      : context;
+    if (!context.ok) return context;
+    try {
+      return await resolveSavedFromConnectionContext(identity, context.value, mode);
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          ok: false,
+          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+        };
+      }
+      throw error;
+    }
   }
 
   const projectResolvedCatalogContext = (
@@ -858,7 +1008,18 @@ export function createRuntimeProviderServices(input: Readonly<{
         catalogRuntimeKey: null,
       };
     }
-    const resolved = await resolveSavedFromConnectionContext(identity, connectionContext.value, 'catalog');
+    let resolved;
+    try {
+      resolved = await resolveSavedFromConnectionContext(identity, connectionContext.value, 'catalog');
+    } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError) {
+        return {
+          status: 'error' as const,
+          error: createProviderErrorV1('provider_endpoint_unavailable', identity),
+        };
+      }
+      throw error;
+    }
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
     return projectResolvedCatalogContext(identity, resolved.value, runtimeState);
@@ -872,6 +1033,13 @@ export function createRuntimeProviderServices(input: Readonly<{
         ...resolved.value.request,
         operationScope: {
           registry: resolved.value.registry,
+          ...(resolved.value.accountSettingsBasis
+            ? { accountSettingsBasis: resolved.value.accountSettingsBasis }
+            : {}),
+          dnsEvidenceByConnectionId: new Map([[
+            identity.connectionId,
+            resolved.value.dnsEvidenceByEndpointUrl,
+          ]]),
           // Admitted work is shared by scheduler waiters: preserve its single
           // deadline but never let one caller's abort cancel another waiter.
           lifetime: { wallDeadlineAtMs: lifetime.wallDeadlineAtMs },
@@ -980,10 +1148,24 @@ export function createRuntimeProviderServices(input: Readonly<{
       const operationScope = withOperationLifetime(scope);
       const catalog = await resolveSaved(identity, 'catalog', operationScope);
       if (!catalog.ok || !isProviderFeatureEnabled()) return;
+      const resolvedDnsEvidenceByConnectionId = operationScope.dnsEvidenceByConnectionId
+        ?? new Map([[identity.connectionId, catalog.value.dnsEvidenceByEndpointUrl]]);
+      const resolvedAccountSettingsBasis = operationScope.accountSettingsBasis
+        ?? catalog.value.accountSettingsBasis;
       if (!await hasFreshExactCatalogObservation(catalog.value.request)) {
         if (!isProviderFeatureEnabled()) return;
         const admittedScope: RuntimeProviderOperationScope = {
           registry: catalog.value.registry,
+          ...(operationScope.resolveContributedCatalogParsers
+            ? {
+                resolveContributedCatalogParsers:
+                  operationScope.resolveContributedCatalogParsers,
+              }
+            : {}),
+          ...(resolvedAccountSettingsBasis
+            ? { accountSettingsBasis: resolvedAccountSettingsBasis }
+            : {}),
+          dnsEvidenceByConnectionId: resolvedDnsEvidenceByConnectionId,
           // Work admitted by the scheduler is shared. Retain the caller's
           // deadline and exact registry projection, but not its cancellation.
           lifetime: { wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs },
@@ -996,12 +1178,28 @@ export function createRuntimeProviderServices(input: Readonly<{
         );
       }
       if (!isProviderFeatureEnabled()) return;
-      const health = await resolveSaved(identity, 'health', operationScope);
+      const health = await resolveSaved(identity, 'health', {
+        ...operationScope,
+        ...(resolvedAccountSettingsBasis
+          ? { accountSettingsBasis: resolvedAccountSettingsBasis }
+          : {}),
+        dnsEvidenceByConnectionId: resolvedDnsEvidenceByConnectionId,
+      });
       if (!health.ok || !isProviderFeatureEnabled() || health.value.request.probes.length !== 1) return;
       if (await hasFreshExactHealthObservation(health.value.request)) return;
       if (!isProviderFeatureEnabled()) return;
       const admittedScope: RuntimeProviderOperationScope = {
         registry: health.value.registry,
+        ...(operationScope.resolveContributedCatalogParsers
+          ? {
+              resolveContributedCatalogParsers:
+                operationScope.resolveContributedCatalogParsers,
+            }
+          : {}),
+        ...(resolvedAccountSettingsBasis
+          ? { accountSettingsBasis: resolvedAccountSettingsBasis }
+          : {}),
+        dnsEvidenceByConnectionId: resolvedDnsEvidenceByConnectionId,
         lifetime: { wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs },
       };
       await runResolvedHealthProbe(
@@ -1185,6 +1383,7 @@ export function createRuntimeProviderServices(input: Readonly<{
             accountSettings: input.accountSettings,
             registry: input.registry,
             dnsEvidenceByEndpointUrl: input.dnsEvidence,
+            lifetime: input.lifetime,
           }, 'catalog');
         })()
       : await resolveSaved(identity, 'catalog', operationScope);

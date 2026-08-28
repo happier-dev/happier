@@ -67,6 +67,7 @@ describe('managed Provider catalog runtime composition', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
+        sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.95',
         probes: [{
           endpointTemplateId: 'responses',
           path: '/v1/models',
@@ -129,6 +130,7 @@ describe('managed Provider catalog runtime composition', () => {
     };
     const registry = {
       providersByContributionKey: new Map([[contributionKey, contribution]]),
+      runtimeRegistryGeneration: 7,
     };
     const base = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -180,6 +182,7 @@ describe('managed Provider catalog runtime composition', () => {
     let invalidateAuthorizationDuringStart = false;
     let switchRuntimeDuringStart = false;
     let returnSuccessorRuntime = false;
+    let returnSuccessorRegistry = false;
     let releaseTransport!: () => void;
     const transportGate = new Promise<void>((resolve) => {
       releaseTransport = resolve;
@@ -341,13 +344,19 @@ describe('managed Provider catalog runtime composition', () => {
     // Boundary fixture exposes only the two registry capabilities this real
     // catalog operation consumes; every internal launch owner remains real.
     const runtimeRegistry = {
+      generation: 7,
       acquireManagedProviderRuntime,
+      createManagedProviderRuntimeInvocationServices,
+    } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+    const successorRegistry = {
+      generation: 8,
+      acquireManagedProviderRuntime: vi.fn(async () => successorRuntime),
       createManagedProviderRuntimeInvocationServices,
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const releaseRegistryLease = vi.fn(async () => undefined);
     const managedCatalogRuntime = createProviderManagedCatalogRuntimePort({
       acquireRegistryLease: async () => Object.freeze({
-        registry: runtimeRegistry,
+        registry: returnSuccessorRegistry ? successorRegistry : runtimeRegistry,
         source: 'active' as const,
         durableRevision: -1,
         release: releaseRegistryLease,
@@ -366,7 +375,8 @@ describe('managed Provider catalog runtime composition', () => {
         settings: AccountSettingsSchema.parse({
           providerSettingsV1: currentSettings,
         }),
-        settingsVersion: 1,
+        settingsVersion:
+          (currentSettings.connections.find((connection) => connection.id === connectionId)?.revision ?? 0) + 1,
         loadedAtMs: 1,
         settingsSecretsReadKeys: [],
         scopeKey: 'account-a',
@@ -404,6 +414,20 @@ describe('managed Provider catalog runtime composition', () => {
     expect(releaseRegistryLease).toHaveBeenCalledTimes(1);
     expect(disposeService).toHaveBeenCalledTimes(1);
 
+    // Structural authorization was admitted from registry generation 7. A
+    // replacement that is already current before managed-runtime acquisition
+    // must not execute generation 8 under those generation-7 facts.
+    returnSuccessorRegistry = true;
+    await expect(services.probe(identity)).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'provider_authorization_changed' },
+    });
+    returnSuccessorRegistry = false;
+    expect(successorRegistry.acquireManagedProviderRuntime).not.toHaveBeenCalled();
+    expect(createManagedProviderRuntimeInvocationServices).toHaveBeenCalledTimes(1);
+    expect(releaseRegistryLease).toHaveBeenCalledTimes(2);
+    expect(disposeService).toHaveBeenCalledTimes(1);
+
     switchRuntimeDuringStart = true;
     await expect(services.probe(identity)).resolves.toMatchObject({
       status: 'error',
@@ -416,7 +440,7 @@ describe('managed Provider catalog runtime composition', () => {
     expect(createManagedProviderRuntimeInvocationServices).toHaveBeenCalledTimes(2);
     expect(endpointAccessCleanup).toHaveBeenCalledTimes(1);
     expect(invocationCleanup).toHaveBeenCalledTimes(2);
-    expect(releaseRegistryLease).toHaveBeenCalledTimes(2);
+    expect(releaseRegistryLease).toHaveBeenCalledTimes(3);
     expect(disposeService).toHaveBeenCalledTimes(2);
 
     invalidateAuthorizationDuringStart = true;
@@ -430,7 +454,7 @@ describe('managed Provider catalog runtime composition', () => {
     expect(createManagedProviderRuntimeInvocationServices).toHaveBeenCalledTimes(3);
     expect(endpointAccessCleanup).toHaveBeenCalledTimes(1);
     expect(invocationCleanup).toHaveBeenCalledTimes(3);
-    expect(releaseRegistryLease).toHaveBeenCalledTimes(3);
+    expect(releaseRegistryLease).toHaveBeenCalledTimes(4);
     expect(disposeService).toHaveBeenCalledTimes(3);
     const state = await services.runtimeStore.read();
     expect(state.catalogs).toHaveLength(1);

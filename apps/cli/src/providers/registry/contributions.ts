@@ -4,9 +4,13 @@ import type { ProviderContributionRegistryView } from './types';
 
 export function resolveProviderContributionRegistryView(
   registry: Pick<ResolvedContributionRegistry, 'providersByContributionKey'>,
+  runtimeRegistryGeneration: number,
 ): ProviderContributionRegistryView {
   if (!registry.providersByContributionKey) {
     throw new Error('Resolved contribution registry is missing its provider contribution index');
   }
-  return { providersByContributionKey: registry.providersByContributionKey };
+  return {
+    providersByContributionKey: registry.providersByContributionKey,
+    runtimeRegistryGeneration,
+  };
 }

@@ -4,8 +4,7 @@ import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { createConfiguredAcpBackend } from '@/agent/acp/catalog/configured/createConfiguredAcpBackend';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
-import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
-import { configuration } from '@/configuration';
+import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { StoredCredentials } from '@/persistence';
 
@@ -37,11 +36,10 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
 }>): Promise<AcpProbeBackend | null> {
   if (!isConfiguredAcpProbeTarget(params)) return null;
 
-  const backend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
-    settings: params.accountSettings ?? {},
-    backendId: params.backendTarget.backendId,
-    happyHomeDir: configuration.happyHomeDir,
-  });
+  const backend = resolveConfiguredAcpBackendFromAccountSettings(
+    params.accountSettings ?? {},
+    params.backendTarget.backendId,
+  );
   if (!backend) return null;
 
   let launchEnv = tryResolveLiteralConfiguredAcpEnvironment(backend.env);

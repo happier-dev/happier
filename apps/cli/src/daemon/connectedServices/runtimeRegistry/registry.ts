@@ -1,7 +1,7 @@
 import {
   ConnectedServiceMaterializationIdentityV1Schema,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
@@ -81,7 +81,7 @@ function omitRevision(target: ConnectedServiceRuntimeTarget): Omit<ConnectedServ
 function buildExactGroupApplicationSelectionEnv(
   target: ConnectedServiceRuntimeTarget,
   input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     profileId: string;
     generation: number;
@@ -200,7 +200,7 @@ export class ConnectedServiceRuntimeRegistry {
 
   public adoptExactGroupApplicationForSession(input: Readonly<{
     sessionId: string;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     profileId: string;
     generation: number;

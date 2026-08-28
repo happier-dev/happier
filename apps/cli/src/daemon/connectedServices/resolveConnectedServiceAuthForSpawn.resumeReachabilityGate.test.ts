@@ -265,13 +265,9 @@ describe('resolveConnectedServiceAuthForSpawn §2 resume-reachability gate', () 
     expect(result).not.toBeNull();
   });
 
-  it('fails closed when reachability is REQUIRED for a resume but cwd is missing (a plumbing fault must not silently disable the hard gate)', async () => {
+  it('checks declared Session state rather than failing on an obsolete cwd prerequisite', async () => {
     const piAgentDir = await makeTempDir('happier-pi-gate-native-nocwd-');
 
-    // A resume IS requested (vendorResumeId present) and shared-state continuity REQUIRES the
-    // reachability gate, but the gate's `cwd` plumbing input is missing. Returning here would
-    // SILENTLY disable the hard gate for a continuity resume; it must instead fail closed with the
-    // structured continuity reason BEFORE the vendor launches.
     const error = await callSpawn({
       cwd: '',
       piAgentDir,
@@ -286,6 +282,6 @@ describe('resolveConnectedServiceAuthForSpawn §2 resume-reachability gate', () 
     const gateError = error as ConnectedServiceSpawnResumeUnreachableError;
     expect(gateError.errorCode).toBe('provider_session_state_unavailable_for_resume');
     expect(gateError.failurePhase).toBe('continuity');
-    expect(gateError.reason).toBe('resume_reachability_inputs_missing');
+    expect(gateError.reason).toBe('pi_session_file_not_found');
   });
 });

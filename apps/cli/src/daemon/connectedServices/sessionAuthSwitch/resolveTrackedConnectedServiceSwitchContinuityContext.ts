@@ -1,9 +1,12 @@
 import { isAbsolute } from 'node:path';
 
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
-import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
+import {
+  readRuntimeDescriptorV1,
+  type ConnectedServiceMaterializationIdentityV1,
+  type RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 
-import { resolveConnectedServiceCandidatePersistedSessionFile } from '@/daemon/connectedServices/catalogHooks';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import {
@@ -75,15 +78,7 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
   const trackedMetadata = input.tracked?.happySessionMetadataFromLocalWebhook ?? null;
   const persistedMetadata = input.persistedSessionMetadata ?? null;
   const trackedMetadataVendorResumeId = resolveBuiltInVendorResumeId(input.agentId, trackedMetadata);
-  const trackedMetadataCandidatePersistedSessionFile = resolveConnectedServiceCandidatePersistedSessionFile(
-    input.agentId,
-    trackedMetadata,
-  );
   const persistedMetadataVendorResumeId = resolveBuiltInVendorResumeId(input.agentId, persistedMetadata);
-  const persistedMetadataCandidatePersistedSessionFile = resolveConnectedServiceCandidatePersistedSessionFile(
-    input.agentId,
-    persistedMetadata,
-  );
   const trackedVendorResumeId = normalizeOptionalString(input.tracked?.vendorResumeId);
   const trackedSpawnResume = normalizeOptionalString(input.tracked?.spawnOptions?.resume);
   const trackedSpawnResumeCandidate = normalizeOptionalAbsolutePath(trackedSpawnResume);
@@ -94,8 +89,6 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
     return {
       vendorResumeId: trackedVendorResumeId,
       candidatePersistedSessionFile: trackedSpawnResumeCandidate
-        ?? (persistedMetadataVendorResumeId === trackedVendorResumeId ? persistedMetadataCandidatePersistedSessionFile : null)
-        ?? (trackedMetadataVendorResumeId === trackedVendorResumeId ? trackedMetadataCandidatePersistedSessionFile : null)
         ?? (explicitVendorResumeId === trackedVendorResumeId ? explicitCandidatePersistedSessionFile : null),
     };
   }
@@ -104,8 +97,6 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
     return {
       vendorResumeId: trackedSpawnResume,
       candidatePersistedSessionFile: trackedSpawnResumeCandidate
-        ?? (persistedMetadataVendorResumeId === trackedSpawnResume ? persistedMetadataCandidatePersistedSessionFile : null)
-        ?? (trackedMetadataVendorResumeId === trackedSpawnResume ? trackedMetadataCandidatePersistedSessionFile : null)
         ?? (explicitVendorResumeId === trackedSpawnResume ? explicitCandidatePersistedSessionFile : null),
     };
   }
@@ -113,16 +104,18 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
   if (persistedMetadataVendorResumeId) {
     return {
       vendorResumeId: persistedMetadataVendorResumeId,
-      candidatePersistedSessionFile: persistedMetadataCandidatePersistedSessionFile
-        ?? (explicitVendorResumeId === persistedMetadataVendorResumeId ? explicitCandidatePersistedSessionFile : null),
+      candidatePersistedSessionFile: explicitVendorResumeId === persistedMetadataVendorResumeId
+        ? explicitCandidatePersistedSessionFile
+        : null,
     };
   }
 
   if (trackedMetadataVendorResumeId) {
     return {
       vendorResumeId: trackedMetadataVendorResumeId,
-      candidatePersistedSessionFile: trackedMetadataCandidatePersistedSessionFile
-        ?? (explicitVendorResumeId === trackedMetadataVendorResumeId ? explicitCandidatePersistedSessionFile : null),
+      candidatePersistedSessionFile: explicitVendorResumeId === trackedMetadataVendorResumeId
+        ? explicitCandidatePersistedSessionFile
+        : null,
     };
   }
 
@@ -148,6 +141,7 @@ export function resolveTrackedConnectedServiceSwitchContinuityContext(input: Rea
   targetMaterializedEnv: Readonly<Record<string, string>> | null;
   vendorResumeId: string | null;
   cwd: string | null;
+  runtimeDescriptorV1?: RuntimeDescriptorV1;
   candidatePersistedSessionFile: string | null;
 }> {
   const metadata = input.tracked?.happySessionMetadataFromLocalWebhook ?? null;
@@ -172,6 +166,10 @@ export function resolveTrackedConnectedServiceSwitchContinuityContext(input: Rea
       effectiveIdentity,
       runtimeAuthSelection: input.runtimeAuthSelection,
     });
+  const runtimeDescriptorV1 =
+    readRuntimeDescriptorV1(input.tracked?.spawnOptions?.runtimeDescriptorV1)
+    ?? readRuntimeDescriptorV1((persistedMetadata as { runtimeDescriptorV1?: unknown } | null)?.runtimeDescriptorV1)
+    ?? readRuntimeDescriptorV1((metadata as { runtimeDescriptorV1?: unknown } | null)?.runtimeDescriptorV1);
   return {
     connectedServiceMaterializationIdentityV1: effectiveIdentity,
     targetMaterializedRoot,
@@ -181,6 +179,7 @@ export function resolveTrackedConnectedServiceSwitchContinuityContext(input: Rea
       ?? normalizeOptionalString((metadata as { path?: unknown } | null)?.path)
       ?? normalizeOptionalString(input.cwd)
       ?? normalizeOptionalString((persistedMetadata as { path?: unknown } | null)?.path),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     candidatePersistedSessionFile: resumeContext.candidatePersistedSessionFile,
   };
 }
