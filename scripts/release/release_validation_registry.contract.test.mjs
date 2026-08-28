@@ -21,7 +21,6 @@ test('release-validation registry exposes the canonical suite and source ids', (
     'cli-update',
     'daemon-continuity',
     'session-continuity',
-    'sdk-dual-origin',
   ]);
 
   assert.deepEqual(RELEASE_VALIDATION_SOURCE_KINDS, [
@@ -35,7 +34,7 @@ test('release-validation registry exposes the canonical suite and source ids', (
   assert.equal(resolveReleaseValidationSourceKind(' local-build '), 'local-build');
   assert.equal(resolveReleaseValidationSourceKind('unknown'), null);
   assert.equal(resolveReleaseValidationSuite(' cli-update ')?.executorId, 'cli-update');
-  assert.deepEqual(resolveReleaseValidationSuite('sdk-dual-origin')?.supportedDirectSourceKinds, ['local-pack']);
+  assert.equal(resolveReleaseValidationSuite('sdk-dual-origin'), null);
   assert.equal(resolveReleaseValidationSuite('unknown'), null);
 });
 

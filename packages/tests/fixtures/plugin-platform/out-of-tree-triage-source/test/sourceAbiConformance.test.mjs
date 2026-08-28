@@ -22,7 +22,6 @@ import { fileURLToPath } from 'node:url';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageGetResultV1Schema,
@@ -571,7 +570,6 @@ test('QB-05: a page never exceeds the submitted limit once omissions are counted
                 ? page.evidence.omittedItemCount ?? 0
                 : 0;
             assert.ok(page.observations.length + omitted <= 3);
-            assert.ok(page.observations.length <= MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1);
         }
     } finally {
         await installed.dispose();

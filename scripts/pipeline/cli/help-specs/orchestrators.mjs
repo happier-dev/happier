@@ -63,7 +63,6 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       `--deploy-targets <csv>            ${releaseTargetChoices} (default: ui,server,website,docs).`,
       '--release-profile <integrated|stable|deep>  Defaults to integrated for dev/preview and stable for production; deep is dry-run only.',
       '--waive-ci <bool>                 Maintainer-only exact-candidate CI waiver; requires --override-reason.',
-      '--approve-public-sdk-release <bool> Approve the exact public SDK candidate after reviewing its API comparison; requires --override-reason.',
       '--include-validation-suites <csv> Add risk-selected validation suites for this candidate.',
       '--waive-validation-suites <csv>  Mark heavy suites WAIVED for this candidate; requires --override-reason.',
       '--override-reason <text>          Bounded maintainer rationale recorded with evidence waivers.',

@@ -163,6 +163,14 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
       dedupe: ['react', 'react-dom'],
       alias: [
         {
+          find: /^react(\/.*)?$/,
+          replacement: `${resolve(uiRoot, 'node_modules/react')}$1`,
+        },
+        {
+          find: /^react-dom(\/.*)?$/,
+          replacement: `${resolve(uiRoot, 'node_modules/react-dom')}$1`,
+        },
+        {
           find: /^react-test-renderer$/,
           replacement: resolve(uiRoot, 'node_modules/react-test-renderer/index.js'),
         },

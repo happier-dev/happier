@@ -20,13 +20,13 @@ export type PluginCallerFixture = Extract<
 export function createAutomationRunCallerFixture(input: Readonly<{
   runId: string;
   automationId: string;
-  origin: AutomationRunCallerFixture['origin'];
+  cause: AutomationRunCallerFixture['cause'];
 }>): AutomationRunCallerFixture {
   return Object.freeze({
     kind: 'automationRun' as const,
     runId: input.runId,
     automationId: input.automationId,
-    origin: input.origin,
+    cause: input.cause,
   });
 }
 

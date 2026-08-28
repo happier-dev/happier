@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import {
   accountScopedCryptoMaterialFromCliAccessKey,
   readCliAccessKey,
+  readCliAccessKeyForServerId,
 } from './cliAccessKey';
 import { createRunDirs } from './runDir';
 
@@ -59,5 +60,16 @@ describe('readCliAccessKey', () => {
 
     const key = await readCliAccessKey(home);
     expect(key).toEqual({ token: 't-active', secret: 's-active' });
+  });
+
+  it('reads only the exact selected server without newest-key fallback', async () => {
+    const home = resolve(join(run.testDir('exact-server'), 'cli-home'));
+    await mkdir(join(home, 'servers', 'selected'), { recursive: true });
+    await mkdir(join(home, 'servers', 'newer'), { recursive: true });
+    await writeFile(join(home, 'servers', 'selected', 'access.key'), JSON.stringify({ token: 'selected', secret: 'secret' }), 'utf8');
+    await writeFile(join(home, 'servers', 'newer', 'access.key'), JSON.stringify({ token: 'wrong', secret: 'secret' }), 'utf8');
+    await expect(readCliAccessKeyForServerId(home, 'selected')).resolves.toEqual({ token: 'selected', secret: 'secret' });
+    await expect(readCliAccessKeyForServerId(home, 'missing')).resolves.toBeNull();
+    await expect(readCliAccessKeyForServerId(home, '../selected')).resolves.toBeNull();
   });
 });

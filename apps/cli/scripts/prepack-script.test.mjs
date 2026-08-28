@@ -14,6 +14,16 @@ test('apps/cli prepack builds dist for npm pack', () => {
   assert.ok(bundleIndex > syncIndex, `expected workspace dependency bundling after package dist sync, got: ${prepack}`);
 });
 
+test('apps/cli has one canonical packer and no postpack archive rewriter', () => {
+  const pkgPath = new URL('../package.json', import.meta.url);
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  assert.equal(
+    pkg?.scripts?.postpack,
+    undefined,
+    'the canonical packTarball helper must own the final archive instead of a lifecycle-only rewriter',
+  );
+});
+
 test('apps/cli npm files list ships archives (not unpacked tools)', () => {
   const pkgPath = new URL('../package.json', import.meta.url);
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));

@@ -30,6 +30,7 @@
     "@types/react": "19.2.0",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "4.7.0",
+    "typescript": "5.9.3",
     "vite": "7.3.1"
   },
   "files": [
@@ -42,7 +43,7 @@
     "build:ui": "happier-plugin-build-ui --project-root .",
     "prepack": "npm run manifest && npm run build:ui",
     "pack:fixture": "node scripts/pack-fixture.mjs",
-    "typecheck:public": "node ../../../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.public.json",
+    "typecheck:public": "node ../../../scripts/plugin-platform/typecheck-composer-external-dogfood-source.mjs",
     "test": "npm run test:public && npm run test:pack",
     "test:public": "node --test test/public-only.test.mjs test/external-semantic.test.mjs",
     "test:pack": "node --test test/pack-fixture.test.mjs"

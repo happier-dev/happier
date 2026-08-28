@@ -40,6 +40,113 @@ function invocationContext(signal = new AbortController().signal) {
   return Object.freeze({ signal });
 }
 
+function actionServices(state) {
+  return {
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+      diagnostic() {},
+    },
+    settings: {
+      forScope(scope) {
+        assert.deepEqual(scope, { kind: 'account' });
+        return {
+          async snapshot() {
+            return { scope, revision: state.revision, values: state.values };
+          },
+        };
+      },
+    },
+  };
+}
+
+test('external fixture projects Action, settings, placement, and approval contracts', async () => {
+  const { manifest } = await loadDogfoodPlugin();
+  const inspect = manifest.contributes.actions.find(({ id }) => id === 'inspect');
+  assert.deepEqual(inspect.surfaces, ['cli', 'agent', 'ui']);
+  assert.deepEqual(inspect.scopes, ['global']);
+  assert.deepEqual(inspect.placementBindings, ['commandPalette']);
+  assert.equal(inspect.dangerLevel, 'safe');
+  assert.equal(inspect.execution.target, 'daemon');
+  assert.equal(inspect.inputSchema.properties.message.type, 'string');
+  assert.equal(inspect.resultSchema.properties.marker.type, 'string');
+
+  const approval = manifest.contributes.actions.find(({ id }) => id === 'approval-probe');
+  assert.equal(approval.dangerLevel, 'writesLocal');
+  assert.deepEqual(approval.confirmation, {
+    title: 'Run the external Action approval probe?',
+    body: 'This dogfood Action validates the host approval path without modifying user data.',
+    confirmLabel: 'Run probe',
+  });
+
+  assert.deepEqual(manifest.contributes.settings, [{
+    id: 'action-preferences',
+    title: 'External Action preferences',
+    target: { kind: 'plugin' },
+    scope: 'account',
+    fields: [{
+      id: 'multiplier',
+      title: 'Message length multiplier',
+      schema: { type: 'integer', minimum: 1, maximum: 5 },
+      default: 2,
+    }, {
+      id: 'label',
+      title: 'Result label',
+      schema: { type: 'string', minLength: 1, maxLength: 64 },
+      default: 'external',
+    }],
+  }]);
+});
+
+test('external Action invocation observes current settings, host surface, and cancellation', async () => {
+  const { activate, manifest } = await loadDogfoodPlugin();
+  const settingsState = {
+    revision: 'settings-revision-7',
+    values: { multiplier: 3, label: 'fresh' },
+  };
+  const testkit = await createPluginTestkit({
+    manifest,
+    module: { activate },
+    services: actionServices(settingsState),
+  });
+  try {
+    assertJsonSemantics(await testkit.invokeAction('inspect', { message: 'dogfood' }, { surface: 'cli' }), {
+      marker: 'composer-external-action-v1',
+      message: 'dogfood',
+      multipliedLength: 21,
+      multiplier: 3,
+      label: 'fresh',
+      settingsRevision: 'settings-revision-7',
+      surface: 'cli',
+    });
+
+    settingsState.revision = 'settings-revision-8';
+    settingsState.values = { multiplier: 4, label: 'newer' };
+    assertJsonSemantics(await testkit.invokeAction('inspect', { message: 'again' }, { surface: 'ui' }), {
+      marker: 'composer-external-action-v1',
+      message: 'again',
+      multipliedLength: 20,
+      multiplier: 4,
+      label: 'newer',
+      settingsRevision: 'settings-revision-8',
+      surface: 'ui',
+    });
+
+    const caller = new AbortController();
+    const pending = testkit.invokeAction('inspect', {
+      message: 'cancel-me',
+      delayMs: 30_000,
+    }, { surface: 'agent', signal: caller.signal });
+    await Promise.resolve();
+    caller.abort(new Error('fixture cancellation'));
+    await assert.rejects(pending, { code: 'plugin_action_aborted' });
+  } finally {
+    await testkit.dispose();
+  }
+});
+
 test('external Composer declaration projects every independent r1.0 family', async () => {
   const { manifest } = await loadDogfoodPlugin();
   assert.deepEqual(manifest.contributes.ui.renderers, [{

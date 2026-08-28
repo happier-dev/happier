@@ -86,14 +86,9 @@ test('public release contract distinguishes automatic release profiles from deep
   ]);
 });
 
-test('public release contract exposes the manual exact SDK candidate validation suite', () => {
-  const suite = buildPublicReleaseContractV1().validationSuites.find((candidate) => candidate.id === 'sdk-dual-origin');
-
-  assert.deepEqual(suite, {
-    id: 'sdk-dual-origin',
-    supportsDirectSource: true,
-    supportsUpdateSources: false,
-    supportedDirectSourceKinds: ['local-pack'],
-    executable: true,
-  });
+test('public release contract does not expose packaged SDK feature QA', () => {
+  assert.equal(
+    buildPublicReleaseContractV1().validationSuites.some((suite) => suite.id === 'sdk-dual-origin'),
+    false,
+  );
 });

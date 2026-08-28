@@ -408,6 +408,24 @@ const WEBSITE_PRIMARY_FEATURES: ReadonlyArray<Omit<Feature, 'availability' | 'ti
         accent: 'sun',
     },
     {
+        /**
+         * No `image`: both new cards ship text-only until there is art for them.
+         * `tall` in AlternatingFeatures only takes effect when a panel HAS art,
+         * so a missing asset degrades to a correctly-sized panel rather than a
+         * tall empty box.
+         */
+        id: 'worktrees',
+        eyebrow: 'Parallel work',
+        visual: 'desktop',
+        accent: 'indigo',
+    },
+    {
+        id: 'handoff',
+        eyebrow: 'Move machines',
+        visual: 'mobileAndDesktop',
+        accent: 'blue',
+    },
+    {
         id: 'mcp',
         eyebrow: 'Configure once',
         visual: 'desktop',
@@ -495,14 +513,12 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = PRODUCT_STORY_FEATURES
  * Capabilities that don't need a full alternating section but deserve a
  * visible place on the page. Promoted features (subagents, queue, mcp, the
  * attention groups) now live in PRIMARY_FEATURES and are intentionally absent.
+ * 'handoff' joined them: a one-line grid entry and a full card are the same
+ * claim made twice, and the card is the one that can carry the qualifier the
+ * grid line lacked — handoff needs the agent to transfer its own session
+ * state, which most cannot.
  */
 export const GRID_FEATURES: ReadonlyArray<GridFeature> = [
-    {
-        id: 'handoff',
-        availability: 'shipped',
-        title: 'Hand off mid-session.',
-        body: 'Move a live session from one machine to another and keep the same thread — pick up exactly where you left off.',
-    },
     {
         id: 'sharing',
         availability: 'shipped',

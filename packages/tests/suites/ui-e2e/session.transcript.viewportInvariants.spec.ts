@@ -134,16 +134,11 @@ const PIN_THRESHOLD_PX = 72;
 // Browser layout values can differ by one physical pixel after fractional CSS-pixel rounding.
 // Anchor preservation is otherwise exact: proximity thresholds must never certify this contract.
 const VIEWPORT_MEASUREMENT_ROUNDING_PX = 1;
-// Dev pages /v1/sessions/:id/messages at a FIXED 150 (`SESSION_MESSAGES_PAGE_SIZE` in
-// `apps/ui/sources/sync/sync.ts` — dev has NO message-page-size tuning key, unlike remote-dev's
-// `sessionMessagesPageSize`), and the server's own limit default/cap is also 150
-// (`apps/server/sources/app/api/routes/session/registerSessionMessageRoutes.ts`,
-// `limit: z.coerce.number().int().min(1).max(500).default(150)`). A session at or under 150
-// materializes ENTIRELY on open (hasMore=false) and `loadOlder` is deterministically no_more — no
-// user-triggered older-page request can ever fire. Each seeded turn persists ~5 messages.
-// 95 turns + the initial turn ≈ 480 messages, so two real older pages remain even if the bounded
-// entry phase consumes one delayed 150-message page before the user-triggered exact-top phase.
-const SEED_TURN_COUNT = 95;
+// The test route below constrains transcript pages to 12 messages on entry and 6 while paging.
+// Nine total turns persist roughly 45 messages, leaving several real older pages after entry while
+// avoiding hundreds of serial native-agent turns whose only purpose was overcoming a production
+// page-size constant in test setup.
+const SEED_TURN_COUNT = 8;
 
 function describeViewportEvent(event: ViewportTelemetryEvent): string {
   const parts = [`t=${event.timestampMs}`, event.type];
@@ -200,6 +195,16 @@ async function installViewportTelemetryOverride(page: Page): Promise<void> {
       enabled: true,
       capacity: 5000,
     };
+  });
+
+  await page.route('**/v1/sessions/*/messages?**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('projection') === 'turns') {
+      await route.fallback();
+      return;
+    }
+    url.searchParams.set('limit', url.searchParams.has('beforeSeq') ? '6' : '12');
+    await route.fallback({ url: url.toString() });
   });
 }
 
@@ -463,13 +468,9 @@ test.describe('ui e2e: transcript viewport invariants', () => {
       HAPPIER_E2E_UI_WEB_NO_DEV: '0',
       HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS ?? '480000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
-      // Dev has NO message-page-size tuning (pages are a fixed 150 — see the SEED_TURN_COUNT
-      // comment), so the seed must exceed the 150-message initial fetch to leave an older page.
-      // The initial-fill budget is tightened so the entry fill loop (which legitimately pages
-      // older content until the list is observed scrollable) cannot silently drain the single
-      // remaining older page under the prepend scenario's 700ms older-response delay; with the
-      // 150-message cold-open window the list is scrollable immediately, so no entry drain is
-      // expected at all — the prepend premise guard fails loudly if one happens anyway.
+      // The route override provides small deterministic pages; keep entry fill bounded so it cannot
+      // consume every remaining older page before the explicit prepend scenarios exercise them.
+      // The premise guards below still fail loudly if entry unexpectedly drains the history.
       // Immediate older-load spinner so invariant H's loading indicator is observable.
       EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
         transcriptInitialFillBudgetMs: 1200,
@@ -576,8 +577,8 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
 
-    // Each turn persists ~5 messages: 1 + SEED_TURN_COUNT turns => ~480 messages total, leaving
-    // two 150-message pages even after one bounded entry-phase load (see SEED_TURN_COUNT).
+    // Each turn persists roughly five messages, so this leaves multiple six-message older pages
+    // after the initial 12-message window without paying for hundreds of serial agent turns.
     for (let i = 1; i <= SEED_TURN_COUNT; i += 1) {
       await sendSeedPromptAndWaitForOk(page, seedMessageText(i, run.runId), i + 1);
     }
@@ -801,7 +802,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     // Delay older-page responses so the in-flight window (and the loading overlay) is observable.
     await page.route((url) => isOlderPageRequest(url.href), async (route) => {
       await new Promise((r) => setTimeout(r, 700));
-      await route.continue();
+      await route.fallback();
     });
 
     let inFlightOlderRequests = 0;

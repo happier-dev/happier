@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { TestAuth } from '../auth';
 import {
     buildTestAccountCliAuthCredentials,
+    type TestAccountCliAuthCredentials,
     type TestAccountCliAuthMode,
 } from '../cliAuth';
 import type { AuthBootstrapStorageSnapshot } from './readLegacyAuthSecretFromLocalStorage';
@@ -76,10 +77,9 @@ function defaultServerNameFromUrl(serverUrl: string): string {
     }
 }
 
-export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
+export function buildCredentialsAuthBootstrapStorageSnapshot(params: Readonly<{
     serverUrl: string;
-    auth: TestAuth;
-    mode: TestAccountCliAuthMode;
+    credentials: TestAccountCliAuthCredentials;
     storageScope: string;
     serverIdentityId?: string | null;
     legacyServerIds?: readonly string[];
@@ -87,10 +87,7 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     const now = Date.now();
     const canonicalServerUrl = canonicalizeServerUrlForUiWeb(params.serverUrl);
     const serverId = deriveUiServerIdFromUrl(canonicalServerUrl);
-    const credentialPayload = JSON.stringify(buildTestAccountCliAuthCredentials({
-        auth: params.auth,
-        mode: params.mode,
-    }));
+    const credentialPayload = JSON.stringify(params.credentials);
     const legacyServerIds = uniqueNonEmptyStrings([
         ...(params.legacyServerIds ?? []),
         params.serverIdentityId ? serverId : null,
@@ -140,4 +137,24 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
             activeServerId: serverId,
         },
     };
+}
+
+export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
+    serverUrl: string;
+    auth: TestAuth;
+    mode: TestAccountCliAuthMode;
+    storageScope: string;
+    serverIdentityId?: string | null;
+    legacyServerIds?: readonly string[];
+}>): AuthBootstrapStorageSnapshot {
+    return buildCredentialsAuthBootstrapStorageSnapshot({
+        serverUrl: params.serverUrl,
+        credentials: buildTestAccountCliAuthCredentials({
+            auth: params.auth,
+            mode: params.mode,
+        }),
+        storageScope: params.storageScope,
+        serverIdentityId: params.serverIdentityId,
+        legacyServerIds: params.legacyServerIds,
+    });
 }

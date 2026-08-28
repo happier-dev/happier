@@ -1,0 +1,16 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_CURRENT_SOURCE_RN_SURFACE_URL}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_RN_SENTINEL}
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_TARGETED_READY_ID}
+    timeout: 120000
+- assertNotVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_PREVIOUS_TARGETED_READY_ID}
+- assertNotVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_PREVIOUS_RN_SENTINEL}
+- takeScreenshot: plugin-platform-current-source-targeted-transition-${HAPPIER_E2E_MOBILE_PLATFORM}

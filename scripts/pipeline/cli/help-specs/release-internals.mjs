@@ -275,7 +275,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|daemon-continuity|session-continuity|sdk-dual-origin.',
+      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|daemon-continuity|session-continuity.',
       '--profile <integrated|stable|deep>  Profile planning only; mutually exclusive with --suite and requires --dry-run.',
       '--platform <linux|darwin|win32>   Script flag; defaults to current runtime platform.',
       '--source <kind>                   Direct source mode (published-channel|published-tag|local-build|local-pack|git-ref-build).',
@@ -297,7 +297,6 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       'Docker suite: docker-release-assets (local-build|published-channel; published-channel -> local-build upgrade).',
       'Continuity suites: daemon-continuity, session-continuity (local-build).',
       'cli-update (published-channel|published-tag -> published-channel|published-tag|local-build|local-pack).',
-      'SDK candidate: sdk-dual-origin (local-pack absolute SDK .tgz; exact-candidate SDK publication validation).',
       'Profiles list canonical suite IDs only; run each automatic suite separately with its required source inputs.',
     ],
     examples: [

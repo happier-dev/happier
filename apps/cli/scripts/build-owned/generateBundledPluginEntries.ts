@@ -440,7 +440,7 @@ type BundledPluginPackage = Readonly<{
   agentDefinition?: JsonValue;
   agentUiDescriptor?: AgentUiDescriptor;
   agentPredecessorMessageMetaWriter?: AgentPredecessorMessageMetaWriterImportSource;
-  agentRuntimeContributions?: AgentRuntimeContributionsDescriptor;
+  releasedFlatSessionMetadataRuntimeDescriptorReader?: ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor;
   promptAssetContributions?: PromptAssetContributionSource;
   builtInLegacyConnectedAccountCompatibility?:
     readonly BuiltInLegacyConnectedAccountCompatibilitySource[];
@@ -455,28 +455,10 @@ type BundledPluginSourceProjectionFacts = Readonly<{
   agentDefinition?: JsonValue;
   agentUiDescriptor?: AgentUiDescriptor;
   agentPredecessorMessageMetaWriter?: AgentPredecessorMessageMetaWriterImportSource;
-  agentRuntimeContributions?: AgentRuntimeContributionsDescriptor;
+  releasedFlatSessionMetadataRuntimeDescriptorReader?: ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor;
   promptAssetContributions?: PromptAssetContributionSource;
   builtInLegacyConnectedAccountCompatibility?:
     readonly BuiltInLegacyConnectedAccountCompatibilitySource[];
-}>;
-/**
- * Private, generator-owned data retained only because these two protocol
- * values are not yet serialized in a plugin final artifact. It is not a
- * plugin manifest, registry, build record, or runtime input.
- */
-type BundledPluginProtocolProjectionFacts = Readonly<{
-  packageName: string;
-  pluginId: string;
-  pluginPackageId: string;
-  protocolBuiltInBackendProfiles?: Readonly<{
-    agentId: string;
-    profiles: readonly JsonObject[];
-  }>;
-  protocolMemoryDefaults?: Readonly<{
-    agentId: string;
-    summarizerBackendId: string;
-  }>;
 }>;
 type BuiltInLegacyConnectedAccountCompatibilitySource = Readonly<{
   legacyServiceId: string;
@@ -629,46 +611,6 @@ type AgentUiDescriptor = Readonly<{
   components?: JsonObject;
   assets?: JsonObject;
 }>;
-type AgentRuntimeContributionsDescriptor = Readonly<{
-  agentCatalogEntry?: AgentRuntimeProjectionImportDescriptor;
-  sessionControlAdapter?: SessionControlAdapterContributionDescriptor;
-  runtimeDescriptorReader?: RuntimeDescriptorReaderContributionDescriptor;
-  protocolRuntimeDescriptor?: ProtocolRuntimeDescriptorContributionDescriptor;
-  protocolBuiltInBackendProfiles?: ProtocolBuiltInBackendProfilesContributionDescriptor;
-  protocolMemoryDefaults?: ProtocolMemoryDefaultsContributionDescriptor;
-  externalSessionHostAdapters?: ExternalSessionHostAdaptersContributionDescriptor;
-}>;
-type AgentRuntimeProjectionImportDescriptor = Readonly<{
-  importName: string;
-  source: string;
-}>;
-type RuntimeProjectionExportDescriptor = Readonly<{
-  source: string;
-  exportName: string;
-}>;
-type ExternalSessionHostAdaptersContributionDescriptor = Readonly<{
-  kind: 'providerExternalSessionHostAdaptersV1';
-  agentId: string;
-  candidateHostAdapter?: RuntimeProjectionExportDescriptor;
-  transcriptStoreAdapter?: RuntimeProjectionExportDescriptor;
-}>;
-type RuntimeDescriptorResumeIdSessionControlContributionDescriptor = Readonly<{
-  kind: 'runtimeDescriptorResumeId';
-  agentId: string;
-  absolutePathField?: string;
-  legacyAbsolutePathField?: string;
-  fallbackField: string;
-}>;
-type ProviderSessionControlAdapterContributionDescriptor = Readonly<{
-  kind: 'providerSessionControlAdapter';
-  agentId: string;
-  source?: string;
-  exportName?: string;
-  generatedAdapter: JsonObject;
-}>;
-type SessionControlAdapterContributionDescriptor =
-  | RuntimeDescriptorResumeIdSessionControlContributionDescriptor
-  | ProviderSessionControlAdapterContributionDescriptor;
 type ProviderSessionIdRuntimeDescriptorReaderContributionDescriptor = Readonly<{
   kind: 'providerSessionId';
   agentId: string;
@@ -684,45 +626,11 @@ type ProviderRuntimeDescriptorReaderContributionDescriptor = Readonly<{
 type RuntimeDescriptorReaderContributionDescriptor =
   | ProviderSessionIdRuntimeDescriptorReaderContributionDescriptor
   | ProviderRuntimeDescriptorReaderContributionDescriptor;
-type ProtocolRuntimeDescriptorContributionDescriptor = Readonly<{
-  kind: 'providerRuntimeDescriptorV1';
-  agentId: string;
-  source: string;
-  buildFunction: string;
-  canonicalReader: string;
-}>;
-type ProtocolBuiltInBackendProfilesContributionDescriptor = Readonly<{
-  kind: 'providerBuiltInBackendProfilesV1';
-  agentId: string;
-  source: string;
-  exportName: string;
-}>;
-type ProtocolMemoryDefaultsContributionDescriptor = Readonly<{
-  kind: 'providerMemoryDefaultsV1';
-  agentId: string;
-  source: string;
-  exportName: string;
-}>;
-type SessionControlAdapterProjectionDescriptor =
-  | RuntimeDescriptorResumeIdSessionControlContributionDescriptor
-  | ProviderSessionControlAdapterContributionDescriptor;
-type RuntimeDescriptorReaderProjectionDescriptor =
+type ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor =
+  RuntimeDescriptorReaderContributionDescriptor;
+type ReleasedFlatSessionMetadataRuntimeDescriptorReaderProjectionDescriptor =
   | ProviderSessionIdRuntimeDescriptorReaderContributionDescriptor
   | ProviderRuntimeDescriptorReaderContributionDescriptor;
-type ProtocolRuntimeDescriptorProjectionDescriptor = ProtocolRuntimeDescriptorContributionDescriptor & Readonly<{
-  generatedImportSource: string;
-  moduleFileName: string;
-  sourceContent: string;
-}>;
-
-type ProtocolBuiltInBackendProfilesProjectionDescriptor = Readonly<{
-  agentId: string;
-  profiles: readonly JsonObject[];
-}>;
-type ProtocolMemoryDefaultsProjectionDescriptor = Readonly<{
-  agentId: string;
-  summarizerBackendId: string;
-}>;
 type ExternalSessionSchemaFieldDescriptor = Readonly<{
   name: string;
   kind: 'literal' | 'string' | 'enum' | 'unknown';
@@ -873,22 +781,6 @@ type AgentSessionBehaviorSource = Readonly<{
 type SessionSubagentVisibleMessageResolverSource = Readonly<{
   agentId: string;
   descriptor: JsonObject;
-}>;
-type AgentCatalogEntryHookSource = Readonly<{
-  agentId: string;
-  importName: string;
-  importPath: string;
-  packageName: string;
-  systemTools: readonly JsonValue[];
-  externalSessionHostAdapters?: Readonly<{
-    candidateHostAdapter?: ExternalSessionHostAdapterImportSource;
-    transcriptStoreAdapter?: ExternalSessionHostAdapterImportSource;
-  }>;
-}>;
-type ExternalSessionHostAdapterImportSource = Readonly<{
-  exportName: string;
-  importAlias: string;
-  importPath: string;
 }>;
 type PromptAssetContributionSource = Readonly<{
   importName: string;
@@ -1310,168 +1202,58 @@ function readOptionalJsonObjectDescriptor(
   return normalized;
 }
 
-function readOptionalAgentRuntimeProjectionImportDescriptor(
+function readOptionalReleasedFlatSessionMetadataRuntimeDescriptorReaderContribution(
   record: Record<string, unknown>,
-  key: keyof AgentRuntimeContributionsDescriptor,
   path: string,
-): AgentRuntimeProjectionImportDescriptor | undefined {
+): ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor | undefined {
+  const key = 'releasedFlatSessionMetadataRuntimeDescriptorReader';
   const value = record[key];
   if (value === undefined) return undefined;
-  const projection = readRequiredRecord(value, `${path}.${String(key)}`);
-  return {
-    importName: readRequiredString(projection, 'importName', `${path}.${String(key)}`),
-    source: readRequiredString(projection, 'source', `${path}.${String(key)}`),
-  };
-}
-
-function readOptionalSessionControlAdapterContribution(
-  record: Record<string, unknown>,
-  path: string,
-): SessionControlAdapterContributionDescriptor | undefined {
-  const value = record.sessionControlAdapter;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.sessionControlAdapter`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.sessionControlAdapter`);
-  if (kind === 'providerSessionControlAdapter') {
-    const source = readOptionalString(contribution, 'source', `${path}.sessionControlAdapter`);
-    const exportName = readOptionalString(contribution, 'exportName', `${path}.sessionControlAdapter`);
-    if ((source === undefined) !== (exportName === undefined)) {
-      throw new Error(`Invalid agent runtime contribution at ${path}.sessionControlAdapter: source and exportName must be provided together`);
-    }
-    return {
-      kind,
-      agentId: readRequiredString(contribution, 'providerId', `${path}.sessionControlAdapter`),
-      ...(source === undefined ? {} : { source, exportName }),
-      generatedAdapter: readOptionalJsonObjectDescriptor(
-        contribution,
-        'generatedAdapter',
-        `${path}.sessionControlAdapter`,
-      ) ?? (() => {
-        throw new Error(`Invalid agent runtime contribution at ${path}.sessionControlAdapter.generatedAdapter: expected object`);
-      })(),
-    };
-  }
-  if (kind !== 'runtimeDescriptorResumeId') {
-    throw new Error(
-      `Invalid agent runtime contribution at ${path}.sessionControlAdapter.kind: expected runtimeDescriptorResumeId or providerSessionControlAdapter`,
-    );
-  }
-  return {
-    kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.sessionControlAdapter`),
-    ...(readOptionalString(contribution, 'absolutePathField', `${path}.sessionControlAdapter`) === undefined
-      ? {}
-      : { absolutePathField: readOptionalString(contribution, 'absolutePathField', `${path}.sessionControlAdapter`) }),
-    ...(readOptionalString(contribution, 'legacyAbsolutePathField', `${path}.sessionControlAdapter`) === undefined
-      ? {}
-      : { legacyAbsolutePathField: readOptionalString(contribution, 'legacyAbsolutePathField', `${path}.sessionControlAdapter`) }),
-    fallbackField: readRequiredString(contribution, 'fallbackField', `${path}.sessionControlAdapter`),
-  };
-}
-
-function readOptionalRuntimeDescriptorReaderContribution(
-  record: Record<string, unknown>,
-  path: string,
-): RuntimeDescriptorReaderContributionDescriptor | undefined {
-  const value = record.runtimeDescriptorReader;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.runtimeDescriptorReader`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.runtimeDescriptorReader`);
+  const contribution = readRequiredRecord(value, `${path}.${key}`);
+  const kind = readRequiredString(contribution, 'kind', `${path}.${key}`);
   if (kind === 'providerRuntimeDescriptorReader') {
-    const source = readOptionalString(contribution, 'source', `${path}.runtimeDescriptorReader`);
-    const exportName = readOptionalString(contribution, 'exportName', `${path}.runtimeDescriptorReader`);
+    const source = readOptionalString(contribution, 'source', `${path}.${key}`);
+    const exportName = readOptionalString(contribution, 'exportName', `${path}.${key}`);
     if ((source === undefined) !== (exportName === undefined)) {
-      throw new Error(`Invalid agent runtime contribution at ${path}.runtimeDescriptorReader: source and exportName must be provided together`);
+      throw new Error(`Invalid Agent definition at ${path}.${key}: source and exportName must be provided together`);
     }
     return {
       kind,
-      agentId: readRequiredString(contribution, 'providerId', `${path}.runtimeDescriptorReader`),
+      agentId: readRequiredString(contribution, 'providerId', `${path}.${key}`),
       ...(source === undefined ? {} : { source, exportName }),
       generatedReader: readOptionalJsonObjectDescriptor(
         contribution,
         'generatedReader',
-        `${path}.runtimeDescriptorReader`,
+        `${path}.${key}`,
       ) ?? (() => {
-        throw new Error(`Invalid agent runtime contribution at ${path}.runtimeDescriptorReader.generatedReader: expected object`);
+        throw new Error(`Invalid Agent definition at ${path}.${key}.generatedReader: expected object`);
       })(),
     };
   }
   if (kind !== 'providerSessionId') {
     throw new Error(
-      `Invalid agent runtime contribution at ${path}.runtimeDescriptorReader.kind: expected providerSessionId or providerRuntimeDescriptorReader`,
+      `Invalid Agent definition at ${path}.${key}.kind: expected providerSessionId or providerRuntimeDescriptorReader`,
     );
   }
-  const runtimeHandle = readRequiredString(contribution, 'runtimeHandle', `${path}.runtimeDescriptorReader`);
+  const runtimeHandle = readRequiredString(contribution, 'runtimeHandle', `${path}.${key}`);
   if (runtimeHandle !== 'providerSessionId') {
-    throw new Error(`Invalid agent runtime contribution at ${path}.runtimeDescriptorReader.runtimeHandle: expected providerSessionId`);
+    throw new Error(`Invalid Agent definition at ${path}.${key}.runtimeHandle: expected providerSessionId`);
   }
   return {
     kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.runtimeDescriptorReader`),
+    agentId: readRequiredString(contribution, 'providerId', `${path}.${key}`),
     runtimeHandle,
   };
 }
 
-function readOptionalProtocolRuntimeDescriptorContribution(
-  record: Record<string, unknown>,
-  path: string,
-): ProtocolRuntimeDescriptorContributionDescriptor | undefined {
-  const value = record.protocolRuntimeDescriptor;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.protocolRuntimeDescriptor`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.protocolRuntimeDescriptor`);
-  if (kind !== 'providerRuntimeDescriptorV1') {
-    throw new Error(`Invalid agent runtime contribution at ${path}.protocolRuntimeDescriptor.kind: expected providerRuntimeDescriptorV1`);
-  }
-  return {
-    kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.protocolRuntimeDescriptor`),
-    source: readRequiredString(contribution, 'source', `${path}.protocolRuntimeDescriptor`),
-    buildFunction: readRequiredString(contribution, 'buildFunction', `${path}.protocolRuntimeDescriptor`),
-    canonicalReader: readRequiredString(contribution, 'canonicalReader', `${path}.protocolRuntimeDescriptor`),
-  };
-}
-
-function readOptionalProtocolBuiltInBackendProfilesContribution(
-  record: Record<string, unknown>,
-  path: string,
-): ProtocolBuiltInBackendProfilesContributionDescriptor | undefined {
-  const value = record.protocolBuiltInBackendProfiles;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.protocolBuiltInBackendProfiles`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.protocolBuiltInBackendProfiles`);
-  if (kind !== 'providerBuiltInBackendProfilesV1') {
-    throw new Error(
-      `Invalid agent runtime contribution at ${path}.protocolBuiltInBackendProfiles.kind: expected providerBuiltInBackendProfilesV1`,
-    );
-  }
-  return {
-    kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.protocolBuiltInBackendProfiles`),
-    source: readRequiredString(contribution, 'source', `${path}.protocolBuiltInBackendProfiles`),
-    exportName: readRequiredString(contribution, 'exportName', `${path}.protocolBuiltInBackendProfiles`),
-  };
-}
-
-function readOptionalProtocolMemoryDefaultsContribution(
-  record: Record<string, unknown>,
-  path: string,
-): ProtocolMemoryDefaultsContributionDescriptor | undefined {
-  const value = record.protocolMemoryDefaults;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.protocolMemoryDefaults`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.protocolMemoryDefaults`);
-  if (kind !== 'providerMemoryDefaultsV1') {
-    throw new Error(
-      `Invalid agent runtime contribution at ${path}.protocolMemoryDefaults.kind: expected providerMemoryDefaultsV1`,
-    );
-  }
-  return {
-    kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.protocolMemoryDefaults`),
-    source: readRequiredString(contribution, 'source', `${path}.protocolMemoryDefaults`),
-    exportName: readRequiredString(contribution, 'exportName', `${path}.protocolMemoryDefaults`),
-  };
+function rejectRetiredAgentRuntimeContributionsAggregate(
+  value: JsonValue,
+  definitionPath: string,
+): void {
+  if (!isRecord(value) || value.runtimeContributions === undefined) return;
+  throw new Error(
+    `Invalid Agent definition at ${definitionPath}.runtimeContributions: the private runtime-contribution aggregate is retired; declare each retained fact at its canonical Agent or Protocol owner`,
+  );
 }
 
 function rejectRetiredProtocolExternalSessionSourceContribution(
@@ -1482,134 +1264,6 @@ function rejectRetiredProtocolExternalSessionSourceContribution(
   throw new Error(
     `Invalid agent runtime contribution at ${path}.protocolExternalSessionSource: declare external-session source schemas at manifest.contributes.agents[].surfaces.externalSession.sources[]`,
   );
-}
-
-function readOptionalRuntimeProjectionExportDescriptor(
-  record: Record<string, unknown>,
-  key: string,
-  path: string,
-): RuntimeProjectionExportDescriptor | undefined {
-  const value = record[key];
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.${key}`);
-  return {
-    source: readRequiredString(contribution, 'source', `${path}.${key}`),
-    exportName: readRequiredString(contribution, 'exportName', `${path}.${key}`),
-  };
-}
-
-function readOptionalExternalSessionHostAdaptersContribution(
-  record: Record<string, unknown>,
-  path: string,
-): ExternalSessionHostAdaptersContributionDescriptor | undefined {
-  const value = record.externalSessionHostAdapters;
-  if (value === undefined) return undefined;
-  const contribution = readRequiredRecord(value, `${path}.externalSessionHostAdapters`);
-  const kind = readRequiredString(contribution, 'kind', `${path}.externalSessionHostAdapters`);
-  if (kind !== 'providerExternalSessionHostAdaptersV1') {
-    throw new Error(
-      `Invalid agent runtime contribution at ${path}.externalSessionHostAdapters.kind: expected providerExternalSessionHostAdaptersV1`,
-    );
-  }
-  const candidateHostAdapter = readOptionalRuntimeProjectionExportDescriptor(
-    contribution,
-    'candidateHostAdapter',
-    `${path}.externalSessionHostAdapters`,
-  );
-  const transcriptStoreAdapter = readOptionalRuntimeProjectionExportDescriptor(
-    contribution,
-    'transcriptStoreAdapter',
-    `${path}.externalSessionHostAdapters`,
-  );
-  if (!candidateHostAdapter && !transcriptStoreAdapter) {
-    throw new Error(
-      `Invalid agent runtime contribution at ${path}.externalSessionHostAdapters: expected candidateHostAdapter or transcriptStoreAdapter`,
-    );
-  }
-  return {
-    kind,
-    agentId: readRequiredString(contribution, 'providerId', `${path}.externalSessionHostAdapters`),
-    ...(candidateHostAdapter ? { candidateHostAdapter } : {}),
-    ...(transcriptStoreAdapter ? { transcriptStoreAdapter } : {}),
-  };
-}
-
-function readOptionalAgentRuntimeContributions(
-  value: JsonValue,
-  definitionPath: string,
-): AgentRuntimeContributionsDescriptor | undefined {
-  if (!isRecord(value)) return undefined;
-  const rawRuntimeContributions = value.runtimeContributions;
-  if (rawRuntimeContributions === undefined) return undefined;
-  const runtimeContributions = readRequiredRecord(
-    rawRuntimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const agentCatalogEntry = readOptionalAgentRuntimeProjectionImportDescriptor(
-    runtimeContributions,
-    'agentCatalogEntry',
-    `${definitionPath}.runtimeContributions`,
-  );
-  const sessionControlAdapter = readOptionalSessionControlAdapterContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const runtimeDescriptorReader = readOptionalRuntimeDescriptorReaderContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const protocolRuntimeDescriptor = readOptionalProtocolRuntimeDescriptorContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const protocolBuiltInBackendProfiles = readOptionalProtocolBuiltInBackendProfilesContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const protocolMemoryDefaults = readOptionalProtocolMemoryDefaultsContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  rejectRetiredProtocolExternalSessionSourceContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  const externalSessionHostAdapters = readOptionalExternalSessionHostAdaptersContribution(
-    runtimeContributions,
-    `${definitionPath}.runtimeContributions`,
-  );
-  return {
-    ...(agentCatalogEntry === undefined ? {} : { agentCatalogEntry }),
-    ...(sessionControlAdapter === undefined ? {} : { sessionControlAdapter }),
-    ...(runtimeDescriptorReader === undefined ? {} : { runtimeDescriptorReader }),
-    ...(protocolRuntimeDescriptor === undefined ? {} : { protocolRuntimeDescriptor }),
-    ...(protocolBuiltInBackendProfiles === undefined ? {} : { protocolBuiltInBackendProfiles }),
-    ...(protocolMemoryDefaults === undefined ? {} : { protocolMemoryDefaults }),
-    ...(externalSessionHostAdapters === undefined ? {} : { externalSessionHostAdapters }),
-  };
-}
-
-async function readConventionalAgentRuntimeContributions(
-  repoRoot: string,
-  pluginPackageId: string,
-  agentId: string,
-): Promise<AgentRuntimeContributionsDescriptor | undefined> {
-  const source = './agent/contributions/runtime';
-  const sourcePath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/agent/contributions/runtime.ts');
-  if (!existsSync(sourcePath)) return undefined;
-
-  const importName = `${toAgentConstPrefix(agentId)}_AGENT_RUNTIME_CONTRIBUTION`;
-  const mod = await importTypescriptModule(sourcePath) as Record<string, unknown>;
-  if (!(importName in mod)) {
-    throw new Error(`Expected ${importName} export in ${sourcePath}`);
-  }
-
-  return {
-    agentCatalogEntry: {
-      importName,
-      source,
-    },
-  };
 }
 
 function readOptionalAgentUiRuntimeInput(
@@ -1672,6 +1326,16 @@ function normalizeAgentUiDescriptor(value: unknown, descriptorPath: string): Age
   const settings = readOptionalJsonObjectDescriptor(root, 'settings', descriptorPath);
   const behavior = readOptionalJsonObjectDescriptor(root, 'behavior', descriptorPath);
   const session = readOptionalJsonObjectDescriptor(root, 'session', descriptorPath);
+  for (const retiredKey of [
+    'providerBehaviorDescriptorId',
+    'visibleMessageFilterDescriptorId',
+  ] as const) {
+    if (session?.[retiredKey] !== undefined) {
+      throw new Error(
+        `Invalid agent UI descriptor at ${descriptorPath}.session.${retiredKey}: retired compiled Session adapter ids are not public authoring declarations; use the inline session.providerBehavior or session.visibleMessages declaration`,
+      );
+    }
+  }
   const message = readOptionalJsonObjectDescriptor(root, 'message', descriptorPath);
   const components = readOptionalJsonObjectDescriptor(root, 'components', descriptorPath);
   const assets = readOptionalJsonObjectDescriptor(root, 'assets', descriptorPath);
@@ -3109,9 +2773,9 @@ async function createBundledImmutableArtifactSource(params: Readonly<{
       schemaVersion: 1,
       pluginId: params.manifest.id,
       // The generated artifact publication below assigns the opaque immutable
-      // identity after it compares the current pack-time facts with its prior
-      // publication. This unpublished construction record never reaches the
-      // runtime generation store.
+      // identity for its publication occurrence. Pack-time integrity remains a
+      // separate verifier input and never decides whether this identity rotates.
+      // This unpublished construction record never reaches the runtime store.
       immutableGenerationId: 'bundled-unpublished',
       createdAtMs: 0,
       files: files.map(({ relativePath, byteLength }) => Object.freeze({ relativePath, byteLength })),
@@ -3122,26 +2786,6 @@ async function createBundledImmutableArtifactSource(params: Readonly<{
 
 function bundledGenerationIdentityKey(packageName: string, pluginId: string): string {
   return JSON.stringify([packageName, pluginId]);
-}
-
-// Server custody retirement is permanent for a published immutable identity.
-// Keep this publisher-local denylist so an unchanged source artifact cannot
-// accidentally republish a generation that the custody owner has fenced.
-const RETIRED_BUNDLED_IMMUTABLE_GENERATION_IDS_BY_IDENTITY = Object.freeze({
-  [bundledGenerationIdentityKey(
-    '@happier-dev/plugins-codex',
-    'happier.agent.codex',
-  )]: Object.freeze([
-    'bundled-13457e22-f993-4eb8-9d67-77caad02eefe',
-  ]),
-} satisfies Readonly<Record<string, readonly string[]>>);
-
-function isRetiredBundledImmutableGenerationIdentity(
-  identityKey: string,
-  immutableGenerationId: string,
-): boolean {
-  return RETIRED_BUNDLED_IMMUTABLE_GENERATION_IDS_BY_IDENTITY[identityKey]
-    ?.includes(immutableGenerationId) ?? false;
 }
 
 function readGeneratedJsonExportLiteral(
@@ -3290,21 +2934,6 @@ function readPriorBundledImmutableArtifactIdentities(
   return identities;
 }
 
-function sameBundledSourceArtifactIntegrity(
-  left: BundledFirstPartySourceArtifactIntegrity,
-  right: BundledFirstPartySourceArtifactIntegrity,
-): boolean {
-  return left.packageName === right.packageName
-    && left.files.length === right.files.length
-    && left.files.every((file, index) => {
-      const candidate = right.files[index];
-      return candidate !== undefined
-        && candidate.relativePath === file.relativePath
-        && candidate.byteLength === file.byteLength
-        && candidate.digest === file.digest;
-    });
-}
-
 function createOpaqueBundledImmutableGenerationId(occupiedGenerationIds: Set<string>): string {
   let immutableGenerationId = `bundled-${randomUUID()}`;
   while (occupiedGenerationIds.has(immutableGenerationId)) {
@@ -3315,6 +2944,7 @@ function createOpaqueBundledImmutableGenerationId(occupiedGenerationIds: Set<str
 }
 
 function assignBundledImmutableArtifactGenerationIds(input: Readonly<{
+  mode: Mode;
   pluginPackages: readonly BundledPluginPackage[];
   priorIdentities: ReadonlyMap<string, PriorBundledImmutableArtifactIdentity>;
 }>): readonly BundledPluginPackage[] {
@@ -3337,18 +2967,12 @@ function assignBundledImmutableArtifactGenerationIds(input: Readonly<{
     }
     seenCurrentIdentityKeys.add(identityKey);
     const priorIdentity = input.priorIdentities.get(identityKey);
-    const canReusePriorGeneration = priorIdentity !== undefined
-      && sameBundledSourceArtifactIntegrity(
-        priorIdentity.sourceArtifactIntegrity,
-        immutableArtifact.sourceArtifactIntegrity,
-      )
-      && !isRetiredBundledImmutableGenerationIdentity(
-        identityKey,
-        priorIdentity.immutableGenerationId,
-      );
-    // Integrity remains a pack-time fact. It only tells this publisher whether
-    // the current artifact revision is still G; runtime currentness continues
-    // to own the resulting opaque immutable generation id.
+    const canReusePriorGeneration = input.mode === 'check'
+      && priorIdentity !== undefined;
+    // Check mode retains the already-published opaque identity so drift is
+    // decided by the emitted artifact bytes, not by a second identity rule.
+    // A write publication is a new host-custody occurrence and therefore
+    // rotates the opaque identity regardless of content equality.
     const immutableGenerationId = canReusePriorGeneration
       ? priorIdentity.immutableGenerationId
       : createOpaqueBundledImmutableGenerationId(occupiedGenerationIds);
@@ -3412,17 +3036,15 @@ async function readSourceProjectionFacts(params: Readonly<{
       params.pluginPackageId,
     )
     : undefined;
-  const explicitAgentRuntimeContributions = agentDefinition
-    ? readOptionalAgentRuntimeContributions(agentDefinition, definitionPath)
+  if (agentDefinition) {
+    rejectRetiredAgentRuntimeContributionsAggregate(agentDefinition, definitionPath);
+  }
+  const releasedFlatSessionMetadataRuntimeDescriptorReader = agentDefinition
+    ? readOptionalReleasedFlatSessionMetadataRuntimeDescriptorReaderContribution(
+      agentDefinition,
+      definitionPath,
+    )
     : undefined;
-  const agentRuntimeContributions = explicitAgentRuntimeContributions
-    ?? (agentDefinition
-      ? await readConventionalAgentRuntimeContributions(
-        params.repoRoot,
-        params.pluginPackageId,
-        agentDefinition.id,
-      )
-      : undefined);
   const agentUiDescriptor = agentDefinition
     ? await loadPluginAgentUiDescriptor(params.repoRoot, params.pluginPackageId)
     : undefined;
@@ -3444,13 +3066,6 @@ async function readSourceProjectionFacts(params: Readonly<{
       params.repoRoot,
       params.pluginPackageId,
     );
-  if (agentRuntimeContributions?.agentCatalogEntry) {
-    resolvePluginRuntimeProjectionSourceFile(
-      params.repoRoot,
-      params.pluginPackageId,
-      agentRuntimeContributions.agentCatalogEntry.source,
-    );
-  }
   if (!agentDefinition && manifestDeclaresAgentRuntime(params.manifest, params.dependencies)) {
     throw new Error(
       `Missing required agent definition for agent-capable plugin package ${params.pluginPackageId}: ${definitionPath}`,
@@ -3466,7 +3081,9 @@ async function readSourceProjectionFacts(params: Readonly<{
     ...(agentDefinition ? { agentDefinition, agentId: agentDefinition.id } : {}),
     ...(agentUiDescriptor ? { agentUiDescriptor } : {}),
     ...(agentPredecessorMessageMetaWriter ? { agentPredecessorMessageMetaWriter } : {}),
-    ...(agentRuntimeContributions ? { agentRuntimeContributions } : {}),
+    ...(releasedFlatSessionMetadataRuntimeDescriptorReader
+      ? { releasedFlatSessionMetadataRuntimeDescriptorReader }
+      : {}),
     ...(promptAssetContributions ? { promptAssetContributions } : {}),
     ...(builtInLegacyConnectedAccountCompatibility
       ? { builtInLegacyConnectedAccountCompatibility }
@@ -3602,8 +3219,11 @@ async function collectBundledPluginPackages(
         ...(sourceProjectionFacts.agentPredecessorMessageMetaWriter
           ? { agentPredecessorMessageMetaWriter: sourceProjectionFacts.agentPredecessorMessageMetaWriter }
           : {}),
-        ...(sourceProjectionFacts.agentRuntimeContributions
-          ? { agentRuntimeContributions: sourceProjectionFacts.agentRuntimeContributions }
+        ...(sourceProjectionFacts.releasedFlatSessionMetadataRuntimeDescriptorReader
+          ? {
+            releasedFlatSessionMetadataRuntimeDescriptorReader:
+              sourceProjectionFacts.releasedFlatSessionMetadataRuntimeDescriptorReader,
+          }
           : {}),
         ...(sourceProjectionFacts.promptAssetContributions
           ? { promptAssetContributions: sourceProjectionFacts.promptAssetContributions }
@@ -3704,299 +3324,6 @@ function readSerializedBundledPluginPackages(
     }));
   }
   return Object.freeze(out.sort((left, right) => left.packageName.localeCompare(right.packageName)));
-}
-
-function resolveBundledPluginProtocolProjectionFactsOutPath(rootDir: string): string {
-  return resolve(
-    rootDir,
-    'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
-  );
-}
-
-function readProtocolProjectionFactRecord(value: unknown, path: string): Record<string, unknown> {
-  if (!isRecord(value) || Array.isArray(value)) {
-    throw new Error(`Invalid bundled protocol projection facts at ${path}: expected object`);
-  }
-  return value;
-}
-
-function readProtocolProjectionFactString(
-  record: Record<string, unknown>,
-  key: string,
-  path: string,
-): string {
-  const value = record[key];
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Invalid bundled protocol projection facts at ${path}.${key}: expected non-empty string`);
-  }
-  return value;
-}
-
-function readBundledPluginProtocolProjectionFacts(
-  factsOutPath: string,
-  pluginPackages: readonly BundledPluginPackage[],
-): readonly BundledPluginProtocolProjectionFacts[] | undefined {
-  if (!existsSync(factsOutPath)) return undefined;
-  const raw = readGeneratedJsonExportLiteral(
-    readFileSync(factsOutPath, 'utf8'),
-    'BUNDLED_PLUGIN_PROTOCOL_PROJECTION_FACTS',
-    factsOutPath,
-  );
-  if (raw === undefined) {
-    throw new Error(`Invalid bundled protocol projection facts at ${factsOutPath}: missing data export`);
-  }
-  if (!Array.isArray(raw)) {
-    throw new Error(`Invalid bundled protocol projection facts at ${factsOutPath}: expected array`);
-  }
-
-  const packageByName = new Map(pluginPackages.map((pluginPackage) => [
-    pluginPackage.packageName,
-    pluginPackage,
-  ]));
-  const facts = raw.map((value, index): BundledPluginProtocolProjectionFacts => {
-    const path = `${factsOutPath}[${String(index)}]`;
-    const record = readProtocolProjectionFactRecord(value, path);
-    const packageName = readProtocolProjectionFactString(record, 'packageName', path);
-    const pluginPackage = packageByName.get(packageName);
-    if (!pluginPackage) {
-      throw new Error(`Invalid bundled protocol projection facts at ${path}: unknown package '${packageName}'`);
-    }
-    const pluginId = readProtocolProjectionFactString(record, 'pluginId', path);
-    const pluginPackageId = readProtocolProjectionFactString(record, 'pluginPackageId', path);
-    if (pluginId !== pluginPackage.pluginId || pluginPackageId !== pluginPackage.pluginPackageId) {
-      throw new Error(`Invalid bundled protocol projection facts at ${path}: package provenance does not match '${packageName}'`);
-    }
-    const declaredAgentIds = new Set(
-      readManifestContributionArray(pluginPackage.manifest, 'agents').map((contribution) =>
-        readRequiredContributionId(contribution, 'agents', pluginPackage.pluginPackageId)),
-    );
-    const rawProfiles = record.protocolBuiltInBackendProfiles;
-    const protocolBuiltInBackendProfiles = rawProfiles === undefined
-      ? undefined
-      : (() => {
-        const profileRecord = readProtocolProjectionFactRecord(
-          rawProfiles,
-          `${path}.protocolBuiltInBackendProfiles`,
-        );
-        const agentId = readProtocolProjectionFactString(
-          profileRecord,
-          'agentId',
-          `${path}.protocolBuiltInBackendProfiles`,
-        );
-        if (!declaredAgentIds.has(agentId)) {
-          throw new Error(`Invalid bundled protocol projection facts at ${path}: '${agentId}' is not owned by '${packageName}'`);
-        }
-        return Object.freeze({
-          agentId,
-          profiles: normalizeProtocolBuiltInBackendProfiles(
-            profileRecord.profiles,
-            `${path}.protocolBuiltInBackendProfiles.profiles`,
-          ),
-        });
-      })();
-    const rawMemoryDefaults = record.protocolMemoryDefaults;
-    const protocolMemoryDefaults = rawMemoryDefaults === undefined
-      ? undefined
-      : (() => {
-        const memoryRecord = readProtocolProjectionFactRecord(
-          rawMemoryDefaults,
-          `${path}.protocolMemoryDefaults`,
-        );
-        const agentId = readProtocolProjectionFactString(
-          memoryRecord,
-          'agentId',
-          `${path}.protocolMemoryDefaults`,
-        );
-        if (!declaredAgentIds.has(agentId)) {
-          throw new Error(`Invalid bundled protocol projection facts at ${path}: '${agentId}' is not owned by '${packageName}'`);
-        }
-        return Object.freeze({
-          agentId,
-          ...normalizeProtocolMemoryDefaults(
-            memoryRecord,
-            `${path}.protocolMemoryDefaults`,
-          ),
-        });
-      })();
-    if (!protocolBuiltInBackendProfiles && !protocolMemoryDefaults) {
-      throw new Error(`Invalid bundled protocol projection facts at ${path}: expected a protocol projection value`);
-    }
-    return Object.freeze({
-      packageName,
-      pluginId,
-      pluginPackageId,
-      ...(protocolBuiltInBackendProfiles ? { protocolBuiltInBackendProfiles } : {}),
-      ...(protocolMemoryDefaults ? { protocolMemoryDefaults } : {}),
-    });
-  });
-  return validateBundledPluginProtocolProjectionFacts(facts, pluginPackages, factsOutPath);
-}
-
-function validateBundledPluginProtocolProjectionFacts(
-  facts: readonly BundledPluginProtocolProjectionFacts[],
-  pluginPackages: readonly BundledPluginPackage[],
-  source: string,
-): readonly BundledPluginProtocolProjectionFacts[] {
-  const packageByName = new Map(pluginPackages.map((pluginPackage) => [
-    pluginPackage.packageName,
-    pluginPackage,
-  ]));
-  const factOwnerByPackageName = new Set<string>();
-  const profileOwnerByAgentId = new Map<string, string>();
-  const memoryOwnerByAgentId = new Map<string, string>();
-  for (const fact of facts) {
-    if (factOwnerByPackageName.has(fact.packageName)) {
-      throw new Error(`Duplicate bundled protocol projection facts owner '${fact.packageName}' in ${source}`);
-    }
-    factOwnerByPackageName.add(fact.packageName);
-    const pluginPackage = packageByName.get(fact.packageName);
-    if (!pluginPackage
-      || pluginPackage.pluginId !== fact.pluginId
-      || pluginPackage.pluginPackageId !== fact.pluginPackageId) {
-      throw new Error(`Invalid bundled protocol projection facts package provenance for '${fact.packageName}' in ${source}`);
-    }
-    const declaredAgentIds = new Set(
-      readManifestContributionArray(pluginPackage.manifest, 'agents').map((contribution) =>
-        readRequiredContributionId(contribution, 'agents', pluginPackage.pluginPackageId)),
-    );
-    const profiles = fact.protocolBuiltInBackendProfiles;
-    if (profiles) {
-      if (!declaredAgentIds.has(profiles.agentId)) {
-        throw new Error(`Invalid bundled protocol projection profiles owner '${profiles.agentId}' for '${fact.packageName}' in ${source}`);
-      }
-      const previousOwner = profileOwnerByAgentId.get(profiles.agentId);
-      if (previousOwner) {
-        throw new Error(`Duplicate bundled protocol profile owner '${profiles.agentId}' from '${previousOwner}' and '${fact.packageName}' in ${source}`);
-      }
-      profileOwnerByAgentId.set(profiles.agentId, fact.packageName);
-    }
-    const memoryDefaults = fact.protocolMemoryDefaults;
-    if (memoryDefaults) {
-      if (!declaredAgentIds.has(memoryDefaults.agentId)) {
-        throw new Error(`Invalid bundled protocol memory defaults owner '${memoryDefaults.agentId}' for '${fact.packageName}' in ${source}`);
-      }
-      const previousOwner = memoryOwnerByAgentId.get(memoryDefaults.agentId);
-      if (previousOwner) {
-        throw new Error(`Duplicate bundled protocol memory defaults owner '${memoryDefaults.agentId}' from '${previousOwner}' and '${fact.packageName}' in ${source}`);
-      }
-      memoryOwnerByAgentId.set(memoryDefaults.agentId, fact.packageName);
-    }
-  }
-  if (memoryOwnerByAgentId.size > 1) {
-    throw new Error(`Expected at most one generated protocol memory default contribution, found ${String(memoryOwnerByAgentId.size)}`);
-  }
-  return Object.freeze([...facts].sort((left, right) => left.packageName.localeCompare(right.packageName)));
-}
-
-function renderBundledPluginProtocolProjectionFactsTs(
-  facts: readonly BundledPluginProtocolProjectionFacts[],
-): string {
-  return [
-    '/**',
-    ' * GENERATED FILE. DO NOT EDIT.',
-    ' *',
-    ' * Private generator-owned data used to retain the two protocol projection',
-    ' * values that are not yet serialized in plugin final artifacts. The canonical',
-    ' * bundled-plugin generator is this file\'s sole producer and consumer.',
-    ' * Remove this sidecar once those owned values are serialized in existing',
-    ' * plugin artifacts.',
-    ' */',
-    '',
-    'export const BUNDLED_PLUGIN_PROTOCOL_PROJECTION_FACTS = Object.freeze(',
-    `${renderJsonLiteral(facts as unknown as JsonValue)} satisfies readonly Readonly<{`,
-    '  packageName: string;',
-    '  pluginId: string;',
-    '  pluginPackageId: string;',
-    '  protocolBuiltInBackendProfiles?: Readonly<{',
-    '    agentId: string;',
-    '    profiles: readonly Readonly<Record<string, unknown>>[];',
-    '  }>;',
-    '  protocolMemoryDefaults?: Readonly<{',
-    '    agentId: string;',
-    '    summarizerBackendId: string;',
-    '  }>;',
-    '}>[]);',
-    '',
-  ].join('\n');
-}
-
-function targetMayOwnProtocolProjectionFacts(
-  rootDir: string,
-  pluginPackage: BundledPluginPackage,
-  priorFactsByPackageName: ReadonlyMap<string, BundledPluginProtocolProjectionFacts>,
-): boolean {
-  if (priorFactsByPackageName.has(pluginPackage.packageName)) return true;
-  const definitionPath = resolve(
-    rootDir,
-    'packages/plugins',
-    pluginPackage.pluginPackageId,
-    'src/agent/definition.ts',
-  );
-  if (!existsSync(definitionPath)) return false;
-  const source = readFileSync(definitionPath, 'utf8');
-  return /protocolBuiltInBackendProfiles|protocolMemoryDefaults/u.test(source);
-}
-
-async function readTargetProtocolProjectionFactsFromSource(params: Readonly<{
-  rootDir: string;
-  pluginPackages: readonly BundledPluginPackage[];
-  workspaceNames: readonly string[];
-  priorFacts: readonly BundledPluginProtocolProjectionFacts[];
-}>): Promise<readonly BundledPluginProtocolProjectionFacts[]> {
-  const selectedWorkspaceNames = new Set(params.workspaceNames);
-  const nextFactsByPackageName = new Map(
-    params.priorFacts.map((fact) => [fact.packageName, fact]),
-  );
-  const priorFactsByPackageName = new Map(
-    params.priorFacts.map((fact) => [fact.packageName, fact]),
-  );
-  for (const pluginPackage of params.pluginPackages) {
-    const workspaceName = pluginPackage.packageName.startsWith('@happier-dev/')
-      ? pluginPackage.packageName.slice('@happier-dev/'.length)
-      : pluginPackage.packageName;
-    if (!selectedWorkspaceNames.has(workspaceName)) continue;
-    if (!targetMayOwnProtocolProjectionFacts(
-      params.rootDir,
-      pluginPackage,
-      priorFactsByPackageName,
-    )) continue;
-    const definitionPath = resolve(
-      params.rootDir,
-      'packages/plugins',
-      pluginPackage.pluginPackageId,
-      'src/agent/definition.ts',
-    );
-    const loadedAgentDefinition = existsSync(definitionPath)
-      ? await loadPluginAgentDefinition(params.rootDir, pluginPackage.pluginPackageId)
-      : undefined;
-    const agentDefinition = loadedAgentDefinition
-      ? projectNativeAgentCliDefinitionFacts(
-        loadedAgentDefinition,
-        pluginPackage.manifest,
-        pluginPackage.pluginPackageId,
-      )
-      : undefined;
-    const agentRuntimeContributions = agentDefinition
-      ? readOptionalAgentRuntimeContributions(agentDefinition, definitionPath)
-      : undefined;
-    const nextFact = await readProtocolProjectionFactsForPlugin({
-      repoRoot: params.rootDir,
-      packageName: pluginPackage.packageName,
-      pluginId: pluginPackage.pluginId,
-      pluginPackageId: pluginPackage.pluginPackageId,
-      agentRuntimeContributions,
-    });
-    if (nextFact) {
-      nextFactsByPackageName.set(pluginPackage.packageName, nextFact);
-    } else {
-      nextFactsByPackageName.delete(pluginPackage.packageName);
-    }
-  }
-  return validateBundledPluginProtocolProjectionFacts(
-    [...nextFactsByPackageName.values()],
-    params.pluginPackages,
-    'targeted bundled-plugin protocol projection publication',
-  );
 }
 
 function collectBuiltInLegacyConnectedAccountCompatibility(
@@ -4713,12 +4040,26 @@ function resolveBundledPluginUiArtifactProjectionOutPaths(rootDir: string): Read
   });
 }
 
+const RETIRED_BUNDLED_PLUGIN_PROTOCOL_PROJECTION_OUTPUTS = Object.freeze([
+  'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
+  'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
+  'packages/protocol/src/agents/generated/memory/defaults.ts',
+]);
+
+function removeRetiredBundledPluginProtocolProjectionOutputs(
+  rootDir: string,
+  mode: GeneratorMode,
+): void {
+  for (const relativePath of RETIRED_BUNDLED_PLUGIN_PROTOCOL_PROJECTION_OUTPUTS) {
+    removeRetiredGeneratedOutput(resolve(rootDir, relativePath), mode);
+  }
+}
+
 /**
  * Fast final-artifact publication. This is deliberately separate from the
  * source-authoring generator below: all package manifests and UI artifacts are
  * read first and every global conflict/digest is rejected before any projection
- * is replaced. A targeted publish evaluates only its selected plugin when that
- * plugin owns protocol values absent from serialized final artifacts.
+ * is replaced.
  */
 async function publishBundledPluginUiArtifactProjection(
   options: GeneratorOptions,
@@ -4736,53 +4077,6 @@ async function publishBundledPluginUiArtifactProjection(
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
   );
   const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
-  const protocolProjectionFactsOutPath = resolveBundledPluginProtocolProjectionFactsOutPath(
-    options.rootDir,
-  );
-  const priorProtocolProjectionFacts = readBundledPluginProtocolProjectionFacts(
-    protocolProjectionFactsOutPath,
-    pluginPackages,
-  );
-  const protocolProjectionFacts = options.workspaceNames.length > 0
-    ? await readTargetProtocolProjectionFactsFromSource({
-      rootDir: options.rootDir,
-      pluginPackages,
-      workspaceNames: options.workspaceNames,
-      priorFacts: priorProtocolProjectionFacts ?? [],
-    })
-    : priorProtocolProjectionFacts;
-  if (
-    options.workspaceNames.length > 0
-    && priorProtocolProjectionFacts === undefined
-    && protocolProjectionFacts !== undefined
-    && protocolProjectionFacts.length > 0
-  ) {
-    throw new Error(
-      'Missing bundled protocol projection facts; run the explicit full bundled-plugin publisher before targeted protocol publication.',
-    );
-  }
-  const publishesProtocolProjection = protocolProjectionFacts !== undefined
-    && (priorProtocolProjectionFacts !== undefined || protocolProjectionFacts.length > 0);
-  const protocolBuiltInBackendProfilesOutPath = resolve(
-    options.rootDir,
-    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
-  );
-  const protocolMemoryDefaultsOutPath = resolve(
-    options.rootDir,
-    'packages/protocol/src/agents/generated/memory/defaults.ts',
-  );
-  const protocolOutputs = publishesProtocolProjection && protocolProjectionFacts
-    ? Object.freeze({
-      facts: renderBundledPluginProtocolProjectionFactsTs(protocolProjectionFacts),
-      profiles: renderGeneratedBuiltInBackendProfilesTs(
-        collectProtocolBuiltInBackendProfilesContributions(protocolProjectionFacts),
-        collectProviderMigrationSourceProfileIds(pluginPackages),
-      ),
-      memoryDefaults: renderGeneratedMemoryDefaultsTs(
-        collectProtocolMemoryDefaultsContributions(protocolProjectionFacts),
-      ),
-    })
-    : undefined;
   const sources = collectBundledPluginUiAppArtifactSources(
     options.rootDir,
     pluginPackages,
@@ -4797,6 +4091,8 @@ async function publishBundledPluginUiArtifactProjection(
     ])),
   } as Record<'generic' | BundledPluginUiAppArtifactPlatform, string>);
 
+  removeRetiredBundledPluginProtocolProjectionOutputs(options.rootDir, options.mode);
+
   if (options.mode === 'check') {
     syncBundledPluginUiAppArtifactPackageDependencies({
       rootDir: options.rootDir,
@@ -4807,11 +4103,6 @@ async function publishBundledPluginUiArtifactProjection(
       assertGeneratedOutputMatches(outPaths[platform], outputs[platform]);
     }
     assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
-    if (protocolOutputs) {
-      assertGeneratedOutputMatches(protocolProjectionFactsOutPath, protocolOutputs.facts);
-      assertGeneratedOutputMatches(protocolBuiltInBackendProfilesOutPath, protocolOutputs.profiles);
-      assertGeneratedOutputMatches(protocolMemoryDefaultsOutPath, protocolOutputs.memoryDefaults);
-    }
     for (const output of additionalOutputs) {
       assertGeneratedOutputMatches(output.outPath, output.out);
     }
@@ -4832,13 +4123,6 @@ async function publishBundledPluginUiArtifactProjection(
       outPath: outPaths[platform],
       out: outputs[platform],
     })),
-    ...(protocolOutputs
-      ? [
-        { outPath: protocolProjectionFactsOutPath, out: protocolOutputs.facts },
-        { outPath: protocolBuiltInBackendProfilesOutPath, out: protocolOutputs.profiles },
-        { outPath: protocolMemoryDefaultsOutPath, out: protocolOutputs.memoryDefaults },
-      ]
-      : []),
     ...additionalOutputs,
   ]);
 }
@@ -5066,32 +4350,12 @@ function collectProtocolAgentProviderIdsV1(generatedAgentIds: readonly string[])
   return PROTOCOL_AGENT_PROVIDER_IDS_V1;
 }
 
-function collectSessionControlAdapterContributions(
+function collectReleasedFlatSessionMetadataRuntimeDescriptorReaderContributions(
   pluginPackages: readonly BundledPluginPackage[],
-): readonly SessionControlAdapterProjectionDescriptor[] {
+): readonly ReleasedFlatSessionMetadataRuntimeDescriptorReaderProjectionDescriptor[] {
   return pluginPackages
-    .flatMap((entry): SessionControlAdapterProjectionDescriptor[] => {
-      const contribution = entry.agentRuntimeContributions?.sessionControlAdapter;
-      if (!contribution) return [];
-      if (contribution.kind === 'providerSessionControlAdapter') {
-        return [{
-          ...contribution,
-          ...(contribution.source === undefined
-            ? {}
-            : { source: `${entry.packageName}/${normalizePluginRuntimeProjectionSource(contribution.source)}` }),
-        }];
-      }
-      return [contribution];
-    })
-    .sort((a, b) => a.agentId.localeCompare(b.agentId));
-}
-
-function collectRuntimeDescriptorReaderContributions(
-  pluginPackages: readonly BundledPluginPackage[],
-): readonly RuntimeDescriptorReaderProjectionDescriptor[] {
-  return pluginPackages
-    .flatMap((entry): RuntimeDescriptorReaderProjectionDescriptor[] => {
-      const contribution = entry.agentRuntimeContributions?.runtimeDescriptorReader;
+    .flatMap((entry): ReleasedFlatSessionMetadataRuntimeDescriptorReaderProjectionDescriptor[] => {
+      const contribution = entry.releasedFlatSessionMetadataRuntimeDescriptorReader;
       if (!contribution) return [];
       if (contribution.kind === 'providerRuntimeDescriptorReader') {
         return [{
@@ -5106,125 +4370,12 @@ function collectRuntimeDescriptorReaderContributions(
     .sort((a, b) => a.agentId.localeCompare(b.agentId));
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-}
-
 function toScreamingSnakeCase(value: string): string {
   return value
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
-}
-
-function assertExportedRuntimeDescriptorSymbol(
-  sourceContent: string,
-  symbolName: string,
-  sourcePath: string,
-): void {
-  const escaped = escapeRegExp(symbolName);
-  const exportedSymbolPattern = new RegExp(
-    `export\\s+(?:async\\s+)?(?:function|const|type|interface)\\s+${escaped}\\b`,
-  );
-  if (!exportedSymbolPattern.test(sourceContent)) {
-    throw new Error(`Invalid protocol runtime descriptor source ${sourcePath}: missing exported ${symbolName}`);
-  }
-}
-
-function assertHermeticProtocolRuntimeDescriptorSource(
-  sourceContent: string,
-  sourcePath: string,
-): void {
-  const importSpecifierPatterns = [
-    /^\s*(?:import|export)\s+[^'"]*\sfrom\s+['"]([^'"]+)['"]/gm,
-    /^\s*import\s+['"]([^'"]+)['"]/gm,
-    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gm,
-  ];
-  for (const pattern of importSpecifierPatterns) {
-    for (const match of sourceContent.matchAll(pattern)) {
-      assertHermeticProtocolRuntimeDescriptorImportSpecifier(match[1], sourcePath);
-    }
-  }
-}
-
-function assertHermeticProtocolRuntimeDescriptorImportSpecifier(
-  specifier: string,
-  sourcePath: string,
-): void {
-  if (specifier.startsWith('.')) {
-    throw new Error(
-      `Invalid protocol runtime descriptor source ${sourcePath}: generated protocol modules cannot preserve relative imports`,
-    );
-  }
-  if (
-    specifier === '@happier-dev/protocol'
-    || specifier.startsWith('@happier-dev/plugins-')
-    || specifier.startsWith('@/')
-    || specifier.includes('packages/plugins/')
-  ) {
-    throw new Error(
-      `Invalid protocol runtime descriptor source ${sourcePath}: generated protocol module would import forbidden ${specifier}`,
-    );
-  }
-}
-
-function protocolRuntimeDescriptorModuleFileName(agentId: string): string {
-  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(agentId)) {
-    throw new Error(`Invalid protocol runtime descriptor agent id '${agentId}': cannot derive generated module filename`);
-  }
-  return `${agentId}.ts`;
-}
-
-function renderGeneratedProtocolRuntimeDescriptorModuleTs(
-  contribution: ProtocolRuntimeDescriptorProjectionDescriptor,
-): string {
-  const lines: string[] = [];
-  lines.push('/**');
-  lines.push(' * GENERATED FILE CONTRACT (A.16y.6-runtime-descriptor-protocol-abi-codegen)');
-  lines.push(' *');
-  lines.push(' * This file is emitted by:');
-  lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
-  lines.push(' */');
-  lines.push('');
-  lines.push(contribution.sourceContent.trimEnd());
-  lines.push('');
-  return lines.join('\n');
-}
-
-function collectProtocolRuntimeDescriptorContributions(
-  pluginPackages: readonly BundledPluginPackage[],
-  repoRoot: string,
-): readonly ProtocolRuntimeDescriptorProjectionDescriptor[] {
-  return pluginPackages
-    .flatMap((entry): ProtocolRuntimeDescriptorProjectionDescriptor[] => {
-      const contribution = entry.agentRuntimeContributions?.protocolRuntimeDescriptor;
-      if (!contribution) return [];
-      const sourceFilePath = resolvePluginRuntimeProjectionSourceFile(repoRoot, entry.pluginPackageId, contribution.source);
-      const sourceContent = readFileSync(sourceFilePath, 'utf8');
-      const descriptorType = runtimeDescriptorTypeFromBuildFunction(contribution.buildFunction);
-      const canonicalType = canonicalRuntimeDescriptorTypeFromReader(contribution.canonicalReader);
-      assertExportedRuntimeDescriptorSymbol(sourceContent, contribution.buildFunction, sourceFilePath);
-      assertExportedRuntimeDescriptorSymbol(sourceContent, contribution.canonicalReader, sourceFilePath);
-      assertExportedRuntimeDescriptorSymbol(
-        sourceContent,
-        strictCanonicalRuntimeDescriptorReaderFromReader(
-          contribution.canonicalReader,
-        ),
-        sourceFilePath,
-      );
-      assertExportedRuntimeDescriptorSymbol(sourceContent, descriptorType, sourceFilePath);
-      assertExportedRuntimeDescriptorSymbol(sourceContent, canonicalType, sourceFilePath);
-      assertHermeticProtocolRuntimeDescriptorSource(sourceContent, sourceFilePath);
-      const moduleFileName = protocolRuntimeDescriptorModuleFileName(contribution.agentId);
-      return [{
-        ...contribution,
-        generatedImportSource: `./descriptors/${moduleFileName.replace(/\.ts$/, '')}`,
-        moduleFileName,
-        sourceContent,
-      }];
-    })
-    .sort((a, b) => a.agentId.localeCompare(b.agentId));
 }
 
 function compareStableProviderIdOrder(a: string, b: string): number {
@@ -5234,139 +4385,6 @@ function compareStableProviderIdOrder(a: string, b: string): number {
     return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi);
   }
   return a.localeCompare(b);
-}
-
-async function readPluginProtocolProjectionExport(
-  repoRoot: string,
-  pluginPackageId: string,
-  contribution: Readonly<{ source: string; exportName: string }>,
-): Promise<JsonValue> {
-  const sourceFilePath = resolvePluginRuntimeProjectionSourceFile(repoRoot, pluginPackageId, contribution.source);
-  const mod = await importTypescriptModule(sourceFilePath) as Record<string, unknown>;
-  if (!(contribution.exportName in mod)) {
-    throw new Error(`Expected ${contribution.exportName} export in ${sourceFilePath}`);
-  }
-  return readJsonSerializableValue(mod[contribution.exportName], `${sourceFilePath}.${contribution.exportName}`);
-}
-
-function normalizeProtocolBuiltInBackendProfiles(
-  value: unknown,
-  path: string,
-): readonly JsonObject[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`Invalid protocol built-in backend profiles source for ${path}: expected array`);
-  }
-  return Object.freeze(value.map((profile, index): JsonObject => {
-    const normalized = readJsonSerializableValue(profile, `${path}[${String(index)}]`);
-    if (!isJsonObject(normalized) || typeof normalized.id !== 'string' || normalized.id.trim().length === 0) {
-      throw new Error(
-        `Invalid protocol built-in backend profile ${path}[${String(index)}]: expected object with id`,
-      );
-    }
-    return normalized;
-  }));
-}
-
-function normalizeProtocolMemoryDefaults(
-  value: unknown,
-  path: string,
-): Readonly<{ summarizerBackendId: string }> {
-  const defaults = readRequiredRecord(value, path);
-  return Object.freeze({
-    summarizerBackendId: readRequiredString(defaults, 'summarizerBackendId', path),
-  });
-}
-
-async function readProtocolProjectionFactsForPlugin(params: Readonly<{
-  repoRoot: string;
-  packageName: string;
-  pluginId: string;
-  pluginPackageId: string;
-  agentRuntimeContributions?: AgentRuntimeContributionsDescriptor;
-}>): Promise<BundledPluginProtocolProjectionFacts | undefined> {
-  const profileContribution = params.agentRuntimeContributions?.protocolBuiltInBackendProfiles;
-  const memoryContribution = params.agentRuntimeContributions?.protocolMemoryDefaults;
-  if (!profileContribution && !memoryContribution) return undefined;
-
-  const profiles = profileContribution
-    ? normalizeProtocolBuiltInBackendProfiles(
-      await readPluginProtocolProjectionExport(
-        params.repoRoot,
-        params.pluginPackageId,
-        profileContribution,
-      ),
-      `${params.pluginPackageId}.${profileContribution.exportName}`,
-    )
-    : undefined;
-  const memoryDefaults = memoryContribution
-    ? normalizeProtocolMemoryDefaults(
-      await readPluginProtocolProjectionExport(
-        params.repoRoot,
-        params.pluginPackageId,
-        memoryContribution,
-      ),
-      `${params.pluginPackageId}.${memoryContribution.exportName}`,
-    )
-    : undefined;
-
-  return Object.freeze({
-    packageName: params.packageName,
-    pluginId: params.pluginId,
-    pluginPackageId: params.pluginPackageId,
-    ...(profiles ? {
-      protocolBuiltInBackendProfiles: Object.freeze({
-        agentId: profileContribution!.agentId,
-        profiles,
-      }),
-    } : {}),
-    ...(memoryDefaults ? {
-      protocolMemoryDefaults: Object.freeze({
-        agentId: memoryContribution!.agentId,
-        summarizerBackendId: memoryDefaults.summarizerBackendId,
-      }),
-    } : {}),
-  });
-}
-
-async function readProtocolProjectionFactsFromSource(
-  repoRoot: string,
-  pluginPackages: readonly BundledPluginPackage[],
-): Promise<readonly BundledPluginProtocolProjectionFacts[]> {
-  const facts = await Promise.all(pluginPackages.map(async (entry) =>
-    await readProtocolProjectionFactsForPlugin({
-      repoRoot,
-      packageName: entry.packageName,
-      pluginId: entry.pluginId,
-      pluginPackageId: entry.pluginPackageId,
-      agentRuntimeContributions: entry.agentRuntimeContributions,
-    })));
-  return Object.freeze(facts
-    .filter((fact): fact is BundledPluginProtocolProjectionFacts => fact !== undefined)
-    .sort((left, right) => left.packageName.localeCompare(right.packageName)));
-}
-
-function collectProtocolBuiltInBackendProfilesContributions(
-  facts: readonly BundledPluginProtocolProjectionFacts[],
-): readonly ProtocolBuiltInBackendProfilesProjectionDescriptor[] {
-  return Object.freeze(facts.flatMap((fact) => {
-    const contribution = fact.protocolBuiltInBackendProfiles;
-    return contribution ? [Object.freeze({
-      agentId: contribution.agentId,
-      profiles: contribution.profiles,
-    })] : [];
-  }).sort((a, b) => compareStableProviderIdOrder(a.agentId, b.agentId)));
-}
-
-function collectProtocolMemoryDefaultsContributions(
-  facts: readonly BundledPluginProtocolProjectionFacts[],
-): readonly ProtocolMemoryDefaultsProjectionDescriptor[] {
-  return Object.freeze(facts.flatMap((fact) => {
-    const contribution = fact.protocolMemoryDefaults;
-    return contribution ? [Object.freeze({
-      agentId: contribution.agentId,
-      summarizerBackendId: contribution.summarizerBackendId,
-    })] : [];
-  }).sort((a, b) => compareStableProviderIdOrder(a.agentId, b.agentId)));
 }
 
 function readExternalSessionWhenDescriptor(value: unknown, path: string): Readonly<{ field: string; equals: string }> {
@@ -5642,24 +4660,7 @@ async function collectProtocolExternalSessionSourceContributions(
   return out;
 }
 
-const RUNTIME_CONTRIBUTION_PROJECTION_CONTRACT = 'A.16y.3-provider-session-control-and-runtime-descriptor-projections';
-const PROTOCOL_RUNTIME_DESCRIPTOR_ABI_CODEGEN_CONTRACT = 'A.16y.6-runtime-descriptor-protocol-abi-codegen';
 const PROTOCOL_PROVIDER_DEFAULT_SOURCE_PROJECTION_CONTRACT = 'A.16y.7-protocol-provider-default-and-source-projection';
-
-function renderRuntimeContributionProjectionHeader(
-  lines: string[],
-  extraContracts: readonly string[] = [],
-): void {
-  lines.push('/**');
-  lines.push(` * GENERATED FILE CONTRACT (${RUNTIME_CONTRIBUTION_PROJECTION_CONTRACT})`);
-  for (const contract of extraContracts) {
-    lines.push(` * GENERATED FILE CONTRACT (${contract})`);
-  }
-  lines.push(' *');
-  lines.push(' * This file is emitted by:');
-  lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
-  lines.push(' */');
-}
 
 function renderProtocolProviderProjectionHeader(lines: string[]): void {
   lines.push('/**');
@@ -5668,70 +4669,6 @@ function renderProtocolProviderProjectionHeader(lines: string[]): void {
   lines.push(' * This file is emitted by:');
   lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
   lines.push(' */');
-}
-
-function renderGeneratedBuiltInBackendProfilesTs(
-  contributions: readonly ProtocolBuiltInBackendProfilesProjectionDescriptor[],
-  providerMigrationSourceProfileIds: readonly string[],
-): string {
-  const profiles = contributions.flatMap((contribution) => contribution.profiles);
-  const lines: string[] = [];
-  renderProtocolProviderProjectionHeader(lines);
-  lines.push('');
-  lines.push('import type { AIBackendProfile } from \'../../../profiles/backendProfileSchema.js\';');
-  lines.push('');
-  lines.push('export const GENERATED_BUILT_IN_BACKEND_PROFILES = [');
-  for (const profile of profiles) {
-    lines.push(`${renderJsonLiteral(profile, 2).split('\n').map((line) => `  ${line}`).join('\n')},`);
-  }
-  lines.push('] as const satisfies ReadonlyArray<AIBackendProfile>;');
-  lines.push('');
-  lines.push(`export const GENERATED_PROVIDER_MIGRATION_SOURCE_PROFILE_IDS = ${renderTsStringArrayLiteral(providerMigrationSourceProfileIds)} as const;`);
-  lines.push('');
-  return lines.join('\n');
-}
-
-function collectProviderMigrationSourceProfileIds(
-  pluginPackages: readonly BundledPluginPackage[],
-): readonly string[] {
-  const ids = new Set<string>();
-  for (const entry of pluginPackages) {
-    for (const provider of readManifestContributionArray(entry.manifest, 'providers')) {
-      const migrations = isJsonObject(provider) ? provider.legacyProfileMigrations : undefined;
-      if (migrations === undefined) continue;
-      if (!Array.isArray(migrations)) {
-        throw new Error(`${entry.pluginPackageId}.contributes.providers legacyProfileMigrations must be an array`);
-      }
-      for (const migration of migrations) {
-        if (!isJsonObject(migration) || typeof migration.sourceProfileId !== 'string' || migration.sourceProfileId.trim().length === 0) {
-          throw new Error(`${entry.pluginPackageId}.contributes.providers legacy migration must declare sourceProfileId`);
-        }
-        ids.add(migration.sourceProfileId);
-      }
-    }
-  }
-  return [...ids].sort();
-}
-
-function renderGeneratedMemoryDefaultsTs(
-  contributions: readonly ProtocolMemoryDefaultsProjectionDescriptor[],
-): string {
-  if (contributions.length > 1) {
-    throw new Error(`Expected at most one generated protocol memory default contribution, found ${String(contributions.length)}`);
-  }
-  const defaults = contributions[0];
-  const lines: string[] = [];
-  renderProtocolProviderProjectionHeader(lines);
-  lines.push('');
-  lines.push(`export const GENERATED_MEMORY_SUMMARIZER_BACKEND_ID = ${
-    defaults ? renderTsStringLiteral(defaults.summarizerBackendId) : 'null'
-  } as const;`);
-  lines.push('');
-  lines.push('export const GENERATED_MEMORY_DEFAULTS = Object.freeze({');
-  lines.push('  summarizerBackendId: GENERATED_MEMORY_SUMMARIZER_BACKEND_ID,');
-  lines.push('} as const);');
-  lines.push('');
-  return lines.join('\n');
 }
 
 export function renderGeneratedExternalSessionSourcesTs(
@@ -5749,99 +4686,29 @@ export function renderGeneratedExternalSessionSourcesTs(
   return lines.join('\n');
 }
 
-function renderAgentSessionControlAdaptersTs(
-  contributions: readonly SessionControlAdapterProjectionDescriptor[],
-): string {
-  const lines: string[] = [];
-  renderRuntimeContributionProjectionHeader(lines);
-  lines.push('');
-  const dataOnlyContributions = contributions.filter(
-    (contribution): contribution is RuntimeDescriptorResumeIdSessionControlContributionDescriptor =>
-      contribution.kind === 'runtimeDescriptorResumeId',
-  );
-  const executableContributions = contributions.filter(
-    (contribution): contribution is ProviderSessionControlAdapterContributionDescriptor =>
-      contribution.kind === 'providerSessionControlAdapter',
-  );
-  if (executableContributions.length > 0) {
-    lines.push('import {');
-    lines.push('  createGeneratedRuntimeProjectionSessionControlAdapter,');
-    lines.push('  type GeneratedRuntimeProjectionSessionControlAdapterConfig,');
-    lines.push('} from \'../runtime/identity/generatedRuntimeProjection.js\';');
-  }
-  if (dataOnlyContributions.length > 0) {
-    lines.push('import {');
-    lines.push('  createRuntimeDescriptorResumeIdSessionControlAdapter,');
-    lines.push('} from \'../runtime/controlSurface/runtimeDescriptorResume.js\';');
-  }
-  lines.push('import type { ProviderSessionControlAdapter } from \'../runtime/controlSurface/types.js\';');
-  lines.push('');
-  for (const contribution of executableContributions) {
-    const constName = `${toScreamingSnakeCase(contribution.agentId)}_GENERATED_SESSION_CONTROL_ADAPTER`;
-    lines.push(`const ${constName} = createGeneratedRuntimeProjectionSessionControlAdapter(`);
-    lines.push(`${renderJsonLiteral(contribution.generatedAdapter, 2)} satisfies GeneratedRuntimeProjectionSessionControlAdapterConfig<${renderTsStringLiteral(contribution.agentId)}>,`);
-    lines.push(');');
-    lines.push('');
-  }
-  lines.push('export const GENERATED_PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS = [');
-  for (const contribution of contributions) {
-    lines.push(`  ${renderTsStringLiteral(contribution.agentId)},`);
-  }
-  lines.push('] as const;');
-  lines.push('');
-  lines.push('export type GeneratedProviderSessionControlAdapterProviderId =');
-  lines.push('  (typeof GENERATED_PROVIDER_SESSION_CONTROL_ADAPTER_PROVIDER_IDS)[number];');
-  lines.push('');
-  lines.push('export const GENERATED_PROVIDER_SESSION_CONTROL_ADAPTERS: Readonly<Record<GeneratedProviderSessionControlAdapterProviderId, ProviderSessionControlAdapter>> = Object.freeze({');
-  for (const contribution of contributions) {
-    if (contribution.kind === 'providerSessionControlAdapter') {
-      lines.push(`  ${contribution.agentId}: ${toScreamingSnakeCase(contribution.agentId)}_GENERATED_SESSION_CONTROL_ADAPTER,`);
-    } else {
-      lines.push(`  ${contribution.agentId}: createRuntimeDescriptorResumeIdSessionControlAdapter({`);
-      lines.push(`    providerId: ${renderTsStringLiteral(contribution.agentId)},`);
-      if (contribution.absolutePathField) {
-        lines.push(`    absolutePathField: ${renderTsStringLiteral(contribution.absolutePathField)},`);
-      }
-      if (contribution.legacyAbsolutePathField) {
-        lines.push(`    legacyAbsolutePathField: ${renderTsStringLiteral(contribution.legacyAbsolutePathField)},`);
-      }
-      lines.push(`    fallbackField: ${renderTsStringLiteral(contribution.fallbackField)},`);
-      lines.push('  }),');
-    }
-  }
-  lines.push('});');
-  lines.push('');
-  return lines.join('\n');
-}
-
 function renderAgentRuntimeDescriptorReadersTs(
-  contributions: readonly RuntimeDescriptorReaderProjectionDescriptor[],
+  contributions: readonly ReleasedFlatSessionMetadataRuntimeDescriptorReaderContributionDescriptor[],
 ): string {
   const lines: string[] = [];
-  renderRuntimeContributionProjectionHeader(lines);
+  lines.push('/**');
+  lines.push(' * GENERATED released flat Session-metadata compatibility readers.');
+  lines.push(' *');
+  lines.push(' * This bounded registry reads provider-specific metadata written by released');
+  lines.push(' * CLI 0.2.0/0.2.1 builds. It is not a current descriptor or plugin-authoring seam.');
+  lines.push(' *');
+  lines.push(' * This file is emitted by:');
+  lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
+  lines.push(' */');
   lines.push('');
-  const dataOnlyContributions = contributions.filter(
-    (contribution): contribution is ProviderSessionIdRuntimeDescriptorReaderContributionDescriptor =>
-      contribution.kind === 'providerSessionId',
-  );
-  const executableContributions = contributions.filter(
-    (contribution): contribution is ProviderRuntimeDescriptorReaderContributionDescriptor =>
-      contribution.kind === 'providerRuntimeDescriptorReader',
-  );
-  if (executableContributions.length > 0) {
+  if (contributions.length > 0) {
     lines.push('import {');
     lines.push('  createGeneratedRuntimeDescriptorReader,');
     lines.push('  type GeneratedRuntimeDescriptorReaderConfig,');
     lines.push('} from \'../runtime/identity/generatedRuntimeProjection.js\';');
   }
-  if (dataOnlyContributions.length > 0) {
-    lines.push('import {');
-    lines.push('  createProviderSessionIdRuntimeDescriptorReader,');
-    lines.push('} from \'../runtime/identity/providerSessionIdReader.js\';');
-  }
   lines.push('import type { RuntimeDescriptorReaderMap } from \'../runtime/identity/runtimeDescriptorTypes.js\';');
   lines.push('');
-  for (const contribution of executableContributions) {
+  for (const contribution of contributions) {
     const constName = `${toScreamingSnakeCase(contribution.agentId)}_GENERATED_RUNTIME_DESCRIPTOR_READER`;
     lines.push(`const ${constName} = createGeneratedRuntimeDescriptorReader(`);
     lines.push(`${renderJsonLiteral(contribution.generatedReader, 2)} satisfies GeneratedRuntimeDescriptorReaderConfig<${renderTsStringLiteral(contribution.agentId)}>,`);
@@ -5859,135 +4726,9 @@ function renderAgentRuntimeDescriptorReadersTs(
   lines.push('');
   lines.push('export const GENERATED_RUNTIME_DESCRIPTOR_READERS: Readonly<Pick<RuntimeDescriptorReaderMap, GeneratedRuntimeDescriptorReaderProviderId>> = Object.freeze({');
   for (const contribution of contributions) {
-    if (contribution.kind === 'providerRuntimeDescriptorReader') {
-      lines.push(`  ${contribution.agentId}: ${toScreamingSnakeCase(contribution.agentId)}_GENERATED_RUNTIME_DESCRIPTOR_READER,`);
-    } else {
-      lines.push(`  ${contribution.agentId}: createProviderSessionIdRuntimeDescriptorReader({`);
-      lines.push(`    providerId: ${renderTsStringLiteral(contribution.agentId)},`);
-      lines.push(`    runtimeHandle: ${renderTsStringLiteral(contribution.runtimeHandle)},`);
-      lines.push('  }),');
-    }
+    lines.push(`  ${contribution.agentId}: ${toScreamingSnakeCase(contribution.agentId)}_GENERATED_RUNTIME_DESCRIPTOR_READER,`);
   }
   lines.push('});');
-  lines.push('');
-  return lines.join('\n');
-}
-
-function runtimeDescriptorTypeFromBuildFunction(buildFunction: string): string {
-  if (!buildFunction.startsWith('build')) {
-    throw new Error(`Invalid runtime descriptor build function '${buildFunction}': expected build*`);
-  }
-  return buildFunction.slice('build'.length);
-}
-
-function canonicalRuntimeDescriptorTypeFromReader(canonicalReader: string): string {
-  if (!canonicalReader.startsWith('readCanonical')) {
-    throw new Error(`Invalid canonical runtime descriptor reader '${canonicalReader}': expected readCanonical*`);
-  }
-  return canonicalReader.slice('read'.length);
-}
-
-function strictCanonicalRuntimeDescriptorReaderFromReader(
-  canonicalReader: string,
-): string {
-  if (!canonicalReader.startsWith('readCanonical')) {
-    throw new Error(`Invalid canonical runtime descriptor reader '${canonicalReader}': expected readCanonical*`);
-  }
-  return canonicalReader.replace(/^readCanonical/, 'readStrictCanonical');
-}
-
-function renderProtocolRuntimeDescriptorContributionsV1Ts(
-  contributions: readonly ProtocolRuntimeDescriptorProjectionDescriptor[],
-): string {
-  const lines: string[] = [];
-  renderRuntimeContributionProjectionHeader(lines, [PROTOCOL_RUNTIME_DESCRIPTOR_ABI_CODEGEN_CONTRACT]);
-  lines.push('');
-  for (const contribution of contributions) {
-    const descriptorType = runtimeDescriptorTypeFromBuildFunction(contribution.buildFunction);
-    const canonicalType = canonicalRuntimeDescriptorTypeFromReader(contribution.canonicalReader);
-    const strictCanonicalReader =
-      strictCanonicalRuntimeDescriptorReaderFromReader(contribution.canonicalReader);
-    lines.push('import {');
-    lines.push(`  ${contribution.buildFunction},`);
-    lines.push(`  ${contribution.canonicalReader},`);
-    lines.push(`  ${strictCanonicalReader},`);
-    lines.push(`  type ${canonicalType},`);
-    lines.push(`  type ${descriptorType},`);
-    lines.push(`} from ${renderTsStringLiteral(renderTsImportSpecifier(contribution.generatedImportSource))};`);
-  }
-  lines.push('');
-  lines.push('export {');
-  for (const contribution of contributions) {
-    lines.push(`  ${contribution.buildFunction},`);
-  }
-  lines.push('};');
-  lines.push('');
-  lines.push('export type {');
-  for (const contribution of contributions) {
-    lines.push(`  ${canonicalRuntimeDescriptorTypeFromReader(contribution.canonicalReader)},`);
-    lines.push(`  ${runtimeDescriptorTypeFromBuildFunction(contribution.buildFunction)},`);
-  }
-  lines.push('};');
-  lines.push('');
-  lines.push('export const GENERATED_RUNTIME_DESCRIPTOR_PROVIDER_IDS_V1 = [');
-  for (const contribution of contributions) {
-    lines.push(`  ${renderTsStringLiteral(contribution.agentId)},`);
-  }
-  lines.push('] as const;');
-  lines.push('');
-  lines.push('export type GeneratedRuntimeDescriptorProviderIdV1 =');
-  lines.push('  (typeof GENERATED_RUNTIME_DESCRIPTOR_PROVIDER_IDS_V1)[number];');
-  lines.push('');
-  lines.push('export type GeneratedRuntimeDescriptorByProviderIdV1 = {');
-  for (const contribution of contributions) {
-    lines.push(`  ${contribution.agentId}: ${runtimeDescriptorTypeFromBuildFunction(contribution.buildFunction)};`);
-  }
-  lines.push('};');
-  lines.push('');
-  lines.push('export type GeneratedCanonicalRuntimeDescriptorByProviderIdV1 = {');
-  for (const contribution of contributions) {
-    lines.push(`  ${contribution.agentId}: ${canonicalRuntimeDescriptorTypeFromReader(contribution.canonicalReader)};`);
-  }
-  lines.push('};');
-  lines.push('');
-  lines.push('type GeneratedRuntimeDescriptorContributionV1 = Readonly<{');
-  lines.push('  agentId: GeneratedRuntimeDescriptorProviderIdV1;');
-  lines.push('  readCanonicalDescriptor: (descriptor: unknown) => unknown;');
-  lines.push('  readStrictCanonicalDescriptor: (descriptor: unknown) => unknown;');
-  lines.push('}>;');
-  lines.push('');
-  lines.push('export const GENERATED_RUNTIME_DESCRIPTOR_CONTRIBUTIONS_V1 = Object.freeze({');
-  for (const contribution of contributions) {
-    const descriptorType = runtimeDescriptorTypeFromBuildFunction(contribution.buildFunction);
-    const strictCanonicalReader =
-      strictCanonicalRuntimeDescriptorReaderFromReader(contribution.canonicalReader);
-    lines.push(`  ${contribution.agentId}: Object.freeze({`);
-    lines.push(`    agentId: ${renderTsStringLiteral(contribution.agentId)},`);
-    lines.push(`    readCanonicalDescriptor: (descriptor: unknown) => ${contribution.canonicalReader}(`);
-    lines.push(`      descriptor as ${descriptorType} | null,`);
-    lines.push('    ),');
-    lines.push(`    readStrictCanonicalDescriptor: (descriptor: unknown) => ${strictCanonicalReader}(`);
-    lines.push(`      descriptor as ${descriptorType} | null,`);
-    lines.push('    ),');
-    lines.push('  }),');
-  }
-  lines.push('} satisfies {');
-  lines.push('  readonly [K in GeneratedRuntimeDescriptorProviderIdV1]: GeneratedRuntimeDescriptorContributionV1;');
-  lines.push('});');
-  lines.push('');
-  lines.push('export function getGeneratedRuntimeDescriptorContributionV1<TProviderId extends GeneratedRuntimeDescriptorProviderIdV1>(');
-  lines.push('  agentId: TProviderId,');
-  lines.push('): GeneratedRuntimeDescriptorContributionV1;');
-  lines.push('export function getGeneratedRuntimeDescriptorContributionV1(');
-  lines.push('  agentId: string,');
-  lines.push('): GeneratedRuntimeDescriptorContributionV1 | null;');
-  lines.push('export function getGeneratedRuntimeDescriptorContributionV1(');
-  lines.push('  agentId: string,');
-  lines.push('): GeneratedRuntimeDescriptorContributionV1 | null {');
-  lines.push('  return Object.hasOwn(GENERATED_RUNTIME_DESCRIPTOR_CONTRIBUTIONS_V1, agentId)');
-  lines.push('    ? GENERATED_RUNTIME_DESCRIPTOR_CONTRIBUTIONS_V1[agentId as GeneratedRuntimeDescriptorProviderIdV1]');
-  lines.push('    : null;');
-  lines.push('}');
   lines.push('');
   return lines.join('\n');
 }
@@ -6062,72 +4803,35 @@ function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
   return lines.join('\n');
 }
 
-function renderCliBundledPluginEntriesTs(params: Readonly<{
-  pluginPackages: readonly BundledPluginPackage[];
-}>): string {
-  const implementationSources = collectProviderCatalogEntryHookSources(params.pluginPackages);
-  const pluginByAgentId = new Map(
-    params.pluginPackages.flatMap((entry) => entry.agentId ? [[entry.agentId, entry] as const] : []),
-  );
+type BundledFirstPartyAgentRegistrationIdentity = Readonly<{
+  pluginId: string;
+  localId: string;
+  implementationOwnerId: string;
+  registrationFamily: string;
+}>;
+
+function renderCliBundledAgentRegistrationBindingsTs(
+  registrations: readonly BundledFirstPartyAgentRegistrationIdentity[],
+): string {
   const lines: string[] = [];
-  lines.push('/** GENERATED executable bindings for bundled first-party plugins. */');
-  lines.push("import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';");
-  if (implementationSources.length > 0) {
-    lines.push("import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';");
-  }
-  for (const source of implementationSources) {
-    lines.push(`import { ${source.importName} } from ${renderTsStringLiteral(source.importPath)};`);
-  }
-  const externalSessionHostAdapterImportSources = implementationSources.flatMap((source) => [
-    source.externalSessionHostAdapters?.candidateHostAdapter,
-    source.externalSessionHostAdapters?.transcriptStoreAdapter,
-  ].filter((entry): entry is ExternalSessionHostAdapterImportSource => Boolean(entry)));
-  for (const source of externalSessionHostAdapterImportSources) {
-    lines.push(`import { ${source.exportName} as ${source.importAlias} } from ${renderTsStringLiteral(source.importPath)};`);
-  }
+  lines.push('/** GENERATED data-only registration identities for bundled first-party Agents. */');
+  lines.push("import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';");
   lines.push('');
-  lines.push('export type BundledFirstPartyImplementationBinding = Readonly<{');
+  lines.push('export type BundledFirstPartyAgentRegistrationBinding = Readonly<{');
   lines.push('  identity: PluginContributionIdentityV1;');
   lines.push('  implementationOwnerId: string;');
   lines.push('  registrationFamily: string;');
-  lines.push('  implementation: unknown;');
   lines.push('}>;');
   lines.push('');
-  lines.push('export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstPartyImplementationBinding[] = Object.freeze([');
-  for (const source of implementationSources) {
-    const pluginPackage = pluginByAgentId.get(source.agentId);
-    if (!pluginPackage) throw new Error(`Missing bundled plugin locator for agent implementation '${source.agentId}'`);
+  lines.push('export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFirstPartyAgentRegistrationBinding[] = Object.freeze([');
+  for (const registration of registrations) {
     lines.push('  Object.freeze({');
-    lines.push('    identity: createPluginContributionIdentity({');
-    lines.push(`      pluginId: ${JSON.stringify(pluginPackage.pluginId)},`);
-    const manifestAgent = readManifestContributionArray(pluginPackage.manifest, 'agents')[0];
-    const manifestAgentId = readRequiredContributionId(manifestAgent, 'agents', pluginPackage.pluginPackageId);
-    lines.push(`      localId: ${JSON.stringify(manifestAgentId)},`);
+    lines.push('    identity: Object.freeze({');
+    lines.push(`      pluginId: ${JSON.stringify(registration.pluginId)},`);
+    lines.push(`      localId: ${JSON.stringify(registration.localId)},`);
     lines.push('    }),');
-    lines.push(`    implementationOwnerId: ${JSON.stringify(source.agentId)},`);
-    lines.push("    registrationFamily: 'agents',");
-    lines.push('    implementation: createAgentRuntimeCatalogEntryHooks({');
-    lines.push(`      agentId: ${renderTsStringLiteral(source.agentId)},`);
-    lines.push(`      packageName: ${renderTsStringLiteral(source.packageName)},`);
-    if (source.externalSessionHostAdapters) {
-      lines.push('      contribution: {');
-      lines.push(`        ...${source.importName},`);
-      lines.push('        externalSessions: {');
-      if (source.externalSessionHostAdapters.candidateHostAdapter) {
-        lines.push(`          createCandidateHostAdapter: ${source.externalSessionHostAdapters.candidateHostAdapter.importAlias},`);
-      }
-      if (source.externalSessionHostAdapters.transcriptStoreAdapter) {
-        lines.push(`          createTranscriptStoreAdapter: ${source.externalSessionHostAdapters.transcriptStoreAdapter.importAlias},`);
-      }
-      lines.push('        },');
-      lines.push('      },');
-    } else {
-      lines.push(`      contribution: ${source.importName},`);
-    }
-    if (source.systemTools.length > 0) {
-      lines.push(`      systemTools: ${renderCompactJsonLiteral([...source.systemTools])},`);
-    }
-    lines.push('    }),');
+    lines.push(`    implementationOwnerId: ${JSON.stringify(registration.implementationOwnerId)},`);
+    lines.push(`    registrationFamily: ${JSON.stringify(registration.registrationFamily)},`);
     lines.push('  }),');
   }
   lines.push(']);');
@@ -6135,38 +4839,44 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   return lines.join('\n');
 }
 
+function renderCliBundledPluginEntriesTs(params: Readonly<{
+  pluginPackages: readonly BundledPluginPackage[];
+}>): string {
+  const registrations = params.pluginPackages.flatMap(
+    (pluginPackage): BundledFirstPartyAgentRegistrationIdentity[] => {
+      if (!pluginPackage.agentId) return [];
+      const manifestAgent = readManifestContributionArray(pluginPackage.manifest, 'agents')[0];
+      return [{
+        pluginId: pluginPackage.pluginId,
+        localId: readRequiredContributionId(
+          manifestAgent,
+          'agents',
+          pluginPackage.pluginPackageId,
+        ),
+        implementationOwnerId: pluginPackage.agentId,
+        registrationFamily: 'agents',
+      }];
+    },
+  );
+  return renderCliBundledAgentRegistrationBindingsTs(registrations);
+}
+
 export function renderRetainedCliBundledPluginImplementationEntriesTs(entriesOutPath: string): string {
   const source = readFileSync(entriesOutPath, 'utf8');
-  const implementationStart = source.indexOf(
-    'export type BundledFirstPartyImplementationBinding = Readonly<{',
-  );
-  const implementationTypeEnd = source.indexOf('>;', implementationStart);
-  const implementationBindingsStart = source.indexOf(
-    'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS',
-    implementationTypeEnd,
-  );
-  if (
-    implementationStart < 0
-    || implementationTypeEnd < 0
-    || implementationBindingsStart < 0
-  ) {
+  const registrations = [...source.matchAll(
+    /identity:\s*(?:createPluginContributionIdentity\(\s*|Object\.freeze\(\s*)?\{\s*pluginId:\s*("(?:\\.|[^"\\])*")\s*,\s*localId:\s*("(?:\\.|[^"\\])*")\s*,?\s*\}\s*\)?\s*,\s*implementationOwnerId:\s*("(?:\\.|[^"\\])*")\s*,\s*registrationFamily:\s*(['"])([^'"]+)\4\s*,/gms,
+  )].map((match): BundledFirstPartyAgentRegistrationIdentity => ({
+    pluginId: JSON.parse(match[1]!),
+    localId: JSON.parse(match[2]!),
+    implementationOwnerId: JSON.parse(match[3]!),
+    registrationFamily: match[5]!,
+  }));
+  if (registrations.length === 0) {
     throw new Error(
-      `Invalid generated bundled plugin registry at ${entriesOutPath}: missing implementation bindings`,
+      `Invalid generated bundled plugin registry at ${entriesOutPath}: missing Agent registration bindings`,
     );
   }
-  const retainedImports = source
-    .split('\n')
-    .filter((line) => line.startsWith('import '))
-    .filter((line) => !line.includes('PluginSourceSpecV1'))
-    .filter((line) => !line.includes('PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS'));
-  return [
-    '/** GENERATED executable bindings for bundled first-party plugins. */',
-    ...retainedImports,
-    '',
-    source.slice(implementationStart, implementationTypeEnd + 2).trim(),
-    '',
-    source.slice(implementationBindingsStart).trimStart(),
-  ].join('\n');
+  return renderCliBundledAgentRegistrationBindingsTs(registrations);
 }
 
 function renderCliBundledPluginArtifactRecordsTs(
@@ -6464,14 +5174,7 @@ function readDescriptorGeneratedSvgIcon(
 
 function buildVisibleMessageDescriptor(descriptor: AgentUiDescriptor): JsonObject | undefined {
   const visibleMessages = readJsonObjectProperty(descriptor.session ?? {}, 'visibleMessages');
-  if (hasDescriptorFields(visibleMessages ?? undefined)) return visibleMessages ?? undefined;
-
-  const descriptorId = readDescriptorString(descriptor.session, 'visibleMessageFilterDescriptorId');
-  if (!descriptorId) return undefined;
-  return {
-    kind: 'plugin.ui.visibleMessages.v1',
-    descriptorId,
-  };
+  return hasDescriptorFields(visibleMessages ?? undefined) ? visibleMessages ?? undefined : undefined;
 }
 
 function normalizePluginRuntimeProjectionSource(source: string): string {
@@ -6512,31 +5215,6 @@ function resolvePluginRuntimeProjectionSourceFile(repoRoot: string, pluginPackag
     throw new Error(`Missing plugin runtime projection source for ${pluginPackageId}: ${source}`);
   }
   return match;
-}
-
-function renderPluginRuntimeProjectionImportPath(packageName: string, source: string): string {
-  const normalized = normalizePluginRuntimeProjectionSource(source);
-  return normalized === '.' ? packageName : `${packageName}/${normalized}`;
-}
-
-function renderAgentRuntimeContributionImportPath(packageName: string, source: string): string {
-  const normalized = source.trim();
-  if (normalized.startsWith('./')) {
-    return renderPluginRuntimeProjectionImportPath(packageName, normalized);
-  }
-  return renderTsImportSpecifier(normalized);
-}
-
-function createExternalSessionHostAdapterImportSource(
-  pluginPackage: BundledPluginPackage,
-  descriptor: RuntimeProjectionExportDescriptor,
-  importAlias: string,
-): ExternalSessionHostAdapterImportSource {
-  return {
-    exportName: descriptor.exportName,
-    importAlias,
-    importPath: renderAgentRuntimeContributionImportPath(pluginPackage.packageName, descriptor.source),
-  };
 }
 
 function readProviderOwnedEnvironmentKeys(
@@ -6636,48 +5314,6 @@ function collectVisibleMessageResolverSources(
     return [{
       agentId: pluginPackage.agentUiDescriptor.agentId,
       descriptor: projection,
-    }];
-  });
-}
-
-function collectProviderCatalogEntryHookSources(
-  pluginPackages: readonly BundledPluginPackage[],
-): readonly AgentCatalogEntryHookSource[] {
-  return pluginPackages.flatMap((pluginPackage): AgentCatalogEntryHookSource[] => {
-    const projection = pluginPackage.agentRuntimeContributions?.agentCatalogEntry;
-    if (!projection || !pluginPackage.agentId) return [];
-    const externalSessionHostAdapters = pluginPackage.agentRuntimeContributions?.externalSessionHostAdapters;
-    const constPrefix = toAgentConstPrefix(pluginPackage.agentId);
-    return [{
-      agentId: pluginPackage.agentId,
-      importName: projection.importName,
-      importPath: renderPluginRuntimeProjectionImportPath(pluginPackage.packageName, projection.source),
-      packageName: pluginPackage.packageName,
-      systemTools: readManifestContributionArray(pluginPackage.manifest, 'systemTools'),
-      ...(externalSessionHostAdapters
-        ? {
-            externalSessionHostAdapters: {
-              ...(externalSessionHostAdapters.candidateHostAdapter
-                ? {
-                    candidateHostAdapter: createExternalSessionHostAdapterImportSource(
-                      pluginPackage,
-                      externalSessionHostAdapters.candidateHostAdapter,
-                      `${constPrefix}_EXTERNAL_SESSION_CREATE_CANDIDATE_HOST_ADAPTER`,
-                    ),
-                  }
-                : {}),
-              ...(externalSessionHostAdapters.transcriptStoreAdapter
-                ? {
-                    transcriptStoreAdapter: createExternalSessionHostAdapterImportSource(
-                      pluginPackage,
-                      externalSessionHostAdapters.transcriptStoreAdapter,
-                      `${constPrefix}_EXTERNAL_SESSION_CREATE_TRANSCRIPT_STORE_ADAPTER`,
-                    ),
-                  }
-                : {}),
-            },
-          }
-        : {}),
     }];
   });
 }
@@ -7399,6 +6035,7 @@ async function generateBundledPluginEntries(
       dependencies,
     );
     const selectedPluginPackages = assignBundledImmutableArtifactGenerationIds({
+      mode: options.mode,
       pluginPackages: selectedResult.pluginPackages,
       priorIdentities: readPriorBundledImmutableArtifactIdentities(cliArtifactsOutPath),
     });
@@ -7449,14 +6086,10 @@ async function generateBundledPluginEntries(
     dependencies,
   );
   const pluginPackages = assignBundledImmutableArtifactGenerationIds({
+    mode: options.mode,
     pluginPackages: discoveredPluginPackages,
     priorIdentities: priorBundledImmutableArtifactIdentities,
   });
-  const protocolProjectionFacts = validateBundledPluginProtocolProjectionFacts(
-    await readProtocolProjectionFactsFromSource(options.rootDir, pluginPackages),
-    pluginPackages,
-    'source-authoring bundled-plugin publisher',
-  );
   const builtInLegacyConnectedAccountCompatibility =
     collectBuiltInLegacyConnectedAccountCompatibility(
       options.rootDir,
@@ -7569,7 +6202,10 @@ async function generateBundledPluginEntries(
     'packages/agents/src/agentSettings/generated/bundledAgentSettings.ts',
   );
   const agentIdsOutPath = resolve(options.rootDir, 'packages/agents/src/generated/agentIds.ts');
-  const sessionControlAdaptersOutPath = resolve(options.rootDir, 'packages/agents/src/generated/sessionControlAdapters.ts');
+  const retiredSessionControlAdaptersOutPath = resolve(
+    options.rootDir,
+    'packages/agents/src/generated/sessionControlAdapters.ts',
+  );
   const runtimeDescriptorReadersOutPath = resolve(options.rootDir, 'packages/agents/src/generated/runtimeDescriptorReaders.ts');
   const protocolAgentProviderIdsV1OutPath = resolve(
     options.rootDir,
@@ -7579,45 +6215,27 @@ async function generateBundledPluginEntries(
     options.rootDir,
     'packages/protocol/src/connect/generatedBuiltInLegacyConnectedAccountCompatibility.ts',
   );
-  const protocolRuntimeDescriptorContributionsOutPath = resolve(
+  const retiredProtocolRuntimeDescriptorContributionsOutPath = resolve(
     options.rootDir,
     'packages/protocol/src/agents/generated/runtime/descriptorContributionsV1.ts',
   );
+  const retiredProtocolRuntimeDescriptorModulesDir = resolve(
+    options.rootDir,
+    'packages/protocol/src/agents/generated/runtime/descriptors',
+  );
+  const retiredProtocolRuntimeDescriptorModuleOutPaths = existsSync(retiredProtocolRuntimeDescriptorModulesDir)
+    ? readdirSync(retiredProtocolRuntimeDescriptorModulesDir)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => resolve(retiredProtocolRuntimeDescriptorModulesDir, name))
+    : [];
   const protocolSessionPresentationCompatV1OutPath = resolve(
     options.rootDir,
     'packages/protocol/src/agents/generated/sessionPresentationCompatV1.ts',
-  );
-  const protocolRuntimeDescriptorContributions = collectProtocolRuntimeDescriptorContributions(
-    pluginPackages,
-    options.rootDir,
-  );
-  const protocolRuntimeDescriptorModuleOutputs = protocolRuntimeDescriptorContributions.map((contribution) => ({
-    outPath: resolve(
-      options.rootDir,
-      'packages/protocol/src/agents/generated/runtime/descriptors',
-      contribution.moduleFileName,
-    ),
-    out: renderGeneratedProtocolRuntimeDescriptorModuleTs(contribution),
-  }));
-  const protocolBuiltInBackendProfilesOutPath = resolve(
-    options.rootDir,
-    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
-  );
-  const protocolProjectionFactsOutPath = resolveBundledPluginProtocolProjectionFactsOutPath(
-    options.rootDir,
-  );
-  const protocolMemoryDefaultsOutPath = resolve(
-    options.rootDir,
-    'packages/protocol/src/agents/generated/memory/defaults.ts',
   );
   const protocolExternalSessionSourcesOutPath = resolve(
     options.rootDir,
     'packages/protocol/src/agents/generated/externalSession/sources.ts',
   );
-  const protocolBuiltInBackendProfilesContributions =
-    collectProtocolBuiltInBackendProfilesContributions(protocolProjectionFacts);
-  const protocolMemoryDefaultsContributions =
-    collectProtocolMemoryDefaultsContributions(protocolProjectionFacts);
   const protocolExternalSessionSourceContributions = await collectProtocolExternalSessionSourceContributions(
     pluginPackages,
   );
@@ -7648,11 +6266,8 @@ async function generateBundledPluginEntries(
       agentDefinitionsById,
     });
   const agentIdsOut = renderAgentIdsTs(generatedAgentIds);
-  const sessionControlAdaptersOut = renderAgentSessionControlAdaptersTs(
-    collectSessionControlAdapterContributions(pluginPackages),
-  );
   const runtimeDescriptorReadersOut = renderAgentRuntimeDescriptorReadersTs(
-    collectRuntimeDescriptorReaderContributions(pluginPackages),
+    collectReleasedFlatSessionMetadataRuntimeDescriptorReaderContributions(pluginPackages),
   );
   const protocolAgentProviderIdsV1Out = renderProtocolAgentProviderIdsV1Ts(
     collectProtocolAgentProviderIdsV1(generatedAgentIds),
@@ -7661,19 +6276,6 @@ async function generateBundledPluginEntries(
     renderProtocolBuiltInLegacyConnectedAccountCompatibilityTs(
       builtInLegacyConnectedAccountCompatibility,
     );
-  const protocolRuntimeDescriptorContributionsOut = renderProtocolRuntimeDescriptorContributionsV1Ts(
-    protocolRuntimeDescriptorContributions,
-  );
-  const protocolBuiltInBackendProfilesOut = renderGeneratedBuiltInBackendProfilesTs(
-    protocolBuiltInBackendProfilesContributions,
-    collectProviderMigrationSourceProfileIds(pluginPackages),
-  );
-  const protocolProjectionFactsOut = renderBundledPluginProtocolProjectionFactsTs(
-    protocolProjectionFacts,
-  );
-  const protocolMemoryDefaultsOut = renderGeneratedMemoryDefaultsTs(
-    protocolMemoryDefaultsContributions,
-  );
   const protocolExternalSessionSourcesOut = renderGeneratedExternalSessionSourcesTs(
     protocolExternalSessionSourceContributions,
   );
@@ -7717,6 +6319,12 @@ async function generateBundledPluginEntries(
   });
   removeRetiredGeneratedOutput(retiredAgentSettingsOutPath, options.mode);
   removeRetiredGeneratedOutput(retiredHostAgentSettingsOutPath, options.mode);
+  removeRetiredGeneratedOutput(retiredSessionControlAdaptersOutPath, options.mode);
+  removeRetiredGeneratedOutput(retiredProtocolRuntimeDescriptorContributionsOutPath, options.mode);
+  for (const retiredOutPath of retiredProtocolRuntimeDescriptorModuleOutPaths) {
+    removeRetiredGeneratedOutput(retiredOutPath, options.mode);
+  }
+  removeRetiredBundledPluginProtocolProjectionOutputs(options.rootDir, options.mode);
 
   if (options.mode === 'check') {
     assertGeneratedOutputMatches(cliOutPath, cliOut);
@@ -7724,7 +6332,6 @@ async function generateBundledPluginEntries(
     assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut);
     assertGeneratedOutputMatches(agentsOutPath, agentsOut);
     assertGeneratedOutputMatches(agentIdsOutPath, agentIdsOut);
-    assertGeneratedOutputMatches(sessionControlAdaptersOutPath, sessionControlAdaptersOut);
     assertGeneratedOutputMatches(runtimeDescriptorReadersOutPath, runtimeDescriptorReadersOut);
     assertGeneratedOutputMatches(protocolAgentProviderIdsV1OutPath, protocolAgentProviderIdsV1Out);
     assertGeneratedOutputMatches(
@@ -7732,19 +6339,9 @@ async function generateBundledPluginEntries(
       protocolBuiltInLegacyConnectedAccountCompatibilityOut,
     );
     assertGeneratedOutputMatches(
-      protocolRuntimeDescriptorContributionsOutPath,
-      protocolRuntimeDescriptorContributionsOut,
-    );
-    assertGeneratedOutputMatches(
       protocolSessionPresentationCompatV1OutPath,
       protocolSessionPresentationCompatV1Out,
     );
-    for (const output of protocolRuntimeDescriptorModuleOutputs) {
-      assertGeneratedOutputMatches(output.outPath, output.out);
-    }
-    assertGeneratedOutputMatches(protocolBuiltInBackendProfilesOutPath, protocolBuiltInBackendProfilesOut);
-    assertGeneratedOutputMatches(protocolProjectionFactsOutPath, protocolProjectionFactsOut);
-    assertGeneratedOutputMatches(protocolMemoryDefaultsOutPath, protocolMemoryDefaultsOut);
     assertGeneratedOutputMatches(protocolExternalSessionSourcesOutPath, protocolExternalSessionSourcesOut);
     assertGeneratedOutputMatches(uiOutPath, uiOut);
     assertGeneratedOutputMatches(uiTranslationsOutPath, uiTranslationsOut);
@@ -7774,7 +6371,6 @@ async function generateBundledPluginEntries(
     { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
     { outPath: agentsOutPath, out: agentsOut },
     { outPath: agentIdsOutPath, out: agentIdsOut },
-    { outPath: sessionControlAdaptersOutPath, out: sessionControlAdaptersOut },
     { outPath: runtimeDescriptorReadersOutPath, out: runtimeDescriptorReadersOut },
     { outPath: protocolAgentProviderIdsV1OutPath, out: protocolAgentProviderIdsV1Out },
     {
@@ -7782,17 +6378,9 @@ async function generateBundledPluginEntries(
       out: protocolBuiltInLegacyConnectedAccountCompatibilityOut,
     },
     {
-      outPath: protocolRuntimeDescriptorContributionsOutPath,
-      out: protocolRuntimeDescriptorContributionsOut,
-    },
-    {
       outPath: protocolSessionPresentationCompatV1OutPath,
       out: protocolSessionPresentationCompatV1Out,
     },
-    ...protocolRuntimeDescriptorModuleOutputs,
-    { outPath: protocolBuiltInBackendProfilesOutPath, out: protocolBuiltInBackendProfilesOut },
-    { outPath: protocolProjectionFactsOutPath, out: protocolProjectionFactsOut },
-    { outPath: protocolMemoryDefaultsOutPath, out: protocolMemoryDefaultsOut },
     { outPath: protocolExternalSessionSourcesOutPath, out: protocolExternalSessionSourcesOut },
     { outPath: uiOutPath, out: uiOut },
     { outPath: uiTranslationsOutPath, out: uiTranslationsOut },

@@ -115,6 +115,33 @@ test('public API comparison admits a purely additive surface without mandatory h
   assert.match(renderPublicApiReleaseComparison(report), /human review required: no/i);
 });
 
+test('public API comparison ignores publisher-owned since provenance when the source contract is unchanged', () => {
+  const report = comparePublicApiReleaseRecords({
+    packageName: '@happier-dev/example',
+    candidateVersion: '0.1.0-preview.2',
+    previousVersion: '0.1.0-preview.1',
+    previousInventory: inventory([{
+      specifier: '.',
+      exportName: 'Alpha',
+      kind: 'type',
+      since: '0.1.0-preview.1',
+    }]),
+    candidateInventory: inventory([{
+      specifier: '.',
+      exportName: 'Alpha',
+      kind: 'type',
+      since: '0.1.0-preview.2',
+    }]),
+    previousDeclarations: declarations(),
+    candidateDeclarations: declarations(),
+  });
+
+  assert.deepEqual(report.facts.changedSymbols, []);
+  assert.deepEqual(report.facts.unchangedSymbols, ['.:Alpha']);
+  assert.equal(report.disposition.humanReviewRequired, false);
+  assert.equal(report.disposition.versionDecision, 'no_surface_change');
+});
+
 test('release preparation derives the exact candidate channel and passes only a previous published tarball inventory into the canonical governance owner', async () => {
   const root = await mkdtemp(join(tmpdir(), 'public-api-governance-prepare-'));
   let cleanupCalls = 0;

@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { resolveLocalhostHost } from '../../apps/stack/scripts/utils/paths/localhost_host.mjs';
 import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer } from '../../apps/stack/scripts/runtime/shared/borrowed_expo.mjs';
+import { findRunningExpoStateInRoot } from '../../apps/stack/scripts/utils/expo/expo.mjs';
 
 function readJsonFileBestEffort(path) {
   try {
@@ -15,7 +16,7 @@ function readJsonFileBestEffort(path) {
   }
 }
 
-function resolveRuntimeJsonPathFromEnv(env) {
+export function resolveQaStackRuntimeJsonPath(env = process.env) {
   const explicitRuntimePath = String(env.HAPPIER_QA_STACK_RUNTIME_JSON_PATH ?? '').trim();
   if (explicitRuntimePath) return explicitRuntimePath;
 
@@ -90,8 +91,41 @@ function resolveQaStackName({ env, json, runtimePath }) {
   ).trim();
 }
 
+export function resolveQaUiRuntimeIdentity(env = process.env) {
+  const consumerRuntimePath = resolveQaStackRuntimeJsonPath(env);
+  const consumer = consumerRuntimePath ? readJsonFileBestEffort(consumerRuntimePath) : null;
+  if (!consumer) throw new Error('[qa-ui-url] Unable to resolve consumer stack runtime');
+  const consumerStackName = resolveQaStackName({ env, json: consumer, runtimePath: consumerRuntimePath });
+  if (String(env.HAPPIER_QA_UI_MODE ?? '').trim().toLowerCase() === 'snapshot') {
+    return Object.freeze({ mode: 'snapshot', consumerRuntimePath, producerRuntimePath: consumerRuntimePath, producerStackName: consumerStackName });
+  }
+  const consumerStackDir = dirname(consumerRuntimePath);
+  const stacksDir = String(env.HAPPIER_QA_STACKS_DIR ?? '').trim() || dirname(consumerStackDir);
+  const borrowedExpoStackName = String(
+    env.HAPPIER_QA_EXPO_SOURCE_STACK
+    ?? readEnvValue(join(consumerStackDir, 'env'), 'HAPPIER_STACK_EXPO_SOURCE_STACK')
+    ?? '',
+  ).trim();
+  if (isBorrowedExpoConsumer({ consumerStackName, producerStackName: borrowedExpoStackName })) {
+    return Object.freeze({
+      mode: 'borrowedExpo',
+      consumerRuntimePath,
+      producerRuntimePath: join(stacksDir, borrowedExpoStackName, 'stack.runtime.json'),
+      producerStackName: borrowedExpoStackName,
+    });
+  }
+  return Object.freeze({ mode: 'expo', consumerRuntimePath, producerRuntimePath: consumerRuntimePath, producerStackName: consumerStackName });
+}
+
+export async function resolveQaRunningExpoState(producerRuntimePath) {
+  return await findRunningExpoStateInRoot({
+    expoDevRoot: join(dirname(String(producerRuntimePath)), 'expo-dev'),
+    requireWeb: true,
+  });
+}
+
 export function resolveQaUiUrl(env = process.env) {
-  const runtimePath = resolveRuntimeJsonPathFromEnv(env);
+  const runtimePath = resolveQaStackRuntimeJsonPath(env);
   const json = runtimePath ? readJsonFileBestEffort(runtimePath) : null;
   if (!json) {
     throw new Error('[qa-ui-url] Unable to resolve stack.runtime.json (set HAPPIER_QA_STACK_RUNTIME_JSON_PATH or HAPPIER_QA_STACKS_DIR)');

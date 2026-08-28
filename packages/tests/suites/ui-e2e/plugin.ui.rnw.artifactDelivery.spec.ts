@@ -769,7 +769,7 @@ test.describe('plugin UI: current generated RNW artifact delivery', () => {
             kind: 'plugins_install',
         });
         const runtimeV1 = attestExternalInspectorRuntime(await describeProjection());
-        expect(runtimeV1.artifactDigest).toBe(inspectorAttestation.webArtifactDigest);
+        expect(runtimeV1.artifactDigest).toBe(inspectorAttestation.artifact.digest);
 
         const traffic = observePeerTraffic(page);
         await page.setViewportSize({ width: 1440, height: 900 });

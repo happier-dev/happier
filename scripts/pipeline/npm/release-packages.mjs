@@ -16,13 +16,16 @@ import {
 import { resolveRollingPublishVersion } from '../release/lib/rolling-version-allocation.mjs';
 import {
   admitNpmPublication,
+  admitPublicSdkPublication,
   admitPublicSdkRelease,
   publicSdkReleaseApprovalRequired,
   resolvePublicNpmPackageNames,
 } from '../release/admit-release.mjs';
+import { analyzeCurrentPublicApiForEditorial } from '../release/public-api-governance.mjs';
+import { publicApiAdmissionFacts } from '../release/analyze-release-change.mjs';
 import { assertCleanWorktree } from '../git/ensure-clean-worktree.mjs';
 import { exportPackSandboxTarball } from '../../../apps/stack/scripts/pack.mjs';
-import { resolvePublicSdkTarballValidationTimeoutMs } from './validate-public-sdk-tarballs.mjs';
+import { validatePublicSdkPublicationTarballs } from './validate-public-sdk-publication-tarballs.mjs';
 
 function fail(message) {
   console.error(message);
@@ -402,38 +405,6 @@ function publishPluginSdkPair(repoRoot, channel, sdkTarball, uiTarball, publishO
   });
 }
 
-/**
- * The pack sandbox is the single candidate-byte owner. Validate the exact
- * exported files once, after every selected public package has been packed and
- * before either existing publisher can upload one of them.
- *
- * @param {string} repoRoot
- * @param {Record<string, string>} publicTarballs
- * @param {{ dryRun: boolean }} opts
- */
-function runPublicSdkTarballValidationPhase(repoRoot, publicTarballs, opts) {
-  const pluginSdkTarball = publicTarballs.plugin_sdk;
-  const pluginUiTarball = publicTarballs.plugin_ui;
-  const sdkTarball = publicTarballs.sdk;
-  if (!pluginSdkTarball && !pluginUiTarball && !sdkTarball) return;
-  const script = withinRepo(repoRoot, 'scripts/pipeline/npm/validate-public-sdk-tarballs.mjs');
-  const args = [
-    script,
-    ...(pluginSdkTarball ? ['--plugin-sdk-tarball', pluginSdkTarball] : []),
-    ...(pluginUiTarball ? ['--plugin-ui-tarball', pluginUiTarball] : []),
-    ...(sdkTarball ? ['--sdk-tarball', sdkTarball] : []),
-  ];
-  run(opts, process.execPath, args, {
-    cwd: repoRoot,
-    timeoutMs: resolvePublicSdkTarballValidationTimeoutMs({
-      repoRoot,
-      pluginSdkTarball,
-      pluginUiTarball,
-      sdkTarball,
-    }),
-  });
-}
-
 async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -456,6 +427,14 @@ async function main() {
       'channels-protocol-version': { type: 'string', default: '' },
       'authorized-sha': { type: 'string', default: '' },
       'approve-public-sdk-release': { type: 'string', default: 'false' },
+      'plugin-sdk-ready': { type: 'string', default: 'false' },
+      'plugin-sdk-api-classification': { type: 'string', default: '' },
+      'plugin-sdk-migration-notes': { type: 'string', default: '' },
+      'sdk-auth-readiness': { type: 'string', default: '' },
+      'sdk-auth-waiver': { type: 'string', default: '' },
+      'sdk-api-classification': { type: 'string', default: '' },
+      'sdk-migration-notes': { type: 'string', default: '' },
+      'release-notes-id': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -494,6 +473,14 @@ async function main() {
     values['approve-public-sdk-release'],
     '--approve-public-sdk-release',
   );
+  const pluginSdkReady = parseBool(values['plugin-sdk-ready'], '--plugin-sdk-ready');
+  const pluginSdkApiClassification = String(values['plugin-sdk-api-classification'] ?? '').trim();
+  const pluginSdkMigrationNotes = String(values['plugin-sdk-migration-notes'] ?? '').trim();
+  const sdkAuthReadiness = String(values['sdk-auth-readiness'] ?? '').trim();
+  const sdkAuthWaiver = String(values['sdk-auth-waiver'] ?? '').trim();
+  const sdkApiClassification = String(values['sdk-api-classification'] ?? '').trim();
+  const sdkMigrationNotes = String(values['sdk-migration-notes'] ?? '').trim();
+  const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
 
   const opts = { dryRun };
   if (mode !== 'pack' && mode !== 'pack+publish') {
@@ -659,6 +646,59 @@ async function main() {
       ? { channel: 'preview', tag: 'dev' }
       : { channel, tag: '' };
 
+  if (!dryRun && mode === 'pack+publish' && (publishPluginSdk || publishSdk)) {
+    const publicApiComparisons = [];
+    for (const pkg of publicSdkPackages.filter((item) => item.key !== 'channels_protocol')) {
+      const profileId = pkg.key === 'plugin_sdk' ? 'plugin-sdk' : pkg.key === 'plugin_ui' ? 'plugin-ui' : 'sdk';
+      const component = pkg.key === 'sdk' ? 'sdk' : 'plugin_sdk';
+      const sourceVersion = readPackageVersion(repoRoot, pkg.packageRelDir);
+      const analysis = await analyzeCurrentPublicApiForEditorial({
+        profileId,
+        packageName: String(pkg.publication.expectedPackageName ?? ''),
+        packageRoot: withinRepo(repoRoot, pkg.packageRelDir),
+        sourceVersion,
+        releaseChannel: channelId === 'stable' ? 'stable' : 'preview',
+        repositoryRoot: repoRoot,
+      });
+      publicApiComparisons.push({
+        component,
+        profileId,
+        packageName: String(pkg.publication.expectedPackageName ?? ''),
+        sourceVersion: analysis.sourceVersion,
+        sourcePosture: pkg.sourceReleasePolicy?.posture,
+        externalPublicationRequiresApproval: pkg.sourceReleasePolicy?.externalPublicationRequiresApproval === true,
+        releaseChannel: analysis.releaseChannel,
+        humanReviewRequired: analysis.comparison?.disposition?.humanReviewRequired === true,
+        comparison: analysis.comparison,
+      });
+    }
+    const pluginSdkFacts = publicApiAdmissionFacts(publicApiComparisons, 'plugin_sdk');
+    const sdkFacts = publicApiAdmissionFacts(publicApiComparisons, 'sdk');
+    admitPublicSdkPublication({
+      channel,
+      npmTag: channelId === 'stable' ? 'latest' : 'next',
+      approved: approvePublicSdkRelease,
+      releaseNotesId,
+      publishPluginSdk,
+      pluginSdkReady,
+      pluginSdkVersion: publicSdkPackages.find((pkg) => pkg.key === 'plugin_sdk')?.version,
+      pluginSdkFirstPublication: pluginSdkFacts.firstPublication,
+      pluginSdkRemovedSymbols: pluginSdkFacts.removedSymbols,
+      pluginSdkHumanReviewRequired: pluginSdkFacts.humanReviewRequired,
+      pluginSdkClassification: pluginSdkApiClassification,
+      pluginSdkMigrationNotes,
+      publishSdk,
+      sdkAuthReadiness,
+      sdkAuthWaiver,
+      sdkVersion: publicSdkPackages.find((pkg) => pkg.key === 'sdk')?.version,
+      sdkFirstPublication: sdkFacts.firstPublication,
+      sdkRemovedSymbols: sdkFacts.removedSymbols,
+      sdkHumanReviewRequired: sdkFacts.humanReviewRequired,
+      sdkClassification: sdkApiClassification,
+      sdkMigrationNotes,
+    });
+  }
+
   /** @type {Array<() => void>} */
   const restorePackageManifests = [];
   try {
@@ -742,7 +782,7 @@ async function main() {
       });
       publicTarballs[pkg.key] = path.join(withinRepo(repoRoot, pkg.outDir), metadata.tarball.name);
       const apiGovernance = metadata.publication?.apiGovernance ?? null;
-      if (pkg.sourceReleasePolicy && (authorizedSha || mode === 'pack+publish')) {
+      if (pkg.key === 'channels_protocol' && pkg.sourceReleasePolicy && (authorizedSha || mode === 'pack+publish')) {
         admitPublicSdkRelease({
           packageName: String(metadata.publication?.name ?? ''),
           approvalRequired: publicSdkReleaseApprovalRequired({
@@ -756,7 +796,15 @@ async function main() {
       }
     }
 
-    runPublicSdkTarballValidationPhase(repoRoot, publicTarballs, opts);
+    if (!dryRun && (publishPluginSdk || publishSdk)) {
+      await validatePublicSdkPublicationTarballs({
+        repoRoot,
+        pluginSdkTarball: publishPluginSdk ? publicTarballs.plugin_sdk : null,
+        pluginUiTarball: publishPluginSdk ? publicTarballs.plugin_ui : null,
+        sdkTarball: publishSdk ? publicTarballs.sdk : null,
+        env: process.env,
+      });
+    }
 
     if (mode === 'pack+publish' && publishPluginSdk) {
       publishPluginSdkPair(

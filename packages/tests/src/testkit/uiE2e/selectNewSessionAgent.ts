@@ -9,11 +9,17 @@ const AGENT_LABEL_BY_ID: Readonly<Record<string, string>> = {
   codex: 'Codex',
 };
 
-function expectedAgentLabel(agentId: string): string {
+function expectedAgentLabel(agentId: string, label?: string): string {
+  if (label && label.trim()) return label.trim();
   return AGENT_LABEL_BY_ID[agentId] ?? agentId;
 }
 
-function buildAgentOptionTestIds(agentId: string): string[] {
+/**
+ * Stable option testIDs tried in order for one Agent target. Qualified plugin
+ * Agent ids (`agent:<pluginId>/<localId>`) resolve through the same wizard and
+ * chip-picker option families as built-in Agent ids.
+ */
+export function buildAgentOptionTestIds(agentId: string): string[] {
   const dropdownSafeAgentId = agentId.replace(/[^a-zA-Z0-9_-]/g, '_');
   return [
     `dropdown-option-${dropdownSafeAgentId}`,
@@ -96,8 +102,9 @@ async function openAgentSelectionSurface(page: Page): Promise<void> {
 async function isAgentSelected(params: Readonly<{
   page: Page;
   agentId: string;
+  label?: string;
 }>): Promise<boolean> {
-  const expectedLabel = expectedAgentLabel(params.agentId);
+  const expectedLabel = expectedAgentLabel(params.agentId, params.label);
   const selectedSurfaces = [
     params.page.getByTestId(WIZARD_AGENT_DROPDOWN_TRIGGER_TEST_ID).first(),
     params.page.getByTestId(AGENT_CHIP_TEST_ID).first(),
@@ -115,6 +122,12 @@ async function isAgentSelected(params: Readonly<{
 export async function selectNewSessionAgent(params: Readonly<{
   page: Page;
   agentId: string;
+  /**
+   * Exact display label for targets whose visible title differs from the id
+   * (qualified plugin Agents). Required for those targets because the id is
+   * never rendered as the selection label.
+   */
+  label?: string;
   timeoutMs?: number;
 }>): Promise<void> {
   const timeoutMs = params.timeoutMs ?? 120_000;
@@ -122,17 +135,17 @@ export async function selectNewSessionAgent(params: Readonly<{
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    if (await isAgentSelected({ page: params.page, agentId: params.agentId })) return;
+    if (await isAgentSelected({ page: params.page, agentId: params.agentId, label: params.label })) return;
 
     await openAgentSelectionSurface(params.page);
 
     if (await clickFirstEnabledOption({
       page: params.page,
       agentOptionTestIds,
-      agentLabel: expectedAgentLabel(params.agentId),
+      agentLabel: expectedAgentLabel(params.agentId, params.label),
     })) {
       await maybeApplyAndClosePicker(params.page);
-      if (await isAgentSelected({ page: params.page, agentId: params.agentId })) return;
+      if (await isAgentSelected({ page: params.page, agentId: params.agentId, label: params.label })) return;
     }
 
     await params.page.waitForTimeout(250);

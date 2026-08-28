@@ -34,7 +34,7 @@ function csv(value, label) {
  * candidateSourceSha?: string; resumeRunId?: string; operationId?: string; attemptId?: string;
  * releaseNotesId?: string; confirm?: string; deployTargets?: string;
  * environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
- * waiveCi?: boolean; approvePublicSdkRelease?: boolean; includeValidationSuites?: string; waiveValidationSuites?: string; overrideReason?: string;
+ * waiveCi?: boolean; includeValidationSuites?: string; waiveValidationSuites?: string; overrideReason?: string;
  * }} input
  */
 export function validateReleaseDispatch(input) {
@@ -56,10 +56,9 @@ export function validateReleaseDispatch(input) {
   const includeValidationSuiteIds = refinements.includeSuiteIds;
   const waiveValidationSuiteIds = refinements.waiveSuiteIds;
   const waiveCi = input.waiveCi === true;
-  const approvePublicSdkRelease = input.approvePublicSdkRelease === true;
   const overrideReason = text(input.overrideReason);
-  if ((waiveCi || approvePublicSdkRelease || waiveValidationSuiteIds.length > 0) && !overrideReason) {
-    throw new Error('override_reason is required when CI or validation evidence is waived or a public SDK release is explicitly approved.');
+  if ((waiveCi || waiveValidationSuiteIds.length > 0) && !overrideReason) {
+    throw new Error('override_reason is required when CI or validation evidence is waived.');
   }
   if (overrideReason.length > OVERRIDE_REASON_MAX || /[\r\n]/u.test(overrideReason)) {
     throw new Error(`override_reason must be a single line of at most ${OVERRIDE_REASON_MAX} characters.`);
@@ -119,7 +118,7 @@ export function validateReleaseDispatch(input) {
     baseRef,
     compareLabel,
     deployTargets,
-    overrides: { waiveCi, approvePublicSdkRelease, includeValidationSuiteIds, waiveValidationSuiteIds, reason: overrideReason },
+    overrides: { waiveCi, includeValidationSuiteIds, waiveValidationSuiteIds, reason: overrideReason },
   };
 }
 
@@ -141,7 +140,6 @@ export function validateReleaseDispatchFromEnvironment(env) {
     eventName: env.GITHUB_EVENT_NAME,
     refName: env.GITHUB_REF_NAME,
     waiveCi: env.WAIVE_CI === 'true',
-    approvePublicSdkRelease: env.APPROVE_PUBLIC_SDK_RELEASE === 'true',
     includeValidationSuites: env.INCLUDE_VALIDATION_SUITES,
     waiveValidationSuites: env.WAIVE_VALIDATION_SUITES,
     overrideReason: env.OVERRIDE_REASON,

@@ -1,0 +1,74 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    file: ../_shared/gotoNewSessionComposer.yaml
+
+- assertVisible:
+    id: agent-input-agent-chip
+- tapOn:
+    id: agent-input-agent-chip
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
+    timeout: 60000
+- tapOn:
+    id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
+
+- tapOn:
+    id: new-session-composer-input
+- inputText: ${HAPPIER_E2E_SESSION_AGENT_PROMPT}
+- tapOn:
+    id: new-session-composer-send
+
+# Host confirmation interaction: the deterministic example asks once per turn.
+- extendedWaitUntil:
+    visible:
+      id: permission-footer.allow
+    timeout: 120000
+- tapOn:
+    id: permission-footer.allow
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_SESSION_AGENT_ASSISTANT_TEXT}
+    timeout: 120000
+
+# A later cancellation turn: aborting the pending confirmation is terminal,
+# so the composer returns without a new assistant message for that turn.
+- tapOn:
+    id: session-composer-input
+- inputText: ${HAPPIER_E2E_SESSION_AGENT_CANCEL_PROMPT}
+- tapOn:
+    id: session-composer-send
+- extendedWaitUntil:
+    visible:
+      id: permission-footer.allow
+    timeout: 120000
+- tapOn:
+    id: agent-input-abort
+- extendedWaitUntil:
+    notVisible:
+      id: permission-footer.allow
+    timeout: 120000
+- extendedWaitUntil:
+    notVisible:
+      id: agent-input-abort
+    timeout: 120000
+- assertVisible:
+    id: session-composer-input
+- assertNotVisible: "Prompt: ${HAPPIER_E2E_SESSION_AGENT_CANCEL_PROMPT}"
+
+# The Agent keeps serving new turns after a cancelled one.
+- tapOn:
+    id: session-composer-input
+- inputText: ${HAPPIER_E2E_SESSION_AGENT_RECOVERY_PROMPT}
+- tapOn:
+    id: session-composer-send
+- extendedWaitUntil:
+    visible:
+      id: permission-footer.allow
+    timeout: 120000
+- tapOn:
+    id: permission-footer.allow
+- extendedWaitUntil:
+    visible: "Prompt: ${HAPPIER_E2E_SESSION_AGENT_RECOVERY_PROMPT}"
+    timeout: 120000
+- takeScreenshot: plugin-platform-current-source-session-agent-${HAPPIER_E2E_MOBILE_PLATFORM}

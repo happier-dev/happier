@@ -13,14 +13,13 @@ import {
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const BASELINE_REF = 'refs/qualified-v4-payload-baseline';
-const RETRY_CANDIDATE_REF = 'refs/qualified-v4-payload-candidate';
 
 /**
- * Resolve the npm-publication facts which must be coupled to the exact
- * candidate. The workflow supplies topology; this is the sole owner of the
- * deployed-baseline lookup and candidate identity check.
+ * Resolve the npm-publication facts for the source checkout selected by the
+ * release dispatch. The workflow supplies topology; this is the sole owner of
+ * the deployed-baseline lookup and source identity check.
  *
- * @param {{ channel: unknown; candidateRef: unknown; candidateSha: unknown }} input
+ * @param {{ channel: unknown; sourceRef: unknown; sourceSha: unknown }} input
  */
 export function resolveQualifiedV4NpmCliPayloadAdmission(input) {
   const channel = String(input.channel ?? '').trim();
@@ -28,22 +27,22 @@ export function resolveQualifiedV4NpmCliPayloadAdmission(input) {
     throw new Error(`--channel must be 'preview' or 'production' (got '${channel || '<empty>'}')`);
   }
 
-  const candidateRef = String(input.candidateRef ?? '').trim();
-  if (candidateRef !== 'HEAD' && candidateRef !== RETRY_CANDIDATE_REF) {
-    throw new Error(`--candidate-ref must be HEAD or ${RETRY_CANDIDATE_REF}`);
+  const sourceRef = String(input.sourceRef ?? '').trim();
+  if (sourceRef !== 'HEAD') {
+    throw new Error('--source-ref must be HEAD');
   }
 
-  const candidateSha = String(input.candidateSha ?? '').trim();
-  if (!COMMIT_SHA.test(candidateSha)) {
-    throw new Error('--candidate-sha must be exactly 40 lowercase hexadecimal characters.');
+  const sourceSha = String(input.sourceSha ?? '').trim();
+  if (!COMMIT_SHA.test(sourceSha)) {
+    throw new Error('--source-sha must be exactly 40 lowercase hexadecimal characters.');
   }
 
   return {
     channel,
     deployEnvironment: channel === 'production' ? 'production' : 'preview',
     deployBranch: `deploy/${channel === 'production' ? 'production' : 'preview'}/server`,
-    candidateRef,
-    candidateSha,
+    sourceRef,
+    sourceSha,
   };
 }
 
@@ -70,8 +69,8 @@ function git(repoRoot, args, { allowFailure = false } = {}) {
 /**
  * @param {{
  *   channel: unknown;
- *   candidateRef: unknown;
- *   candidateSha: unknown;
+ *   sourceRef: unknown;
+ *   sourceSha: unknown;
  *   summaryFile?: unknown;
  * }} input
  * @param {{
@@ -87,18 +86,13 @@ export async function admitQualifiedV4NpmCliPayload(input, dependencies = {}) {
   const runAdmission = dependencies.runAdmission
     ?? runQualifiedConnectedAccountsV4ActivationAdmission;
 
-  if (resolved.candidateRef === RETRY_CANDIDATE_REF) {
-    runGit(['fetch', '--no-tags', '--depth=1', 'origin', resolved.candidateSha]);
-    runGit(['update-ref', RETRY_CANDIDATE_REF, 'FETCH_HEAD']);
-  }
-
-  const candidateAtRef = String(
-    runGit(['rev-parse', '--verify', `${resolved.candidateRef}^{commit}`]).stdout ?? '',
+  const sourceAtRef = String(
+    runGit(['rev-parse', '--verify', `${resolved.sourceRef}^{commit}`]).stdout ?? '',
   ).trim();
-  if (candidateAtRef !== resolved.candidateSha) {
+  if (sourceAtRef !== resolved.sourceSha) {
     throw new Error(
-      `[npm-qualified-v4-admission] candidate ref ${resolved.candidateRef} resolved to ` +
-      `'${candidateAtRef || '<empty>'}', expected admitted SHA '${resolved.candidateSha}'.`,
+      `[npm-qualified-v4-admission] source ref ${resolved.sourceRef} resolved to ` +
+      `'${sourceAtRef || '<empty>'}', expected release source SHA '${resolved.sourceSha}'.`,
     );
   }
 
@@ -121,7 +115,7 @@ export async function admitQualifiedV4NpmCliPayload(input, dependencies = {}) {
     '--repo-root', repoRoot,
     '--admission-kind', 'payload-publication',
     '--baseline-ref', BASELINE_REF,
-    '--candidate-ref', resolved.candidateRef,
+    '--candidate-ref', resolved.sourceRef,
     ...(summaryFile ? ['--summary-file', summaryFile] : []),
   ];
   const result = await runAdmission(admissionArgs);
@@ -134,16 +128,16 @@ export async function main(argv = process.argv.slice(2)) {
     args: argv,
     options: {
       channel: { type: 'string' },
-      'candidate-ref': { type: 'string' },
-      'candidate-sha': { type: 'string' },
+      'source-ref': { type: 'string' },
+      'source-sha': { type: 'string' },
       'summary-file': { type: 'string', default: '' },
     },
     allowPositionals: false,
   });
   return admitQualifiedV4NpmCliPayload({
     channel: values.channel,
-    candidateRef: values['candidate-ref'],
-    candidateSha: values['candidate-sha'],
+    sourceRef: values['source-ref'],
+    sourceSha: values['source-sha'],
     summaryFile: values['summary-file'],
   });
 }

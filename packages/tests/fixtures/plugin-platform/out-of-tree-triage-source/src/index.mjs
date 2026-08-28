@@ -10,7 +10,6 @@
  */
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageSourcesContributionProtocolV1,
@@ -72,7 +71,10 @@ function decodeContinuation(continuation) {
 
 function readPageRequest(input) {
     if (input.page.kind === 'initial') {
-        return { offset: 0, limit: Math.min(input.page.limit, MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1) };
+        // The protocol-owned input schema already admits only page sizes whose
+        // encoded result fits the host Action boundary. Re-clamping here would
+        // make this external source a second, stale cardinality owner.
+        return { offset: 0, limit: input.page.limit };
     }
     return decodeContinuation(input.page.continuation);
 }

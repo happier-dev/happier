@@ -12,62 +12,25 @@ function extractJobBlock(raw, jobName) {
   return match[1];
 }
 
-test('automatic CI exercises the packed plugin-platform vertical with its natural artifacts', async () => {
+test('automatic CI exercises Plugin Platform feature contracts from current source', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const workflow = YAML.parse(raw);
-  const packedJob = extractJobBlock(raw, 'plugin-platform-packed');
-
-  assert.equal(
-    workflow?.jobs?.['plugin-platform-packed']?.name,
-    'Plugin Platform (natural packed artifacts)',
-  );
-
-  assert.match(
-    packedJob,
-    /if:\s*\$\{\{\s*\(github\.event_name != 'workflow_dispatch' && github\.event_name != 'workflow_call'\) \|\| inputs\.run_plugin_platform_packed\s*\}\}/,
-    'the packed proof should run automatically for normal events and when an explicit reusable caller selects it',
-  );
-  assert.match(
-    packedJob,
-    /yarn -s workspace @happier-dev\/tests build:plugin-platform:natural/,
-    'the packed proof should build its natural artifact inputs through the canonical builder',
-  );
-  assert.match(packedJob, /--run-id "\$PACKED_PLUGIN_PLATFORM_RUN_ID"/);
-  assert.match(packedJob, /--output-root "\$PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT"/);
-  for (const artifactField of [
-    'sdkTarballPath',
-    'pluginUiTarballPath',
-    'channelsProtocolTarballPath',
-    'cliTarballPath',
-  ]) {
-    assert.match(
-      packedJob,
-      new RegExp(`artifactInputs\\.${artifactField}`),
-      `the packed runner should receive the builder's ${artifactField}`,
-    );
-  }
-  assert.match(
-    packedJob,
-    /yarn -s workspace @happier-dev\/tests test:plugin-platform:packed-author/,
-    'the packed proof should pass the exact natural SDK, Plugin UI, and CLI tarballs to the existing vertical runner',
-  );
-  assert.match(packedJob, /--sdk-tarball "\$PACKED_PLUGIN_PLATFORM_SDK_TARBALL"/);
-  assert.match(packedJob, /--plugin-ui-tarball "\$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL"/);
-  assert.match(packedJob, /--cli-tarball "\$PACKED_PLUGIN_PLATFORM_CLI_TARBALL"/);
-  assert.doesNotMatch(packedJob, /--native-target|--native-artifacts-dir/);
+  assert.equal(workflow?.jobs?.['plugin-platform-packed'], undefined);
+  assert.equal(workflow?.on?.workflow_call?.inputs?.run_plugin_platform_packed, undefined);
+  assert.match(raw, /yarn workspace @happier-dev\/tests test:plugin-platform:source/u);
+  assert.doesNotMatch(raw, /build:plugin-platform:natural|PACKED_PLUGIN_PLATFORM_|test:plugin-platform:packed-/u);
 });
 
-test('the reusable full profile selects the packed plugin-platform job', async () => {
+test('the reusable full profile cannot select a release-representation feature gate', async () => {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const dispatchRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests-dispatch.yml'), 'utf8');
   const testsWorkflow = YAML.parse(testsRaw);
   const dispatchWorkflow = YAML.parse(dispatchRaw);
 
-  assert.equal(testsWorkflow?.on?.workflow_call?.inputs?.run_plugin_platform_packed?.type, 'boolean');
-  assert.match(extractJobBlock(testsRaw, 'plugin-platform-packed'), /inputs\.run_plugin_platform_packed/u);
-  assert.equal(dispatchWorkflow?.jobs?.resolve?.outputs?.run_plugin_platform_packed, '${{ steps.flags.outputs.run_plugin_platform_packed }}');
-  assert.match(dispatchRaw, /if \[ "\$\{profile\}" = "full" \]; then[\s\S]*run_plugin_platform_packed=true/u);
-  assert.equal(dispatchWorkflow?.jobs?.tests?.with?.run_plugin_platform_packed, "${{ needs.resolve.outputs.run_plugin_platform_packed == 'true' }}");
+  assert.equal(testsWorkflow?.on?.workflow_call?.inputs?.run_plugin_platform_packed, undefined);
+  assert.equal(dispatchWorkflow?.jobs?.resolve?.outputs?.run_plugin_platform_packed, undefined);
+  assert.equal(dispatchWorkflow?.jobs?.tests?.with?.run_plugin_platform_packed, undefined);
+  assert.doesNotMatch(dispatchRaw, /plugin_platform_packed/u);
 });
 
 test('ordinary UI E2E path filtering includes its source-loaded Protocol and SDK dependencies', async () => {
@@ -83,30 +46,15 @@ test('ordinary UI E2E path filtering includes its source-loaded Protocol and SDK
   }
 });
 
-test('automatic CI runs the out-of-tree Channels provider fixture against the built channels-protocol tarball', async () => {
+test('automatic CI runs the public-only out-of-tree fixtures without a package archive', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
-  const packedJob = extractJobBlock(raw, 'plugin-platform-packed');
-
-  assert.match(
-    packedJob,
-    /PACKED_PLUGIN_PLATFORM_CHANNELS_PROTOCOL_TARBALL', artifactInputs\.channelsProtocolTarballPath/,
-    'the already-built channels-protocol tarball must be projected, not discarded',
-  );
-  assert.match(
-    packedJob,
-    /yarn -s workspace @happier-dev\/tests test:plugin-platform:out-of-tree-channel-socket-provider/,
-    'the packed external Channels provider fixture must run in the same natural-artifact lane',
-  );
-  assert.match(
-    packedJob,
-    /CHANNELS_PROTOCOL_TARBALL="\$PACKED_PLUGIN_PLATFORM_CHANNELS_PROTOCOL_TARBALL"/,
-    'the fixture reads the candidate protocol archive from CHANNELS_PROTOCOL_TARBALL',
-  );
-  assert.match(
-    packedJob,
-    /PLUGIN_SDK_TARBALL="\$PACKED_PLUGIN_PLATFORM_SDK_TARBALL"/,
-    'the fixture reads the candidate SDK archive from PLUGIN_SDK_TARBALL',
-  );
+  const testsPackage = JSON.parse(await readFile(join(repoRoot, 'packages', 'tests', 'package.json'), 'utf8'));
+  const sourceLane = testsPackage.scripts['test:plugin-platform:source'];
+  assert.match(sourceLane, /out-of-tree-channel-socket-provider\/test\/public-only\.test\.mjs/u);
+  assert.match(sourceLane, /out-of-tree-channel-socket-provider\/test\/public-runtime\.test\.mjs/u);
+  assert.match(sourceLane, /composer-external-dogfood\/test\/public-only\.test\.mjs/u);
+  assert.doesNotMatch(sourceLane, /pack-fixture|installedTarballProof|action-contract-composition|\.tgz|tarball/iu);
+  assert.match(raw, /yarn workspace @happier-dev\/tests test:plugin-platform:source/u);
 });
 
 test('the existing weekly automatic workflow reaches the slow core route', async () => {

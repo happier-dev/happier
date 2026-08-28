@@ -36,9 +36,18 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   );
 
   const checkouts = checkoutSteps(candidate);
-  assert.equal(checkouts.length, 1);
+  assert.equal(checkouts.length, 2);
+  assert.equal(checkouts[0].with?.repository, '${{ job.workflow_repository }}');
+  assert.equal(checkouts[0].with?.ref, '${{ job.workflow_sha }}');
   assert.equal(checkouts[0].with?.['persist-credentials'], false);
-  assert.notEqual(checkouts[0].with?.ref, '${{ job.workflow_sha }}');
+  assert.equal(checkouts[1].with?.repository, undefined);
+  assert.equal(checkouts[1].with?.ref, '${{ steps.release_inputs.outputs.authorized_sha }}');
+  assert.equal(checkouts[1].with?.['persist-credentials'], false);
+  const trustedCheckoutIndex = candidate.steps.findIndex((step) => step.name === 'Checkout trusted workflow control bytes');
+  const resolveInputsIndex = candidate.steps.findIndex((step) => step.name === 'Resolve release inputs');
+  const sourceCheckoutIndex = candidate.steps.findIndex((step) => step.name === 'Checkout source ref');
+  assert.ok(trustedCheckoutIndex >= 0 && trustedCheckoutIndex < resolveInputsIndex);
+  assert.ok(resolveInputsIndex < sourceCheckoutIndex);
   assert.match(JSON.stringify(candidate), /node scripts\/pipeline\/run\.mjs npm-release/);
 });
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { analyzeReleasePublicApiComparisons, buildReleaseChangeAnalysis } from './analyze-release-change.mjs';
-import { renderReleaseChangeAnalysisGitHubOutput } from './analyze-release-change.mjs';
+import { renderPublicApiComparisonSummary, renderReleaseChangeAnalysisGitHubOutput } from './analyze-release-change.mjs';
 
 test('release change analysis separates fast admission from seam-selected heavy validation', () => {
   const analysis = buildReleaseChangeAnalysis({
@@ -70,6 +70,7 @@ test('release change analysis carries owner-produced public API comparison facts
     sourcePosture: 'developer_preview',
     comparison: {
       status: 'comparison',
+      facts: { removedSymbols: ['oldName'] },
       disposition: { humanReviewRequired: true },
     },
   }];
@@ -86,10 +87,17 @@ test('release change analysis carries owner-produced public API comparison facts
   });
 
   assert.deepEqual(analysis.publicApiComparisons, publicApiComparisons);
+  assert.deepEqual(analysis.publicSdkAdmissionFacts.pluginSdk, {
+    firstPublication: false,
+    removedSymbols: true,
+    humanReviewRequired: true,
+  });
   assert.equal(analysis.publicApiHumanReviewRequired, true);
   assert.equal(analysis.publicSdkReleaseApprovalRequired, true);
   assert.match(renderReleaseChangeAnalysisGitHubOutput(analysis), /public_api_human_review_required=true/);
   assert.match(renderReleaseChangeAnalysisGitHubOutput(analysis), /public_sdk_release_approval_required=true/);
+  assert.match(renderReleaseChangeAnalysisGitHubOutput(analysis), /plugin_sdk_api_removed_symbols=true/u);
+  assert.match(renderPublicApiComparisonSummary(analysis), /Removed symbols: oldName/u);
 });
 
 test('prepublish-hold packages require explicit first-publication approval without treating additions as breaking', () => {

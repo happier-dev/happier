@@ -3,6 +3,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const flowUrl = new URL('../../../suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml', import.meta.url);
+const revisionFlowUrl = new URL(
+  '../../../suites/mobile-e2e/flows/_shared/loadedBundleRevisionProbe.yaml',
+  import.meta.url,
+);
+const currentSourceProbeUrl = new URL(
+  '../../../suites/mobile-e2e/flows/plugin-platform-current-source/native-module-probe.yaml',
+  import.meta.url,
+);
 
 const requiredProbeIds = [
   'native-crypto-worker-probe-status:pass',
@@ -27,5 +35,17 @@ describe('native crypto worker mobile probe flow', () => {
     for (const testId of requiredProbeIds) {
       expect(flow).toContain(`id: ${testId}`);
     }
+  });
+
+  it('keeps loaded revision assertion in one non-overridable runner-owned flow', () => {
+    const probe = readFileSync(flowUrl, 'utf8');
+    const currentSourceProbe = readFileSync(currentSourceProbeUrl, 'utf8');
+    const revisionProbe = readFileSync(revisionFlowUrl, 'utf8');
+    const marker = 'native-crypto-worker-probe-loaded-bundle-revision:${HAPPIER_E2E_EXPECTED_LOADED_BUNDLE_REVISION}';
+
+    expect(probe).not.toContain(marker);
+    expect(currentSourceProbe).not.toContain(marker);
+    expect(revisionProbe).toContain(`id: ${marker}`);
+    expect(revisionProbe).toContain('clearState: false');
   });
 });

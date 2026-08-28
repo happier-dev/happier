@@ -1,11 +1,20 @@
-import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
   parsePackedManagedProviderArgs,
+  type PackedManagedProviderPreparedInput,
+  type PackedManagedProviderPreparation,
 } from '../../scripts/plugin-platform/run-packed-managed-provider.mjs';
+import {
+  readPackedPackageManifest,
+  sha512Sri,
+} from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
+import { exportPackSandboxTarball } from '../../../../apps/stack/scripts/pack.mjs';
 import {
   PackedManagedProviderEntrypointError,
   runPackedChannelProviderEntrypoint,
@@ -22,16 +31,155 @@ import {
 import {
   assertPackedManagedProviderContinuityContract,
   PackedCurrentSourceExternalSessionsExecutionError,
-  runPackedCurrentSourceExternalSessions,
   startPackedManagedProviderComposedRuntime,
   type PackedManagedProviderCandidateHandoffObservation,
   type PackedCurrentSourceExternalSessionsObservation,
   type PackedManagedProviderContinuityObservation,
   type PackedManagedProviderRecoveryRefusalObservation,
 } from './packedManagedProviderComposedRuntime';
+import { resolveCliTestLaunchSpec } from '../testkit/process/cliLaunchSpec';
 
 const PACKED_MANAGED_PROVIDER_SAFE_CODE_PATTERN =
   /^(packed_(?:managed_provider|current_source_external_sessions|channel_provider)_[a-z0-9_]+)(?:$|:)/u;
+
+const REPOSITORY_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+
+async function prepareCurrentSourceManagedProvider(): Promise<Readonly<{
+  prepared: PackedManagedProviderPreparation;
+  cleanup(): Promise<void>;
+}>> {
+  const root = await mkdtemp(join(tmpdir(), 'happier-packed-current-provider-'));
+  try {
+    const packageRoot = join(root, 'packages');
+    const testDir = join(root, 'harness');
+    const workspaceDir = join(root, 'workspace');
+    await Promise.all([
+      mkdir(packageRoot, { recursive: true, mode: 0o700 }),
+      mkdir(testDir, { recursive: true, mode: 0o700 }),
+      mkdir(workspaceDir, { recursive: true, mode: 0o700 }),
+    ]);
+    const packageDefinitions = [
+      ['sdk', 'packages/plugin-sdk', '@happier-dev/plugin-sdk'],
+      ['pluginUi', 'packages/plugin-ui', '@happier-dev/plugin-ui'],
+      ['channelsProtocol', 'packages/channels-protocol', '@happier-dev/channels-protocol'],
+      ['cli', 'apps/cli', '@happier-dev/cli'],
+    ] as const;
+    const records: Record<string, Readonly<Record<string, unknown>>> = {};
+    for (const [field, packageRelDir, packageName] of packageDefinitions) {
+      const outputDir = join(packageRoot, field);
+      await mkdir(outputDir, { recursive: true, mode: 0o700 });
+      const packed = await exportPackSandboxTarball({
+        monorepoRoot: REPOSITORY_ROOT,
+        packageRelDir,
+        destinationDir: outputDir,
+      });
+      const tarballName = String(packed?.tarball?.name ?? '');
+      if (!tarballName || tarballName !== basename(tarballName)) {
+        throw new Error(`packed_current_source_package_identity_invalid:${field}`);
+      }
+      const tarballPath = join(outputDir, tarballName);
+      const [bytes, manifest] = await Promise.all([
+        readFile(tarballPath),
+        readPackedPackageManifest(tarballPath, join(outputDir, 'manifest')),
+      ]);
+      if (manifest.name !== packageName || typeof manifest.version !== 'string') {
+        throw new Error(`packed_current_source_package_identity_invalid:${field}`);
+      }
+      const manifestDependencies = manifest.dependencies !== null
+        && typeof manifest.dependencies === 'object'
+        && !Array.isArray(manifest.dependencies)
+        ? manifest.dependencies as Record<string, unknown>
+        : {};
+      records[field] = Object.freeze({
+        packageName,
+        version: manifest.version,
+        integrity: sha512Sri(bytes),
+        tarballPath,
+        ...(field === 'pluginUi'
+          ? {
+              pluginSdkVersion: String(
+                manifestDependencies['@happier-dev/plugin-sdk'] ?? '',
+              ),
+            }
+          : {}),
+        ...(field === 'cli' ? { entrypoint: 'package/bin/happier.mjs' } : {}),
+      });
+    }
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: { HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy' } },
+      {
+        snapshotDir: join(root, 'cli-source-snapshot'),
+        preferSourceEntrypoint: true,
+      },
+    );
+    const cliRoot = cliLaunchSpec.cwd;
+    if (!cliRoot) throw new Error('packed_current_source_cli_root_missing');
+    const externalRuntimeRoot = join(root, 'external-provider-runtime');
+    await mkdir(externalRuntimeRoot, { recursive: true, mode: 0o700 });
+    const operatingSystem = process.platform === 'win32' ? 'windows' : process.platform;
+    const architecture = process.arch === 'x64' ? 'amd64' : process.arch;
+    if (
+      !['darwin', 'linux', 'windows'].includes(operatingSystem)
+      || !['amd64', 'arm64'].includes(architecture)
+    ) {
+      throw new Error('packed_current_source_managed_runtime_target_unsupported');
+    }
+    const wrapperExecutable = join(
+      externalRuntimeRoot,
+      `acme-packed-provider-runtime${operatingSystem === 'windows' ? '.exe' : ''}`,
+    );
+    // The external fixture owns its packaged runtime artifact. A private copy
+    // of the already-running Node executable keeps this moving-source proof
+    // independent from CPX's Go build and from the singleton CLI runtime asset.
+    await copyFile(process.execPath, wrapperExecutable);
+    await chmod(wrapperExecutable, 0o700);
+    const cliVersion = String(records.cli?.version ?? '0.0.0');
+    const artifactSet = {
+      schemaVersion: 1,
+      runId: `current-source-${randomUUID()}`,
+      sdk: records.sdk,
+      pluginUi: records.pluginUi,
+      channelsProtocol: records.channelsProtocol,
+      cli: records.cli,
+    };
+    const prepared = {
+      currentSource: true,
+      candidate: artifactSet,
+      standaloneCliArtifact: {
+        product: 'happier',
+        version: cliVersion,
+        os: operatingSystem,
+        arch: process.arch,
+        archivePath: cliRoot,
+        sourceArchivePath: cliRoot,
+        sha256: '',
+        extractRoot: cliRoot,
+        executablePath: cliLaunchSpec.command,
+      },
+      cliLaunchSpec: {
+        command: cliLaunchSpec.command,
+        args: cliLaunchSpec.args,
+        cwd: workspaceDir,
+        env: cliLaunchSpec.env,
+      },
+      wrapperExecutable,
+      verifiedCandidateIntegrity: true,
+      verifiedCandidatePackageIdentity: true,
+      verifiedStandaloneCliIntegrity: true,
+      verifiedStandaloneCliIdentity: true,
+    } as unknown as PackedManagedProviderPreparation;
+    return {
+      prepared,
+      cleanup: async () => {
+        await cliLaunchSpec.cleanup?.();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 type PackedChannelProviderContinuityProbeDependencies = Omit<
   PackedChannelProviderEntrypointDependencies,
@@ -125,6 +273,7 @@ export function serializePackedManagedProviderContinuitySuccess(
     continuity: PackedManagedProviderContinuityObservation;
     candidateHandoff: PackedManagedProviderCandidateHandoffObservation;
     recoveryRefusal: PackedManagedProviderRecoveryRefusalObservation;
+    currentSource?: boolean;
   }>,
 ): string {
   const candidateIdentity = {
@@ -145,30 +294,55 @@ export function serializePackedManagedProviderContinuitySuccess(
     schemaVersion: 1,
     kind: 'packed_managed_provider_daemon_continuity',
     status: 'passed',
-    candidate: {
-      identityFingerprint: fingerprintJson(candidateIdentity),
-      sdk: candidateIdentity.sdk,
-      cli: candidateIdentity.cli,
-    },
-    standaloneCliArtifact: {
-      product: input.result.standaloneCliArtifact.product,
-      version: input.result.standaloneCliArtifact.version,
-      os: input.result.standaloneCliArtifact.os,
-      arch: input.result.standaloneCliArtifact.arch,
-      sha256: input.result.standaloneCliArtifact.sha256,
-    },
+    ...(input.currentSource
+      ? {
+          source: {
+            kind: 'current-source',
+            sdk: {
+              packageName: candidateIdentity.sdk.packageName,
+              version: candidateIdentity.sdk.version,
+            },
+            cli: {
+              packageName: candidateIdentity.cli.packageName,
+              version: candidateIdentity.cli.version,
+            },
+          },
+          runtime: {
+            product: input.result.standaloneCliArtifact.product,
+            version: input.result.standaloneCliArtifact.version,
+            os: input.result.standaloneCliArtifact.os,
+            arch: input.result.standaloneCliArtifact.arch,
+          },
+        }
+      : {
+          candidate: {
+            identityFingerprint: fingerprintJson(candidateIdentity),
+            sdk: candidateIdentity.sdk,
+            cli: candidateIdentity.cli,
+          },
+          standaloneCliArtifact: {
+            product: input.result.standaloneCliArtifact.product,
+            version: input.result.standaloneCliArtifact.version,
+            os: input.result.standaloneCliArtifact.os,
+            arch: input.result.standaloneCliArtifact.arch,
+            sha256: input.result.standaloneCliArtifact.sha256,
+          },
+        }),
     freshBootstrapStages: input.result.stages.map((stage) => ({
       id: stage.id,
       status: stage.status,
     })),
-    harnessEvidence: summarizeHarnessEvidence(input.result.harnessEvidence),
+    harnessEvidence: input.currentSource
+      ? { source: 'current-source', cleanup: input.result.harnessEvidence.cleanup }
+      : summarizeHarnessEvidence(input.result.harnessEvidence),
     continuityContract: input.continuity.contract,
-    candidateHandoffStages:
+    [input.currentSource ? 'currentSourceHandoffStages' : 'candidateHandoffStages']:
       PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS.map((id) => ({
-        id,
+        id: input.currentSource ? id.replace(/^candidate-/u, 'current-source-') : id,
         status: 'passed' as const,
       })),
-    candidateHandoffContract: input.candidateHandoff.contract,
+    [input.currentSource ? 'currentSourceHandoffContract' : 'candidateHandoffContract']:
+      input.candidateHandoff.contract,
     recoveryRefusal: input.recoveryRefusal,
   });
 }
@@ -253,6 +427,35 @@ export async function runPackedExternalSessionsCandidateContinuity(
   };
 }
 
+async function runPackedCurrentSourceManagedProviderContinuity(): Promise<
+  Readonly<{
+    prepared: PackedManagedProviderPreparation;
+    candidateHandoff: PackedManagedProviderCandidateHandoffObservation;
+  }>
+> {
+  const source = await prepareCurrentSourceManagedProvider();
+  const composed = await startPackedManagedProviderComposedRuntime();
+  try {
+    try {
+      return {
+        prepared: source.prepared,
+        candidateHandoff:
+          await composed.probeCandidateExternalAgentProviderHandoff(
+            { prepared: source.prepared } as PackedManagedProviderPreparedInput,
+          ),
+      };
+    } catch (cause) {
+      throw new PackedCurrentSourceExternalSessionsExecutionError({
+        stage: 'handoff-contract',
+        cause,
+      });
+    }
+  } finally {
+    await composed.cleanup().catch(() => {});
+    await source.cleanup();
+  }
+}
+
 /**
  * Process-level seams this command owns. The composed runtime launches a real
  * server/daemon pair and the artifact owners read, verify, and extract real
@@ -281,11 +484,27 @@ export async function main(
   } = dependencies;
   const parsed = parsePackedManagedProviderArgs(argv);
   if (parsed.mode === 'current-source') {
-    writeStdout(
-      `${serializePackedCurrentSourceExternalSessionsSuccess(
-        await runPackedCurrentSourceExternalSessions(),
-      )}\n`,
-    );
+    const current = await runPackedCurrentSourceManagedProviderContinuity();
+    writeStdout(`${JSON.stringify({
+      schemaVersion: 1,
+      kind: 'packed_current_source_external_packaged_runtime',
+      status: 'passed',
+      source: {
+        sdk: {
+          packageName: current.prepared.candidate.sdk.packageName,
+          version: current.prepared.candidate.sdk.version,
+        },
+        cli: {
+          packageName: current.prepared.candidate.cli.packageName,
+          version: current.prepared.candidate.cli.version,
+        },
+      },
+      hostTarget: {
+        os: process.platform === 'win32' ? 'windows' : process.platform,
+        arch: process.arch,
+      },
+      contract: current.candidateHandoff.contract,
+    })}\n`);
     return;
   }
   if (parsed.mode === 'channel') {

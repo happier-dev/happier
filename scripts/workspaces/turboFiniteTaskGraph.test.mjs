@@ -155,7 +155,7 @@ test('the finite Turbo graph is activated through the current package manager wi
   assert.equal(sdk.scripts['test:finite'], 'yarn -s test:local');
   assert.equal(
     sdk.scripts['typecheck:finite'],
-    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && yarn -s test:external-consumer',
   );
 });
 

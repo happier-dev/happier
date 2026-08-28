@@ -14,6 +14,8 @@ test('Composer dogfood evaluates through its public non-UI entrypoints', async (
 
   assert.equal(manifest.id, 'acme.composer.issue-dogfood');
   assert.equal(typeof activate, 'function');
+  assert.deepEqual(manifest.contributes.actions.map(({ id }) => id), ['inspect', 'approval-probe']);
+  assert.deepEqual(manifest.contributes.settings.map(({ id }) => id), ['action-preferences']);
   assert.equal(typeof readAcceptedMessageLocalIds, 'function');
   assert.equal(typeof composerHelpers.attachIssueWithoutControl, 'function');
   assert.equal(typeof composerHelpers.attachDaemonIssueMediaFromCurrentComposer, 'function');

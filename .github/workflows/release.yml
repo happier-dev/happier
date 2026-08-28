@@ -18,10 +18,48 @@ on:
         default: false
         type: boolean
       approve_public_sdk_release:
-        description: "Maintainer approval — publish this exact public SDK candidate after reviewing its API comparison"
+        description: "Maintainer approval after reviewing this source's public API comparison, selected versions, and migration decision"
         required: false
         default: false
         type: boolean
+      plugin_sdk_ready:
+        description: "Plugin SDK/UI — PEP RB-A, SDK-EU-17, and RB-B are ready"
+        required: false
+        default: false
+        type: boolean
+      plugin_sdk_api_classification:
+        description: "Plugin SDK/UI — classification of the displayed API comparison"
+        required: false
+        default: unreviewed
+        type: choice
+        options: [unreviewed, first_publication, compatible, breaking]
+      plugin_sdk_migration_notes:
+        description: "Plugin SDK/UI — not_required or the approved release notes ID"
+        required: false
+        default: not_required
+        type: string
+      sdk_auth_readiness:
+        description: "External SDK — auth readiness"
+        required: false
+        default: not_ready
+        type: choice
+        options: [not_ready, ready, waived]
+      sdk_auth_waiver:
+        description: "External SDK — named auth waiver when readiness is waived"
+        required: false
+        default: ""
+        type: string
+      sdk_api_classification:
+        description: "External SDK — classification of the displayed API comparison"
+        required: false
+        default: unreviewed
+        type: choice
+        options: [unreviewed, first_publication, compatible, breaking]
+      sdk_migration_notes:
+        description: "External SDK — not_required or the approved release notes ID"
+        required: false
+        default: not_required
+        type: string
       include_validation_suites:
         description: "Maintainer refinement — comma-separated additional validation suite IDs"
         required: false
@@ -353,17 +391,15 @@ jobs:
           set -euo pipefail
           node scripts/pipeline/release/validate-release-dispatch.mjs
       - name: Record explicit maintainer overrides
-        if: ${{ inputs.waive_ci == true || inputs.approve_public_sdk_release == true || inputs.waive_validation_suites != '' }}
+        if: ${{ inputs.waive_ci == true || inputs.waive_validation_suites != '' }}
         env:
           WAIVE_CI: ${{ inputs.waive_ci }}
-          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
           WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
           OVERRIDE_REASON: ${{ inputs.override_reason }}
         run: |
           {
             echo '### Maintainer release overrides'
             if [ "$WAIVE_CI" = "true" ]; then echo '- Exact-SHA CI evidence: **WAIVED**'; fi
-            if [ "$APPROVE_PUBLIC_SDK_RELEASE" = "true" ]; then echo '- Exact public SDK candidate: **APPROVED**'; fi
             if [ -n "$WAIVE_VALIDATION_SUITES" ]; then echo "- Validation suites: **WAIVED** ($WAIVE_VALIDATION_SUITES)"; fi
             echo "- Reason: $OVERRIDE_REASON"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -428,6 +464,14 @@ jobs:
       risk_trust_roots: ${{ steps.plan.outputs.risk_trust_roots }}
       risk_plugin_sdk_package_changed: ${{ steps.plan.outputs.risk_plugin_sdk_package_changed }}
       risk_plugin_runtime_compatibility: ${{ steps.plan.outputs.risk_plugin_runtime_compatibility }}
+      plugin_sdk_version: ${{ steps.public_sdk_versions.outputs.plugin_sdk_version }}
+      sdk_version: ${{ steps.public_sdk_versions.outputs.sdk_version }}
+      plugin_sdk_api_first_publication: ${{ steps.public_sdk_analysis.outputs.plugin_sdk_api_first_publication }}
+      plugin_sdk_api_removed_symbols: ${{ steps.public_sdk_analysis.outputs.plugin_sdk_api_removed_symbols }}
+      plugin_sdk_api_human_review_required: ${{ steps.public_sdk_analysis.outputs.plugin_sdk_api_human_review_required }}
+      sdk_api_first_publication: ${{ steps.public_sdk_analysis.outputs.sdk_api_first_publication }}
+      sdk_api_removed_symbols: ${{ steps.public_sdk_analysis.outputs.sdk_api_removed_symbols }}
+      sdk_api_human_review_required: ${{ steps.public_sdk_analysis.outputs.sdk_api_human_review_required }}
     steps:
       - name: Checkout authorized release planning source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -651,6 +695,49 @@ jobs:
             --versioned-sdk-changed "${VERSIONED_SDK_CHANGED}" \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: Resolve selected public SDK versions before approval admission
+        id: public_sdk_versions
+        if: ${{ steps.bump_plan.outputs.publish_plugin_sdk == 'true' || steps.bump_plan.outputs.publish_sdk == 'true' }}
+        env:
+          RELEASE_CHANNEL: ${{ inputs.environment }}
+          PUBLISH_PLUGIN_SDK: ${{ steps.bump_plan.outputs.publish_plugin_sdk }}
+          PUBLISH_SDK: ${{ steps.bump_plan.outputs.publish_sdk }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/npm/resolve-release-metadata.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --source-ref "${{ inputs.environment == 'production' && 'main' || 'preview' }}" \
+            --npm-tag "${{ inputs.environment == 'production' && 'latest' || 'next' }}" \
+            --publish-cli false \
+            --publish-stack false \
+            --publish-server false \
+            --publish-plugin-sdk "$PUBLISH_PLUGIN_SDK" \
+            --publish-sdk "$PUBLISH_SDK" \
+            --publish-channels-protocol false \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Compare public SDK APIs for the exact planning source
+        id: public_sdk_analysis
+        if: ${{ steps.bump_plan.outputs.publish_plugin_sdk == 'true' || steps.bump_plan.outputs.publish_sdk == 'true' }}
+        env:
+          RELEASE_CHANNEL: ${{ inputs.environment }}
+          PLAN_BASE_REF: ${{ needs.ci.outputs.base_ref }}
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse "origin/${PLAN_BASE_REF}")"
+          head_sha="$(git rev-parse HEAD)"
+          node scripts/pipeline/release/analyze-release-change.mjs \
+            --base "$base_sha" \
+            --head "$head_sha" \
+            --profile "${{ needs.resolve_validation_profile.outputs.profile }}" \
+            --channel "${{ inputs.environment == 'production' && 'stable' || 'preview' }}" \
+            --has-cli-candidate false \
+            --has-server-candidate false \
+            --has-published-relay-predecessor false \
+            --trust-checked-in-governance true \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+
   mysql_db_contract:
     name: Server DB Contract (MySQL 8)
     needs: [plan]
@@ -790,6 +877,7 @@ jobs:
           node-version: 22.x
       - name: Enforce stable and risk-selected publication admission
         env:
+          WAIVE_CI: ${{ inputs.waive_ci }}
           CHECKS_PROFILE: ${{ needs.plan.outputs.checks_profile }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           PUBLISH_SERVER_RUNTIME_NEEDED: ${{ needs.plan.outputs.publish_server_runtime_needed }}
@@ -800,9 +888,42 @@ jobs:
           MYSQL_GATE_RESULT: ${{ needs.mysql_db_contract.result }}
           PLATFORM_GATE_RESULT: ${{ needs.platform_service_validation.result }}
           TRUST_ROOT_GATE_RESULT: ${{ needs.trust_root_validation.result }}
+          PUBLISH_PLUGIN_SDK: ${{ needs.plan.outputs.publish_plugin_sdk }}
+          PUBLISH_SDK: ${{ needs.plan.outputs.publish_sdk }}
+          PLUGIN_SDK_VERSION: ${{ needs.plan.outputs.plugin_sdk_version }}
+          SDK_VERSION: ${{ needs.plan.outputs.sdk_version }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
+          PLUGIN_SDK_READY: ${{ inputs.plugin_sdk_ready }}
+          PLUGIN_SDK_API_FIRST_PUBLICATION: ${{ needs.plan.outputs.plugin_sdk_api_first_publication }}
+          PLUGIN_SDK_API_REMOVED_SYMBOLS: ${{ needs.plan.outputs.plugin_sdk_api_removed_symbols }}
+          PLUGIN_SDK_API_HUMAN_REVIEW_REQUIRED: ${{ needs.plan.outputs.plugin_sdk_api_human_review_required }}
+          PLUGIN_SDK_API_CLASSIFICATION: ${{ inputs.plugin_sdk_api_classification }}
+          PLUGIN_SDK_MIGRATION_NOTES: ${{ inputs.plugin_sdk_migration_notes }}
+          SDK_AUTH_READINESS: ${{ inputs.sdk_auth_readiness }}
+          SDK_AUTH_WAIVER: ${{ inputs.sdk_auth_waiver }}
+          SDK_API_FIRST_PUBLICATION: ${{ needs.plan.outputs.sdk_api_first_publication }}
+          SDK_API_REMOVED_SYMBOLS: ${{ needs.plan.outputs.sdk_api_removed_symbols }}
+          SDK_API_HUMAN_REVIEW_REQUIRED: ${{ needs.plan.outputs.sdk_api_human_review_required }}
+          SDK_API_CLASSIFICATION: ${{ inputs.sdk_api_classification }}
+          SDK_MIGRATION_NOTES: ${{ inputs.sdk_migration_notes }}
+          RELEASE_CHANNEL: ${{ inputs.environment }}
+          NPM_TAG: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/admit-release.mjs
+          if [ "$PUBLISH_PLUGIN_SDK" = "true" ] || [ "$PUBLISH_SDK" = "true" ]; then
+            {
+              echo '### Public SDK publication approval'
+              echo "- Approved: $APPROVE_PUBLIC_SDK_RELEASE"
+              if [ "$PUBLISH_PLUGIN_SDK" = "true" ]; then
+                echo "- Plugin SDK/UI: $PLUGIN_SDK_VERSION; readiness=$PLUGIN_SDK_READY; classification=$PLUGIN_SDK_API_CLASSIFICATION; migration_notes=$PLUGIN_SDK_MIGRATION_NOTES"
+              fi
+              if [ "$PUBLISH_SDK" = "true" ]; then
+                echo "- External SDK: $SDK_VERSION; auth=$SDK_AUTH_READINESS; classification=$SDK_API_CLASSIFICATION; migration_notes=$SDK_MIGRATION_NOTES"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   deploy_plan:
     name: deploy_plan (source → deploy branches)

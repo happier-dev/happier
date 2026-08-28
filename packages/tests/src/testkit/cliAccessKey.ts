@@ -65,6 +65,16 @@ async function readAccessKeyFromPath(path: string): Promise<CliAccessKey | null>
   }
 }
 
+/** Reads only the credentials owned by one already-selected server profile. */
+export async function readCliAccessKeyForServerId(
+  happierHomeDir: string,
+  serverId: string,
+): Promise<CliAccessKey | null> {
+  const normalizedServerId = serverId.trim();
+  if (!normalizedServerId || normalizedServerId.includes('/') || normalizedServerId.includes('\\')) return null;
+  return await readAccessKeyFromPath(perServerAccessKeyPath(happierHomeDir, normalizedServerId));
+}
+
 async function resolveActiveServerIdFromSettings(happyHomeDir: string): Promise<string | null> {
   try {
     const raw = await readFile(join(happyHomeDir, 'settings.json'), 'utf8');

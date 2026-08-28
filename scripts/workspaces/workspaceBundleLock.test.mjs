@@ -279,6 +279,77 @@ async function runRetainedHistoryCase(mode, { includeInconclusiveOwner }) {
   }
 }
 
+async function runDuplicateRetainedOwnerCase(mode) {
+  const tempRoot = mkdtempSync(join(tmpdir(), `happier-workspace-bundle-lock-duplicate-owner-${mode}-`));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    const owner = {
+      pid: process.pid,
+      createdAtMs: Date.now() - 1_000,
+      token: 'same-authenticated-owner',
+      processInstanceFingerprint: 'same-process-instance',
+    };
+    const olderRaw = JSON.stringify({ ...owner, updatedAtMs: Date.now() - 500 });
+    const newerRaw = JSON.stringify({ ...owner, updatedAtMs: Date.now() - 100 });
+    writeFileSync(`${lockPath}.reclaim-older`, olderRaw, 'utf8');
+    writeFileSync(`${lockPath}.reclaim-newer`, newerRaw, 'utf8');
+    const options = {
+      lockPath,
+      timeoutMs: 40,
+      pollIntervalMs: 5,
+      staleAfterMs: 5_000,
+      isRunningPidImpl: () => true,
+      readProcessInstanceFingerprintSyncImpl: () => 'same-process-instance',
+    };
+    const callback = () => assert.fail('the retained live owner must remain authoritative');
+    if (mode === 'async') {
+      await assert.rejects(() => withWorkspaceBundleLock(callback, options), /Timed out waiting/);
+    } else {
+      assert.throws(() => withWorkspaceBundleLockSync(callback, options), /Timed out waiting/);
+    }
+    assert.equal(readFileSync(lockPath, 'utf8'), newerRaw);
+    assert.deepEqual(
+      readdirSync(tempRoot).filter((name) => name.startsWith('workspace-bundling.lock.reclaim-')),
+      [],
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function runDistinctRetainedOwnerCase(mode) {
+  const tempRoot = mkdtempSync(join(tmpdir(), `happier-workspace-bundle-lock-distinct-owners-${mode}-`));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    const owner = {
+      pid: process.pid,
+      createdAtMs: Date.now() - 1_000,
+      updatedAtMs: Date.now() - 100,
+      processInstanceFingerprint: 'same-process-instance',
+    };
+    writeFileSync(`${lockPath}.reclaim-first`, JSON.stringify({ ...owner, token: 'first-owner' }), 'utf8');
+    writeFileSync(`${lockPath}.reclaim-second`, JSON.stringify({ ...owner, token: 'second-owner' }), 'utf8');
+    const options = {
+      lockPath,
+      timeoutMs: 40,
+      pollIntervalMs: 5,
+      staleAfterMs: 5_000,
+      isRunningPidImpl: () => true,
+      readProcessInstanceFingerprintSyncImpl: () => 'same-process-instance',
+    };
+    const callback = () => assert.fail('must not acquire');
+    if (mode === 'async') {
+      await assert.rejects(() => withWorkspaceBundleLock(callback, options), /recovery is ambiguous/);
+    } else {
+      assert.throws(() => withWorkspaceBundleLockSync(callback, options), /recovery is ambiguous/);
+    }
+    assert.equal(existsSync(lockPath), false);
+    assert.equal(readdirSync(tempRoot).filter((name) => name.startsWith('workspace-bundling.lock.reclaim-')).length, 2);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 function runPostCreateRetainedRaceCase(mode) {
   const tempRoot = mkdtempSync(join(tmpdir(), `happier-workspace-lock-post-create-${mode}-`));
   try {
@@ -1951,6 +2022,22 @@ test('withWorkspaceBundleLock retires stale history and restores one inconclusiv
 
 test('withWorkspaceBundleLockSync retires stale history and restores one inconclusive retained owner', async () => {
   await runRetainedHistoryCase('sync', { includeInconclusiveOwner: true });
+});
+
+test('withWorkspaceBundleLock restores the newest duplicate snapshot for one authenticated owner', async () => {
+  await runDuplicateRetainedOwnerCase('async');
+});
+
+test('withWorkspaceBundleLockSync restores the newest duplicate snapshot for one authenticated owner', async () => {
+  await runDuplicateRetainedOwnerCase('sync');
+});
+
+test('withWorkspaceBundleLock keeps distinct authenticated retained owners ambiguous', async () => {
+  await runDistinctRetainedOwnerCase('async');
+});
+
+test('withWorkspaceBundleLockSync keeps distinct authenticated retained owners ambiguous', async () => {
+  await runDistinctRetainedOwnerCase('sync');
 });
 
 test('withWorkspaceBundleLock revalidates retained owners after create and preserves a successor', () => {

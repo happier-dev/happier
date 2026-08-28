@@ -92,13 +92,6 @@ export const RELEASE_VALIDATION_SUITES = [
     supportedDirectSourceKinds: ['local-build'],
     executorId: 'session-continuity',
   },
-  {
-    id: 'sdk-dual-origin',
-    supportsDirectSource: true,
-    supportsUpdateSources: false,
-    supportedDirectSourceKinds: ['local-pack'],
-    executorId: 'sdk-dual-origin',
-  },
 ];
 
 export const RELEASE_VALIDATION_SUITE_IDS = RELEASE_VALIDATION_SUITES.map((suite) => suite.id);

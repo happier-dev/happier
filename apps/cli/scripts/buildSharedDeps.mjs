@@ -60,6 +60,51 @@ const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH = 'dist/happier-plugi
 const BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH = '.happier-plugin/plugin.json';
 const BUNDLED_PLUGIN_GENERATOR_RELATIVE_PATH = 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts';
 const PLUGIN_SDK_GENERATED_INPUTS_RELATIVE_PATH = 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs';
+const CHILD_FAILURE_DIAGNOSTIC_MAX_BYTES = 8_000;
+const SECRET_ENV_KEY_PATTERN = /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)/i;
+
+function trimUtf8HeadToMaxBytes(value, maxBytes) {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+  let bytes = 0;
+  let head = '';
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > maxBytes) break;
+    head += character;
+    bytes += characterBytes;
+  }
+  return head;
+}
+
+function appendChildFailureDiagnostic(current, chunk, maxBytes) {
+  const next = `${current}${String(chunk)}`;
+  return trimUtf8HeadToMaxBytes(next, maxBytes);
+}
+
+function resolveChildFailureDiagnosticCaptureMaxBytes(env) {
+  const maximumSecretBytes = Object.entries(env ?? {})
+    .filter(([key, value]) => SECRET_ENV_KEY_PATTERN.test(key) && String(value ?? '').length >= 4)
+    .reduce((maximum, [, value]) => Math.max(maximum, Buffer.byteLength(String(value), 'utf8')), 0);
+  // Retain exactly enough lookahead for an exact secret beginning at the
+  // diagnostic boundary to be fully redacted before the public head bound.
+  return CHILD_FAILURE_DIAGNOSTIC_MAX_BYTES + maximumSecretBytes;
+}
+
+function formatChildFailureDiagnostic(stderr, env, truncated) {
+  let redacted = String(stderr ?? '');
+  const secretValues = Object.entries(env ?? {})
+    .filter(([key, value]) => SECRET_ENV_KEY_PATTERN.test(key) && String(value ?? '').length >= 4)
+    .map(([, value]) => String(value))
+    .sort((left, right) => right.length - left.length);
+  for (const value of secretValues) {
+    redacted = redacted.replaceAll(value, '<redacted>');
+  }
+  redacted = redacted.trim();
+  if (!redacted) return '';
+  const bounded = trimUtf8HeadToMaxBytes(redacted, CHILD_FAILURE_DIAGNOSTIC_MAX_BYTES);
+  const didTruncate = truncated || bounded !== redacted;
+  return `\n\nChild stderr${didTruncate ? ' (head; later output omitted)' : ''}:\n${bounded}`;
+}
 
 function resolveRepoRootOption(repoRootArg) {
   return typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
@@ -182,10 +227,17 @@ export async function runCanonicalBundledPluginArtifactPublisher({
       : workspaceNames.flatMap((workspaceName) => ['--workspace', workspaceName])),
   ];
   await new Promise((resolvePromise, reject) => {
+    let stderr = '';
+    let stderrTruncated = false;
+    const captureMaxBytes = resolveChildFailureDiagnosticCaptureMaxBytes(env);
     const child = spawn(command, args, {
       cwd: repoRoot,
       env,
-      stdio: quiet ? 'ignore' : 'inherit',
+      stdio: quiet ? ['ignore', 'ignore', 'pipe'] : 'inherit',
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderrTruncated ||= Buffer.byteLength(`${stderr}${String(chunk)}`, 'utf8') > captureMaxBytes;
+      stderr = appendChildFailureDiagnostic(stderr, chunk, captureMaxBytes);
     });
     child.once('error', reject);
     child.once('close', (status, signal) => {
@@ -194,7 +246,11 @@ export async function runCanonicalBundledPluginArtifactPublisher({
         return;
       }
 
-      const error = new Error(`Command failed: ${command} ${args.join(' ')}`);
+      const diagnostic = formatChildFailureDiagnostic(stderr, env, stderrTruncated);
+      const error = new Error(
+        `Command failed: ${command} ${args.join(' ')} `
+        + `(code=${status ?? 'null'}, sig=${signal ?? 'null'})${diagnostic}`,
+      );
       error.status = status;
       error.signal = signal;
       error.output = [null, null, null];
@@ -219,10 +275,18 @@ export async function runCanonicalPluginSdkGeneratedCompilerInputs({
 
   const args = [generatorPath, mode === 'check' ? '--check' : '--write'];
   await new Promise((resolvePromise, reject) => {
+    let stderr = '';
+    let stderrTruncated = false;
+    const captureMaxBytes = resolveChildFailureDiagnosticCaptureMaxBytes(env);
     const child = spawn(process.execPath, args, {
       cwd: resolvedRepoRoot,
       env,
-      stdio: quiet ? 'ignore' : 'inherit',
+      stdio: quiet ? ['ignore', 'ignore', 'pipe'] : 'inherit',
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderrTruncated ||= Buffer.byteLength(`${stderr}${String(chunk)}`, 'utf8')
+        > captureMaxBytes;
+      stderr = appendChildFailureDiagnostic(stderr, chunk, captureMaxBytes);
     });
     child.once('error', reject);
     child.once('close', (status, signal) => {
@@ -230,7 +294,11 @@ export async function runCanonicalPluginSdkGeneratedCompilerInputs({
         resolvePromise();
         return;
       }
-      const error = new Error(`Command failed: ${process.execPath} ${args.join(' ')}`);
+      const diagnostic = formatChildFailureDiagnostic(stderr, env, stderrTruncated);
+      const error = new Error(
+        `Command failed: ${process.execPath} ${args.join(' ')} ` +
+        `(code=${status ?? 'null'}, sig=${signal ?? 'null'})${diagnostic}`,
+      );
       error.status = status;
       error.signal = signal;
       reject(error);

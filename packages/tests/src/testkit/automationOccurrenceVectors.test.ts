@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AutomationOccurrenceKeyV1Schema,
-  AutomationOccurrenceEvidenceV1Schema,
+  AutomationPluginEventOccurrenceEvidenceV1Schema,
   deriveAutomationOccurrenceKeyV1,
   serializeAutomationOccurrenceEvidenceEqualityV1,
 } from '@happier-dev/protocol';
@@ -22,17 +22,24 @@ describe('Automation occurrence vectors', () => {
 
   it('keeps replay identity independent from payload while equality evidence changes', () => {
     const vector = AUTOMATION_OCCURRENCE_EVENT_VECTOR_V1;
-    const changedEvidence = AutomationOccurrenceEvidenceV1Schema.parse({
+    const changedEvidence = AutomationPluginEventOccurrenceEvidenceV1Schema.parse({
       ...vector.evidence,
       payload: { action: 'opened', repository: { id: 43 } },
     });
-    const key = deriveAutomationOccurrenceKeyV1(vector.evidence);
-    const changedKey = deriveAutomationOccurrenceKeyV1(changedEvidence);
+    const key = deriveAutomationOccurrenceKeyV1({
+      triggerId: vector.triggerId,
+      evidence: vector.evidence,
+    });
+    const changedKey = deriveAutomationOccurrenceKeyV1({
+      triggerId: vector.triggerId,
+      evidence: changedEvidence,
+    });
 
     expect(changedKey).toBe(key);
     expect(serializeAutomationOccurrenceEvidenceEqualityV1({
       accountId: vector.accountId,
       automationId: vector.automationId,
+      triggerId: vector.triggerId,
       occurrenceKey: changedKey,
       evidence: changedEvidence,
     })).not.toBe(vector.serializedEqualityInput);
@@ -43,12 +50,16 @@ describe('Automation occurrence vectors', () => {
     const { deriveAutomationOccurrenceEvidenceEqualityTagV1 } = await import(
       '@happier-dev/protocol',
     );
-    const occurrenceKey = deriveAutomationOccurrenceKeyV1(vector.evidence);
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+      triggerId: vector.triggerId,
+      evidence: vector.evidence,
+    });
     const tag = deriveAutomationOccurrenceEvidenceEqualityTagV1({
       purposeSeparatedAccountKey: vector.purposeSeparatedAccountKey,
       accountId: vector.accountId,
       automationId: 'automation-qa-2',
       occurrenceKey,
+      triggerId: vector.triggerId,
       evidence: vector.evidence,
     });
 
@@ -65,6 +76,7 @@ describe('Automation occurrence vectors', () => {
       accountId: vector.accountId,
       automationId: vector.automationId,
       occurrenceKey: mismatchedKey,
+      triggerId: vector.triggerId,
       evidence: vector.evidence,
     })).toThrowError(TypeError);
   });

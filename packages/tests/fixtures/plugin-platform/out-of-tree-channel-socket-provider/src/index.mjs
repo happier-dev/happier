@@ -460,7 +460,10 @@ function createObserver(context, generation) {
         try {
           ingress = ConversationProviderObservationIngestInputV1Schema.parse({
             connectionId: entry.snapshot.connectionId,
-            observation: frame.observation,
+            entry: {
+              observation: frame.observation,
+              eventCandidate: null,
+            },
           });
         } catch {
           return { kind: 'historyGap', reason: 'providerHistoryUnavailable' };

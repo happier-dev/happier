@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import {
+  chmod,
   cp,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -33,6 +36,12 @@ const exampleConsumerRoot = join(
   repoRoot,
   'packages/plugin-sdk/examples/action-contract-consumer',
 );
+const require = createRequire(import.meta.url);
+const nativeTypeScriptPlatformPackageName =
+  `@typescript/typescript-${process.platform}-${process.arch}`;
+const nativeTypeScriptPlatformPackageRoot = dirname(
+  require.resolve(`${nativeTypeScriptPlatformPackageName}/package.json`),
+);
 
 function oneTarball(packDir, label) {
   return readdir(packDir).then((entries) => {
@@ -63,7 +72,7 @@ async function buildAuthorProject(projectDir, label, happierHomeDir) {
   await runCommand(process.execPath, [
     join(repoRoot, 'apps/cli/bin/happier.mjs'),
     'plugins',
-    'author',
+    'dev',
     'build',
     projectDir,
   ], {
@@ -74,10 +83,69 @@ async function buildAuthorProject(projectDir, label, happierHomeDir) {
   });
 }
 
+async function prepareManagedJavaScriptRuntime(happierHomeDir) {
+  const runtimeRoot = join(happierHomeDir, 'tools', 'js-runtime', 'current');
+  const wrapperPath = join(
+    runtimeRoot,
+    'bin',
+    process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime',
+  );
+  const runtimePath = process.platform === 'win32'
+    ? join(runtimeRoot, 'runtime', 'node.exe')
+    : join(runtimeRoot, 'runtime', 'bin', 'node');
+  await mkdir(dirname(wrapperPath), { recursive: true });
+  await mkdir(dirname(runtimePath), { recursive: true });
+  if (process.platform === 'win32') {
+    await copyFile(process.execPath, runtimePath);
+    await writeFile(wrapperPath, '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n', 'utf8');
+    return;
+  }
+  await symlink(process.execPath, runtimePath);
+  await writeFile(wrapperPath, '#!/bin/sh\nexec "${0%/*}/../runtime/bin/node" "$@"\n', 'utf8');
+  await chmod(wrapperPath, 0o755);
+}
+
+async function linkNativeTypeScriptToolchain(projectDir) {
+  await copyWorkspacePackage(
+    projectDir,
+    '@typescript/native',
+    join(repoRoot, 'node_modules/@typescript/native'),
+  );
+  await copyWorkspacePackage(
+    projectDir,
+    nativeTypeScriptPlatformPackageName,
+    nativeTypeScriptPlatformPackageRoot,
+  );
+}
+
+async function prepareCurrentAuthorSourceLayout(projectDir, fixtureSourceEntrypoint) {
+  if (!fixtureSourceEntrypoint) return;
+  const currentEntrypoint = join(projectDir, 'src/index.ts');
+  try {
+    await readFile(currentEntrypoint, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    await cp(join(projectDir, fixtureSourceEntrypoint), currentEntrypoint);
+  }
+  const tsconfigPath = join(projectDir, 'tsconfig.json');
+  const tsconfig = JSON.parse(await readFile(tsconfigPath, 'utf8'));
+  tsconfig.compilerOptions = {
+    ...tsconfig.compilerOptions,
+    noEmit: true,
+  };
+  await writeFile(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`, 'utf8');
+}
+
 async function linkWorkspacePackage(projectDir, packageName, packageRoot) {
   const packagePath = join(projectDir, 'node_modules', ...packageName.split('/'));
   await mkdir(dirname(packagePath), { recursive: true });
   await symlink(packageRoot, packagePath, 'dir');
+}
+
+async function copyWorkspacePackage(projectDir, packageName, packageRoot) {
+  const packagePath = join(projectDir, 'node_modules', ...packageName.split('/'));
+  await mkdir(dirname(packagePath), { recursive: true });
+  await cp(packageRoot, packagePath, { recursive: true });
 }
 
 async function extractPackedPackage(tarballPath, targetRoot) {
@@ -139,6 +207,7 @@ async function runPackedComposition(input) {
     consumerPackageName,
     producerPluginId,
     producerRuntimeEntry,
+    producerFixtureSourceEntrypoint,
   } = input;
   const workDir = await mkdtemp(join(tmpdir(), 'happier-action-contract-composition-'));
   try {
@@ -162,6 +231,8 @@ async function runPackedComposition(input) {
     const producerDir = join(workDir, 'producer');
     const consumerDir = join(workDir, 'consumer');
     const happierHomeDir = join(workDir, 'happier-home');
+    await prepareManagedJavaScriptRuntime(happierHomeDir);
+    await prepareCurrentAuthorSourceLayout(producerDir, producerFixtureSourceEntrypoint);
     // The package pair is external to the workspace. Link only the incumbent
     // SDK package for compilation; producer and consumer are still packed and
     // installed below as independent package boundaries.
@@ -171,17 +242,7 @@ async function runPackedComposition(input) {
       '@types/node',
       join(repoRoot, 'packages/plugin-sdk/node_modules/@types/node'),
     );
-    await mkdir(join(producerDir, 'node_modules', '@typescript'), { recursive: true });
-    await cp(
-      join(repoRoot, 'node_modules/@typescript/native'),
-      join(producerDir, 'node_modules/@typescript/native'),
-      { recursive: true },
-    );
-    await cp(
-      join(repoRoot, 'node_modules/@typescript/typescript-darwin-arm64'),
-      join(producerDir, 'node_modules/@typescript/typescript-darwin-arm64'),
-      { recursive: true },
-    );
+    await linkNativeTypeScriptToolchain(producerDir);
     await buildAuthorProject(producerDir, 'producer', happierHomeDir);
 
     const producerDeclaration = await readFile(join(producerDir, 'dist/plugin.d.ts'), 'utf8');
@@ -195,17 +256,7 @@ async function runPackedComposition(input) {
       join(repoRoot, 'packages/plugin-sdk/node_modules/@types/node'),
     );
     await extractPackedPackage(producerTarball, consumerDir);
-    await mkdir(join(consumerDir, 'node_modules', '@typescript'), { recursive: true });
-    await cp(
-      join(repoRoot, 'node_modules/@typescript/native'),
-      join(consumerDir, 'node_modules/@typescript/native'),
-      { recursive: true },
-    );
-    await cp(
-      join(repoRoot, 'node_modules/@typescript/typescript-darwin-arm64'),
-      join(consumerDir, 'node_modules/@typescript/typescript-darwin-arm64'),
-      { recursive: true },
-    );
+    await linkNativeTypeScriptToolchain(consumerDir);
     await buildAuthorProject(consumerDir, 'consumer', happierHomeDir);
 
     const generatedActionRuntime = await readFile(
@@ -288,6 +339,7 @@ test('independently packed producer/consumer fixture composes through public ./a
     consumerPackageName: '@happier-dev/action-contract-consumer-fixture',
     producerPluginId: 'fixture.action-contract-producer',
     producerRuntimeEntry: 'dist/plugin.js',
+    producerFixtureSourceEntrypoint: 'src/plugin.ts',
   });
 });
 

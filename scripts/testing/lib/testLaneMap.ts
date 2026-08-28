@@ -10,7 +10,7 @@ import { resolveOwningWorkspaceDirectory, type WorkspaceManifest } from './works
 export type LaneId =
   | 'test'
   | 'test:plugin-workspaces'
-  | 'test:plugin-platform:contracts'
+  | 'test:plugin-platform:source'
   | 'workspace:test'
   | 'test:integration'
   | 'test:e2e:desktop:native'
@@ -48,10 +48,10 @@ export const TEST_LANE_DEFINITIONS: readonly TestLaneDefinition[] = Object.freez
     packageLocalOnly: false,
   },
   {
-    id: 'test:plugin-platform:contracts',
+    id: 'test:plugin-platform:source',
     category: 'unit',
-    rootScriptName: 'test:plugin-platform:contracts',
-    rootCommand: 'yarn test:plugin-platform:contracts',
+    rootScriptName: 'test:plugin-platform:source',
+    rootCommand: 'yarn test:plugin-platform:source',
     packageLocalOnly: false,
   },
   { id: 'workspace:test', category: 'unit', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
@@ -438,7 +438,7 @@ export function classifyTestFile(context: TestLaneContext, relativePath: string)
       return resolveExplicitlyNamedUnitLane(context, relativePath);
     }
     if (relativePath.startsWith('packages/tests/src/plugin-platform/')) {
-      return /\.test\.ts$/.test(relativePath) ? 'test:plugin-platform:contracts' : null;
+      return /\.test\.ts$/.test(relativePath) ? 'test:plugin-platform:source' : null;
     }
     if (relativePath.includes('/suites/ui-e2e/')) return /\.spec\.ts$/.test(relativePath) ? 'test:e2e:ui' : null;
     if (relativePath.includes('/suites/agents/')) return /\.test\.ts$/.test(relativePath) ? 'test:agents' : null;

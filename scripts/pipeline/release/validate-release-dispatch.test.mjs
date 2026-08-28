@@ -23,7 +23,6 @@ function valid(overrides = {}) {
     eventName: 'workflow_dispatch',
     refName: 'dev',
     waiveCi: false,
-    approvePublicSdkRelease: false,
     includeValidationSuites: '',
     waiveValidationSuites: '',
     overrideReason: '',
@@ -38,28 +37,25 @@ test('validates a materialized preview release and resolves planning facts', () 
     baseRef: 'preview',
     compareLabel: 'preview..dev',
     deployTargets: ['ui', 'server', 'cli'],
-    overrides: { waiveCi: false, approvePublicSdkRelease: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
+    overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
   });
 });
 
 test('accepts only explicit reasoned maintainer overrides and keeps them distinct from passing evidence', () => {
   const result = validateReleaseDispatch(valid({
     waiveCi: true,
-    approvePublicSdkRelease: true,
     includeValidationSuites: 'installers-smoke',
     waiveValidationSuites: 'docker-release-assets,session-continuity',
     overrideReason: 'Maintainer accepted the bounded release risk for this exact candidate.',
   }));
   assert.deepEqual(result.overrides, {
     waiveCi: true,
-    approvePublicSdkRelease: true,
     includeValidationSuiteIds: ['installers-smoke'],
     waiveValidationSuiteIds: ['docker-release-assets', 'session-continuity'],
     reason: 'Maintainer accepted the bounded release risk for this exact candidate.',
   });
   assert.throws(() => validateReleaseDispatch(valid({ waiveCi: true })), /override_reason is required/);
   assert.throws(() => validateReleaseDispatch(valid({ waiveValidationSuites: 'docker-release-assets' })), /override_reason is required/);
-  assert.throws(() => validateReleaseDispatch(valid({ approvePublicSdkRelease: true })), /override_reason is required/);
 });
 
 test('rejects unknown and identity-critical suite waivers before release mutation', () => {

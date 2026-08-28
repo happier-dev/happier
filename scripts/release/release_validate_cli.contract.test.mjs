@@ -422,64 +422,6 @@ test('release-validate plans cli-update continuity against the core e2e lane', a
   });
 });
 
-test('release-validate plans the SDK dual-origin fixture against one exact candidate tarball', async () => {
-  const candidateTarball = resolve('/tmp', 'happier-dev-sdk-candidate.tgz');
-  const raw = execFileSync(
-    process.execPath,
-    [
-      scriptPath,
-      '--suite',
-      'sdk-dual-origin',
-      '--platform',
-      'linux',
-      '--source',
-      'local-pack',
-      '--ref',
-      candidateTarball,
-      '--dry-run',
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
-
-  assert.deepEqual(JSON.parse(raw), {
-    ok: true,
-    dryRun: true,
-    suite: 'sdk-dual-origin',
-    platform: 'linux',
-    source: {
-      kind: 'local-pack',
-      ref: candidateTarball,
-    },
-    update: null,
-    execution: {
-      type: 'command',
-      command: process.execPath,
-      args: [
-        resolve(repoRoot, 'packages', 'tests', 'scripts', 'run-vitest-with-heartbeat.mjs'),
-        '--config',
-        resolve(repoRoot, 'packages', 'tests', 'vitest.core.slow.config.ts'),
-        resolve(
-          repoRoot,
-          'packages',
-          'tests',
-          'suites',
-          'core-e2e',
-          'externalActions.dualOrigin.packedSdk.slow.e2e.test.ts',
-        ),
-      ],
-      cwd: resolve(repoRoot, 'packages', 'tests'),
-      env: {
-        HAPPIER_RELEASE_VALIDATION_SDK_TARBALL: candidateTarball,
-      },
-    },
-  });
-});
-
 test('release-validate materializes cli-update local-build targets before running the continuity lane', async () => {
   const calls = [];
   runCliUpdateValidation({

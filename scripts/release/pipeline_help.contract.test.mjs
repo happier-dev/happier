@@ -56,7 +56,7 @@ test('pipeline CLI supports help for npm-release', async () => {
   assert.match(out, /--publish-sdk/);
   assert.match(out, /--authorized-sha/);
   assert.match(out, /--approve-public-sdk-release/);
-  assert.match(out, /packed API comparison requires maintainer approval/i);
+  assert.match(out, /readiness, API classification, migration notes, and maintainer approval/i);
   assert.match(out, /lockstep/i);
 });
 
@@ -227,7 +227,7 @@ test('pipeline CLI help reflects the current release-validate execution surface'
   assert.match(help, /artifact-verify \(local-build or --product\/--version\)/);
   assert.match(help, /docker-release-assets \(local-build\|published-channel; published-channel -> local-build upgrade\)/);
   assert.match(help, /cli-update \(published-channel\|published-tag -> published-channel\|published-tag\|local-build\|local-pack\)/);
-  assert.match(help, /sdk-dual-origin \(local-pack absolute SDK \.tgz; exact-candidate SDK publication validation\)/);
+  assert.doesNotMatch(help, /sdk-dual-origin/);
   assert.doesNotMatch(help, /server-upgrade/);
   assert.doesNotMatch(help, /Later phases will add executor wiring/);
 });

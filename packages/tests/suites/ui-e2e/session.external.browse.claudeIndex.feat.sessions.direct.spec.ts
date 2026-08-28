@@ -336,7 +336,6 @@ test.describe('ui e2e: authenticated Claude candidate index browse', () => {
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
-        HAPPIER_EXTERNAL_SESSIONS_CANDIDATES_DEFAULT_LIMIT: String(candidatePageSize),
         HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'plaintext_only',
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',

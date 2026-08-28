@@ -244,43 +244,25 @@ export function parsePackedManagedProviderArgs(argv) {
 export function buildPackedManagedProviderRecipe({ packageRoot }) {
   return Object.freeze({
     schemaVersion: 1,
-    kind: 'packed_managed_provider_recipe',
+    kind: 'packed_managed_provider_current_source_recipe',
     packageRoot: resolve(packageRoot),
     command:
-      'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider --candidate <candidate-manifest.json>',
-    // The Channel provider lifecycle reverifies a candidate channels-protocol
-    // archive and drives its own stage list, so it is a sibling command against
-    // the same candidate manifest rather than an extra stage of the run above.
-    channelCommand:
-      'yarn workspace @happier-dev/tests test:plugin-platform:packed-channel-provider --candidate <candidate-manifest.json>',
-    requiredStageIds: PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS,
-    candidateHandoffStageIds:
-      PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
-    channelProviderStageIds: PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
+      'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider',
     inputs: Object.freeze({
-      candidateManifest:
-        'one exact candidate manifest from the canonical candidate creator binding the sole SDK, CLI, and five-target standalone CLI archive matrix to one run',
-      candidateArchives: 'read-only; SHA-512 SRI and package identity are reverified',
-      standaloneCliArtifact:
-        'the candidate-manifest-bound host-native happier release archive built by the canonical CLI binary/component-artifact owner; exact path, SHA-256, product, version, platform, archive layout, executable, and bundled managed wrapper are reverified',
+      source:
+        'the current checkout through the normal development CLI snapshot and canonical npm pack owners',
     }),
     resources: Object.freeze({
       workRoot: 'one new private temporary root',
-      candidateInstall: 'one private exact-tarball install beneath workRoot for candidate package verification only',
-      standaloneCliExtract:
-        'one private extraction of the separate exact host-native CLI binary artifact beneath workRoot',
       externalAuthoring:
-        'candidate-authored public-only Agent G/H and Provider P/Q use the exact candidate SDK and CLI, then execute through the exact candidate standalone CLI and wrapper',
+        'public-only external Agent generations use the current packed SDK and current development CLI snapshot',
       server: 'one server-light SQLite process on a dynamically reserved loopback port',
-      daemon: 'one exact standalone CLI artifact daemon with an isolated HAPPIER_HOME_DIR and lifecycle scope',
-      providerProcesses: 'public managed-service operations allocate loopback ports dynamically and own their process lifetime',
+      daemon: 'one current development CLI snapshot daemon with an isolated HAPPIER_HOME_DIR and lifecycle scope',
       agentWorkspace: 'one private empty workspace',
       opencodeState: 'one isolated XDG/config root; ambient OpenCode state is forbidden',
       externalBoundaries:
-        'a TLS upstream observer only; the installed Agent, public managed Provider operations, runner, and session lifecycle remain real',
+        'the installed external Agent and public External Sessions lifecycle remain real',
       dynamicPortsOnly: true,
-      stockCliProxyApiPort: 8317,
-      stockCliProxyApiPolicy: 'must-not-connect-or-mutate',
       cliSourceFallback: false,
     }),
     environment: Object.freeze({
@@ -339,6 +321,19 @@ function stage(id, status = 'passed', evidence = undefined) {
 }
 
 function validateCandidatePreparation(prepared, input) {
+  if (prepared?.currentSource === true) {
+    if (
+      prepared?.candidate?.sdk?.packageName !== '@happier-dev/plugin-sdk'
+      || prepared?.candidate?.cli?.packageName !== '@happier-dev/cli'
+      || typeof prepared.wrapperExecutable !== 'string'
+      || prepared.wrapperExecutable.length === 0
+      || typeof prepared.cliLaunchSpec?.command !== 'string'
+      || prepared.cliLaunchSpec.command.length === 0
+    ) {
+      fail('packed_managed_provider_current_source_preparation_mismatch');
+    }
+    return;
+  }
   if (
     prepared?.verifiedCandidateIntegrity !== true
     || prepared?.candidate?.sdk?.packageName !== '@happier-dev/plugin-sdk'
@@ -620,7 +615,9 @@ export async function runPackedManagedProviderVertical(input, deps) {
     }));
     stages.push(stage('candidate-package-identity'));
     stages.push(stage('standalone-cli-artifact-integrity', 'passed', {
-      sha256: prepared.standaloneCliArtifact.sha256,
+      ...(prepared.currentSource === true
+        ? { source: 'current-source' }
+        : { sha256: prepared.standaloneCliArtifact.sha256 }),
     }));
     stages.push(stage('standalone-cli-artifact-identity', 'passed', {
       product: prepared.standaloneCliArtifact.product,

@@ -1,0 +1,12 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins/panels
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_PANEL_TAB_ID}
+    timeout: 120000
+- tapOn:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_PANEL_TAB_ID}
+- extendedWaitUntil:
+    visible: ${HAPPIER_E2E_CURRENT_SOURCE_EXPECTED_TEXT}
+    timeout: 120000

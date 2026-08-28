@@ -39,7 +39,6 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     visible:
       id: native-crypto-worker-probe-status:pass
     timeout: 240000
-
 - assertVisible:
     id: native-crypto-worker-probe-module-available:pass
 - assertVisible:

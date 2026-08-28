@@ -1,0 +1,11 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_SURFACE_URL}
+- extendedWaitUntil:
+    visible:
+      id: plugin-surface-unavailable
+    timeout: 120000
+- assertNotVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_SENTINEL}
+- assertNotVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_READY_ID}

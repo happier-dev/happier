@@ -1,8 +1,9 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import {
+    admitCheckpointedPluginEventObservationV1,
+    createPluginEventAutomationSetupResultV1JsonSchema,
     PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
     type PluginEventAutomationHistoryGapResetActionResultV1,
@@ -34,18 +35,10 @@ const LEDGER_SOURCE_CONFIG_SCHEMA = {
  * The canonical setup-result shape the host manifest owner requires for this
  * exact source contract version and source-config schema.
  */
-const LEDGER_SETUP_RESULT_SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-        v: { type: 'integer', const: 1 },
-        sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-        sourceContractVersion: { type: 'integer', const: LEDGER_SOURCE_CONTRACT_VERSION },
-        sourceConfig: LEDGER_SOURCE_CONFIG_SCHEMA,
-        displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-    },
-    required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-} satisfies PluginJsonSchema;
+const LEDGER_SETUP_RESULT_SCHEMA = createPluginEventAutomationSetupResultV1JsonSchema(
+    LEDGER_SOURCE_CONTRACT_VERSION,
+    LEDGER_SOURCE_CONFIG_SCHEMA,
+);
 
 const LEDGER_EVENT_PAYLOAD_SCHEMA = {
     type: 'object',
@@ -68,46 +61,31 @@ export const LEDGER_ENTRIES: readonly LedgerEntryV1[] = Object.freeze([
     Object.freeze({ entryId: 'entry-1', occurredAt: 1_725_000_000_000, summary: 'ledger opened' }),
 ]);
 
-type AutomationEventAdmitInputV1 = PluginActionInputById['automation.event.admit'];
-
 /**
  * The external source's observation cycle. It reaches the host only through
- * the published Action ids, exactly like the first-party reference source: the
- * host owns the adopted definition set, the occurrence identity, and the Run.
+ * the public checkpointed-Event helper, exactly like first-party sources: the
+ * helper owns the complete current source scan plus canonical admission/status
+ * Actions, while the host owns the adopted definition set, occurrence identity,
+ * and Run.
  */
 export async function runLedgerSourceObserver(context: BackgroundServiceContext): Promise<void> {
-    const listed = await context.services.actions.execute('automation.event.sources.list', {
-        transport: { kind: 'checkpointedPull' },
-    }, { signal: context.signal });
-    if (listed.kind !== 'page') return;
-    for (const definition of listed.definitions) {
-        if (definition.eventRef.pluginId !== PLUGIN_ID) continue;
-        if (definition.eventRef.localId !== LEDGER_EVENT_ID) continue;
-        for (const entry of LEDGER_ENTRIES) {
-            context.signal.throwIfAborted();
-            const input: AutomationEventAdmitInputV1 = {
-                eventRef: definition.eventRef,
-                occurrenceId: entry.entryId,
-                occurredAt: entry.occurredAt,
-                observationReceivedAt: entry.occurredAt + 1,
-                payload: { entryId: entry.entryId, summary: entry.summary },
-                definitions: [{
-                    automationId: definition.automationId,
-                    templateVersion: definition.templateVersion,
-                    sourceSelectorId: definition.sourceSelectorId,
-                }],
-            };
-            const admitted = await context.services.actions.execute(
-                'automation.event.admit',
-                input,
-                { signal: context.signal },
-            );
-            context.services.logger.info('automation_event_source.admitted', {
-                occurrenceId: entry.entryId,
-                results: admitted.results,
-            });
-            if (!admitted.results.every((result) => result.checkpointSafe)) return;
-        }
+    for (const entry of LEDGER_ENTRIES) {
+        context.signal.throwIfAborted();
+        const disposition = await admitCheckpointedPluginEventObservationV1({
+            eventRef: { pluginId: PLUGIN_ID, localId: LEDGER_EVENT_ID },
+            sourceInstanceId: 'ledger:main',
+            sourceContractVersion: LEDGER_SOURCE_CONTRACT_VERSION,
+            occurrenceId: entry.entryId,
+            occurredAt: entry.occurredAt,
+            observationReceivedAt: entry.occurredAt + 1,
+            observedDelta: 1,
+            payload: { entryId: entry.entryId, summary: entry.summary },
+        }, context);
+        context.services.logger.info('automation_event_source.settled', {
+            occurrenceId: entry.entryId,
+            disposition,
+        });
+        if (disposition.kind !== 'checkpointSafe') return;
     }
 }
 

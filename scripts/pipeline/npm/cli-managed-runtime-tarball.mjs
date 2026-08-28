@@ -67,7 +67,27 @@ export function assertCliManagedRuntimeTarballPublication(tarballPath) {
     throw new Error(`[npm-publish] Unable to read CLI runtime archive checksum inventory: ${message}`);
   }
 
-  for (const runtimeAsset of getCliRuntimeAssetArchiveManifest()) {
+  const runtimeAssets = getCliRuntimeAssetArchiveManifest();
+  const expectedArchiveNames = new Set(runtimeAssets.map((runtimeAsset) => runtimeAsset.archiveName));
+  const unexpectedChecksumNames = [...checksums.keys()]
+    .filter((archiveName) => !expectedArchiveNames.has(archiveName))
+    .sort();
+  if (unexpectedChecksumNames.length > 0) {
+    throw new Error(
+      `[npm-publish] CLI runtime archive checksum inventory contains unexpected entries: ${unexpectedChecksumNames.join(', ')}`,
+    );
+  }
+  const runtimeArchivePrefix = `${archivesPrefix}/happier-cliproxyapi-managed-`;
+  const unexpectedRuntimeArchives = entries
+    .filter((entry) => entry.startsWith(runtimeArchivePrefix) && !expectedArchiveNames.has(entry.slice(archivesPrefix.length + 1)))
+    .sort();
+  if (unexpectedRuntimeArchives.length > 0) {
+    throw new Error(
+      `[npm-publish] CLI tarball contains unexpected managed runtime archives: ${unexpectedRuntimeArchives.join(', ')}`,
+    );
+  }
+
+  for (const runtimeAsset of runtimeAssets) {
     const archivePath = `${archivesPrefix}/${runtimeAsset.archiveName}`;
     if (entryCount(archivePath) !== 1) {
       throw new Error(

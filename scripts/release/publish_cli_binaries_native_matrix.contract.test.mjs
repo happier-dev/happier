@@ -820,6 +820,12 @@ test('ordinary CI runs the pinned Go source on macOS, Linux, and Windows and com
   const workflow = YAML.parse(raw);
   const job = workflow.jobs?.['cliproxyapi-managed-runtime'];
   assert.ok(job, 'expected cliproxyapi-managed-runtime CI job');
+  assert.deepEqual(job.needs, ['trusted_ref_guard']);
+  assert.equal(
+    workflow.jobs?.trusted_ref_guard?.outputs?.ubuntu_2404,
+    '${{ steps.runner_pool.outputs.ubuntu_2404 }}',
+    'the semantic Linux runner matrix must consume the trusted runner-pool owner',
+  );
   assert.deepEqual(
     job.strategy?.matrix?.include?.map(({ platform_key, runner, go_target }) => ({
       platform_key,
@@ -827,13 +833,17 @@ test('ordinary CI runs the pinned Go source on macOS, Linux, and Windows and com
       go_target,
     })),
     [
-      { platform_key: 'linux-amd64', runner: 'ubuntu-24.04', go_target: 'linux-amd64' },
+      {
+        platform_key: 'linux-amd64',
+        runner: '${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}',
+        go_target: 'linux-amd64',
+      },
       { platform_key: 'darwin-arm64', runner: 'macos-15', go_target: 'darwin-arm64' },
       { platform_key: 'windows-amd64', runner: 'windows-2025', go_target: 'windows-amd64' },
       { platform_key: 'windows-arm64', runner: 'windows-2025', go_target: 'windows-arm64' },
     ],
   );
-  const setupGo = job.steps.find((step) => step.uses === 'actions/setup-go@v6');
+  const setupGo = job.steps.find((step) => usesAction(step, 'actions/setup-go'));
   assert.equal(setupGo?.with?.['go-version-file'], 'packages/plugins/cliproxyapi/managed-runtime/go.mod');
   assert.equal(setupGo?.with?.['cache-dependency-path'], 'packages/plugins/cliproxyapi/managed-runtime/go.sum');
   const runs = job.steps.map((step) => String(step.run ?? '')).join('\n');

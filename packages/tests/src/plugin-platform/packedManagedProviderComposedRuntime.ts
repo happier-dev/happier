@@ -25,7 +25,11 @@ import {
 } from '../../../../apps/cli/src/daemon/processSnapshotCache';
 import {
   buildConnectedServiceCredentialRecord,
+  CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
+  CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+  ConnectedAccountAttemptResponseSchema,
+  ConnectedAccountDaemonControlResponseSchema,
   DaemonPluginUiResourceReadResponseSchema,
   DaemonPluginUiResourceWatchCloseResponseSchema,
   DaemonPluginUiResourceWatchNextResponseSchema,
@@ -38,6 +42,9 @@ import {
   RestartSessionRunnerResultV1Schema,
   sealAccountScopedBlobCiphertext,
   SessionRunnerRuntimeStateV1Schema,
+  type ConnectedAccountDaemonCommand,
+  type ConnectedAccountDaemonControlCommand,
+  type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 import {
   PLUGIN_ACTION_OUTPUT_SCHEMAS,
@@ -186,6 +193,17 @@ const CANDIDATE_HANDOFF_AGENT_ID = 'packed-managed-public-agent';
 const CANDIDATE_HANDOFF_PROVIDER_ID = 'gateway';
 const CANDIDATE_HANDOFF_PROVIDER_CONTRIBUTION_KEY =
   `${CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID}/${CANDIDATE_HANDOFF_PROVIDER_ID}`;
+const CANDIDATE_HANDOFF_NOVEL_SERVICE = Object.freeze({
+  pluginId: CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID,
+  localId: 'novel-cloud',
+});
+const CANDIDATE_HANDOFF_NOVEL_PURPOSE = Object.freeze({
+  consumer: Object.freeze({
+    pluginId: CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID,
+    localId: CANDIDATE_HANDOFF_PROVIDER_ID,
+  }),
+  purpose: 'novel-upstream',
+});
 const CANDIDATE_HANDOFF_CONNECTION_ID = ProviderConnectionIdSchema.parse(
   'pc_packed_public_handoff',
 );
@@ -193,7 +211,7 @@ const CANDIDATE_HANDOFF_MODEL_ID = 'gpt-packed-public-handoff';
 const CANDIDATE_HANDOFF_AGENT_TARGET_KEY =
   `backend:${CANDIDATE_HANDOFF_AGENT_ID}`;
 const CANDIDATE_HANDOFF_PROVIDER_BINARY_NAME =
-  'happier-cliproxyapi-managed';
+  'acme-packed-provider-runtime';
 const CANDIDATE_HANDOFF_PROVIDER_SERVICE_ID =
   'packed-public-provider-managed';
 const CANDIDATE_HANDOFF_PROVIDER_ENDPOINT_ID = 'responses';
@@ -2809,7 +2827,7 @@ export async function writeCandidateHandoffAgentSource(input: Readonly<{
   ].join('\n'), 'utf8');
 }
 
-async function writeCandidateHandoffProviderSource(input: Readonly<{
+export async function writeCandidateHandoffProviderSource(input: Readonly<{
   pluginRoot: string;
   version: string;
   generation: Extract<CandidateHandoffGeneration, 'P' | 'Q'>;
@@ -2828,13 +2846,6 @@ async function writeCandidateHandoffProviderSource(input: Readonly<{
   const wrapperName = basename(input.wrapperExecutable);
   await copyFile(input.wrapperExecutable, join(toolsRoot, wrapperName));
   await chmod(join(toolsRoot, wrapperName), 0o755);
-  for (const name of [
-    'CLIProxyAPI-LICENSE',
-    'CLIProxyAPI-THIRD-PARTY-NOTICES',
-  ]) {
-    await copyFile(join(resolve(input.wrapperExecutable, '..'), name),
-      join(toolsRoot, name));
-  }
   const providerDeclaration = {
     v: 1,
     id: CANDIDATE_HANDOFF_PROVIDER_ID,
@@ -2881,20 +2892,20 @@ async function writeCandidateHandoffProviderSource(input: Readonly<{
     managedRuntime: {
       kind: 'managed',
       connectedAccounts: [{
-        purpose: 'openai-upstream',
+        purpose: 'novel-upstream',
         service: {
-          pluginId: 'happier.agent.codex',
-          localId: 'openai-codex',
+          pluginId: CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID,
+          localId: 'novel-cloud',
         },
         required: false,
         materializationKinds: ['httpHeaders'],
       }],
       requestAuthUses: [{
-        purpose: 'openai-upstream',
+        purpose: 'novel-upstream',
         materialization: {
           kind: 'httpHeaders',
           origin: 'https://chatgpt.com',
-          headerNames: ['authorization', 'chatgpt-account-id'],
+          headerNames: ['authorization'],
         },
       }],
       endpointTemplateIds: [CANDIDATE_HANDOFF_PROVIDER_ENDPOINT_ID],
@@ -2914,16 +2925,88 @@ async function writeCandidateHandoffProviderSource(input: Readonly<{
       contributes: {
         agents: [],
         providers: [providerDeclaration],
+        connectedAccountDescriptors: [{
+          id: 'novel-cloud',
+          title: 'Packed public Novel Cloud',
+          authentication: {
+            defaultModeId: 'manual',
+            modes: [{
+              id: 'manual',
+              kind: 'manual',
+              outcomeReconciliation: 'none',
+              fields: [{
+                id: 'token',
+                title: 'Token',
+                schema: { type: 'string', minLength: 1 },
+                secret: true,
+              }],
+            }],
+          },
+          capabilities: ['packedNovelCloud'],
+        }],
       },
     }, null, 2)}\n`,
     'utf8',
   );
   await writeFile(join(input.pluginRoot, 'src', 'index.ts'), [
     "import { definePlugin } from '@happier-dev/plugin-sdk';",
+    "import { buildConnectedAccountRequestAuthClientSource, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';",
     "import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';",
     "import type { ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';",
     '',
     `export const packedProviderGeneration = ${JSON.stringify(input.generation)} as const;`,
+    `const requestAuthClientSource = buildConnectedAccountRequestAuthClientSource({ capabilityPathEnv: ${JSON.stringify(CANDIDATE_HANDOFF_REQUEST_AUTH_CAPABILITY_ENV)} });`,
+    'const externalRuntimeProgram = [',
+    `  "const { readFileSync } = require('node:fs');",`,
+    '  requestAuthClientSource,',
+    `  "const http = require('node:http');",`,
+    `  "const net = require('node:net');",`,
+    `  "const tls = require('node:tls');",`,
+    `  "const once = require('node:events').once;",`,
+    `  ${JSON.stringify(`const purpose = { consumer: { pluginId: ${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID)}, localId: ${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_ID)} }, purpose: 'novel-upstream' };`)},`,
+    `  ${JSON.stringify("async function forward(body, lease) {")},`,
+    `  ${JSON.stringify("  const proxy = new URL(process.env.HTTPS_PROXY || process.env.https_proxy);")},`,
+    `  ${JSON.stringify("  const socket = net.connect({ host: proxy.hostname, port: Number(proxy.port) });")},`,
+    `  ${JSON.stringify("  await once(socket, 'connect');")},`,
+    `  ${JSON.stringify("  socket.write('CONNECT chatgpt.com:443 HTTP/1.1\\r\\nHost: chatgpt.com:443\\r\\n\\r\\n');")},`,
+    `  ${JSON.stringify("  const connectResponse = String((await once(socket, 'data'))[0]);")},`,
+    `  ${JSON.stringify("  if (!connectResponse.includes('200 Connection Established')) throw new Error('upstream CONNECT refused');")},`,
+    `  ${JSON.stringify("  const secure = tls.connect({ socket, servername: 'chatgpt.com' });")},`,
+    `  ${JSON.stringify("  await once(secure, 'secureConnect');")},`,
+    `  ${JSON.stringify("  const required = Object.entries(lease.requiredHeaders || {}).map(([name, value]) => `${name}: ${value}`);")},`,
+    `  ${JSON.stringify("  secure.write(['POST /backend-api/codex/responses HTTP/1.1', 'Host: chatgpt.com', `Authorization: Bearer ${lease.accessToken}`, ...required, 'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(body)}`, 'Connection: close', '', body].join('\\r\\n'));")},`,
+    `  ${JSON.stringify("  await once(secure, 'data');")},`,
+    `  ${JSON.stringify("  secure.destroy();")},`,
+    `  ${JSON.stringify("}")},`,
+    `  ${JSON.stringify("const server = http.createServer(async (request, response) => {")},`,
+    `  ${JSON.stringify("  try {")},`,
+    `  ${JSON.stringify("    if (request.url === '/healthz') { response.writeHead(200).end('ok'); return; }")},`,
+    `  ${JSON.stringify("    const chunks = []; for await (const chunk of request) chunks.push(chunk);")},`,
+    `  ${JSON.stringify("    const body = Buffer.concat(chunks).toString('utf8');")},`,
+    `  ${JSON.stringify("    await forward(body, await lookupConnectedAccountRequestAuth({ purpose }));")},`,
+    `  ${JSON.stringify("    response.writeHead(200, { 'content-type': 'application/json' }).end('{}');")},`,
+    `  ${JSON.stringify("  } catch { response.writeHead(502).end('provider runtime failed'); }")},`,
+    `  ${JSON.stringify("});")},`,
+    `  ${JSON.stringify("server.listen(Number(process.env.PORT), process.env.HOST || '127.0.0.1');")},`,
+    `  ${JSON.stringify("for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)));")},`,
+    "].join('\\n');",
+    "const novelCloudRuntime: ConnectedAccountRuntime = Object.freeze({",
+    "  authentication: { modes: { manual: { kind: 'manual', async complete(input, context) {",
+    "    const token = input.fields.token?.trim() ?? '';",
+    "    if (!token) return { status: 'rejected', diagnostic: { code: 'packed_novel_token_invalid', severity: 'error', message: 'Novel Cloud requires a token.' } };",
+    "    await context.attemptCredentials.set('token', token);",
+    "    return { status: 'connected', displayName: 'Packed Novel Cloud', scopes: [] };",
+    "  } } } },",
+    "  async refresh(context) { return await context.credentials.get('token') ? { status: 'connected', displayName: 'Packed Novel Cloud', scopes: [] } : { status: 'unavailable', diagnostic: { code: 'packed_novel_token_unavailable', severity: 'error', message: 'Novel Cloud credentials are unavailable.' } }; },",
+    "  async revoke() { return { status: 'remoteUnsupported' }; },",
+    "  async status(context) { return await context.credentials.get('token') ? { status: 'connected', displayName: 'Packed Novel Cloud', scopes: [] } : { status: 'unavailable', diagnostic: { code: 'packed_novel_token_unavailable', severity: 'error', message: 'Novel Cloud credentials are unavailable.' } }; },",
+    "  async materialize(request, context) {",
+    "    const token = await context.credentials.get('token');",
+    "    if (!token) throw new Error('Novel Cloud credentials are unavailable');",
+    "    if (request.kind !== 'httpHeaders' || request.origin !== 'https://chatgpt.com') throw new Error('Novel Cloud supports only its declared HTTP origin');",
+    "    return { kind: 'httpHeaders', headers: request.headerNames.some((name) => name.toLowerCase() === 'authorization') ? { Authorization: `Bearer ${token}` } : {} };",
+    "  },",
+    "});",
     'const serviceSpec = Object.freeze({',
     `  id: ${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_SERVICE_ID)},`,
     `  requestAuth: { kind: 'connectedAccountCapabilityPath', injectEnvironmentKey: ${JSON.stringify(CANDIDATE_HANDOFF_REQUEST_AUTH_CAPABILITY_ENV)} },`,
@@ -2937,6 +3020,7 @@ async function writeCandidateHandoffProviderSource(input: Readonly<{
     "    kind: 'spawn',",
     '    launch: {',
     `      executable: { kind: 'packaged-runtime-binary', directorySegments: ['tools', 'unpacked'], executableBaseName: ${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_BINARY_NAME)} },`,
+    "      args: ['-e', externalRuntimeProgram],",
     "      env: { HOST: '127.0.0.1', PACKED_PROVIDER_GENERATION: packedProviderGeneration },",
     '    },',
     "    endpoint: { kind: 'assignAndInject', host: '127.0.0.1', port: { kind: 'allocated' }, inject: { portEnvironmentKey: 'PORT' } },",
@@ -2976,12 +3060,18 @@ async function writeCandidateHandoffProviderSource(input: Readonly<{
     `        catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: ${JSON.stringify(CANDIDATE_HANDOFF_MODEL_ID)}, name: 'Packed public model', capabilities: { toolRoundTrips: 'supported', reasoningControls: 'supported' } }] },`,
     '        managedRuntime: {',
     "          kind: 'managed',",
-    `          connectedAccounts: [{ purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, required: false, materializationKinds: ['httpHeaders'] }],`,
-    `          requestAuthUses: [{ purpose: 'openai-upstream', materialization: { kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] } }],`,
+    `          connectedAccounts: [{ purpose: 'novel-upstream', service: { pluginId: ${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_PLUGIN_ID)}, localId: 'novel-cloud' }, required: false, materializationKinds: ['httpHeaders'] }],`,
+    `          requestAuthUses: [{ purpose: 'novel-upstream', materialization: { kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization'] } }],`,
     `          endpointTemplateIds: [${JSON.stringify(CANDIDATE_HANDOFF_PROVIDER_ENDPOINT_ID)}],`,
     '        },',
     '      },',
     '      runtime,',
+    '    },',
+    '  },',
+    '  connectedAccountDescriptors: {',
+    "    'novel-cloud': {",
+    "      declaration: { title: 'Packed public Novel Cloud', authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string', minLength: 1 }, secret: true }] }] }, capabilities: ['packedNovelCloud'] },",
+    '      runtime: novelCloudRuntime,',
     '    },',
     '  },',
     '});',
@@ -3407,6 +3497,19 @@ async function packAndInstallCandidateHandoffGeneration(input: Readonly<{
           || match[1]?.startsWith('./'))),
     'packed_managed_provider_candidate_public_surface_bypass',
   );
+  if (input.family === 'provider') {
+    const providerSource = sources.join('\n');
+    assert(
+      providerSource.includes('buildConnectedAccountRequestAuthClientSource')
+        && providerSource.includes('lookupConnectedAccountRequestAuth')
+        && providerSource.includes("connectedAccountDescriptors: {")
+        && providerSource.includes("'novel-cloud'")
+        && providerSource.includes("purpose: 'novel-upstream'")
+        && !providerSource.includes("purpose: 'openai-upstream'")
+        && !providerSource.includes("pluginId: 'happier.agent.codex'"),
+      'packed_managed_provider_candidate_public_vertical_incomplete',
+    );
+  }
   const authoredManifest = JSON.parse(await readFile(
     join(pluginRoot, '.happier-plugin', 'plugin.json'),
     'utf8',
@@ -3546,9 +3649,66 @@ async function listCandidateHandoffWrapperProcesses(
   return observed.sort((left, right) => left.pid - right.pid);
 }
 
+async function callCandidateHandoffConnectedAccountCommand(
+  runtime: InitializedRuntime,
+  command: ConnectedAccountDaemonCommand,
+) {
+  return await callEncryptedMachineRpc({
+    ui: runtime.ui,
+    machineId: runtime.machineId,
+    method: CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
+    req: { v: 1, machineId: runtime.machineId, command },
+    secret: runtime.accountSecret,
+    schema: ConnectedAccountAttemptResponseSchema,
+  });
+}
+
+async function callCandidateHandoffConnectedAccountControl(
+  runtime: InitializedRuntime,
+  command: ConnectedAccountDaemonControlCommand,
+) {
+  return await callEncryptedMachineRpc({
+    ui: runtime.ui,
+    machineId: runtime.machineId,
+    method: CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
+    req: { v: 1, machineId: runtime.machineId, command },
+    secret: runtime.accountSecret,
+    schema: ConnectedAccountDaemonControlResponseSchema,
+  });
+}
+
+async function connectCandidateHandoffNovelAccount(
+  runtime: InitializedRuntime,
+): Promise<QualifiedConnectedAccountRef> {
+  const begin = await callCandidateHandoffConnectedAccountCommand(runtime, {
+    operation: 'beginConnect',
+    service: CANDIDATE_HANDOFF_NOVEL_SERVICE,
+    modeId: 'manual',
+  });
+  assert(
+    begin.status === 'awaitingManual',
+    'packed_managed_provider_candidate_novel_account_begin_failed',
+  );
+  const connected = await callCandidateHandoffConnectedAccountCommand(runtime, {
+    operation: 'submitManual',
+    attemptId: begin.attemptId,
+    fields: { token: runtime.credential.accessToken },
+  });
+  assert(
+    connected.status === 'connected'
+      && connected.account.service.pluginId
+        === CANDIDATE_HANDOFF_NOVEL_SERVICE.pluginId
+      && connected.account.service.localId
+        === CANDIDATE_HANDOFF_NOVEL_SERVICE.localId,
+    'packed_managed_provider_candidate_novel_account_connect_failed',
+  );
+  return connected.account;
+}
+
 async function setupCandidateHandoffProvider(
   runtime: InitializedRuntime,
   input: PackedManagedProviderPreparedInput,
+  novelAccount: QualifiedConnectedAccountRef,
 ): Promise<void> {
   const baseline = await listCandidateHandoffWrapperProcesses(input);
   const explicitStart = await callProviderRpc(
@@ -3604,10 +3764,10 @@ async function setupCandidateHandoffProvider(
   );
   const purpose = enabled.connection.managedLocalOption
     ?.connectedAccountPurposes.find((entry) =>
-      entry.purpose === OPENAI_PURPOSE.purpose);
+      entry.purpose === CANDIDATE_HANDOFF_NOVEL_PURPOSE.purpose);
   assert(
-    purpose?.service.pluginId === 'happier.agent.codex'
-      && purpose.service.localId === 'openai-codex',
+    purpose?.service.pluginId === CANDIDATE_HANDOFF_NOVEL_SERVICE.pluginId
+      && purpose.service.localId === CANDIDATE_HANDOFF_NOVEL_SERVICE.localId,
     'packed_managed_provider_candidate_purpose_missing',
   );
   const updated = await callProviderRpc(
@@ -3621,15 +3781,9 @@ async function setupCandidateHandoffProvider(
       deployment: {
         kind: 'managedLocal',
         purposeBindingDefaults: {
-          [OPENAI_PURPOSE.purpose]: {
+          [CANDIDATE_HANDOFF_NOVEL_PURPOSE.purpose]: {
             kind: 'account',
-            account: {
-              service: {
-                pluginId: purpose.service.pluginId,
-                localId: purpose.service.localId,
-              },
-              accountId: 'work',
-            },
+            account: novelAccount,
           },
         },
       },
@@ -4142,9 +4296,8 @@ async function startCurrentSourcePluginSdkRegistry(
 
 /**
  * Runs the existing public G→H External Sessions archive fixture against a
- * current-source CLI snapshot. This is deliberately separate from the
- * release-candidate vertical: it proves the moving-source public SDK path and
- * never claims a native standalone artifact, signing, or notarization fact.
+ * current-source CLI snapshot. It proves the moving-source public SDK path and
+ * does not claim native publication, signing, or notarization evidence.
  */
 export async function runPackedCurrentSourceExternalSessions(): Promise<
   PackedCurrentSourceExternalSessionsObservation
@@ -5759,6 +5912,9 @@ async function probePackedCandidateAgentProviderHandoff(
     CandidateHandoffExternalSessionsPublicPhase | null = null;
   let providerProcessStarts:
     PackedManagedProviderProcessStartCollector | null = null;
+  let novelAccount: QualifiedConnectedAccountRef | null = null;
+  let novelAccountPresent = false;
+  let candidateConnectionPresent = false;
   let providerProcessStartsStopped = false;
   let observation: PackedManagedProviderCandidateHandoffObservation | null = null;
   let hasPrimaryFailure = false;
@@ -5781,7 +5937,10 @@ async function probePackedCandidateAgentProviderHandoff(
       generation: 'P',
       version: '1.0.0',
     });
-    await setupCandidateHandoffProvider(runtime, input);
+    novelAccount = await connectCandidateHandoffNovelAccount(runtime);
+    novelAccountPresent = true;
+    await setupCandidateHandoffProvider(runtime, input, novelAccount);
+    candidateConnectionPresent = true;
     externalSessionsGPhase =
       await invokeCandidateHandoffExternalSessionsPublicPhase({
         authoring,
@@ -6455,6 +6614,7 @@ async function probePackedCandidateAgentProviderHandoff(
           === CANDIDATE_HANDOFF_CONNECTION_ID,
       'packed_managed_provider_candidate_connection_cleanup_failed',
     );
+    candidateConnectionPresent = false;
     const agentUninstall = await runPackedCliJson({
       cliEntrypoint: authoring.cliEntrypoint,
       cwd: authoring.fixtureRoot,
@@ -6466,6 +6626,22 @@ async function probePackedCandidateAgentProviderHandoff(
         '--json',
       ],
     }, 'plugins_uninstall');
+    assert(
+      novelAccount,
+      'packed_managed_provider_candidate_novel_account_cleanup_missing',
+    );
+    const novelAccountRevocation =
+      await callCandidateHandoffConnectedAccountControl(runtime, {
+        operation: 'revokeAccount',
+        account: novelAccount,
+        cleanupGroupReferences: true,
+      });
+    assert(
+      novelAccountRevocation.status === 'revoked'
+        && novelAccountRevocation.account.accountId === novelAccount.accountId,
+      'packed_managed_provider_candidate_novel_account_revoke_failed',
+    );
+    novelAccountPresent = false;
     const providerUninstall = await runPackedCliJson({
       cliEntrypoint: authoring.cliEntrypoint,
       cwd: authoring.fixtureRoot,
@@ -6730,10 +6906,10 @@ async function probePackedCandidateAgentProviderHandoff(
             === 0,
       },
       artifacts: {
-        agentGArchiveSha256: agentG.archiveSha256,
-        agentHArchiveSha256: agentH.archiveSha256,
-        providerPArchiveSha256: providerP.archiveSha256,
-        providerQArchiveSha256: providerQ.archiveSha256,
+        agentGenerationsDistinct:
+          agentG.immutableGenerationId !== agentH.immutableGenerationId,
+        providerGenerationsDistinct:
+          providerP.immutableGenerationId !== providerQ.immutableGenerationId,
         installedArchivesMatchPackedBytes: [
           agentG,
           agentH,
@@ -6747,9 +6923,9 @@ async function probePackedCandidateAgentProviderHandoff(
     >;
     const contract: PackedManagedProviderCandidateHandoffContractEvidence = {
       authoring: {
-        exactCandidateSdk: true,
-        exactCandidateCli: true,
-        exactCandidateStandaloneCli: true,
+        publicSdkOnly: true,
+        publicCliOnly: true,
+        packagedRuntimeBinary: true,
         externalAgentPublicOnly: true,
         externalProviderPublicOnly: true,
         providerPackageHasNoAgentLocator: true,
@@ -6841,6 +7017,46 @@ async function probePackedCandidateAgentProviderHandoff(
       : []),
     ...(providerProcessStarts && !providerProcessStartsStopped
       ? [{ run: async () => await providerProcessStarts.stop() }]
+      : []),
+    ...(candidateConnectionPresent
+      ? [{
+        run: async () => {
+          const deleted = await callProviderRpc(
+            runtime,
+            RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
+            {
+              action: 'delete',
+              machineId: runtime.machineId,
+              connectionId: CANDIDATE_HANDOFF_CONNECTION_ID,
+            },
+            DaemonProviderConnectionMutationResponseV1Schema,
+          );
+          assert(
+            deleted.status === 'success' && deleted.action === 'delete',
+            'packed_managed_provider_candidate_failure_connection_cleanup_failed',
+          );
+          candidateConnectionPresent = false;
+        },
+      }]
+      : []),
+    ...(novelAccountPresent && novelAccount
+      ? [{
+        run: async () => {
+          const revoked = await callCandidateHandoffConnectedAccountControl(
+            runtime,
+            {
+              operation: 'revokeAccount',
+              account: novelAccount!,
+              cleanupGroupReferences: true,
+            },
+          );
+          assert(
+            revoked.status === 'revoked',
+            'packed_managed_provider_candidate_failure_account_cleanup_failed',
+          );
+          novelAccountPresent = false;
+        },
+      }]
       : []),
     ...(authoring ? [{ run: async () => await authoring.registry.close() }] : []),
   ]);
@@ -7019,9 +7235,9 @@ export function assertPackedManagedProviderSafeRestartContract(
 
 export type PackedManagedProviderCandidateHandoffContractEvidence = Readonly<{
   authoring: Readonly<{
-    exactCandidateSdk: boolean;
-    exactCandidateCli: boolean;
-    exactCandidateStandaloneCli: boolean;
+    publicSdkOnly: boolean;
+    publicCliOnly: boolean;
+    packagedRuntimeBinary: boolean;
     externalAgentPublicOnly: boolean;
     externalProviderPublicOnly: boolean;
     providerPackageHasNoAgentLocator: boolean;
@@ -7091,10 +7307,8 @@ export type PackedManagedProviderCandidateHandoffContractEvidence = Readonly<{
       reinstalledHFollowReacquired: boolean;
     }>;
     artifacts: Readonly<{
-      agentGArchiveSha256: string;
-      agentHArchiveSha256: string;
-      providerPArchiveSha256: string;
-      providerQArchiveSha256: string;
+      agentGenerationsDistinct: boolean;
+      providerGenerationsDistinct: boolean;
       installedArchivesMatchPackedBytes: boolean;
     }>;
   }>;
@@ -7137,9 +7351,9 @@ export function assertPackedManagedProviderCandidateHandoffContract(
   evidence: PackedManagedProviderCandidateHandoffContractEvidence,
 ): void {
   assert(
-    evidence.authoring.exactCandidateSdk
-      && evidence.authoring.exactCandidateCli
-      && evidence.authoring.exactCandidateStandaloneCli
+    evidence.authoring.publicSdkOnly
+      && evidence.authoring.publicCliOnly
+      && evidence.authoring.packagedRuntimeBinary
       && evidence.authoring.externalAgentPublicOnly
       && evidence.authoring.externalProviderPublicOnly
       && evidence.authoring.providerPackageHasNoAgentLocator,
@@ -7248,16 +7462,8 @@ export function assertPackedManagedProviderCandidateHandoffContract(
       && externalSessions.generationHandoff.publicGFollowNoPostRetirementEvents
       && externalSessions.generationHandoff.hReinstalledAndRetrusted
       && externalSessions.generationHandoff.reinstalledHFollowReacquired
-      && [
-        externalSessions.artifacts.agentGArchiveSha256,
-        externalSessions.artifacts.agentHArchiveSha256,
-        externalSessions.artifacts.providerPArchiveSha256,
-        externalSessions.artifacts.providerQArchiveSha256,
-      ].every((fingerprint) => /^sha256:[a-f0-9]{64}$/u.test(fingerprint))
-      && externalSessions.artifacts.agentGArchiveSha256
-        !== externalSessions.artifacts.agentHArchiveSha256
-      && externalSessions.artifacts.providerPArchiveSha256
-        !== externalSessions.artifacts.providerQArchiveSha256
+      && externalSessions.artifacts.agentGenerationsDistinct
+      && externalSessions.artifacts.providerGenerationsDistinct
       && externalSessions.artifacts.installedArchivesMatchPackedBytes,
     'packed_managed_provider_candidate_external_sessions_mismatch',
   );

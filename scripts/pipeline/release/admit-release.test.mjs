@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  admitPublicSdkPublication,
   admitPublicSdkRelease,
   admitRelease,
   publicSdkReleaseApprovalRequired,
@@ -35,22 +36,7 @@ test('requires full checks for production and successful selected risk gates', (
   }), /trust validation/);
 });
 
-test('requires explicit maintainer approval only when the exact public SDK analysis asks for it', () => {
-  assert.throws(() => admitRelease({
-    ...base,
-    publicSdk: { approvalRequired: true, approved: false },
-  }), /public SDK release requires explicit maintainer approval/);
-  assert.deepEqual(admitRelease({
-    ...base,
-    publicSdk: { approvalRequired: true, approved: true },
-  }), { admitted: true });
-  assert.deepEqual(admitRelease({
-    ...base,
-    publicSdk: { approvalRequired: false, approved: false },
-  }), { admitted: true });
-});
-
-test('exact packed public SDK candidates retain prepublish and breaking-change approval', () => {
+test('public SDK publication retains first-publication and breaking-change approval', () => {
   assert.equal(publicSdkReleaseApprovalRequired({
     sourcePosture: 'prepublish_hold',
     apiGovernance: { humanReviewRequired: false },
@@ -73,7 +59,7 @@ test('exact packed public SDK candidates retain prepublish and breaking-change a
     packageName: '@happier-dev/plugin-sdk',
     approvalRequired: true,
     approved: false,
-  }), /public SDK release requires explicit maintainer approval/);
+  }), /public SDK publication requires explicit maintainer approval at release dispatch/);
   assert.deepEqual(admitPublicSdkRelease({
     packageName: '@happier-dev/plugin-sdk',
     approvalRequired: true,
@@ -81,38 +67,35 @@ test('exact packed public SDK candidates retain prepublish and breaking-change a
   }), { admitted: true });
 });
 
-test('npm publication consumes an exact admitted candidate without inventing a missing readiness authority', () => {
-  const candidateSha = 'a'.repeat(40);
-
+test('npm publication consumes the release-dispatch source identity', () => {
+  const sourceSha = 'a'.repeat(40);
   assert.throws(() => admitRelease({
     ...base,
     npmPublication: {
       mode: 'pack+publish',
       dryRun: false,
       authorizedSha: '',
-      checkedOutSha: candidateSha,
-      packageNames: ['@happier-dev/relay-server'],
+      checkedOutSha: sourceSha,
+      packageNames: ['@happier-dev/plugin-sdk'],
     },
-  }), /release-admitted exact source SHA/);
-
+  }), /release-dispatch source SHA/);
   assert.throws(() => admitRelease({
     ...base,
     npmPublication: {
       mode: 'pack+publish',
       dryRun: false,
-      authorizedSha: candidateSha,
+      authorizedSha: sourceSha,
       checkedOutSha: 'b'.repeat(40),
-      packageNames: ['@happier-dev/relay-server'],
+      packageNames: ['@happier-dev/plugin-sdk'],
     },
   }), /does not match the checked-out source/);
-
   assert.deepEqual(admitRelease({
     ...base,
     npmPublication: {
       mode: 'pack+publish',
       dryRun: false,
-      authorizedSha: candidateSha,
-      checkedOutSha: candidateSha,
+      authorizedSha: sourceSha,
+      checkedOutSha: sourceSha,
       packageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'],
     },
   }), { admitted: true });
@@ -129,12 +112,12 @@ test('the public npm package names one release selection publishes have a single
     ['@happier-dev/channels-protocol'],
   );
 
-  const candidateSha = 'c'.repeat(40);
+  const sourceSha = 'c'.repeat(40);
   const npmPublication = {
     mode: 'pack+publish',
     dryRun: false,
-    authorizedSha: candidateSha,
-    checkedOutSha: candidateSha,
+    authorizedSha: sourceSha,
+    checkedOutSha: sourceSha,
   };
 
   // Public packages are governed by their executable API/package checks and
@@ -150,4 +133,77 @@ test('the public npm package names one release selection publishes have a single
     ...base,
     npmPublication: { ...npmPublication, packageNames: ['@happier-dev/relay-server', '@happier-dev/cli'] },
   }), { admitted: true });
+});
+
+function publicSdkAdmission(overrides = {}) {
+  return {
+    channel: 'preview',
+    npmTag: 'next',
+    approved: true,
+    releaseNotesId: '2026.08.28-preview',
+    publishPluginSdk: false,
+    pluginSdkReady: false,
+    pluginSdkFirstPublication: false,
+    pluginSdkRemovedSymbols: false,
+    pluginSdkHumanReviewRequired: false,
+    publishSdk: true,
+    sdkAuthReadiness: 'ready',
+    sdkVersion: '0.1.0-preview.1',
+    sdkFirstPublication: true,
+    sdkRemovedSymbols: false,
+    sdkHumanReviewRequired: false,
+    sdkClassification: 'first_publication',
+    sdkMigrationNotes: 'not_required',
+    ...overrides,
+  };
+}
+
+test('public SDK admission consumes direct readiness, comparison facts, and maintainer classification', () => {
+  assert.deepEqual(admitPublicSdkPublication(publicSdkAdmission()), { admitted: true });
+  assert.throws(
+    () => admitPublicSdkPublication(publicSdkAdmission({ ciWaived: true })),
+    /public SDK publication cannot waive exact-SHA CI/u,
+  );
+  assert.throws(() => admitPublicSdkPublication(publicSdkAdmission({ channel: 'production', npmTag: 'latest' })), /preview.*next/u);
+  assert.throws(() => admitPublicSdkPublication(publicSdkAdmission({ approved: false })), /explicit maintainer approval/u);
+  assert.throws(() => admitPublicSdkPublication(publicSdkAdmission({ sdkVersion: '0.1.0' })), /0\.x preview/u);
+  assert.throws(() => admitPublicSdkPublication(publicSdkAdmission({ sdkClassification: 'compatible' })), /first publication/u);
+});
+
+test('plugin readiness and external SDK auth readiness are explicit direct inputs', () => {
+  const plugin = publicSdkAdmission({
+    publishPluginSdk: true,
+    pluginSdkReady: true,
+    pluginSdkVersion: '0.1.0-preview.1',
+    pluginSdkFirstPublication: true,
+    pluginSdkClassification: 'first_publication',
+    pluginSdkMigrationNotes: 'not_required',
+  });
+  assert.deepEqual(admitPublicSdkPublication(plugin), { admitted: true });
+  assert.throws(() => admitPublicSdkPublication({ ...plugin, pluginSdkReady: false }), /plugin SDK publication requires explicit/u);
+  assert.deepEqual(admitPublicSdkPublication(publicSdkAdmission({ sdkAuthReadiness: 'waived', sdkAuthWaiver: 'preview-auth-waiver' })), { admitted: true });
+  assert.throws(() => admitPublicSdkPublication(publicSdkAdmission({ sdkAuthReadiness: 'waived', sdkAuthWaiver: '' })), /waiver must be named/u);
+});
+
+test('removed symbols require breaking classification and release notes', () => {
+  const breaking = publicSdkAdmission({
+    sdkVersion: '0.2.0-preview.1',
+    sdkFirstPublication: false,
+    sdkRemovedSymbols: true,
+    sdkHumanReviewRequired: true,
+    sdkClassification: 'breaking',
+    sdkMigrationNotes: '2026.08.28-preview',
+  });
+  assert.deepEqual(admitPublicSdkPublication(breaking), { admitted: true });
+  assert.throws(() => admitPublicSdkPublication({ ...breaking, sdkClassification: 'compatible' }), /removed public symbols/u);
+  assert.throws(() => admitPublicSdkPublication({ ...breaking, sdkMigrationNotes: 'not_required' }), /migration notes/u);
+});
+
+test('canonical release admission fails closed when selected public SDK inputs are absent', () => {
+  const publicSdkPublication = publicSdkAdmission();
+  assert.deepEqual(admitRelease({ ...base, publicSdkPublication }), { admitted: true });
+  assert.throws(() => admitRelease({
+    ...base,
+    publicSdkPublication: { ...publicSdkPublication, sdkClassification: '' },
+  }), /first publication/u);
 });

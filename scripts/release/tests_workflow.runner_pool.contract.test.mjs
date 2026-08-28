@@ -96,7 +96,6 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     'server-db-contract',
     'e2e-core',
     'e2e-core-slow',
-    'plugin-platform-packed',
   ]) {
     assert.equal(tests.jobs[jobName]['runs-on'], '${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}');
     assert.ok(needs(tests.jobs[jobName]).includes('trusted_ref_guard'), `${jobName} must wait for runner admission`);

@@ -227,8 +227,8 @@ function buildMobileUcxNativeRowAttestation(
       });
     }
     const runtimeDetail = deviceReportedRevision
-      ? `The selected-device loaded bundle digest ${deviceReportedRevision} does not match the row's asserted served-bundle digest ${input.loadedRuntime.bundle.revision}.`
-      : 'The runner did not receive an immutable loaded bundle digest reported by the selected device.';
+      ? `The selected-device loaded bundle revision ${deviceReportedRevision} does not match the row's asserted served-bundle revision ${input.loadedRuntime.bundle.revision}.`
+      : 'The runner did not receive an immutable loaded bundle revision reported by the selected device.';
     return Object.freeze({
       status: 'blocked' as const,
       row,
@@ -237,7 +237,7 @@ function buildMobileUcxNativeRowAttestation(
         kind: 'blocked' as const,
         code: 'loaded_native_identity_unavailable' as const,
         detail: runtimeDetail,
-        wakeCondition: 'Have the selected device report the immutable digest for the JavaScript or bundle it loaded and verify that it matches this row\'s asserted served-bundle digest before recording observed.',
+        wakeCondition: 'Have the selected device report the immutable revision compiled into the JavaScript bundle it loaded and verify that it matches this row\'s asserted served-bundle revision before recording observed.',
         support: Object.freeze({
           servedBundle: input.loadedRuntime.bundle,
           moduleProbe: input.loadedRuntime.moduleProbe,
@@ -257,7 +257,7 @@ function buildMobileUcxNativeRowAttestation(
       code: 'loaded_native_identity_unavailable' as const,
       detail: runtimeDetail,
       wakeCondition: input.loadedRuntime?.wakeCondition
-        ?? 'Have the selected device report the immutable digest for the JavaScript or bundle it loaded and verify that it matches this row\'s asserted served-bundle digest before recording observed.',
+        ?? 'Have the selected device report the immutable revision compiled into the JavaScript bundle it loaded and verify that it matches this row\'s asserted served-bundle revision before recording observed.',
       support: input.loadedRuntime?.support,
     }),
   });
@@ -266,8 +266,8 @@ function buildMobileUcxNativeRowAttestation(
 /**
  * Appends one UCX row-local native attestation to the incumbent Maestro
  * manifest. The returned record is observed only after the existing runner
- * has a selected-device-reported immutable bundle digest matching the row's
- * asserted served-bundle digest. Metro host facts and the module probe are
+ * has a selected-device-reported immutable bundle revision matching the row's
+ * asserted served-bundle revision. Metro host facts and the module probe are
  * support only; they never establish loaded identity on their own.
  */
 export async function appendMobileUcxNativeRowAttestation(

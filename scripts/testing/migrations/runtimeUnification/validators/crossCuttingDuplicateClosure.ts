@@ -37,10 +37,6 @@ const APPROVED_PROVIDER_TREE_COMPATIBILITY_REEXPORTS = new Map<string, ReadonlyS
     'packages/protocol/src/agents/agentProviderIdsV1.ts',
     new Set(['../generated/providers/agentProviderIdsV1.js']),
   ],
-  [
-    'packages/protocol/src/agents/runtimeDescriptorContributionsV1.ts',
-    new Set(['./generated/runtime/descriptorContributionsV1.js']),
-  ],
 ]);
 
 export const DEFAULT_REQUIRED_EVIDENCE_FAMILY_IDS: readonly RuntimeUnificationFamilyId[] = Object.freeze(

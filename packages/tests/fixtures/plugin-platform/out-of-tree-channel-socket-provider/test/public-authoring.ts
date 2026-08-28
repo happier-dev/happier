@@ -190,53 +190,59 @@ const coreTransportFactReport = {
 
 const publicSocketObservationIngress = {
     connectionId: 'connection-1',
-    observation: {
-        kind: 'fullText',
+    entry: {
         observation: {
-            v: 1,
-            occurrenceId: 'fixture:occurrence:1',
-            occurredAt: 1_725_000_000_000,
-            transport: { kind: 'socket' },
-            endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
-            actor: {
-                principalId: 'fixture:human',
-                kind: 'human',
-                isIntegrationSelf: false,
-            },
-            message: {
-                id: 'fixture:message:1',
-                text: 'incoming fixture message',
-                addressingEvidence: 'none',
-                contentProvenance: 'original',
-                providerTimestamp: 1_725_000_000_000,
+            kind: 'fullText',
+            observation: {
+                v: 1,
+                occurrenceId: 'fixture:occurrence:1',
+                occurredAt: 1_725_000_000_000,
+                transport: { kind: 'socket' },
+                endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
+                actor: {
+                    principalId: 'fixture:human',
+                    kind: 'human',
+                    isIntegrationSelf: false,
+                },
+                message: {
+                    id: 'fixture:message:1',
+                    text: 'incoming fixture message',
+                    addressingEvidence: 'none',
+                    contentProvenance: 'original',
+                    providerTimestamp: 1_725_000_000_000,
+                },
             },
         },
+        eventCandidate: null,
     },
 } satisfies ConversationProviderObservationIngestInputV1;
 
 const publicSocketShellIngress = {
     connectionId: 'connection-1',
-    observation: {
-        kind: 'routableNonAdmission',
-        shell: {
-            v: 1,
-            occurrenceId: 'fixture:occurrence:2',
-            occurredAt: 1_725_000_000_001,
-            transport: { kind: 'socket' },
-            endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
-            actor: {
-                principalId: 'fixture:human',
-                kind: 'human',
-                isIntegrationSelf: false,
+    entry: {
+        observation: {
+            kind: 'routableNonAdmission',
+            shell: {
+                v: 1,
+                occurrenceId: 'fixture:occurrence:2',
+                occurredAt: 1_725_000_000_001,
+                transport: { kind: 'socket' },
+                endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
+                actor: {
+                    principalId: 'fixture:human',
+                    kind: 'human',
+                    isIntegrationSelf: false,
+                },
+                message: {
+                    id: 'fixture:message:2',
+                    addressingEvidence: 'none',
+                    contentProvenance: 'original',
+                    providerTimestamp: 1_725_000_000_001,
+                },
             },
-            message: {
-                id: 'fixture:message:2',
-                addressingEvidence: 'none',
-                contentProvenance: 'original',
-                providerTimestamp: 1_725_000_000_001,
-            },
+            reason: 'unsupportedContent',
         },
-        reason: 'unsupportedContent',
+        eventCandidate: null,
     },
 } satisfies ConversationProviderObservationIngestInputV1;
 
@@ -313,18 +319,16 @@ async function publicConversationTargetSelection(context: PluginInvocationContex
         'automation.conversation.target.verify',
         {
             automationId: first.automationId,
-            expectedTemplateVersion: first.templateVersion,
             resultDelivery: 'finalResult',
         },
         { signal: context.signal },
     );
     if (verification.kind === 'notVerified') {
-        const reason: 'notFound' | 'templateVersionMismatch' | 'resultDeliveryUnsupported' =
+        const reason: 'notFound' | 'resultDeliveryUnsupported' =
             verification.reason;
         return reason;
     }
-    const templateVersion: number = verification.templateVersion;
-    return { automationId: first.automationId, templateVersion };
+    return { automationId: first.automationId };
 }
 
 /**
@@ -337,7 +341,6 @@ async function publicConversationAdmission(context: PluginInvocationContext) {
     const input = AutomationConversationAdmitInputV1Schema.parse({
         automationId: 'automation-1',
         bindingId: 'binding-1',
-        templateVersion: 1,
         occurrenceId: 'public-fixture:conversation:1',
         occurredAt: 1_700_000_000_000,
         sender: { id: 'sender-1' },

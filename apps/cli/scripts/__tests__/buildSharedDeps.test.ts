@@ -23,6 +23,7 @@ import {
   inspectSourceDevSharedDepsForSourceDev,
   main,
   publishSourceDevReadinessAfterRuntimeBuild,
+  runCanonicalBundledPluginArtifactPublisher,
   runCanonicalPluginSdkGeneratedCompilerInputs,
   resolveCliCommonWorkspacesHelpersAfterBuild,
 } from '../buildSharedDeps.mjs';
@@ -119,6 +120,46 @@ function createWorkspaceBuildOwner(
 }
 
 describe('buildSharedDeps', () => {
+  it('retains a quiet bundled Plugin publisher failure diagnostic', async () => {
+    const repoRoot = createTempDirSync('happier-cli-bundled-publisher-diagnostic-');
+    try {
+      const scriptDir = resolve(repoRoot, 'apps', 'cli', 'scripts');
+      const generatorDir = resolve(scriptDir, 'build-owned');
+      mkdirSync(generatorDir, { recursive: true });
+      writeFileSync(
+        resolve(scriptDir, 'withNodeHeapLimit.mjs'),
+        [
+          "if (process.env.BUNDLED_PUBLISHER_TEST_FAIL === '1') {",
+          "  process.stderr.write('bundled publisher test failure\\n');",
+          '  process.exit(17);',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      writeFileSync(
+        resolve(generatorDir, 'generateBundledPluginEntries.ts'),
+        'export {};\n',
+        'utf8',
+      );
+
+      await expect(runCanonicalBundledPluginArtifactPublisher({
+        repoRoot,
+        env: process.env,
+        quiet: true,
+        mode: 'check',
+      })).resolves.toBe(true);
+      await expect(runCanonicalBundledPluginArtifactPublisher({
+        repoRoot,
+        env: { ...process.env, BUNDLED_PUBLISHER_TEST_FAIL: '1' },
+        quiet: true,
+        mode: 'check',
+      })).rejects.toThrow(/code=17[\s\S]*bundled publisher test failure/);
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
   it('prepares Plugin SDK compiler inputs locally and checks them on a remote replica', async () => {
     const repoRoot = createTempDirSync('happier-cli-plugin-sdk-generated-inputs-');
     try {
@@ -143,6 +184,122 @@ describe('buildSharedDeps', () => {
         env: { ...process.env, EVENTS_PATH: eventsPath, HAPPIER_DEV_TARGET_EXECUTION: '1' },
       });
       expect(JSON.parse(readFileSync(eventsPath, 'utf8'))).toEqual(['--check']);
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('retains a quiet Plugin SDK compiler-input failure diagnostic', async () => {
+    const repoRoot = createTempDirSync('happier-cli-plugin-sdk-generated-input-failure-');
+    try {
+      const scriptDir = resolve(repoRoot, 'packages', 'plugin-sdk', 'scripts');
+      mkdirSync(scriptDir, { recursive: true });
+      writeFileSync(
+        resolve(scriptDir, 'generateActionTypeMap.mjs'),
+        [
+          "process.stderr.write('action type map test failure\\n');",
+          'process.exit(17);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      await expect(runCanonicalPluginSdkGeneratedCompilerInputs({
+        repoRoot,
+        env: process.env,
+        quiet: true,
+        mode: 'write',
+      })).rejects.toThrow(/code=17[\s\S]*action type map test failure/);
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('retains the UTF-8 diagnostic head when Plugin SDK compiler-input stderr is oversized', async () => {
+    const repoRoot = createTempDirSync('happier-cli-plugin-sdk-generated-input-head-');
+    try {
+      const scriptDir = resolve(repoRoot, 'packages', 'plugin-sdk', 'scripts');
+      mkdirSync(scriptDir, { recursive: true });
+      writeFileSync(
+        resolve(scriptDir, 'generateActionTypeMap.mjs'),
+        [
+          "process.stderr.write(`HEAD_MARKER:${'🙂'.repeat(3_000)}:TAIL_MARKER\\n`);",
+          'process.exit(19);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      await expect(runCanonicalPluginSdkGeneratedCompilerInputs({
+        repoRoot,
+        env: process.env,
+        quiet: true,
+        mode: 'write',
+      })).rejects.toSatisfy((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).toContain('code=19');
+        expect(message).toContain('Child stderr (head; later output omitted)');
+        expect(message).toContain('HEAD_MARKER');
+        expect(message).not.toContain('TAIL_MARKER');
+        expect(message).not.toContain('\uFFFD');
+        return true;
+      });
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('redacts a secret crossing the Plugin SDK compiler-input diagnostic boundary', async () => {
+    const repoRoot = createTempDirSync('happier-cli-plugin-sdk-generated-input-boundary-secret-');
+    const boundarySecret = 'boundary-secret-value';
+    try {
+      const scriptDir = resolve(repoRoot, 'packages', 'plugin-sdk', 'scripts');
+      mkdirSync(scriptDir, { recursive: true });
+      writeFileSync(
+        resolve(scriptDir, 'generateActionTypeMap.mjs'),
+        [
+          `process.stderr.write(${'`'}${'x'.repeat(7_990)}SECRET=${'${process.env.TEST_API_KEY}'}:TAIL${'`'});`,
+          'process.exit(29);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      await expect(runCanonicalPluginSdkGeneratedCompilerInputs({
+        repoRoot,
+        env: { ...process.env, TEST_API_KEY: boundarySecret },
+        quiet: true,
+        mode: 'write',
+      })).rejects.toSatisfy((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).toContain('code=29');
+        expect(message).toContain('SECRET=');
+        expect(message).not.toContain(boundarySecret);
+        expect(message).not.toContain('TAIL');
+        return true;
+      });
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('retains a Plugin SDK compiler-input exit status when the child writes directly', async () => {
+    const repoRoot = createTempDirSync('happier-cli-plugin-sdk-generated-input-status-');
+    try {
+      const scriptDir = resolve(repoRoot, 'packages', 'plugin-sdk', 'scripts');
+      mkdirSync(scriptDir, { recursive: true });
+      writeFileSync(
+        resolve(scriptDir, 'generateActionTypeMap.mjs'),
+        'process.exit(23);\n',
+        'utf8',
+      );
+
+      await expect(runCanonicalPluginSdkGeneratedCompilerInputs({
+        repoRoot,
+        env: process.env,
+        quiet: false,
+        mode: 'write',
+      })).rejects.toThrow(/code=23/);
     } finally {
       removeTempDirSync(repoRoot);
     }
@@ -2982,6 +3139,13 @@ describe('buildSharedDeps', () => {
       writeFileSync(resolve(scmGitPackageDir, 'dist', 'index.js'), 'export const scmGit = true;\n', 'utf8');
       writeFileSync(resolve(scmGitPackageDir, 'src', 'index.ts'), 'export const scmGit = true;\n', 'utf8');
 
+      const staleOutputTime = new Date('2026-01-01T00:00:00.000Z');
+      const sourceTime = new Date('2026-01-02T00:00:00.000Z');
+      for (const packageDir of [opencodePackageDir, scmGitPackageDir]) {
+        utimesSync(resolve(packageDir, 'dist', 'index.js'), staleOutputTime, staleOutputTime);
+        utimesSync(resolve(packageDir, 'src', 'index.ts'), sourceTime, sourceTime);
+      }
+
       let lockCount = 0;
       const publishBundledPluginArtifacts = vi.fn();
       const syncDist = vi.fn((opts?: { workspaceNames?: readonly string[] }) => {
@@ -3001,11 +3165,20 @@ describe('buildSharedDeps', () => {
           lockCount += 1;
           return await fn();
         },
-        ensureWorkspacePackagesBuiltByNameImpl: async (_root: string, packageNames: string[]) => ({
-          ok: true,
-          built: packageNames,
-          skipped: [],
-        }),
+        ensureWorkspacePackagesBuiltByNameImpl: async (_root: string, packageNames: string[]) => {
+          const completedOutputTime = new Date('2026-01-03T00:00:00.000Z');
+          for (const packageName of packageNames) {
+            const packageDir = packageName === '@happier-dev/plugins-opencode'
+              ? opencodePackageDir
+              : scmGitPackageDir;
+            utimesSync(resolve(packageDir, 'dist', 'index.js'), completedOutputTime, completedOutputTime);
+          }
+          return {
+            ok: true,
+            built: packageNames,
+            skipped: [],
+          };
+        },
         syncBundledWorkspaceDistImpl: syncDist,
         publishBundledPluginArtifactsImpl: publishBundledPluginArtifacts,
         syncBundledWorkspaceRuntimeDependenciesImpl: () => undefined,

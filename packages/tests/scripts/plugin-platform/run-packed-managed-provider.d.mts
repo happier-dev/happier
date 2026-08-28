@@ -18,6 +18,7 @@ export type PackedManagedProviderCurrentSourceInput = Readonly<{
 export type PackedManagedProviderCandidate = PackedAuthorCandidate;
 
 export type PackedManagedProviderPreparation = Readonly<{
+  currentSource?: true;
   candidate: PackedManagedProviderCandidate;
   standaloneCliArtifact: Readonly<{
     product: 'happier';

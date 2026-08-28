@@ -722,6 +722,60 @@ test('generic profiles persist the Plugin SDK structured deprecation facts from 
   }
 });
 
+test('generic profiles retain structured deprecation facts declared behind an unannotated re-export', async () => {
+  const root = await createEntrypointFixture('@happier-dev/plugin-ui');
+  try {
+    await writeFile(join(root, 'dist/legacy-run.d.ts'), [
+      '/** @deprecated CurrentRun; remove when callers migrate to CurrentRun */',
+      'export declare function legacyRun(): void;',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(
+      join(root, 'dist/index.d.ts'),
+      "export { legacyRun as run } from './legacy-run.js';\n",
+      'utf8',
+    );
+
+    await runApiGovernance({
+      profileId: 'plugin-ui',
+      packageRoot: root,
+      write: true,
+      check: false,
+    });
+
+    const inventory = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'));
+    assert.deepEqual(inventory.symbols, [{
+      specifier: '.',
+      exportName: 'run',
+      kind: 'value',
+      declarationModule: 'dist/index.d.ts',
+      declarationExport: 'run',
+      replacement: 'CurrentRun',
+      removalCondition: 'callers migrate to CurrentRun',
+    }]);
+
+    const declarationPath = join(root, 'dist/legacy-run.d.ts');
+    await writeFile(declarationPath, [
+      '/** @deprecated CurrentRunV2; remove when callers migrate to CurrentRunV2 */',
+      'export declare function legacyRun(): void;',
+      '',
+    ].join('\n'), 'utf8');
+    const drift = await runApiGovernance({
+      profileId: 'plugin-ui',
+      packageRoot: root,
+      write: false,
+      check: true,
+    });
+    assert.equal(drift.status, 'drift');
+    assert.deepEqual(
+      drift.files.filter((file) => file.changed).map((file) => file.path),
+      ['api-surface.json'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('generic profiles reject deprecation prose outside the Plugin SDK structured form', async () => {
   const root = await createEntrypointFixture('@happier-dev/plugin-ui');
   try {
@@ -745,7 +799,7 @@ test('generic profiles reject deprecation prose outside the Plugin SDK structure
   }
 });
 
-test('generic profiles stamp published provenance from the previous tarball inventory and retain it in ordinary checks', async () => {
+test('generic profiles stamp provenance only from the supplied published baseline inventory', async () => {
   const root = await createEntrypointFixture('@happier-dev/plugin-ui');
   const previousInventoryPath = join(root, 'published-1.0.0-api-surface.json');
   try {
@@ -797,8 +851,11 @@ test('generic profiles stamp published provenance from the previous tarball inve
       write: false,
       check: true,
     });
-    assert.equal(ordinaryCheck.status, 'current');
-    assert.equal(ordinaryCheck.summary.changedFiles, 0);
+    assert.equal(ordinaryCheck.status, 'drift');
+    assert.deepEqual(
+      ordinaryCheck.files.filter((file) => file.changed).map((file) => file.path),
+      ['api-surface.json'],
+    );
 
     await writeFile(
       declarationPath,
@@ -818,8 +875,8 @@ test('generic profiles stamp published provenance from the previous tarball inve
         since,
       }) => ({ exportName, since })),
       [
-        { exportName: 'added', since: '1.1.0' },
-        { exportName: 'run', since: '1.0.0' },
+        { exportName: 'added', since: undefined },
+        { exportName: 'run', since: undefined },
         { exportName: 'unpublished', since: undefined },
       ],
     );

@@ -48,10 +48,6 @@ on:
         required: false
         default: true
         type: boolean
-      run_plugin_platform_packed:
-        required: false
-        default: false
-        type: boolean
       run_server:
         required: false
         default: true
@@ -780,13 +776,9 @@ jobs:
           yarn workspace docs test
           yarn --cwd packages/relay-server test
 
-      - name: Run public plugin SDK consumer contracts
+      - name: Run current-source Plugin Platform author and runtime contracts
         if: ${{ !cancelled() }}
-        run: yarn workspace @happier-dev/tests test:plugin-sdk-consumers:all
-
-      - name: Run Plugin Platform contract tests
-        if: ${{ !cancelled() }}
-        run: yarn test:plugin-platform:contracts
+        run: yarn workspace @happier-dev/tests test:plugin-platform:source
 
   plugin-workspaces-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_plugin_workspaces }}
@@ -2211,127 +2203,6 @@ jobs:
         with:
           name: core-e2e-artifacts-slow-sqlite
           path: .project/logs/e2e
-
-  plugin-platform-packed:
-    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_plugin_platform_packed }}
-    needs: [trusted_ref_guard]
-    name: Plugin Platform (natural packed artifacts)
-    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
-    timeout-minutes: 120
-    env:
-      PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT: ${{ runner.temp }}/plugin-platform-packed
-      PACKED_PLUGIN_PLATFORM_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Setup Node (GitHub Actions)
-        if: env.ACT != 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-
-      - name: Setup Node (act)
-        if: env.ACT == 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Build natural packed Plugin Platform artifacts
-        run: |
-          set -euo pipefail
-          artifact_inputs_path="${RUNNER_TEMP}/plugin-platform-packed-artifacts.json"
-          yarn -s workspace @happier-dev/tests build:plugin-platform:natural \
-            --run-id "$PACKED_PLUGIN_PLATFORM_RUN_ID" \
-            --output-root "$PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT" > "$artifact_inputs_path"
-          cat "$artifact_inputs_path"
-          node --input-type=module - "$artifact_inputs_path" <<'NODE'
-          import { appendFileSync, readFileSync } from 'node:fs';
-
-          const artifactInputs = JSON.parse(readFileSync(process.argv.at(-1), 'utf8'));
-          const inputs = [
-            ['PACKED_PLUGIN_PLATFORM_SDK_TARBALL', artifactInputs.sdkTarballPath],
-            ['PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL', artifactInputs.pluginUiTarballPath],
-            ['PACKED_PLUGIN_PLATFORM_CHANNELS_PROTOCOL_TARBALL', artifactInputs.channelsProtocolTarballPath],
-            ['PACKED_PLUGIN_PLATFORM_CLI_TARBALL', artifactInputs.cliTarballPath],
-          ];
-          for (const [name, value] of inputs) {
-            if (typeof value !== 'string' || value.length === 0) {
-              throw new Error(`Missing packed Plugin Platform artifact input: ${name}`);
-            }
-          }
-          appendFileSync(
-            process.env.GITHUB_ENV,
-            inputs.map(([name, value]) => `${name}=${value}\n`).join(''),
-          );
-          NODE
-
-      - name: Run packed Plugin Platform natural-artifact verticals
-        shell: bash
-        run: |
-          set -uo pipefail
-          declare -a names=()
-          declare -a pids=()
-
-          run_vertical() {
-            local name="$1"
-            shift
-            "$@" > "${RUNNER_TEMP}/${name}.log" 2>&1 &
-            names+=("${name}")
-            pids+=("$!")
-          }
-
-          run_vertical packed-author yarn -s workspace @happier-dev/tests test:plugin-platform:packed-author -- \
-            --sdk-tarball "$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
-            --plugin-ui-tarball "$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL" \
-            --cli-tarball "$PACKED_PLUGIN_PLATFORM_CLI_TARBALL"
-          run_vertical packed-targeted-projection yarn -s workspace @happier-dev/tests test:plugin-platform:packed-targeted-projection -- \
-            --sdk-tarball "$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
-            --plugin-ui-tarball "$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL" \
-            --cli-tarball "$PACKED_PLUGIN_PLATFORM_CLI_TARBALL"
-          run_vertical packed-background-indexer yarn -s workspace @happier-dev/tests test:plugin-platform:packed-background-indexer -- \
-            --sdk-tarball "$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
-            --plugin-ui-tarball "$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL" \
-            --cli-tarball "$PACKED_PLUGIN_PLATFORM_CLI_TARBALL"
-          run_vertical packed-composer yarn -s workspace @happier-dev/tests test:plugin-platform:packed-composer -- \
-            --sdk-tarball "$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
-            --plugin-ui-tarball "$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL"
-          run_vertical packed-channel-socket-provider env \
-            CHANNELS_PROTOCOL_TARBALL="$PACKED_PLUGIN_PLATFORM_CHANNELS_PROTOCOL_TARBALL" \
-            PLUGIN_SDK_TARBALL="$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
-            yarn -s workspace @happier-dev/tests test:plugin-platform:out-of-tree-channel-socket-provider
-
-          status=0
-          for index in "${!pids[@]}"; do
-            if ! wait "${pids[$index]}"; then
-              status=1
-            fi
-            cat "${RUNNER_TEMP}/${names[$index]}.log"
-          done
-          exit "${status}"
-
-      - name: Upload packed Plugin Platform artifacts (on failure)
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: plugin-platform-packed-artifacts
-          path: .project/logs/e2e
-          if-no-files-found: ignore
 
   trusted_ref_guard:
     name: Trusted workflow ref guard

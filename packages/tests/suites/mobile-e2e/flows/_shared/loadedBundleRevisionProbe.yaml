@@ -1,0 +1,30 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Sole device-side loaded-bundle revision assertion. Setup/module probes remain
+# configurable, but no configured flow can establish loaded identity.
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: connectUsingLaunchUrl.yaml
+
+- runFlow:
+    file: connectDevClientIfNeeded.yaml
+
+- runFlow:
+    when:
+      platform: IOS
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_ID}:///dev/native-crypto-worker
+
+- runFlow:
+    when:
+      platform: ANDROID
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///dev/native-crypto-worker
+
+- extendedWaitUntil:
+    visible:
+      id: native-crypto-worker-probe-loaded-bundle-revision:${HAPPIER_E2E_EXPECTED_LOADED_BUNDLE_REVISION}
+    timeout: 240000

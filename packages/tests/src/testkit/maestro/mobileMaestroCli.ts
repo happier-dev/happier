@@ -1,26 +1,43 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { runManagedChildCommand, resolveSignalExitCode } from '../../../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { startTestDaemon } from '../daemon/daemon';
 import { startServerLight } from '../process/serverLight';
 import { startUiDevClientMetro } from '../process/uiDevClientMetro';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 
-import { redactSensitiveMaestroCommandArgsForLog, runMobileMaestro } from './mobileMaestroRunner';
+import {
+  redactSensitiveMaestroCommandArgsForLog,
+  runMobileMaestro,
+  type MobileMaestroScenarioContext,
+} from './mobileMaestroRunner';
 
 function elapsedSeconds(startedAtMs: number): number {
   return Math.floor((Date.now() - startedAtMs) / 1000);
 }
 
-async function main() {
-  const result = await runMobileMaestro(
+export async function runDefaultMobileMaestroCli(input: Readonly<{
+  argv: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}> = {
+  argv: process.argv,
+  cwd: process.cwd(),
+  env: process.env,
+}, options: Readonly<{
+  runScenario?: (context: MobileMaestroScenarioContext) => Promise<number>;
+}> = {}) {
+  return await runMobileMaestro(
     {
-      argv: process.argv,
-      cwd: process.cwd(),
-      env: process.env,
+      argv: input.argv,
+      cwd: input.cwd,
+      env: input.env,
     },
     {
       startDevClientMetro: async ({ testDir, extraEnv, port, host }) => {
         const mergedEnv: NodeJS.ProcessEnv = {
-          ...process.env,
+          ...input.env,
           ...extraEnv,
         };
         const started = await startUiDevClientMetro({ testDir, env: mergedEnv, port, host });
@@ -71,7 +88,7 @@ async function main() {
         // eslint-disable-next-line no-console
         console.log(`[tests] starting: ${maestroBin} ${logArgs.join(' ')}`);
 
-        const heartbeatMs = Number.parseInt(process.env.HAPPIER_TEST_HEARTBEAT_MS ?? '30000', 10);
+        const heartbeatMs = Number.parseInt(input.env.HAPPIER_TEST_HEARTBEAT_MS ?? '30000', 10);
         const safeHeartbeatMs = Number.isFinite(heartbeatMs) && heartbeatMs >= 1000 ? heartbeatMs : 30000;
         const heartbeat = setInterval(() => {
           // eslint-disable-next-line no-console
@@ -90,7 +107,7 @@ async function main() {
           cleanupPollMs: 25,
           signalCleanupGraceMs: 0,
           exitCleanupGraceMs: 1_000,
-          parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
+          parentWatchdogPollMs: Number.parseInt(input.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
         });
         clearInterval(heartbeat);
         if (!result.ok) {
@@ -103,14 +120,22 @@ async function main() {
         console.log(`[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`);
         return { exitCode };
       },
+      ...(options.runScenario ? { runScenario: options.runScenario } : {}),
     },
   );
+}
 
+async function main() {
+  const result = await runDefaultMobileMaestroCli();
   process.exit(result.exitCode);
 }
 
-void main().catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-  process.exit(1);
-});
+const currentFilePath = fileURLToPath(import.meta.url);
+const entrypointPath = process.argv[1] ? resolve(process.argv[1]) : '';
+if (entrypointPath === currentFilePath) {
+  void main().catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exit(1);
+  });
+}

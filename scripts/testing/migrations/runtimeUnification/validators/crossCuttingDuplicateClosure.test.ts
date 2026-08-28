@@ -381,7 +381,7 @@ test('validateCrossCuttingDuplicateClosure rejects final provider-keyed owner tr
   assert.ok(result.violations.some((violation) => violation.familyId === 'F5-execution-run-capability-residue'));
 });
 
-test('validateCrossCuttingDuplicateClosure allows approved provider-tree compatibility re-exports only', async () => {
+test('validateCrossCuttingDuplicateClosure allows only the retained provider-id compatibility re-export', async () => {
   const { validateCrossCuttingDuplicateClosure } = await loadValidator();
 
   const result = validateCrossCuttingDuplicateClosure({
@@ -419,6 +419,7 @@ test('validateCrossCuttingDuplicateClosure allows approved provider-tree compati
   assert.deepEqual(
     result.violations.map((violation) => violation.filePath),
     [
+      'packages/protocol/src/agents/runtimeDescriptorContributionsV1.ts',
       'packages/protocol/src/agents/bitbucket/connectedAccountDescriptor.ts',
       'packages/protocol/src/agents/codex/runtimeDescriptor.ts',
     ],

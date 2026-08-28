@@ -202,8 +202,7 @@
     "// ==== Development Linking ====": "",
     "link:dev": "node scripts/link-dev.cjs",
     "unlink:dev": "node scripts/link-dev.cjs unlink",
-    "prepack": "node scripts/buildPublication.mjs && node scripts/syncPackageDist.mjs && node scripts/bundleWorkspaceDeps.mjs --artifact",
-    "postpack": "node scripts/postpack/patchPackedTarballForBun.mjs"
+    "prepack": "node scripts/buildPublication.mjs && node scripts/syncPackageDist.mjs && node scripts/bundleWorkspaceDeps.mjs --artifact"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",

@@ -32,19 +32,31 @@ describe('generator workspace lock policy', () => {
 });
 
 describe('CLI bundled plugin registry projection', () => {
-  it('publishes a replacement Codex identity and keeps its retired predecessor out of reuse', () => {
+  it('publishes a replacement Codex identity without a publisher-local retirement owner', () => {
     const codex = BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS.find(
       (artifact) => artifact.record.pluginId === 'happier.agent.codex',
     );
     if (!codex) throw new Error('Expected the generated Codex immutable artifact');
 
     expect(codex.record.immutableGenerationId).not.toBe(RETIRED_CODEX_IMMUTABLE_GENERATION_ID);
-    expect(generatorSource).toContain(RETIRED_CODEX_IMMUTABLE_GENERATION_ID);
+    expect(generatorSource).not.toContain(RETIRED_CODEX_IMMUTABLE_GENERATION_ID);
     const assignment = sourceBetween(
       'function assignBundledImmutableArtifactGenerationIds(',
       'function createCanonicalWorkspacePackageRootsReader(',
     );
-    expect(assignment).toContain('!isRetiredBundledImmutableGenerationIdentity(');
+    expect(assignment).not.toContain('isRetiredBundledImmutableGenerationIdentity(');
+  });
+
+  it('keeps opaque publication identity independent from source-content equality', () => {
+    const assignment = sourceBetween(
+      'function assignBundledImmutableArtifactGenerationIds(',
+      'function createCanonicalWorkspacePackageRootsReader(',
+    );
+
+    expect(assignment).toContain("mode: Mode;");
+    expect(assignment).toContain("input.mode === 'check'");
+    expect(assignment).not.toContain('sameBundledSourceArtifactIntegrity(');
+    expect(generatorSource).not.toContain('function sameBundledSourceArtifactIntegrity(');
   });
 
   it('emits the contribution-identity owner subpath instead of the Protocol root barrel', () => {
@@ -96,15 +108,22 @@ describe('CLI bundled plugin registry projection', () => {
     expect(scopedPublisher).toContain('{ outPath: cliOutPath, out: cliOut }');
   });
 
-  it('keeps manifest-owned data out of executable implementation entries', () => {
+  it('keeps retained Agent registration identities data-only', () => {
     const outputPath = join(mkdtempSync(join(tmpdir(), 'happier-cli-registry-')), 'generated.ts');
     writeFileSync(outputPath, [
-      "import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';",
+      "import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';",
+      "import { PI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-pi/agent/contributions/catalog';",
+      "import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';",
       "import type { PluginSourceSpecV1 } from '@happier-dev/protocol/plugins/source-spec';",
-      'export type BundledFirstPartyImplementationBinding = Readonly<{ identity: PluginContributionIdentityV1; }>;',
+      'export type BundledFirstPartyAgentRegistrationBinding = Readonly<{ identity: PluginContributionIdentityV1; }>;',
       'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = Object.freeze(["old"]);',
       'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = Object.freeze([{ pluginId: "old" }]);',
-      'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS = Object.freeze([createPluginContributionIdentity]);',
+      'export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS = Object.freeze([{',
+      '  identity: createPluginContributionIdentity({ pluginId: "happier.agent.pi", localId: "pi" }),',
+      '  implementationOwnerId: "pi",',
+      "  registrationFamily: 'agents',",
+      '  implementation: createAgentRuntimeCatalogEntryHooks({ contribution: PI_AGENT_RUNTIME_CONTRIBUTION }),',
+      '}]);',
       '',
     ].join('\n'));
 
@@ -116,7 +135,13 @@ describe('CLI bundled plugin registry projection', () => {
 
     expect(executableRenderer).not.toContain('./generatedBundledPluginManifests');
     expect(output).not.toContain('./generatedBundledPluginManifests');
-    expect(output).toContain('BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS = Object.freeze');
+    expect(output).toContain('BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFirstPartyAgentRegistrationBinding[] = Object.freeze');
+    expect(executableRenderer).not.toContain("pluginPackage.pluginPackageId === 'pi'");
+    expect(executableRenderer).not.toContain('runtimeContributions');
+    expect(output).not.toContain('implementation: createAgentRuntimeCatalogEntryHooks');
+    expect(output).not.toContain('PI_AGENT_RUNTIME_CONTRIBUTION');
+    expect(output).not.toContain('@happier-dev/plugins-pi');
+    expect(output).not.toMatch(/plugins-(?:grok|kilo|ohmypi)\/agent\/contributions/u);
     expect(output).not.toContain('BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = Object.freeze');
     expect(output).not.toContain('BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = Object.freeze');
     expect(output).not.toContain('PluginSourceSpecV1');

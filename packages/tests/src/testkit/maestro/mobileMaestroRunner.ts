@@ -1,7 +1,8 @@
 import { join as joinPath, resolve as resolvePath } from 'node:path';
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createRunDirs } from '../runDir';
@@ -9,7 +10,15 @@ import { resolveExpoDevClientDeepLink } from '../mobile/expoDevClientDeepLink';
 import { resolveTerminalConnectDeepLink } from '../mobile/terminalConnectDeepLink';
 import { resolveDeviceVisibleBaseUrl } from '../mobile/resolveDeviceHost';
 import { resolveMobileAppScheme } from '../mobile/mobileAppScheme';
-import { resolveInstalledAndroidDevClientRuntimeVersion } from '../mobile/androidDevClientRuntimeVersion';
+import {
+  resolveInstalledAndroidDevClientIdentity,
+  resolveInstalledAndroidDevClientRuntimeVersion,
+  type InstalledAndroidDevClientIdentity,
+} from '../mobile/androidDevClientRuntimeVersion';
+import {
+  resolveInstalledIosSimulatorAppBundleIdentity,
+  type InstalledIosSimulatorAppBundleIdentity,
+} from '../mobile/iosSimulatorAppBundleIdentity';
 import { parseMaestroArgs as defaultParseMaestroArgs } from '../../../scripts/runMaestroWithHeartbeat.shared.mjs';
 import { defaultDevClientIdentity } from '../../../../../apps/stack/scripts/utils/mobile/identifiers.mjs';
 import { defaultPrimePlatformAppLaunch } from './primePlatformAppLaunch';
@@ -51,6 +60,18 @@ export type MobileConnectedMachineScenarioContext = Readonly<{
   ) => Promise<{ exitCode: number }>;
 }>;
 
+export type MobileMaestroScenarioContext = Readonly<{
+  defaultFlowPath: string;
+  serverUrlHost: string;
+  serverUrlDevice: string;
+  platform: 'android' | 'ios';
+  runFlow: (
+    flowPath: string,
+    extraEnv?: NodeJS.ProcessEnv,
+    extraArgs?: string[],
+  ) => Promise<{ exitCode: number }>;
+}>;
+
 export type MobileMaestroRunResult = Readonly<{
   exitCode: number;
   runDir: string;
@@ -59,17 +80,35 @@ export type MobileMaestroRunResult = Readonly<{
   server: StartedServerLike | null;
   metro: StartedDevClientMetroLike | null;
   ucxLoadedNativeRuntime: MobileUcxLoadedNativeRuntime | null;
+  installedNativeAppIdentity: MobileInstalledNativeAppIdentity | null;
 }>;
+
+export type MobileInstalledNativeAppIdentity =
+  | Readonly<{
+      kind: 'android-base-apk';
+      baseApkSha256: string;
+      runtimeVersion: string | null;
+    }>
+  | Readonly<{
+      kind: 'ios-app-bundle-file-set';
+      appBundleFileSetSha256: string;
+    }>;
 
 type MobileUcxServedBundleIdentity = Readonly<{
   url: string;
+  /** Immutable row revision compiled into the selected no-dev bundle. */
   revision: string;
+  /** Exact bytes fetched from the row's Metro launch asset by the host. */
+  contentDigest?: string;
 }>;
 
 type MobileUcxModuleProbe = Readonly<{
-  flow: 'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml';
+  flow: string;
   status: 'passed';
 }>;
+
+const MOBILE_LOADED_BUNDLE_REVISION_PROBE_FLOW =
+  'suites/mobile-e2e/flows/_shared/loadedBundleRevisionProbe.yaml' as const;
 
 export type MobileUcxLoadedNativeRuntimeSupport = Readonly<{
   /** Bytes fetched from Metro by the host; this is not device-loaded identity. */
@@ -79,9 +118,9 @@ export type MobileUcxLoadedNativeRuntimeSupport = Readonly<{
 }>;
 
 /**
- * A row becomes observed only when the selected device reports the immutable
- * digest it loaded and that digest matches the row's asserted served bundle.
- * Metro host fetches and module probes remain supporting evidence only.
+ * A row becomes observed only when the selected device executes and reports
+ * the immutable revision compiled into the row's served no-dev bundle. The
+ * host-captured bundle digest remains a separate supporting byte identity.
  */
 export type MobileUcxLoadedNativeRuntime =
   | Readonly<{
@@ -91,6 +130,7 @@ export type MobileUcxLoadedNativeRuntime =
       bundle: MobileUcxServedBundleIdentity;
       deviceReportedBundle: Readonly<{
         revision: string;
+        probeFlow?: typeof MOBILE_LOADED_BUNDLE_REVISION_PROBE_FLOW;
       }>;
       moduleProbe: MobileUcxModuleProbe;
     }>
@@ -133,6 +173,7 @@ export type MobileMaestroDeps = Readonly<{
   runConnectedMachineScenario: (
     context: MobileConnectedMachineScenarioContext,
   ) => Promise<number>;
+  runScenario: (context: MobileMaestroScenarioContext) => Promise<number>;
   runMaestro: (params: {
     cwd: string;
     env: NodeJS.ProcessEnv;
@@ -159,10 +200,21 @@ export type MobileMaestroDeps = Readonly<{
     env: NodeJS.ProcessEnv;
     outputDir: string;
   }) => string | null;
+  resolveInstalledAndroidAppIdentity: (params: {
+    appId: string;
+    env: NodeJS.ProcessEnv;
+    outputDir: string;
+  }) => InstalledAndroidDevClientIdentity | null;
+  resolveInstalledIosAppBundleIdentity: (params: {
+    appId: string;
+    deviceId: string;
+    env: NodeJS.ProcessEnv;
+  }) => InstalledIosSimulatorAppBundleIdentity | null;
   captureMetroBundleIdentity: (params: {
     platform: 'android' | 'ios';
     hostMetroUrl: string;
     deviceMetroUrl: string;
+    revision: string;
   }) => Promise<MobileUcxServedBundleIdentity | null>;
   resolveMaestroBin: (env: NodeJS.ProcessEnv) => string;
   parseMaestroArgs: (argv: string[]) => {
@@ -200,6 +252,54 @@ function resolveMobileTargetDeviceId(
     return String(env.HAPPIER_E2E_IOS_SIMULATOR_UDID ?? '').trim();
   }
   return '';
+}
+
+function resolvePassThroughMobileTargetDeviceId(args: readonly string[]): string {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const arg = args[index] ?? '';
+    if (arg.startsWith('--udid=') || arg.startsWith('--device=')) {
+      return arg.slice(arg.indexOf('=') + 1).trim();
+    }
+    if (arg === '--udid' || arg === '--device') {
+      return String(args[index + 1] ?? '').trim();
+    }
+  }
+  return '';
+}
+
+export function resolveSelectedMobileTargetDeviceId(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  platform: 'android' | 'ios';
+  args: readonly string[];
+}>): string {
+  const environmentDeviceId = resolveMobileTargetDeviceId(params.env, params.platform);
+  const passThroughDeviceId = resolvePassThroughMobileTargetDeviceId(params.args);
+  if (environmentDeviceId && passThroughDeviceId && environmentDeviceId !== passThroughDeviceId) {
+    throw new Error(
+      `Mobile e2e selected conflicting devices (${environmentDeviceId} vs ${passThroughDeviceId}).`,
+    );
+  }
+  return environmentDeviceId || passThroughDeviceId;
+}
+
+export function projectSelectedMobileTargetDeviceEnv(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  platform: 'android' | 'ios' | null;
+  deviceId: string;
+}>): NodeJS.ProcessEnv {
+  if (!params.deviceId || !params.platform) return params.env;
+  return params.platform === 'android'
+    ? {
+        ...params.env,
+        HAPPIER_E2E_MOBILE_DEVICE_ID: params.deviceId,
+        HAPPIER_E2E_ANDROID_SERIAL: params.deviceId,
+        ANDROID_SERIAL: params.deviceId,
+      }
+    : {
+        ...params.env,
+        HAPPIER_E2E_MOBILE_DEVICE_ID: params.deviceId,
+        HAPPIER_E2E_IOS_SIMULATOR_UDID: params.deviceId,
+      };
 }
 
 function resolveDefaultMobileDevClientAppId(
@@ -590,10 +690,18 @@ function deviceVisibleMetroAssetUrl(params: Readonly<{
   return launchAsset.toString();
 }
 
+export function mobileBundleContainsCompiledRevision(
+  bytes: Uint8Array,
+  revision: string,
+): boolean {
+  return Buffer.from(bytes).includes(Buffer.from(revision, 'utf8'));
+}
+
 async function captureMetroBundleIdentity(params: Readonly<{
   platform: 'android' | 'ios';
   hostMetroUrl: string;
   deviceMetroUrl: string;
+  revision: string;
 }>): Promise<MobileUcxServedBundleIdentity | null> {
   const baseUrl = params.hostMetroUrl.replace(/\/$/, '');
   const manifestRes = await fetch(`${baseUrl}/?platform=${params.platform}`, {
@@ -618,13 +726,20 @@ async function captureMetroBundleIdentity(params: Readonly<{
   if (!bundleRes.ok) return null;
 
   const bytes = new Uint8Array(await bundleRes.arrayBuffer());
+  // Tie the semantic row revision to the exact captured bytes. If Expo did
+  // not compile the revision into this launch asset, the device cannot report
+  // an identity for these bytes and this row must stay blocked.
+  if (!mobileBundleContainsCompiledRevision(bytes, params.revision)) {
+    return null;
+  }
   return Object.freeze({
     url: deviceVisibleMetroAssetUrl({
       hostMetroUrl: baseUrl,
       deviceMetroUrl: params.deviceMetroUrl,
       launchAssetUrl,
     }),
-    revision: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    revision: params.revision,
+    contentDigest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
   });
 }
 
@@ -816,6 +931,19 @@ const defaultDeps: Pick<MobileMaestroDeps, 'resolveMaestroBin' | 'parseMaestroAr
   parseMaestroArgs: (argv) => defaultParseMaestroArgs(argv),
 };
 
+/** Appends bounded wrapper evidence to the incumbent runner manifest. */
+export function appendMobileMaestroManifestEvidence(params: Readonly<{
+  manifestPath: string;
+  evidence: Readonly<Record<string, unknown>>;
+}>): void {
+  const manifest = JSON.parse(readFileSync(params.manifestPath, 'utf8')) as Record<string, unknown>;
+  writeFileSync(
+    params.manifestPath,
+    `${JSON.stringify({ ...manifest, ...params.evidence }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
 export async function runMobileMaestro(
   params: Readonly<{
     argv: string[];
@@ -834,10 +962,21 @@ export async function runMobileMaestro(
     (parsed.appId ? parsed.appId.trim() : '') ||
     (String(params.env.HAPPIER_E2E_MOBILE_APP_ID ?? '').trim()) ||
     resolveDefaultMobileDevClientAppId(params.env, mobilePlatform);
-  const mobileDeviceId = resolveMobileTargetDeviceId(params.env, mobilePlatform);
+  const mobileDeviceId = mobilePlatform
+    ? resolveSelectedMobileTargetDeviceId({
+        env: params.env,
+        platform: mobilePlatform,
+        args: parsed.passThrough ?? [],
+      })
+    : '';
   const skipAppInstallCheck =
     parsed.skipAppInstallCheck === true || isTruthyEnv(params.env.HAPPIER_E2E_SKIP_APP_INSTALL_CHECK ?? '0');
-  const orchestrationEnv = buildNonSecretOrchestrationProcessEnv(params.env);
+  const baseOrchestrationEnv = buildNonSecretOrchestrationProcessEnv(params.env);
+  const orchestrationEnv = projectSelectedMobileTargetDeviceEnv({
+    env: baseOrchestrationEnv,
+    platform: mobilePlatform,
+    deviceId: mobileDeviceId,
+  });
 
   const isAppInstalled = deps.isAppInstalled ?? defaultIsAppInstalled;
   if (mobilePlatform && !skipAppInstallCheck) {
@@ -874,11 +1013,51 @@ export async function runMobileMaestro(
   let androidLogcatCapture: AndroidLogcatCapture | null = null;
   let iosSimulatorLogCapture: AndroidLogcatCapture | null = null;
 
+  let installedNativeAppIdentity: MobileInstalledNativeAppIdentity | null = null;
+  if (mobilePlatform && isTruthyEnv(params.env.HAPPIER_E2E_ATTEST_INSTALLED_NATIVE_APP ?? '0')) {
+    if (mobilePlatform === 'android') {
+      const resolveIdentity = deps.resolveInstalledAndroidAppIdentity
+        ?? resolveInstalledAndroidDevClientIdentity;
+      const identity = resolveIdentity({
+        appId,
+        env: orchestrationEnv,
+        outputDir: run.testDir('installed-native-app'),
+      });
+      if (identity) {
+        installedNativeAppIdentity = Object.freeze({
+          kind: 'android-base-apk',
+          baseApkSha256: identity.baseApkSha256,
+          runtimeVersion: identity.runtimeVersion,
+        });
+      }
+    } else if (mobileDeviceId) {
+      const resolveIdentity = deps.resolveInstalledIosAppBundleIdentity
+        ?? resolveInstalledIosSimulatorAppBundleIdentity;
+      const identity = resolveIdentity({
+        appId,
+        deviceId: mobileDeviceId,
+        env: orchestrationEnv,
+      });
+      if (identity) {
+        installedNativeAppIdentity = Object.freeze({
+          kind: 'ios-app-bundle-file-set',
+          appBundleFileSetSha256: identity.appBundleFileSetSha256,
+        });
+      }
+    }
+  }
+
   const manageMetro = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_MANAGE_METRO ?? '1');
   const ucxLoadedNativeIdentityRequested = isTruthyEnv(
     params.env.HAPPIER_E2E_UCX_NATIVE_LOADED_IDENTITY ?? '0',
   );
+  const loadedNativeModuleProbeFlow =
+    String(params.env.HAPPIER_E2E_NATIVE_MODULE_PROBE_FLOW ?? '').trim()
+    || 'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml';
   const explicitHostMetroUrl = String(params.env.HAPPIER_E2E_DEV_CLIENT_METRO_URL ?? '').trim();
+  const ucxRowBundleRevision = ucxLoadedNativeIdentityRequested
+    ? `mobile-row:${randomUUID()}`
+    : null;
   const hostMetroUrlFromEnv = explicitHostMetroUrl || (manageMetro ? '' : 'http://127.0.0.1:8081');
 
   const explicitServerUrl =
@@ -904,6 +1083,10 @@ export async function runMobileMaestro(
       // Fast Refresh/HMR path before the full launch-URL reload and module
       // probe below; ordinary mobile/candidate runs remain unchanged.
       metroEnv.HAPPIER_E2E_EXPO_NO_DEV ??= '1';
+      // Expo inlines EXPO_PUBLIC values into the JavaScript it serves. The app
+      // probe reads this compiled fact from the bundle it actually executed;
+      // it is never sourced from Maestro's runtime environment.
+      metroEnv.EXPO_PUBLIC_HAPPIER_MOBILE_BUNDLE_REVISION = ucxRowBundleRevision!;
     }
     metroNoDev = isTruthyEnv(metroEnv.HAPPIER_E2E_EXPO_NO_DEV);
     const shouldPinAndroidRuntime =
@@ -1051,6 +1234,7 @@ export async function runMobileMaestro(
           platform: mobilePlatform,
           hostMetroUrl,
           deviceMetroUrl,
+          revision: ucxRowBundleRevision!,
         });
       } catch {
         ucxPendingBundleIdentity = null;
@@ -1140,6 +1324,7 @@ export async function runMobileMaestro(
         metroUrlDevice: deviceMetroUrl ?? null,
         devClientLaunchUrl: devClientLaunchUrl || null,
         connectedMachineMode,
+        installedNativeAppIdentity,
         passThrough: parsed.passThrough ?? [],
         artifacts: {
           ...(androidLogcatCapture ? { androidLogcat: ANDROID_LOGCAT_ARTIFACT } : {}),
@@ -1248,32 +1433,57 @@ export async function runMobileMaestro(
       let moduleProbeExitCode = 1;
       try {
         const moduleProbe = await runMaestroFlow(
-          'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml',
+          loadedNativeModuleProbeFlow,
         );
         moduleProbeExitCode = moduleProbe.exitCode;
       } catch {
         moduleProbeExitCode = 1;
       }
       const moduleProbe = Object.freeze({
-        flow: 'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml' as const,
+        flow: loadedNativeModuleProbeFlow,
         status: 'passed' as const,
       });
-      ucxLoadedNativeRuntime = moduleProbeExitCode === 0
+      let loadedRevisionProbeExitCode = 1;
+      if (moduleProbeExitCode === 0) {
+        try {
+          const loadedRevisionProbe = await runMaestroFlow(
+            MOBILE_LOADED_BUNDLE_REVISION_PROBE_FLOW,
+            {
+              HAPPIER_E2E_EXPECTED_LOADED_BUNDLE_REVISION: ucxPendingBundleIdentity.revision,
+            },
+          );
+          loadedRevisionProbeExitCode = loadedRevisionProbe.exitCode;
+        } catch {
+          loadedRevisionProbeExitCode = 1;
+        }
+      }
+      ucxLoadedNativeRuntime = moduleProbeExitCode !== 0
         ? Object.freeze({
-            kind: 'blocked' as const,
-            code: 'device_loaded_bundle_identity_unavailable' as const,
-            detail: 'The app-owned native module probe passed, but no immutable bundle digest was reported by the selected device to match the host-served Metro digest.',
-            wakeCondition: 'Have the selected device report the immutable digest for the JavaScript or bundle it loaded, then verify that digest matches this row\'s asserted served-bundle digest before recording observed.',
-            support: Object.freeze({
-              servedBundle: ucxPendingBundleIdentity,
-              moduleProbe,
-            }),
-          })
-        : Object.freeze({
             kind: 'blocked' as const,
             code: 'module_probe_failed' as const,
             detail: 'The full Metro reload did not reach the app-owned native module probe.',
-          });
+          })
+        : loadedRevisionProbeExitCode === 0
+          ? Object.freeze({
+            kind: 'observed' as const,
+            fullMetroReload: true as const,
+            fastRefresh: 'disabled_via_expo_no_dev' as const,
+            bundle: ucxPendingBundleIdentity,
+            deviceReportedBundle: Object.freeze({
+              revision: ucxPendingBundleIdentity.revision,
+              probeFlow: MOBILE_LOADED_BUNDLE_REVISION_PROBE_FLOW,
+            }),
+            moduleProbe,
+          })
+          : Object.freeze({
+              kind: 'blocked' as const,
+              code: 'device_loaded_bundle_identity_unavailable' as const,
+              detail: 'The fixed app-owned probe did not report the immutable revision compiled into the selected no-dev bundle.',
+              support: Object.freeze({
+                servedBundle: ucxPendingBundleIdentity,
+                moduleProbe,
+              }),
+            });
     }
     if (connectedMachineMode === 'cli-terminal-daemon') {
       if (!deps.startCliTerminalConnect) {
@@ -1347,6 +1557,14 @@ export async function runMobileMaestro(
           exitCode = result.exitCode;
         }
       }
+    } else if (deps.runScenario && mobilePlatform) {
+      exitCode = await deps.runScenario({
+        defaultFlowPath: flows,
+        serverUrlHost: server.baseUrl,
+        serverUrlDevice: deviceServerUrl,
+        platform: mobilePlatform,
+        runFlow: runMaestroFlow,
+      });
     } else {
       const result = await runMaestroFlow(flows);
       exitCode = result.exitCode;
@@ -1374,6 +1592,20 @@ export async function runMobileMaestro(
     }
   }
 
+  // The incumbent run manifest is the evidence record for this runner. Append
+  // the final canonical identity result only after the device probe settles;
+  // wrappers and candidate attestations consume this fact rather than creating
+  // another loaded-runtime owner.
+  const completedManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...completedManifest,
+      loadedNativeRuntime: ucxLoadedNativeRuntime,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
   return {
     exitCode,
     runDir: run.runDir,
@@ -1382,5 +1614,6 @@ export async function runMobileMaestro(
     server,
     metro,
     ucxLoadedNativeRuntime,
+    installedNativeAppIdentity,
   };
 }

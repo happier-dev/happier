@@ -54,7 +54,7 @@ on:
         required: true
         type: string
       approve_public_sdk_release:
-        description: "Maintainer approval — publish this exact public SDK candidate"
+        description: "Maintainer approval for public packages without SDK API governance"
         required: false
         default: false
         type: boolean
@@ -175,6 +175,13 @@ jobs:
       sdk_version: ${{ steps.meta.outputs.sdk_version }}
       channels_protocol_version: ${{ steps.meta.outputs.channels_protocol_version }}
     steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Resolve release inputs
         id: release_inputs
         env:
@@ -214,12 +221,12 @@ jobs:
         if: inputs.publish_cli
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
-          CANDIDATE_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
+          SOURCE_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
         run: |
           node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
             --channel "$RELEASE_CHANNEL" \
-            --candidate-ref HEAD \
-            --candidate-sha "$CANDIDATE_SHA" \
+            --source-ref HEAD \
+            --source-sha "$SOURCE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node
@@ -528,17 +535,6 @@ jobs:
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
-
-      - name: Re-admit Qualified V4 npm CLI payload publication
-        env:
-          CANDIDATE_SHA: ${{ needs.release.outputs.sha }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-        run: |
-          node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
-            --channel "$RELEASE_CHANNEL" \
-            --candidate-ref refs/qualified-v4-payload-candidate \
-            --candidate-sha "$CANDIDATE_SHA" \
-            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: npm publish (cli tarball) (pipeline)
         env:

@@ -7,6 +7,7 @@ import {
   definePlugin,
 } from '@happier-dev/plugin-sdk';
 import {
+  defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -20,6 +21,25 @@ const ISSUE_VALUE = defineProtocolObject({
   issueId: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' });
 const PREPARED_ISSUE_VALUE = defineProtocolString();
+const ACTION_INSPECT_INPUT = defineProtocolObject({
+  message: defineProtocolString({ minLength: 1 }),
+  delayMs: defineProtocolNumber({ integer: true, minimum: 0, maximum: 30_000 }).optional(),
+}, { policy: 'closed' });
+const ACTION_INSPECT_RESULT = defineProtocolObject({
+  marker: defineProtocolString(),
+  message: defineProtocolString(),
+  multipliedLength: defineProtocolNumber({ integer: true, minimum: 0 }),
+  multiplier: defineProtocolNumber({ integer: true, minimum: 1, maximum: 5 }),
+  label: defineProtocolString(),
+  settingsRevision: defineProtocolString(),
+  surface: defineProtocolString(),
+}, { policy: 'closed' });
+const ACTION_APPROVAL_INPUT = defineProtocolObject({
+  note: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+const ACTION_APPROVAL_RESULT = defineProtocolObject({
+  accepted: defineProtocolString(),
+}, { policy: 'closed' });
 const PREPARED_ISSUE_PREFIX = 'prepared:';
 const ISSUE_CONTROL_STATE_BYTES = new TextEncoder().encode(JSON.stringify({
   enabled: true,
@@ -190,9 +210,96 @@ export function readAcceptedMessageLocalIds() {
   return [...acceptedMessageLocalIds].sort();
 }
 
+/**
+ * @param {number} delayMs
+ * @param {AbortSignal} signal
+ */
+async function waitForActionDelay(delayMs, signal) {
+  if (signal.aborted) throw signal.reason ?? new Error('action_aborted');
+  if (delayMs === 0) return;
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, delayMs);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error('action_aborted'));
+    }, { once: true });
+  });
+}
+
 const issueDogfoodPlugin = definePlugin({
   id: 'acme.composer.issue-dogfood',
   version: '0.0.0',
+  settings: {
+    'action-preferences': {
+      title: 'External Action preferences',
+      target: { kind: 'plugin' },
+      scope: 'account',
+      fields: [{
+        id: 'multiplier',
+        title: 'Message length multiplier',
+        schema: { type: 'integer', minimum: 1, maximum: 5 },
+        default: 2,
+      }, {
+        id: 'label',
+        title: 'Result label',
+        schema: { type: 'string', minLength: 1, maxLength: 64 },
+        default: 'external',
+      }],
+    },
+  },
+  actions: {
+    inspect: {
+      title: 'Inspect external Action context',
+      description: 'Reads current account settings and returns an external-plugin marker.',
+      scopes: ['global'],
+      surfaces: ['cli', 'agent', 'ui'],
+      placementBindings: ['commandPalette'],
+      dangerLevel: 'safe',
+      execution: { target: 'daemon' },
+      inputSchema: ACTION_INSPECT_INPUT,
+      resultSchema: ACTION_INSPECT_RESULT,
+      async run(input, context) {
+        context.services.logger.info('External Action inspection started.', {
+          surface: context.surface,
+        });
+        await waitForActionDelay(input.delayMs ?? 0, context.signal);
+        const snapshot = await context.services.settings
+          .forScope({ kind: 'account' })
+          .snapshot({ signal: context.signal });
+        const multiplier = typeof snapshot.values.multiplier === 'number'
+          ? snapshot.values.multiplier
+          : 2;
+        const label = typeof snapshot.values.label === 'string'
+          ? snapshot.values.label
+          : 'external';
+        return {
+          marker: 'composer-external-action-v1',
+          message: input.message,
+          multipliedLength: input.message.length * multiplier,
+          multiplier,
+          label,
+          settingsRevision: snapshot.revision,
+          surface: context.surface,
+        };
+      },
+    },
+    'approval-probe': {
+      title: 'Apply external Action approval probe',
+      description: 'Returns its note only after the host grants the canonical local-write approval.',
+      scopes: ['global'],
+      surfaces: ['cli', 'agent', 'ui'],
+      dangerLevel: 'writesLocal',
+      confirmation: {
+        title: 'Run the external Action approval probe?',
+        body: 'This dogfood Action validates the host approval path without modifying user data.',
+        confirmLabel: 'Run probe',
+      },
+      execution: { target: 'daemon' },
+      inputSchema: ACTION_APPROVAL_INPUT,
+      resultSchema: ACTION_APPROVAL_RESULT,
+      run: async (input) => ({ accepted: input.note }),
+    },
+  },
   ui: {
     renderers: [{
       id: ISSUE_SURFACE_RENDERER_ID,

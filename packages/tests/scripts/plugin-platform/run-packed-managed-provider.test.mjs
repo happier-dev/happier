@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
   PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
   PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS,
   assertPackedManagedStandaloneCliArchiveIdentity,
@@ -174,7 +173,7 @@ function dependencies(overrides = {}) {
   };
 }
 
-test('prints a candidate-free dry-run recipe with the exact future command and isolated resources', () => {
+test('prints a moving-source recipe with the normal development command and isolated resources', () => {
   assert.deepEqual(parsePackedManagedProviderArgs(['--recipe']), {
     mode: 'recipe',
     candidateManifestPath: null,
@@ -184,27 +183,11 @@ test('prints a candidate-free dry-run recipe with the exact future command and i
   });
   assert.equal(
     recipe.command,
-    'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider --candidate <candidate-manifest.json>',
+    'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider',
   );
-  assert.equal(recipe.inputs.candidateManifest.includes('one run'), true);
-  assert.equal(recipe.inputs.standaloneCliArtifact.includes('candidate-manifest-bound'), true);
-  assert.deepEqual(recipe.requiredStageIds, PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS);
-  assert.deepEqual(
-    recipe.candidateHandoffStageIds,
-    PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
-  );
-  assert.deepEqual(recipe.candidateHandoffStageIds, [
-    'candidate-external-agent-provider-author',
-    'candidate-external-agent-provider-pack',
-    'candidate-external-agent-provider-reviewed-install',
-    'candidate-generation-handoff',
-    'candidate-exactly-once-turns',
-    'candidate-provider-hard-revoke',
-    'candidate-handoff-cleanup',
-  ]);
-  assert.match(recipe.resources.externalAuthoring, /exact candidate SDK and CLI/u);
-  assert.equal(recipe.resources.stockCliProxyApiPort, 8317);
-  assert.equal(recipe.resources.stockCliProxyApiPolicy, 'must-not-connect-or-mutate');
+  assert.match(recipe.inputs.source, /current checkout/u);
+  assert.equal(Object.hasOwn(recipe.inputs, 'candidateManifest'), false);
+  assert.match(recipe.resources.externalAuthoring, /current packed SDK/u);
   assert.equal(recipe.resources.cliSourceFallback, false);
   assert.equal(recipe.resources.dynamicPortsOnly, true);
   assert.deepEqual(recipe.environment.required, [
@@ -246,6 +229,37 @@ test('dispatches the current-source External Sessions packed proof without candi
       '/candidate/manifest.json',
     ]),
     /packed_managed_provider_current_source_must_be_candidate_free/u,
+  );
+});
+
+test('current-source external packaged runtime owns non-CPX bytes without a Go build', () => {
+  const continuitySource = readFileSync(
+    new URL('../../src/plugin-platform/runPackedManagedProviderContinuity.ts', import.meta.url),
+    'utf8',
+  );
+  const composedSource = readFileSync(
+    new URL('../../src/plugin-platform/packedManagedProviderComposedRuntime.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.doesNotMatch(continuitySource, /spawn\(['"]go['"]/u);
+  assert.doesNotMatch(
+    continuitySource,
+    /await runPackedManagedProviderVertical\(/u,
+  );
+  assert.match(continuitySource, /copyFile\(process\.execPath, wrapperExecutable\)/u);
+  assert.match(continuitySource, /acme-packed-provider-runtime/u);
+  assert.match(continuitySource, /join\(root, 'external-provider-runtime'\)/u);
+  assert.match(
+    continuitySource,
+    /probeCandidateExternalAgentProviderHandoff\([\s\S]*?source\.prepared/u,
+  );
+  assert.match(composedSource, /const externalRuntimeProgram = \[/u);
+  assert.match(composedSource, /CANDIDATE_HANDOFF_PROVIDER_BINARY_NAME =\s*'acme-packed-provider-runtime'/u);
+  assert.match(composedSource, /args: \['-e', \$\{JSON\.stringify\(externalRuntimeProgram\)\}\]/u);
+  assert.doesNotMatch(
+    composedSource,
+    /CLIProxyAPI-LICENSE[\s\S]{0,500}?writeCandidateHandoffProviderSource/u,
   );
 });
 
@@ -315,19 +329,13 @@ test('dispatches the packed Channel provider vertical as its own executable cand
   );
 });
 
-test('advertises the packed Channel provider command and its stage list in the dry-run recipe', () => {
+test('does not advertise the release-only manifest Channel path as ordinary moving-source QA', () => {
   const recipe = buildPackedManagedProviderRecipe({
     packageRoot: '/repo/packages/tests',
   });
 
-  assert.equal(
-    recipe.channelCommand,
-    'yarn workspace @happier-dev/tests test:plugin-platform:packed-channel-provider --candidate <candidate-manifest.json>',
-  );
-  assert.deepEqual(
-    recipe.channelProviderStageIds,
-    PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
-  );
+  assert.equal(Object.hasOwn(recipe, 'channelCommand'), false);
+  assert.equal(Object.hasOwn(recipe, 'channelProviderStageIds'), false);
 });
 
 test('explicitly disables the separate Local Services product in every packed Provider launcher', () => {
@@ -586,11 +594,14 @@ test('keeps one canonical package command wired to the daemon continuity entrypo
   ));
   assert.equal(
     packageManifest.scripts['test:plugin-platform:packed-managed-provider'],
-    'node scripts/plugin-platform/run-packed-managed-provider.mjs',
+    'node scripts/plugin-platform/run-packed-managed-provider.mjs --current-source',
   );
   assert.equal(
-    packageManifest.scripts['test:plugin-platform:packed-channel-provider'],
-    'node scripts/plugin-platform/run-packed-managed-provider.mjs --channel',
+    Object.hasOwn(
+      packageManifest.scripts,
+      'test:plugin-platform:packed-channel-provider',
+    ),
+    false,
   );
 
   const invocation = buildPackedManagedProviderEntrypointInvocation({

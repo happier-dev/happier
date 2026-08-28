@@ -1,0 +1,27 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_SURFACE_URL}
+- extendedWaitUntil:
+    visible:
+      id: plugin-hosted-web-frame
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_SENTINEL}
+    timeout: 120000
+- assertVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_READY_ID}
+- tapOn:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_HISTORY_ACTION_ID}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_HISTORY_SENTINEL}
+    timeout: 30000
+- back
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_SENTINEL}
+    timeout: 30000
+- assertNotVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_HOSTED_HISTORY_SENTINEL}
+- takeScreenshot: plugin-platform-current-source-public-hosted-${HAPPIER_E2E_MOBILE_PLATFORM}

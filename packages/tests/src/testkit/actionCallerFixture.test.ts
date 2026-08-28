@@ -10,19 +10,27 @@ describe('Action caller fixtures', () => {
     const caller = createAutomationRunCallerFixture({
       runId: 'run-001',
       automationId: 'automation-001',
-      origin: 'conversation',
+      cause: {
+        kind: 'conversation',
+        occurrenceKey: 'A'.repeat(43),
+        occurredAt: 1,
+      },
     });
 
     expect(caller).toEqual({
       kind: 'automationRun',
       runId: 'run-001',
       automationId: 'automation-001',
-      origin: 'conversation',
+      cause: {
+        kind: 'conversation',
+        occurrenceKey: 'A'.repeat(43),
+        occurredAt: 1,
+      },
     });
     expect(Object.isFrozen(caller)).toBe(true);
   });
 
-  it('keeps ordinary plugin caller attribution distinct from Automation origin', () => {
+  it('keeps ordinary plugin caller attribution distinct from an Automation Run cause', () => {
     const contribution = {
       id: 'automation/result-deliver-v1',
       qualifiedId: 'happier.channels/actions/automation/result-deliver-v1',

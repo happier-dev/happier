@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,7 +7,62 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MobileMaestroDeps } from './mobileMaestroRunner';
 
 describe('mobileMaestroRunner', () => {
-  it('keeps a host Metro digest plus a passing module probe blocked until the selected device reports a matching digest', async () => {
+  it('uses one exact selected device for Maestro and installed-app identity', async () => {
+    const {
+      projectSelectedMobileTargetDeviceEnv,
+      resolveSelectedMobileTargetDeviceId,
+    } = await import('./mobileMaestroRunner');
+    expect(resolveSelectedMobileTargetDeviceId({
+      env: {},
+      platform: 'ios',
+      args: ['--udid=simulator-1'],
+    })).toBe('simulator-1');
+    expect(() => resolveSelectedMobileTargetDeviceId({
+      env: { HAPPIER_E2E_ANDROID_SERIAL: 'android-a' },
+      platform: 'android',
+      args: ['--device', 'android-b'],
+    })).toThrow(/conflicting devices/u);
+    expect(projectSelectedMobileTargetDeviceEnv({
+      env: {},
+      platform: 'android',
+      deviceId: 'android-a',
+    })).toMatchObject({
+      HAPPIER_E2E_MOBILE_DEVICE_ID: 'android-a',
+      HAPPIER_E2E_ANDROID_SERIAL: 'android-a',
+      ANDROID_SERIAL: 'android-a',
+    });
+  });
+
+  it('appends bounded wrapper evidence to the incumbent run manifest', async () => {
+    const { appendMobileMaestroManifestEvidence } = await import('./mobileMaestroRunner');
+    const root = mkdtempSync(join(tmpdir(), 'mobile-maestro-manifest-'));
+    const manifestPath = join(root, 'manifest.json');
+    writeFileSync(manifestPath, '{"tool":"maestro"}\n', 'utf8');
+    appendMobileMaestroManifestEvidence({
+      manifestPath,
+      evidence: { currentManagedStackPluginUi: { daemonMachineId: 'machine-1' } },
+    });
+    expect(JSON.parse(readFileSync(manifestPath, 'utf8'))).toEqual({
+      tool: 'maestro',
+      currentManagedStackPluginUi: { daemonMachineId: 'machine-1' },
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('binds the row revision to the exact Metro bytes that contain it', async () => {
+    const { mobileBundleContainsCompiledRevision } = await import('./mobileMaestroRunner');
+    const revision = 'mobile-row:123e4567-e89b-42d3-a456-426614174000';
+    expect(mobileBundleContainsCompiledRevision(
+      new TextEncoder().encode(`globalThis.__row = ${JSON.stringify(revision)};`),
+      revision,
+    )).toBe(true);
+    expect(mobileBundleContainsCompiledRevision(
+      new TextEncoder().encode('globalThis.__row = "stale";'),
+      revision,
+    )).toBe(false);
+  });
+
+  it('observes a loaded row only when the device executes the immutable revision compiled into the served no-dev bundle', async () => {
     const { runMobileMaestro } = await import('./mobileMaestroRunner');
     const events: string[] = [];
     const startDevClientMetro = vi.fn(async () => ({
@@ -15,14 +70,20 @@ describe('mobileMaestroRunner', () => {
       port: 8085,
       stop: vi.fn(async () => {}),
     }));
-    const runMaestro = vi.fn(async (params: { args: string[] }) => {
+    let expectedLoadedRevision: string | null = null;
+    const runMaestro = vi.fn(async (params: { args: string[]; env: NodeJS.ProcessEnv }) => {
       const flowIndex = params.args.findIndex((arg) => arg === 'test') + 1;
       events.push(params.args[flowIndex] ?? 'missing-flow');
+      const reportedRevision = String(
+        params.env.HAPPIER_E2E_EXPECTED_LOADED_BUNDLE_REVISION ?? '',
+      ).trim() || null;
+      if (reportedRevision) expectedLoadedRevision = reportedRevision;
       return { exitCode: 0 };
     });
-    const captureMetroBundleIdentity = vi.fn(async () => ({
+    const captureMetroBundleIdentity = vi.fn(async (params: { revision: string }) => ({
       url: 'http://127.0.0.1:8085/apps/ui/index.ts.bundle?platform=ios&dev=false',
-      revision: 'sha256:row-local-metro-bundle',
+      revision: params.revision,
+      contentDigest: 'sha256:row-local-metro-bundle',
     }));
 
     const result = await runMobileMaestro(
@@ -46,6 +107,10 @@ describe('mobileMaestroRunner', () => {
           HAPPIER_E2E_MOBILE_MANAGE_METRO: '1',
           HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE: '0',
           HAPPIER_E2E_UCX_NATIVE_LOADED_IDENTITY: '1',
+          HAPPIER_E2E_ATTEST_INSTALLED_NATIVE_APP: '1',
+          HAPPIER_E2E_IOS_SIMULATOR_UDID: 'simulator-1',
+          HAPPIER_E2E_NATIVE_MODULE_PROBE_FLOW:
+            'suites/mobile-e2e/flows/plugin-platform-current-source/native-module-probe.yaml',
         },
       },
       {
@@ -54,38 +119,68 @@ describe('mobileMaestroRunner', () => {
         isAppInstalled: vi.fn(async () => true),
         adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
         captureMetroBundleIdentity,
+        resolveInstalledIosAppBundleIdentity: vi.fn(() => ({
+          appBundleFileSetSha256: 'sha256:selected-ios-app-bundle',
+        })),
       },
     );
 
     expect(startDevClientMetro).toHaveBeenCalledWith(expect.objectContaining({
       extraEnv: expect.objectContaining({
         HAPPIER_E2E_EXPO_NO_DEV: '1',
+        EXPO_PUBLIC_HAPPIER_MOBILE_BUNDLE_REVISION: expect.stringMatching(/^mobile-row:/u),
       }),
     }));
     expect(events).toEqual([
-      'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml',
+      'suites/mobile-e2e/flows/plugin-platform-current-source/native-module-probe.yaml',
+      'suites/mobile-e2e/flows/_shared/loadedBundleRevisionProbe.yaml',
       'suites/mobile-e2e/flows/plugin-platform-candidate/online-install-and-inspector.yaml',
     ]);
-    expect(captureMetroBundleIdentity).toHaveBeenCalledWith({
+    expect(captureMetroBundleIdentity).toHaveBeenCalledWith(expect.objectContaining({
       platform: 'ios',
       hostMetroUrl: 'http://127.0.0.1:8085',
       deviceMetroUrl: 'http://127.0.0.1:8085',
-    });
+      revision: expect.stringMatching(/^mobile-row:/u),
+    }));
     expect(result.ucxLoadedNativeRuntime).toMatchObject({
-      kind: 'blocked',
-      code: 'device_loaded_bundle_identity_unavailable',
-      support: {
-        servedBundle: {
-          url: 'http://127.0.0.1:8085/apps/ui/index.ts.bundle?platform=ios&dev=false',
-          revision: 'sha256:row-local-metro-bundle',
-        },
-        moduleProbe: {
-          flow: 'suites/mobile-e2e/flows/F10.nativeCryptoWorkerProbe.yaml',
-          status: 'passed',
-        },
+      kind: 'observed',
+      fullMetroReload: true,
+      fastRefresh: 'disabled_via_expo_no_dev',
+      bundle: {
+        url: 'http://127.0.0.1:8085/apps/ui/index.ts.bundle?platform=ios&dev=false',
+        revision: expect.stringMatching(/^mobile-row:/u),
+        contentDigest: 'sha256:row-local-metro-bundle',
+      },
+      deviceReportedBundle: {
+        revision: expect.stringMatching(/^mobile-row:/u),
+        probeFlow: 'suites/mobile-e2e/flows/_shared/loadedBundleRevisionProbe.yaml',
+      },
+      moduleProbe: {
+        flow: 'suites/mobile-e2e/flows/plugin-platform-current-source/native-module-probe.yaml',
+        status: 'passed',
       },
     });
-    expect(result.ucxLoadedNativeRuntime?.kind).not.toBe('observed');
+    expect(result.installedNativeAppIdentity).toEqual({
+      kind: 'ios-app-bundle-file-set',
+      appBundleFileSetSha256: 'sha256:selected-ios-app-bundle',
+    });
+    expect(expectedLoadedRevision).toBe(
+      result.ucxLoadedNativeRuntime?.kind === 'observed'
+        ? result.ucxLoadedNativeRuntime.bundle.revision
+        : null,
+    );
+    expect(JSON.parse(readFileSync(result.manifestPath, 'utf8'))).toMatchObject({
+      loadedNativeRuntime: {
+        kind: 'observed',
+        bundle: {
+          contentDigest: 'sha256:row-local-metro-bundle',
+        },
+      },
+      installedNativeAppIdentity: {
+        kind: 'ios-app-bundle-file-set',
+        appBundleFileSetSha256: 'sha256:selected-ios-app-bundle',
+      },
+    });
   });
 
   it('uses the Stack-selected dev-client identity for each platform before install preflight', async () => {

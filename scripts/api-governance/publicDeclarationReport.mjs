@@ -201,9 +201,15 @@ function deprecationDocumentNode(declaration) {
   return declaration;
 }
 
-function structuredDeprecationForPublishedExport(exported, entrypoint) {
+function structuredDeprecationForPublishedExport(checker, exported, entrypoint) {
   const owner = `Prepared declaration ${entrypoint.sourceModule} export ${exported.name}`;
-  const deprecations = orderedDeclarations(exported)
+  const declarationByKey = new Map();
+  for (const symbol of [exported, resolvedSymbol(checker, exported)]) {
+    for (const declaration of orderedDeclarations(symbol)) {
+      declarationByKey.set(declarationKey(declaration), declaration);
+    }
+  }
+  const deprecations = [...declarationByKey.values()]
     .map((declaration) => parseStructuredDeprecationTags(
       ts.getJSDocTags(deprecationDocumentNode(declaration)),
       owner,
@@ -477,7 +483,7 @@ export function projectEntrypointExportRows({ program, packageRoot, entrypoints 
       continue;
     }
     for (const exported of checker.getExportsOfModule(moduleSymbol)) {
-      const deprecation = structuredDeprecationForPublishedExport(exported, entrypoint);
+      const deprecation = structuredDeprecationForPublishedExport(checker, exported, entrypoint);
       rows.push(Object.freeze({
         specifier: entrypoint.specifier,
         exportName: exported.name,

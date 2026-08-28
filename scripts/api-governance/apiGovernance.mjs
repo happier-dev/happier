@@ -17,7 +17,6 @@ import { summarizeDeclarationDiff } from './declarationDiff.mjs';
 import {
   isExactCanonicalPublishedVersion,
   projectPublishedInventoryProvenance,
-  projectRetainedInventoryProvenance,
 } from './publicationProvenance.mjs';
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -278,20 +277,6 @@ async function readPreviousPublishedEntrypointInventory(options) {
   );
 }
 
-async function readRetainedEntrypointInventory(inventoryPath, packageName) {
-  const existing = await optionalLstat(inventoryPath);
-  if (!existing || !existing.isFile()) return undefined;
-  const raw = await readJson(inventoryPath, 'retained public API inventory');
-  // These packages are unpublished while their generated records move from
-  // source labels to declaration labels. No retained publication fact exists
-  // until a publisher stamps `since`, so permit that one direct-cut refresh.
-  const sinceCount = Array.isArray(raw?.symbols)
-    ? raw.symbols.filter((symbol) => symbol !== null && typeof symbol === 'object' && Object.hasOwn(symbol, 'since')).length
-    : 0;
-  if (sinceCount === 0) return undefined;
-  return validateEntrypointInventory(raw, packageName);
-}
-
 function assertPublicationOptions(options) {
   if (
     options.previousPublishedInventoryPath !== undefined
@@ -463,9 +448,6 @@ async function runEntrypointDeclarationProfile(profile, options) {
     `Public API governance ${profile.id} inventory: ${diagnostic}`,
   );
   const previousPublishedInventory = await readPreviousPublishedEntrypointInventory(options);
-  const retainedPublishedInventory = options.publishedVersion === undefined
-    ? await readRetainedEntrypointInventory(join(packageRoot, 'api-surface.json'), packageJson.name)
-    : undefined;
   const inventory = options.publishedVersion !== undefined
     ? projectPublishedInventoryProvenance({
       inventory: emittedInventory,
@@ -476,16 +458,7 @@ async function runEntrypointDeclarationProfile(profile, options) {
       symbolKey: entrypointSymbolKey,
       createError: provenanceError,
     })
-    : retainedPublishedInventory === undefined
-      ? emittedInventory
-      : projectRetainedInventoryProvenance({
-        inventory: emittedInventory,
-        retainedPublishedInventory,
-        validateInventory,
-        symbols: (candidate) => candidate.symbols,
-        symbolKey: entrypointSymbolKey,
-        createError: provenanceError,
-      });
+    : emittedInventory;
   const outputs = [
     Object.freeze({
       owner: 'authorApiMarkdown',

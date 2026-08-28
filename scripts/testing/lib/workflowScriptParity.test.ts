@@ -17,7 +17,7 @@ function createPackageJsonText(): string {
         'check:public-sdk:finite:local': 'turbo run api:finite test:finite typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
         'test:unit': 'yarn workspace privacy-kit test && yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/peer-mediation test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/plugin-sdk test && yarn workspace @happier-dev/plugin-ui test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
         'test:plugin-workspaces': 'node --experimental-strip-types scripts/testing/runPluginWorkspaceTests.ts',
-        'test:plugin-platform:contracts': 'yarn workspace @happier-dev/tests test:plugin-platform:contracts',
+        'test:plugin-platform:source': 'yarn workspace @happier-dev/tests test:plugin-platform:source',
         'test:integration': 'yarn workspace @happier-dev/app test:integration && yarn workspace @happier-dev/cli test:integration && yarn --cwd apps/server test:integration && yarn --cwd apps/stack test:integration',
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
@@ -63,7 +63,7 @@ jobs:
       - run: yarn workspace @happier-dev/plugin-sdk test
       - run: yarn workspace @happier-dev/plugin-ui test
       - run: yarn test:plugin-workspaces
-      - run: yarn test:plugin-platform:contracts
+      - run: yarn workspace @happier-dev/tests test:plugin-platform:source
       - run: yarn workspace @happier-dev/app test:unit
       - run: yarn workspace @happier-dev/app test:integration
       - run: yarn workspace @happier-dev/cli test:unit
@@ -90,7 +90,7 @@ function createDocsText(): string {
 \`\`\`bash
 yarn test
 yarn test:plugin-workspaces
-yarn test:plugin-platform:contracts
+yarn test:plugin-platform:source
 yarn test:integration
 yarn test:e2e:core:fast
 yarn test:e2e:core:slow
@@ -393,30 +393,18 @@ test('routes the root ordinary integration lane through the Stack executor', () 
   );
 });
 
-test('runs every direct natural-artifact packed Plugin Platform script from CI', () => {
+test('runs current-source Plugin Platform contracts without a release representation in CI', () => {
   const testsPackageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'packages/tests/package.json'), 'utf8')) as {
     scripts?: Record<string, string | undefined>;
   };
   const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
-  const directNaturalArtifactScripts = [
-    'test:plugin-platform:packed-author',
-    'test:plugin-platform:packed-targeted-projection',
-    'test:plugin-platform:packed-background-indexer',
-    'test:plugin-platform:packed-composer',
-    'test:plugin-platform:out-of-tree-channel-socket-provider',
-  ];
+  const sourceLane = testsPackageJson.scripts?.['test:plugin-platform:source'] ?? '';
 
-  for (const scriptName of directNaturalArtifactScripts) {
-    assert.ok(testsPackageJson.scripts?.[scriptName], `${scriptName} must remain executable.`);
-    assert.match(workflowText, new RegExp(`workspace @happier-dev/tests ${scriptName}`));
-  }
-  assert.match(workflowText, /build:plugin-platform:natural/);
-  const invokedPluginPlatformScripts = [...new Set(Array.from(
-    workflowText.matchAll(/workspace @happier-dev\/tests (test:plugin-platform:[a-z0-9:-]+)/g),
-    (match) => match[1],
-  ))].sort();
-  assert.deepEqual(invokedPluginPlatformScripts, [...directNaturalArtifactScripts].sort());
-  assert.match(workflowText, /run_vertical\(\) \{[\s\S]*pids\+=\("\$!"\)/);
+  assert.match(sourceLane, /run-contract-tests\.mjs/);
+  assert.match(sourceLane, /public-only\.test\.mjs/);
+  assert.doesNotMatch(sourceLane, /pack-fixture|installedTarballProof|\.tgz|tarball/i);
+  assert.match(workflowText, /yarn workspace @happier-dev\/tests test:plugin-platform:source/);
+  assert.doesNotMatch(workflowText, /build:plugin-platform:natural|test:plugin-platform:packed-/);
 });
 
 test('runs plugin workspace unit tests only through the derived workspace runner', () => {

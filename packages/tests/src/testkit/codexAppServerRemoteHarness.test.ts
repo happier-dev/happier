@@ -304,6 +304,13 @@ describe('startCodexAppServerRemoteHarness', () => {
           },
         },
       });
+      expect(await send(6, 'thread/fork', { threadId: 'thread-started' })).toMatchObject({
+        result: {
+          threadId: 'thread-forked',
+          model: 'gpt-5.4',
+          serviceTier: null,
+        },
+      });
     } finally {
       child.kill();
       lines.close();

@@ -1,11 +1,10 @@
 import { actionContracts } from '@happier-dev/action-contract-producer-fixture/actions';
 import {
   definePlugin,
-  type JsonValue,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 } from '@happier-dev/plugin-sdk/browser';
-import type { ActionContract, ActionHandler, ActionsService } from '@happier-dev/plugin-sdk/actions';
+import type { ActionHandler, ActionsService } from '@happier-dev/plugin-sdk/actions';
 import {
   defineProtocolLiteral,
   defineProtocolObject,
@@ -81,8 +80,8 @@ export const { manifest, activate } = plugin;
 
 if (false) {
   const actions = {} as ActionsService;
-  const contract: ActionContract = actionContracts.publish;
-  const result: Promise<JsonValue | void> = actions.execute(
+  const contract: typeof actionContracts.publish = actionContracts.publish;
+  const result: Promise<Readonly<{ accepted: boolean; title: string }>> = actions.execute(
     contract,
     { title: 'structural invocation' },
   );
@@ -90,10 +89,12 @@ if (false) {
     actionContracts.publish,
     { title: 'static inference' },
   );
-  const archiveResult: Promise<JsonValue | void> = actions.execute(
+  const archiveResult: Promise<Readonly<{ archived: boolean; id: string }>> = actions.execute(
     actionContracts.archive,
     { id: 'static-inference' },
   );
+  // @ts-expect-error Cross-package declarations retain the producer's input schema type.
+  void actions.execute(actionContracts.publish, { id: 'wrong-input' });
   void result;
   void exactOriginResult;
   void archiveResult;

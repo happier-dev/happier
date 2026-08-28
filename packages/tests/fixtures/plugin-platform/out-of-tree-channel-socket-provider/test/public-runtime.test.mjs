@@ -675,7 +675,10 @@ test('background observer forwards checkpoint-free endpoint-routed socket observ
   });
   assert.deepEqual(plainJson(ingested), [{
     connectionId: 'connection-1',
-    observation: socketMessageObservation(),
+    entry: {
+      observation: socketMessageObservation(),
+      eventCandidate: null,
+    },
   }]);
 
   assert.deepEqual(

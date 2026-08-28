@@ -4,7 +4,26 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { resolveQaUiUrl } from './resolveQaUiUrl.mjs';
+import { resolveQaStackRuntimeJsonPath, resolveQaUiRuntimeIdentity, resolveQaUiUrl } from './resolveQaUiUrl.mjs';
+
+test('resolveQaStackRuntimeJsonPath exposes the exact managed runtime selected by QA', async () => {
+  const stacksDir = await mkdtemp(join(tmpdir(), 'qa-ui-runtime-path-'));
+  const stackName = 'qa-current-source';
+  const runtimePath = join(stacksDir, stackName, 'stack.runtime.json');
+  try {
+    await mkdir(join(stacksDir, stackName), { recursive: true });
+    await writeFile(runtimePath, JSON.stringify({ stackName }), 'utf8');
+    assert.equal(resolveQaStackRuntimeJsonPath({
+      HAPPIER_QA_STACKS_DIR: stacksDir,
+      HAPPIER_QA_STACK_NAME: stackName,
+    }), runtimePath);
+    assert.equal(resolveQaStackRuntimeJsonPath({
+      HAPPIER_QA_STACK_RUNTIME_JSON_PATH: runtimePath,
+    }), runtimePath);
+  } finally {
+    await rm(stacksDir, { recursive: true, force: true });
+  }
+});
 
 test('resolveQaUiUrl borrows producer Expo while routing the named consumer origin to its own server', async () => {
   const stacksDir = await mkdtemp(join(tmpdir(), 'qa-ui-borrowed-expo-'));
@@ -38,6 +57,15 @@ test('resolveQaUiUrl borrows producer Expo while routing the named consumer orig
     assert.equal(url.port, '19364');
     assert.equal(url.searchParams.get('server'), 'http://happier-qa-agent-17.localhost:53288');
     assert.equal(url.searchParams.get('happier_hmr'), '0');
+    assert.deepEqual(resolveQaUiRuntimeIdentity({
+      HAPPIER_QA_STACKS_DIR: stacksDir,
+      HAPPIER_QA_STACK_NAME: consumerStackName,
+    }), {
+      mode: 'borrowedExpo',
+      consumerRuntimePath: join(stacksDir, consumerStackName, 'stack.runtime.json'),
+      producerRuntimePath: join(stacksDir, producerStackName, 'stack.runtime.json'),
+      producerStackName,
+    });
   } finally {
     await rm(stacksDir, { recursive: true, force: true });
   }

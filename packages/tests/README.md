@@ -42,12 +42,23 @@ Out of scope for this package:
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
 - Core deterministic e2e (handoff slice): `yarn workspace @happier-dev/tests test:core:handoff`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
+- Current managed-Stack Plugin UI (opt-in, attaches without starting or stopping services): `HAPPIER_QA_STACKS_DIR="$HOME/.happier/stacks" HAPPIER_QA_STACK_NAME=<stack> yarn workspace @happier-dev/tests test:ui:e2e:plugin-current-stack`
 - WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (configuration-driven scale harness): `yarn workspace @happier-dev/tests test:stress`
 - Stress (full Compose topology): `yarn workspace @happier-dev/tests test:stress:full-compose`
 - Stress Compose topology only: `yarn workspace @happier-dev/tests stress:compose:up|status|down`
 - Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:agents`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
+
+### Current managed-Stack Plugin UI QA
+
+`test:ui:e2e:plugin-current-stack` attaches to the named already-running Stack. It never starts or stops a server, Expo, daemon, publisher, or Stack lifecycle. The default scenario performs no plugin build. It fails unless the canonical publication and web/server/daemon phases are current, loaded and published snapshot IDs agree, exact server-profile credentials match the Stack, live daemon `/ping` matches the state-file runtime ID and closure fingerprint, and the Inspector identity agrees before and after the browser journey. Snapshot mode binds to the consumer's published web snapshot; Expo mode binds to the canonical running `expo.state.json` process and exact current-checkout project, including an explicitly attributed borrowed producer Stack.
+
+The default scenario exercises the actual Settings placement and `PluginSurfaceHost` using the loaded Inspector RNW artifact, an observably settled declared Action, a successfully decoded Resource-backed RNW image, remount, offline retirement/reconnect, keyboard focus, and bounded 200% zoom layout. The mounted boundary must stamp the exact admitted artifact digest, projection generation, machine, and server after the module loads. Pre/post JSON attachments record safe Account/server attribution plus exact runtime, plugin, projection, and artifact identities. Secrets and daemon control tokens are never attached.
+
+Add `HAPPIER_E2E_PLUGIN_UI_CURRENT_STACK_MUTATIONS=1` to run the reversible public current-source lifecycle scenario. The maintained fixture is copied to a UUID-qualified temporary development source and built by the current CLI's ordinary `happier plugins dev build` owner. Through one plugin it mounts RNW, declarative, hosted-web and self-targeted surfaces; settles a public Action; mounts Composer controls, attachments, references and regions in both New Session and a disposable plain Session; changes and reloads its source generation; disables/enables it; and uninstalls/reinstalls it. Unconditional typed cleanup verifies final catalog absence and no pending change, deletes the exact Account-owned New Session draft with revision fencing, removes the disposable Session, and attaches every observed generation transition. This is intentionally explicit because it builds source and mutates the selected developer Stack's plugin catalog and Account records.
+
+This is moving-development-source QA. It does not produce or certify a tarball, archive, frozen candidate, or release artifact. The opt-in mutation scenario builds only its disposable public plugin source. The Composer rows above prove real mounted draft-document behavior; they do not claim submit acceptance: this browser row uses a disposable plain Session and never selects or opens the fixture's deterministic Agent. Existing/New/Pending acceptance is therefore unexercised by this row. Targeted update coverage proves real old-generation retirement and restored-generation mounting; it does not claim an intermediate diagnostic was visible if projection convergence made that phase unobservable. This browser row is attributed to one existing Account and does not prove Account-switch isolation. Its observable accessibility checks cover keyboard focus and 200% zoom, not RTL or reduced-motion behavior.
 
 Root aliases may exist (e.g. `yarn test:e2e`), but the workspace commands above are the source of truth.
 

@@ -1,0 +1,9 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///plugins/happier.inspector/inspector-page
+- extendedWaitUntil:
+    visible:
+      id: inspector-surface
+    timeout: 120000
+- assertVisible:
+    id: inspector-plugin-happier.inspector

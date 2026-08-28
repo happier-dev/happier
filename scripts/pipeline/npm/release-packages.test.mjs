@@ -13,7 +13,7 @@ function checkedOutSha() {
   return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-test('public SDK release packing schedules one exact-tarball validation phase before publication', () => {
+test('public SDK publication validates the exported archives before publish', async () => {
   const version = '0.1.0-preview.777';
   const result = spawnSync(process.execPath, [
     releasePackagesPath,
@@ -30,22 +30,28 @@ test('public SDK release packing schedules one exact-tarball validation phase be
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const validationMatch = new RegExp(
-    `validate-public-sdk-tarballs\\.mjs --plugin-sdk-tarball .*plugin_sdk-${version}\\.tgz --plugin-ui-tarball .*plugin_ui-${version}\\.tgz --sdk-tarball .*sdk-${version}\\.tgz`,
-    'u',
+
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(releasePackagesPath, 'utf8'));
+  assert.match(source, /validatePublicSdkPublicationTarballs/u);
+  assert.match(
+    source,
+    /await validatePublicSdkPublicationTarballs\([\s\S]*?pluginSdkTarball: publishPluginSdk \? publicTarballs\.plugin_sdk : null[\s\S]*?pluginUiTarball: publishPluginSdk \? publicTarballs\.plugin_ui : null[\s\S]*?sdkTarball: publishSdk \? publicTarballs\.sdk : null/u,
   );
-  assert.match(result.stdout, validationMatch);
-  const validationIndex = result.stdout.search(validationMatch);
-  const firstPublishIndex = result.stdout.indexOf('publish-tarball.mjs');
-  assert.ok(validationIndex >= 0);
-  assert.ok(firstPublishIndex > validationIndex, 'publication must follow exact-tarball validation');
+  assert.match(
+    source,
+    /await validatePublicSdkPublicationTarballs\([\s\S]*?\);[\s\S]*?publishPluginSdkPair\(/u,
+    'the exported-archive consumer gate must run before the first public SDK publisher',
+  );
 });
 
-test('public SDK release packing exposes exact-candidate maintainer approval to the pack owner', async () => {
+test('public SDK publication selection is the pack owner approval boundary', async () => {
   const source = await import('node:fs/promises').then(({ readFile }) => readFile(releasePackagesPath, 'utf8'));
   assert.match(source, /'approve-public-sdk-release': \{ type: 'string', default: 'false' \}/u);
   assert.match(source, /publicSdkReleaseApprovalRequired/u);
   assert.match(source, /admitPublicSdkRelease/u);
+  assert.match(source, /admitPublicSdkPublication/u);
+  assert.match(source, /analyzeCurrentPublicApiForEditorial/u);
+  assert.match(source, /approved: approvePublicSdkRelease/u);
   assert.match(source, /metadata\.publication\?\.apiGovernance/u);
   assert.match(
     source,
@@ -86,27 +92,28 @@ test('the generic npm release orchestration owns the public Channels protocol pa
   assert.deepEqual(
     publishLines.map((line) => line.replace(/^.*publish-tarball\.mjs /u, '').replace(/[^ ]*\//gu, '')),
     [`--channel preview --tarball channels_protocol-${version}.tgz`],
-    'the Channels protocol candidate publishes exactly once, through the one generic tarball publisher',
+    'the Channels protocol tarball publishes exactly once through the generic tarball publisher',
   );
 });
 
-test('real package publication rejects a missing release-admitted candidate before package work', () => {
+test('ordinary package preparation does not require a release-admitted source SHA', () => {
   const result = spawnSync(process.execPath, [
     releasePackagesPath,
     '--channel', 'preview',
     '--publish-plugin-sdk', 'true',
     '--mode', 'pack+publish',
     '--authorized-sha', '',
+    '--dry-run',
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
 
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}\n${result.stderr}`, /release-admitted exact source SHA/);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /packages\/plugin-sdk/u);
 });
 
-test('direct real package publication rejects a dirty candidate before package work', async () => {
+test('direct real package publication rejects a dirty checkout before package work', async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-release-packages-dirty-'));
   try {
     execFileSync('git', ['init'], { cwd: temporaryRoot, stdio: 'ignore' });

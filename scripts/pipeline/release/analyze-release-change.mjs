@@ -57,6 +57,16 @@ function publicApiComparisonRequiresReleaseApproval(value) {
     || publicApiComparisonRequiresHumanReview(value);
 }
 
+export function publicApiAdmissionFacts(publicApiComparisons, component) {
+  const selected = publicApiComparisons.filter((value) => isRecord(value) && value.component === component);
+  return Object.freeze({
+    firstPublication: selected.length > 0 && selected.every((value) => value.comparison?.status === 'dormant_pre_baseline'),
+    removedSymbols: selected.some((value) => Array.isArray(value.comparison?.facts?.removedSymbols)
+      && value.comparison.facts.removedSymbols.length > 0),
+    humanReviewRequired: selected.some(publicApiComparisonRequiresHumanReview),
+  });
+}
+
 /**
  * Runs the public-package governance comparison while the release conductor
  * is still forming its editorial/version recommendation. The comparison's
@@ -141,6 +151,10 @@ export function buildReleaseChangeAnalysis(input) {
     ...(!risks.trustRoots ? ['trust-root-compatibility'] : []),
   ];
   const publicApiComparisons = input.publicApiComparisons ?? [];
+  const publicSdkAdmissionFacts = Object.freeze({
+    pluginSdk: publicApiAdmissionFacts(publicApiComparisons, 'plugin_sdk'),
+    sdk: publicApiAdmissionFacts(publicApiComparisons, 'sdk'),
+  });
   return {
     schemaVersion: 1,
     kind: 'happier.release-change-analysis.v1',
@@ -156,6 +170,7 @@ export function buildReleaseChangeAnalysis(input) {
     requiredHeavySuites: [...new Set(requiredHeavySuites)],
     skippedHeavySuites: [...new Set(skippedHeavySuites)],
     publicApiComparisons,
+    publicSdkAdmissionFacts,
     deepCertification: 'manual',
   };
 }
@@ -166,6 +181,12 @@ export function renderReleaseChangeAnalysisGitHubOutput(analysis) {
     `compatibility_analysis_required=${analysis.compatibilityAnalysisRequired}`,
     `public_api_human_review_required=${analysis.publicApiHumanReviewRequired}`,
     `public_sdk_release_approval_required=${analysis.publicSdkReleaseApprovalRequired}`,
+    `plugin_sdk_api_first_publication=${analysis.publicSdkAdmissionFacts.pluginSdk.firstPublication}`,
+    `plugin_sdk_api_removed_symbols=${analysis.publicSdkAdmissionFacts.pluginSdk.removedSymbols}`,
+    `plugin_sdk_api_human_review_required=${analysis.publicSdkAdmissionFacts.pluginSdk.humanReviewRequired}`,
+    `sdk_api_first_publication=${analysis.publicSdkAdmissionFacts.sdk.firstPublication}`,
+    `sdk_api_removed_symbols=${analysis.publicSdkAdmissionFacts.sdk.removedSymbols}`,
+    `sdk_api_human_review_required=${analysis.publicSdkAdmissionFacts.sdk.humanReviewRequired}`,
     `risk_cli_upgrade=${analysis.risks.cliUpgrade}`,
     `risk_session_continuity=${analysis.risks.sessionContinuity}`,
     `risk_relay_upgrade=${analysis.risks.relayUpgrade}`,
@@ -174,6 +195,32 @@ export function renderReleaseChangeAnalysisGitHubOutput(analysis) {
     `risk_trust_roots=${analysis.risks.trustRoots}`,
     '',
   ].join('\n');
+}
+
+/** @param {ReturnType<typeof buildReleaseChangeAnalysis>} analysis */
+export function renderPublicApiComparisonSummary(analysis) {
+  const lines = ['## Public SDK API comparison', ''];
+  if (analysis.publicApiComparisons.length === 0) return `${lines.join('\n')}No public SDK package is selected.\n`;
+  for (const value of analysis.publicApiComparisons) {
+    const comparison = value.comparison ?? {};
+    const facts = comparison.facts ?? {};
+    lines.push(`### ${value.packageName}`);
+    lines.push(`- Previous: ${comparison.previousVersion ?? 'none (first publication)'}`);
+    lines.push(`- Status: ${comparison.status ?? 'unknown'}`);
+    lines.push(`- Added: ${Array.isArray(facts.addedSymbols) ? facts.addedSymbols.length : 0}`);
+    lines.push(`- Removed: ${Array.isArray(facts.removedSymbols) ? facts.removedSymbols.length : 0}`);
+    lines.push(`- Changed: ${Array.isArray(facts.changedSymbols) ? facts.changedSymbols.length : 0}`);
+    lines.push(`- Human review required: ${publicApiComparisonRequiresHumanReview(value) ? 'yes' : 'no'}`);
+    for (const [label, symbols] of [
+      ['Added symbols', facts.addedSymbols],
+      ['Removed symbols', facts.removedSymbols],
+      ['Changed symbols', facts.changedSymbols],
+    ]) {
+      if (Array.isArray(symbols) && symbols.length > 0) lines.push(`- ${label}: ${symbols.join(', ')}`);
+    }
+    lines.push('');
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /** @param {string[]} args @param {string | undefined} cwd */
@@ -204,6 +251,7 @@ export async function main(argv = process.argv.slice(2)) {
       'has-server-candidate': { type: 'string', default: 'false' },
       'has-published-relay-predecessor': { type: 'string', default: 'false' },
       'github-output': { type: 'string', default: '' },
+      'summary-file': { type: 'string', default: '' },
       'repository-root': { type: 'string', default: '' },
       'trust-checked-in-governance': { type: 'string', default: 'false' },
     },
@@ -242,6 +290,8 @@ export async function main(argv = process.argv.slice(2)) {
   } else {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   }
+  const summaryFile = String(values['summary-file'] ?? '').trim();
+  if (summaryFile) await appendFile(summaryFile, renderPublicApiComparisonSummary(result), 'utf8');
   return result;
 }
 

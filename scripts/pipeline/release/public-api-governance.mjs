@@ -101,7 +101,14 @@ function inventorySymbolMap(inventory, label) {
 
 function withoutDeprecationFields(symbol) {
   const result = { ...symbol };
+  delete result.since;
   for (const field of DEPRECATION_FIELDS) delete result[field];
+  return result;
+}
+
+function withoutPublisherOwnedFields(symbol) {
+  const result = { ...symbol };
+  delete result.since;
   return result;
 }
 
@@ -114,7 +121,7 @@ function isPureDeprecation(previous, candidate) {
   ));
   return candidateDeclaresDeprecation
     && !previousDeclaresDeprecation
-    && canonicalJson(previous) === canonicalJson(withoutDeprecationFields(candidate));
+    && canonicalJson(withoutPublisherOwnedFields(previous)) === canonicalJson(withoutDeprecationFields(candidate));
 }
 
 function noBaselineReport({ packageName, candidateVersion }) {
@@ -169,7 +176,7 @@ export function comparePublicApiReleaseRecords({
       addedSymbols.push(key);
       continue;
     }
-    if (canonicalJson(previous) === canonicalJson(candidate)) {
+    if (canonicalJson(withoutPublisherOwnedFields(previous)) === canonicalJson(withoutPublisherOwnedFields(candidate))) {
       unchangedSymbols.push(key);
       continue;
     }

@@ -416,12 +416,6 @@ function readGeneratedProtocolAgentProviderIdsOutput(repoRoot: string): string {
   return readFileSync(agentIdsOutPath, 'utf8');
 }
 
-function readGeneratedSessionControlAdaptersOutput(repoRoot: string): string {
-  const outPath = resolve(repoRoot, 'packages/agents/src/generated/sessionControlAdapters.ts');
-  assert.equal(existsSync(outPath), true, 'expected generated session-control adapter output');
-  return readFileSync(outPath, 'utf8');
-}
-
 function readGeneratedRuntimeDescriptorReadersOutput(repoRoot: string): string {
   const outPath = resolve(repoRoot, 'packages/agents/src/generated/runtimeDescriptorReaders.ts');
   assert.equal(existsSync(outPath), true, 'expected generated runtime descriptor reader output');
@@ -437,18 +431,6 @@ function readGeneratedProtocolRuntimeDescriptorContributionsOutput(repoRoot: str
 function readGeneratedProtocolRuntimeDescriptorModuleOutput(repoRoot: string, agentId: string): string {
   const outPath = resolve(repoRoot, `packages/protocol/src/agents/generated/runtime/descriptors/${agentId}.ts`);
   assert.equal(existsSync(outPath), true, `expected generated protocol runtime descriptor module for ${agentId}`);
-  return readFileSync(outPath, 'utf8');
-}
-
-function readGeneratedProtocolBuiltInBackendProfilesOutput(repoRoot: string): string {
-  const outPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts');
-  assert.equal(existsSync(outPath), true, 'expected generated protocol built-in backend profiles output');
-  return readFileSync(outPath, 'utf8');
-}
-
-function readGeneratedProtocolMemoryDefaultsOutput(repoRoot: string): string {
-  const outPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/memory/defaults.ts');
-  assert.equal(existsSync(outPath), true, 'expected generated protocol memory defaults output');
   return readFileSync(outPath, 'utf8');
 }
 
@@ -1057,7 +1039,7 @@ test('emits only bundled locators and structured trusted bindings into the CLI r
   const manifestOutput = readFileSync(manifestOutputPath, 'utf8');
   assert.match(manifestOutput, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
   assert.doesNotMatch(manifestOutput, /\\\\n/);
-  assert.match(executableOutput, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
+  assert.match(executableOutput, /BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS/);
   assert.match(manifestOutput, /pluginId:\s*"happier\.fixture\.descriptor"/);
   // Locators carry the generator-normalized manifest data through the same
   // strict ingress as an installed plugin. Importing a package's authored
@@ -1594,9 +1576,26 @@ test('separates structural bundled generation records from pack-time source arti
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts'),
     'utf8',
   );
+  const [afterCompilerCacheArtifact] = readGeneratedJsonExport<typeof firstArtifact[]>(
+    afterCompilerCacheChange,
+    'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS',
+  );
+  assert.ok(afterCompilerCacheArtifact);
+  assert.notEqual(
+    afterCompilerCacheArtifact.record.immutableGenerationId,
+    firstArtifact.record.immutableGenerationId,
+  );
+  const {
+    immutableGenerationId: _firstPublicationGenerationId,
+    ...firstRecordWithoutPublicationGenerationId
+  } = firstArtifact.record;
+  const {
+    immutableGenerationId: _afterCompilerCachePublicationGenerationId,
+    ...afterCompilerCacheRecordWithoutPublicationGenerationId
+  } = afterCompilerCacheArtifact.record;
   assert.deepEqual(
-    readGeneratedJsonExport(afterCompilerCacheChange, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS'),
-    [firstArtifact],
+    afterCompilerCacheRecordWithoutPublicationGenerationId,
+    firstRecordWithoutPublicationGenerationId,
   );
   assert.deepEqual(
     readGeneratedJsonExport(afterCompilerCacheChange, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES'),
@@ -1619,7 +1618,7 @@ test('separates structural bundled generation records from pack-time source arti
   );
   assert.notEqual(
     secondArtifact.record.immutableGenerationId,
-    firstArtifact.record.immutableGenerationId,
+    afterCompilerCacheArtifact.record.immutableGenerationId,
   );
   const {
     immutableGenerationId: firstImmutableGenerationId,
@@ -2875,13 +2874,12 @@ function writeGeneratorOutputScaffold(repoRoot: string, uiSource?: string): void
       "import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';",
       "export { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES, BUNDLED_FIRST_PARTY_PLUGIN_METADATA, BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './generatedBundledPluginManifests';",
       "export type { BundledFirstPartyPluginMetadata, BundledFirstPartyPluginLocator } from './generatedBundledPluginManifests';",
-      'export type BundledFirstPartyImplementationBinding = Readonly<{',
+      'export type BundledFirstPartyAgentRegistrationBinding = Readonly<{',
       '  identity: PluginContributionIdentityV1;',
       '  implementationOwnerId: string;',
       '  registrationFamily: string;',
-      '  implementation: unknown;',
       '}>;',
-      'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstPartyImplementationBinding[] = Object.freeze([]);',
+      'export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFirstPartyAgentRegistrationBinding[] = Object.freeze([]);',
       '',
     ].join('\n'),
     'utf8',
@@ -3643,7 +3641,16 @@ function writeClaudeUiDescriptorFixture(repoRoot: string): void {
     },
     behavior: { descriptorId: 'claude.uiBehavior.v1' },
     session: {
-      providerBehaviorDescriptorId: 'claude.sessionProviderBehavior.v1',
+      providerBehavior: {
+        kind: 'session.providerBehavior.v1',
+        participants: {
+          sidechainIds: {
+            kind: 'toolCallInputString',
+            toolNames: ['Agent'],
+            inputKey: 'name',
+          },
+        },
+      },
       visibleMessages: {
         kind: 'session.visibleMessages.v1',
         subagentKinds: ['agent_team_member'],
@@ -3989,48 +3996,6 @@ function writeOhMyPiUiDescriptorFixture(repoRoot: string, pluginPackageId = 'ohm
   });
 }
 
-function writePiContributionPluginFixture(repoRoot: string): void {
-  writeJson(resolve(repoRoot, 'packages/plugins/pi/package.json'), {
-    name: '@happier-dev/plugins-pi',
-    version: '0.0.0',
-  });
-  mkdirSync(resolve(repoRoot, 'packages/plugins/pi/src'), { recursive: true });
-  writeFileSync(
-    resolve(repoRoot, 'packages/plugins/pi/src/manifest.ts'),
-    pluginManifestSource({ id: 'happier.agent.pi', capabilities: ['agents'] }),
-    'utf8',
-  );
-  mkdirSync(resolve(repoRoot, 'packages/plugins/pi/src/agent'), { recursive: true });
-  writeFileSync(
-    resolve(repoRoot, 'packages/plugins/pi/src/agent/definition.ts'),
-    [
-      'export const AGENT_DEFINITION = Object.freeze({',
-      '  id: "pi",',
-      '  runtimeContributions: {',
-      '    sessionControlAdapter: { kind: "runtimeDescriptorResumeId", providerId: "pi", absolutePathField: "sessionFile", fallbackField: "providerSessionId" },',
-      '    runtimeDescriptorReader: { kind: "providerSessionId", providerId: "pi", runtimeHandle: "providerSessionId" },',
-      '    protocolRuntimeDescriptor: { kind: "providerRuntimeDescriptorV1", providerId: "pi", source: "./protocol/runtimeDescriptorV1", buildFunction: "buildPiAgentRuntimeDescriptorV1", canonicalReader: "readCanonicalPiAgentRuntimeDescriptorV1" },',
-      '  },',
-      '});',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  mkdirSync(resolve(repoRoot, 'packages/plugins/pi/src/protocol'), { recursive: true });
-  writeFileSync(
-    resolve(repoRoot, 'packages/plugins/pi/src/protocol/runtimeDescriptorV1.ts'),
-    [
-      'export type PiAgentRuntimeDescriptorV1 = Readonly<{ agentId: "pi" }>;',
-      'export type CanonicalPiAgentRuntimeDescriptorV1 = Readonly<{ agentId: "pi" }>;',
-      'export function buildPiAgentRuntimeDescriptorV1(): PiAgentRuntimeDescriptorV1 { return { agentId: "pi" }; }',
-      'export function readCanonicalPiAgentRuntimeDescriptorV1(): CanonicalPiAgentRuntimeDescriptorV1 { return { agentId: "pi" }; }',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  writePiUiDescriptorFixture(repoRoot);
-}
-
 function writeRuntimeContributionPluginFixture(
   repoRoot: string,
   pluginPackageId: string,
@@ -4096,6 +4061,29 @@ function writeRuntimeContributionPluginFixture(
       );
     }
   }
+}
+
+function writeReleasedFlatRuntimeDescriptorReaderFixture(
+  repoRoot: string,
+  pluginPackageId: 'codex' | 'opencode',
+  generatedReader: string,
+): void {
+  writeAgentPluginFixture(repoRoot, pluginPackageId);
+  writeFileSync(
+    resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/agent/definition.ts`),
+    [
+      'export const AGENT_DEFINITION = Object.freeze({',
+      `  id: ${JSON.stringify(pluginPackageId)},`,
+      '  releasedFlatSessionMetadataRuntimeDescriptorReader: {',
+      '    kind: "providerRuntimeDescriptorReader",',
+      `    providerId: ${JSON.stringify(pluginPackageId)},`,
+      `    generatedReader: ${generatedReader},`,
+      '  },',
+      '});',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
 }
 
 function writeManifestOwnedExternalSessionSourceFixture(
@@ -4277,13 +4265,13 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   );
   assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES/);
   assert.match(cliManifestOut, /BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
-  assert.match(cliOut, /createPluginContributionIdentity/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS/);
+  assert.doesNotMatch(cliOut, /createPluginContributionIdentity/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS/);
-  assert.match(cliOut, /import \{ CLAUDE_AGENT_RUNTIME_CONTRIBUTION \} from '@happier-dev\/plugins-claude\/agent\/contributions\/runtime';/);
+  assert.doesNotMatch(cliOut, /@happier-dev\/plugins-/);
   assert.doesNotMatch(cliOut, /@\/session\/external\/hostAdapters\/codex/);
   assert.doesNotMatch(cliOut, /CODEX_EXTERNAL_SESSION_CREATE_CANDIDATE_HOST_ADAPTER/);
   assert.doesNotMatch(cliOut, /CODEX_EXTERNAL_SESSION_CREATE_TRANSCRIPT_STORE_ADAPTER/);
@@ -4293,21 +4281,16 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   assert.doesNotMatch(cliOut, /AgentCliRuntimeDescriptor/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_CLI_RUNTIME_SPECS_BY_ID/);
   assert.doesNotMatch(cliOut, /runtimeSpec:/);
-  assert.match(
-    cliOut,
-    /implementation:\s*createAgentRuntimeCatalogEntryHooks\(\{[\s\S]*contribution:\s*CODEX_AGENT_RUNTIME_CONTRIBUTION,/,
-  );
+  assert.doesNotMatch(cliOut, /implementation:|createAgentRuntimeCatalogEntryHooks/);
   assert.doesNotMatch(cliOut, /systemTools:/);
   assert.match(
     cliManifestOut,
     /sourceSpec:\s*Object\.freeze\(\{[\s\S]*kind:\s*'bundled'/,
   );
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
-  assert.match(cliOut, /@happier-dev\/plugins-claude/);
-  assert.match(cliOut, /@happier-dev\/plugins-codex/);
   assert.ok(
-    cliOut.indexOf('@happier-dev/plugins-claude') < cliOut.indexOf('@happier-dev/plugins-codex'),
-    'expected lexical order',
+    cliOut.indexOf('implementationOwnerId: "claude"') < cliOut.indexOf('implementationOwnerId: "codex"'),
+    'expected lexical Agent owner order',
   );
 
   const uiOut = readFileSync(
@@ -4374,7 +4357,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   assertNoExecutableUiProjectionImports(sessionAgentBehaviorsOut);
   assert.match(sessionAgentBehaviorsOut, /BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIORS/);
   assert.match(sessionAgentBehaviorsOut, /BUNDLED_CANONICAL_AGENT_SESSION_BEHAVIOR_DESCRIPTORS/);
-  assert.match(sessionAgentBehaviorsOut, /claude\.sessionProviderBehavior\.v1/);
+  assert.match(sessionAgentBehaviorsOut, /session\.providerBehavior\.v1/);
 
   assert.equal(
     existsSync(resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.agentSettings.ts')),
@@ -4485,10 +4468,8 @@ test('generateBundledPluginEntries check mode rejects protocol agent provider id
 
 test('generateBundledPluginEntries check mode rejects stale runtime descriptor reader imports', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-runtime-descriptor-readers-check-'));
-  const opencodeGeneratedReader = '{ agentId: "opencode", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "server", runtimeKind: "server" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
-  writeRuntimeContributionPluginFixture(repoRoot, 'opencode', 'opencode', [
-    `runtimeDescriptorReader: { kind: "providerRuntimeDescriptorReader", providerId: "opencode", source: "./agent/identity/runtimeDescriptor", exportName: "readOpenCodeSessionMetadataRuntimeDescriptor", generatedReader: ${opencodeGeneratedReader} },`,
-  ]);
+  const opencodeGeneratedReader = '{ providerId: "opencode", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "server", runtimeKind: "server" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
+  writeReleasedFlatRuntimeDescriptorReaderFixture(repoRoot, 'opencode', opencodeGeneratedReader);
   writeOpenCodeUiDescriptorFixture(repoRoot);
   writeGeneratorOutputScaffold(repoRoot);
 
@@ -4499,7 +4480,10 @@ test('generateBundledPluginEntries check mode rejects stale runtime descriptor r
     runtimeDescriptorReadersOutPath,
     [
       '/**',
-      ' * GENERATED FILE CONTRACT (A.16y.3-provider-session-control-and-runtime-descriptor-projections)',
+      ' * GENERATED released flat Session-metadata compatibility readers.',
+      ' *',
+      ' * This bounded registry reads provider-specific metadata written by released',
+      ' * CLI 0.2.0/0.2.1 builds. It is not a current descriptor or plugin-authoring seam.',
       ' *',
       ' * This file is emitted by:',
       ' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`',
@@ -4526,45 +4510,20 @@ test('generateBundledPluginEntries check mode rejects stale runtime descriptor r
   );
 });
 
-test('generateBundledPluginEntries emits runtime contribution seams into package-local generated artifacts', async () => {
-  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-pi-runtime-contributions-'));
-  const codexGeneratedReader = '{ agentId: "codex", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "appServer", runtimeKind: "appServer" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
-  const opencodeGeneratedReader = '{ agentId: "opencode", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "server", runtimeKind: "server" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
-  writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', [
-    `sessionControlAdapter: { kind: "providerSessionControlAdapter", providerId: "codex", source: "./agent/surfaces/sessions/controls/adapter", exportName: "CODEX_SESSION_CONTROL_ADAPTER", generatedAdapter: { agentId: "codex", runtimeDescriptor: ${codexGeneratedReader} } },`,
-    `runtimeDescriptorReader: { kind: "providerRuntimeDescriptorReader", providerId: "codex", source: "./agent/identity/runtimeDescriptor", exportName: "readCodexSessionMetadataRuntimeDescriptor", generatedReader: ${codexGeneratedReader} },`,
-    'protocolRuntimeDescriptor: { kind: "providerRuntimeDescriptorV1", providerId: "codex", source: "./protocol/runtimeDescriptorV1", buildFunction: "buildCodexAgentRuntimeDescriptorV1", canonicalReader: "readCanonicalCodexAgentRuntimeDescriptorV1" },',
-  ]);
-  writeRuntimeContributionPluginFixture(repoRoot, 'opencode', 'opencode', [
-    `sessionControlAdapter: { kind: "providerSessionControlAdapter", providerId: "opencode", source: "./agent/surfaces/sessions/controls/adapter", exportName: "OPENCODE_SESSION_CONTROL_ADAPTER", generatedAdapter: { agentId: "opencode", runtimeDescriptor: ${opencodeGeneratedReader} } },`,
-    `runtimeDescriptorReader: { kind: "providerRuntimeDescriptorReader", providerId: "opencode", source: "./agent/identity/runtimeDescriptor", exportName: "readOpenCodeSessionMetadataRuntimeDescriptor", generatedReader: ${opencodeGeneratedReader} },`,
-    'protocolRuntimeDescriptor: { kind: "providerRuntimeDescriptorV1", providerId: "opencode", source: "./protocol/runtimeDescriptorV1", buildFunction: "buildOpenCodeAgentRuntimeDescriptorV1", canonicalReader: "readCanonicalOpenCodeAgentRuntimeDescriptorV1" },',
-  ]);
+test('generateBundledPluginEntries emits released runtime descriptor readers into package-local generated artifacts', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-generate-released-runtime-readers-'));
+  const codexGeneratedReader = '{ providerId: "codex", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "appServer", runtimeKind: "appServer" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
+  const opencodeGeneratedReader = '{ providerId: "opencode", backendModeKey: "backendMode", runtimeKind: { aliases: [{ input: "server", runtimeKind: "server" }] }, fields: [{ key: "backendMode", kind: "runtimeKind", runtimeHandle: "whenPresent" }, { key: "providerSessionId", kind: "trimmedString", runtimeHandle: "whenPresent" }] }';
+  writeReleasedFlatRuntimeDescriptorReaderFixture(repoRoot, 'codex', codexGeneratedReader);
+  writeReleasedFlatRuntimeDescriptorReaderFixture(repoRoot, 'opencode', opencodeGeneratedReader);
   writeCodexUiDescriptorFixture(repoRoot);
   writeOpenCodeUiDescriptorFixture(repoRoot);
-  writePiContributionPluginFixture(repoRoot);
   writeGeneratorOutputScaffold(repoRoot);
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 
-  const sessionControlAdaptersOut = readGeneratedSessionControlAdaptersOutput(repoRoot);
-  assert.match(sessionControlAdaptersOut, /GENERATED FILE CONTRACT \(A\.16y\.3-provider-session-control-and-runtime-descriptor-projections\)/);
-  assert.doesNotMatch(sessionControlAdaptersOut, /E\.10-pi-runtime-contribution-seam/);
-  assert.match(sessionControlAdaptersOut, /GENERATED_PROVIDER_SESSION_CONTROL_ADAPTERS/);
-  assert.match(sessionControlAdaptersOut, /createGeneratedRuntimeProjectionSessionControlAdapter/);
-  assert.doesNotMatch(sessionControlAdaptersOut, /@happier-dev\/plugins-/);
-  assert.doesNotMatch(sessionControlAdaptersOut, /\.\.\/providers\/(?:codex|opencode)\//);
-  assert.match(sessionControlAdaptersOut, /CODEX_GENERATED_SESSION_CONTROL_ADAPTER/);
-  assert.match(sessionControlAdaptersOut, /OPENCODE_GENERATED_SESSION_CONTROL_ADAPTER/);
-  assert.match(sessionControlAdaptersOut, /codex: CODEX_GENERATED_SESSION_CONTROL_ADAPTER,/);
-  assert.match(sessionControlAdaptersOut, /opencode: OPENCODE_GENERATED_SESSION_CONTROL_ADAPTER,/);
-  assert.match(sessionControlAdaptersOut, /providerId:\s*'pi'/);
-  assert.match(sessionControlAdaptersOut, /absolutePathField:\s*'sessionFile'/);
-  assert.doesNotMatch(sessionControlAdaptersOut, /PI_SESSION_CONTROL_ADAPTER/);
-
   const runtimeDescriptorReadersOut = readGeneratedRuntimeDescriptorReadersOutput(repoRoot);
-  assert.match(runtimeDescriptorReadersOut, /GENERATED FILE CONTRACT \(A\.16y\.3-provider-session-control-and-runtime-descriptor-projections\)/);
-  assert.doesNotMatch(runtimeDescriptorReadersOut, /E\.10-pi-runtime-contribution-seam/);
+  assert.match(runtimeDescriptorReadersOut, /GENERATED released flat Session-metadata compatibility readers/);
   assert.match(runtimeDescriptorReadersOut, /GENERATED_RUNTIME_DESCRIPTOR_READERS/);
   assert.match(runtimeDescriptorReadersOut, /createGeneratedRuntimeDescriptorReader/);
   assert.doesNotMatch(runtimeDescriptorReadersOut, /@happier-dev\/plugins-/);
@@ -4573,38 +4532,8 @@ test('generateBundledPluginEntries emits runtime contribution seams into package
   assert.match(runtimeDescriptorReadersOut, /OPENCODE_GENERATED_RUNTIME_DESCRIPTOR_READER/);
   assert.match(runtimeDescriptorReadersOut, /codex: CODEX_GENERATED_RUNTIME_DESCRIPTOR_READER,/);
   assert.match(runtimeDescriptorReadersOut, /opencode: OPENCODE_GENERATED_RUNTIME_DESCRIPTOR_READER,/);
-  assert.match(runtimeDescriptorReadersOut, /providerId:\s*'pi'/);
-  assert.match(runtimeDescriptorReadersOut, /runtimeHandle:\s*'providerSessionId'/);
+  assert.doesNotMatch(runtimeDescriptorReadersOut, /providerId:\s*'pi'/);
   assert.doesNotMatch(runtimeDescriptorReadersOut, /readPiSessionMetadataRuntimeDescriptor/);
-
-  const protocolRuntimeDescriptorContributionsOut = readGeneratedProtocolRuntimeDescriptorContributionsOutput(repoRoot);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /GENERATED FILE CONTRACT \(A\.16y\.3-provider-session-control-and-runtime-descriptor-projections\)/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /GENERATED FILE CONTRACT \(A\.16y\.6-runtime-descriptor-protocol-abi-codegen\)/);
-  assert.doesNotMatch(protocolRuntimeDescriptorContributionsOut, /E\.10-pi-runtime-contribution-seam/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /GENERATED_RUNTIME_DESCRIPTOR_CONTRIBUTIONS_V1/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /import \{[\s\S]*buildCodexAgentRuntimeDescriptorV1[\s\S]*\} from '\.\/descriptors\/codex\.js';/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /import \{[\s\S]*buildOpenCodeAgentRuntimeDescriptorV1[\s\S]*\} from '\.\/descriptors\/opencode\.js';/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /import \{[\s\S]*buildPiAgentRuntimeDescriptorV1[\s\S]*\} from '\.\/descriptors\/pi\.js';/);
-  assert.doesNotMatch(protocolRuntimeDescriptorContributionsOut, /\.\/(?:codex|opencode|pi)\/runtimeDescriptorV1\.js/);
-  assert.doesNotMatch(protocolRuntimeDescriptorContributionsOut, /@happier-dev\/plugins-/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /agentId:\s*'pi'/);
-  assert.match(protocolRuntimeDescriptorContributionsOut, /readCanonicalPiAgentRuntimeDescriptorV1/);
-  assert.doesNotMatch(protocolRuntimeDescriptorContributionsOut, /hardcoded Codex/);
-
-  const codexRuntimeDescriptorOut = readGeneratedProtocolRuntimeDescriptorModuleOutput(repoRoot, 'codex');
-  assert.match(codexRuntimeDescriptorOut, /buildCodexAgentRuntimeDescriptorV1/);
-  assert.match(codexRuntimeDescriptorOut, /readCanonicalCodexAgentRuntimeDescriptorV1/);
-  assert.doesNotMatch(codexRuntimeDescriptorOut, /@happier-dev\/plugins-/);
-
-  const openCodeRuntimeDescriptorOut = readGeneratedProtocolRuntimeDescriptorModuleOutput(repoRoot, 'opencode');
-  assert.match(openCodeRuntimeDescriptorOut, /buildOpenCodeAgentRuntimeDescriptorV1/);
-  assert.match(openCodeRuntimeDescriptorOut, /readCanonicalOpenCodeAgentRuntimeDescriptorV1/);
-  assert.doesNotMatch(openCodeRuntimeDescriptorOut, /@happier-dev\/plugins-/);
-
-  const piRuntimeDescriptorOut = readGeneratedProtocolRuntimeDescriptorModuleOutput(repoRoot, 'pi');
-  assert.match(piRuntimeDescriptorOut, /buildPiAgentRuntimeDescriptorV1/);
-  assert.match(piRuntimeDescriptorOut, /readCanonicalPiAgentRuntimeDescriptorV1/);
-  assert.doesNotMatch(piRuntimeDescriptorOut, /@happier-dev\/plugins-/);
 
   const promptAssetPluginDescriptorsOut = readGeneratedPromptAssetPluginDescriptorsOutput(repoRoot);
   assert.match(promptAssetPluginDescriptorsOut, /BUNDLED_FIRST_PARTY_PLUGIN_PROMPT_ASSET_DESCRIPTORS/);
@@ -4614,23 +4543,12 @@ test('generateBundledPluginEntries emits runtime contribution seams into package
 
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']);
 
-  const codexRuntimeDescriptorOutPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/runtime/descriptors/codex.ts');
-  writeFileSync(codexRuntimeDescriptorOutPath, 'export const stale = true;\n', 'utf8');
-  await assert.rejects(
-    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
-    /generated output differs: .*generated\/runtime\/descriptors\/codex\.ts/,
-  );
 });
 
-test('generateBundledPluginEntries emits protocol provider defaults and external-session sources', async () => {
-  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-protocol-provider-defaults-'));
-  writeRuntimeContributionPluginFixture(repoRoot, 'claude', 'claude', [
-    'protocolBuiltInBackendProfiles: { kind: "providerBuiltInBackendProfilesV1", providerId: "claude", source: "./protocol/profiles", exportName: "CLAUDE_BUILT_IN_BACKEND_PROFILES" },',
-    'protocolMemoryDefaults: { kind: "providerMemoryDefaultsV1", providerId: "claude", source: "./protocol/memory", exportName: "CLAUDE_MEMORY_DEFAULTS" },',
-  ]);
-  writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', [
-    'protocolBuiltInBackendProfiles: { kind: "providerBuiltInBackendProfilesV1", providerId: "codex", source: "./protocol/profiles", exportName: "CODEX_BUILT_IN_BACKEND_PROFILES" },',
-  ]);
+test('generateBundledPluginEntries emits protocol external-session sources', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-protocol-external-session-sources-'));
+  writeRuntimeContributionPluginFixture(repoRoot, 'claude', 'claude', []);
+  writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', []);
   writeRuntimeContributionPluginFixture(repoRoot, 'ohmypi', 'ohMyPi', []);
   const externalSessionOutPath = resolve(repoRoot, 'packages/protocol/src/agents/generated/externalSession/sources.ts');
   writeFileSync(externalSessionOutPath, 'export const stale = true;\n', 'utf8');
@@ -4795,20 +4713,6 @@ test('generateBundledPluginEntries emits protocol provider defaults and external
   );
 });
 
-test('generateBundledPluginEntries requires first-party protocol runtime descriptor sources', async () => {
-  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-require-protocol-runtime-source-'));
-  writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', [
-    'protocolRuntimeDescriptor: { kind: "providerRuntimeDescriptorV1", providerId: "codex", buildFunction: "buildCodexAgentRuntimeDescriptorV1", canonicalReader: "readCanonicalCodexAgentRuntimeDescriptorV1" },',
-  ]);
-  writeCodexUiDescriptorFixture(repoRoot);
-  writeGeneratorOutputScaffold(repoRoot);
-
-  await assert.rejects(
-    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
-    /protocolRuntimeDescriptor\.source/,
-  );
-});
-
 test('generateBundledPluginEntries rejects external-session sources declared outside agent manifest surfaces', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-reject-runtime-external-source-'));
   writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', [
@@ -4828,40 +4732,6 @@ test('generateBundledPluginEntries rejects external-session sources declared out
   await assert.rejects(
     generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
     /protocolExternalSessionSource.*manifest\.contributes\.agents\[\]\.surfaces\.externalSession\.sources\[\]/s,
-  );
-});
-
-test('generateBundledPluginEntries rejects non-hermetic protocol runtime descriptor imports', async () => {
-  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-reject-protocol-runtime-imports-'));
-  writeRuntimeContributionPluginFixture(repoRoot, 'codex', 'codex', [
-    'protocolRuntimeDescriptor: { kind: "providerRuntimeDescriptorV1", providerId: "codex", source: "./protocol/runtimeDescriptorV1", buildFunction: "buildCodexAgentRuntimeDescriptorV1", canonicalReader: "readCanonicalCodexAgentRuntimeDescriptorV1" },',
-  ]);
-  writeCodexUiDescriptorFixture(repoRoot);
-  writeGeneratorOutputScaffold(repoRoot);
-
-  const descriptorPath = resolve(repoRoot, 'packages/plugins/codex/src/protocol/runtimeDescriptorV1.ts');
-  const descriptorBody = [
-    'export type CodexAgentRuntimeDescriptorV1 = Readonly<{ agentId: "codex" }>;',
-    'export type CanonicalCodexAgentRuntimeDescriptorV1 = Readonly<{ agentId: "codex" }>;',
-    'export function buildCodexAgentRuntimeDescriptorV1(): CodexAgentRuntimeDescriptorV1 { return { agentId: "codex" }; }',
-    'export function readCanonicalCodexAgentRuntimeDescriptorV1(): CanonicalCodexAgentRuntimeDescriptorV1 { return { agentId: "codex" }; }',
-    '',
-  ].join('\n');
-
-  writeFileSync(descriptorPath, `import './shared.js';\n${descriptorBody}`, 'utf8');
-  await assert.rejects(
-    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
-    /generated protocol modules cannot preserve relative imports/,
-  );
-
-  writeFileSync(
-    descriptorPath,
-    `const pluginDescriptorImport = import('@happier-dev/plugins-codex/protocol/runtimeDescriptorV1');\n${descriptorBody}`,
-    'utf8',
-  );
-  await assert.rejects(
-    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
-    /generated protocol module would import forbidden @happier-dev\/plugins-codex\/protocol\/runtimeDescriptorV1/,
   );
 });
 
@@ -5217,6 +5087,94 @@ test('generateBundledPluginEntries check mode rejects a retired Agent-settings g
   );
 });
 
+test('generateBundledPluginEntries removes retired protocol runtime descriptor projections', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-retired-protocol-runtime-descriptors-write-'));
+  writeAgentPluginFixture(repoRoot, 'qwen');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  const aggregateOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/runtime/descriptorContributionsV1.ts',
+  );
+  const descriptorModuleOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/runtime/descriptors/qwen.ts',
+  );
+  mkdirSync(resolve(descriptorModuleOutPath, '..'), { recursive: true });
+  writeFileSync(aggregateOutPath, 'export const staleDescriptorAggregate = true;\n', 'utf8');
+  writeFileSync(descriptorModuleOutPath, 'export const staleDescriptorModule = true;\n', 'utf8');
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  assert.equal(existsSync(aggregateOutPath), false);
+  assert.equal(existsSync(descriptorModuleOutPath), false);
+});
+
+test('generateBundledPluginEntries removes retired private Agent projection outputs', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-retired-private-agent-projections-write-'));
+  writeAgentPluginFixture(repoRoot, 'qwen');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  const retiredOutPaths = [
+    'packages/agents/src/generated/sessionControlAdapters.ts',
+    'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
+    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
+    'packages/protocol/src/agents/generated/memory/defaults.ts',
+  ].map((relativePath) => resolve(repoRoot, relativePath));
+  for (const outPath of retiredOutPaths) {
+    mkdirSync(resolve(outPath, '..'), { recursive: true });
+    writeFileSync(outPath, 'export const stalePrivateProjection = true;\n', 'utf8');
+  }
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  for (const outPath of retiredOutPaths) {
+    assert.equal(existsSync(outPath), false, outPath);
+  }
+});
+
+test('generateBundledPluginEntries check mode rejects each retired private Agent projection output', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-retired-private-agent-projections-check-'));
+  writeAgentPluginFixture(repoRoot, 'qwen');
+  writeGeneratorOutputScaffold(repoRoot);
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const retiredRelativePaths = [
+    'packages/agents/src/generated/sessionControlAdapters.ts',
+    'packages/protocol/src/agents/generated/bundledPluginProtocolProjectionFacts.ts',
+    'packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts',
+    'packages/protocol/src/agents/generated/memory/defaults.ts',
+  ] as const;
+  for (const relativePath of retiredRelativePaths) {
+    const outPath = resolve(repoRoot, relativePath);
+    mkdirSync(resolve(outPath, '..'), { recursive: true });
+    writeFileSync(outPath, 'export const stalePrivateProjection = true;\n', 'utf8');
+    await assert.rejects(
+      generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
+      new RegExp(`retired generated output still exists: .*${relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    );
+    rmSync(outPath);
+  }
+});
+
+test('generateBundledPluginEntries check mode rejects retired protocol runtime descriptor projections', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-retired-protocol-runtime-descriptors-check-'));
+  writeAgentPluginFixture(repoRoot, 'qwen');
+  writeGeneratorOutputScaffold(repoRoot);
+
+  const descriptorModuleOutPath = resolve(
+    repoRoot,
+    'packages/protocol/src/agents/generated/runtime/descriptors/qwen.ts',
+  );
+  mkdirSync(resolve(descriptorModuleOutPath, '..'), { recursive: true });
+  writeFileSync(descriptorModuleOutPath, 'export const staleDescriptorModule = true;\n', 'utf8');
+
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
+    /retired generated output still exists: .*runtime\/descriptors\/qwen\.ts/,
+  );
+});
+
 test('generateBundledPluginEntries removes separate Agent-settings outputs instead of deriving from Agent UI descriptors', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-agent-settings-sdk-generate-'));
   writeAgentPluginFixture(repoRoot, 'opencode');
@@ -5267,6 +5225,28 @@ test('generateBundledPluginEntries check mode rejects visible message resolver d
   await assert.rejects(
     generateBundledPluginEntries(['--root', repoRoot, '--mode', 'check']),
     /generated output differs: .*generatedBundledPluginEntries\.visibleMessageResolvers\.ts/,
+  );
+});
+
+test('generateBundledPluginEntries rejects retired compiled Session adapter ids', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-session-adapter-id-reject-'));
+  writeAgentPluginFixture(repoRoot, 'cursor');
+  writeCursorUiDescriptorFixture(repoRoot);
+  writeGeneratorOutputScaffold(repoRoot);
+
+  const descriptorPath = resolve(repoRoot, 'packages/plugins/cursor/src/ui/descriptor.ts');
+  writeFileSync(
+    descriptorPath,
+    readFileSync(descriptorPath, 'utf8').replace(
+      '"session": {},',
+      '"session": { "visibleMessageFilterDescriptorId": "cursor.privateMessages.v1" },',
+    ),
+    'utf8',
+  );
+
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /session\.visibleMessageFilterDescriptorId.*retired compiled Session adapter id/s,
   );
 });
 
@@ -5535,11 +5515,11 @@ test('generateBundledPluginEntries keeps OpenCode UI projections on exported/pac
     resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'utf8',
   );
-  assert.match(cliOut, /import \{ OPENCODE_AGENT_RUNTIME_CONTRIBUTION \} from '@happier-dev\/plugins-opencode\/agent\/contributions\/runtime';/);
+  assert.doesNotMatch(cliOut, /@happier-dev\/plugins-opencode\/agent\/contributions/);
   assert.doesNotMatch(cliManifestOut, /@happier-dev\/plugins-opencode\/manifest/);
   assert.match(cliManifestOut, /manifest:\s*\{\s*"contributes":/u);
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
-  assert.match(cliOut, /contribution:\s*OPENCODE_AGENT_RUNTIME_CONTRIBUTION/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS/);
+  assert.match(cliOut, /implementationOwnerId:\s*"opencode"/);
   assert.doesNotMatch(cliManifestOut, /rootHelpLabel:|rootHelpDescription:|allowTmux:/);
   assert.doesNotMatch(cliOut, /\.\/bundled\/opencode/);
 
@@ -6017,7 +5997,7 @@ test('generateBundledPluginEntries projects native Agent ownership and compatibi
   assert.doesNotMatch(cliManifestOut, /"binaryName":\s*"agy"|BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS|ownedBackendIds|enablementCompatibilityBackendIds|terminalRuntime\.launch/);
 });
 
-test('generateBundledPluginEntries keeps executable Agent facts in implementation bindings', async () => {
+test('generateBundledPluginEntries keeps Agent ownership facts in identity-only implementation bindings', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-provider-support-overlay-'));
   writeAgentPluginFixture(repoRoot, 'claude');
   writeFileSync(
@@ -6092,13 +6072,9 @@ test('generateBundledPluginEntries keeps executable Agent facts in implementatio
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
   );
   const cliOut = readFileSync(cliOutPath, 'utf8');
-  assert.match(cliOut, /BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS/);
   assert.match(cliOut, /implementationOwnerId:\s*"claude"/);
-  assert.match(cliOut, /contribution:\s*CLAUDE_AGENT_RUNTIME_CONTRIBUTION/);
-  assert.match(
-    cliOut,
-    /systemTools:\s*\[\s*\{\s*"executableNames":\s*\[\s*"security"\s*\],\s*"id":\s*"macos-security"/u,
-  );
+  assert.doesNotMatch(cliOut, /contribution:|systemTools:|implementation:/);
   assert.doesNotMatch(cliOut, /BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS/);
   assert.doesNotMatch(cliOut, /"ownedBackendIds"|"providerSupport"|"providerRequirements"/);
 
@@ -7393,24 +7369,22 @@ test('targeted protocol projection retains unrelated facts and rolls back the co
       [
         'export const AGENT_DEFINITION = Object.freeze({',
         `  id: ${JSON.stringify(packageId)},`,
-        '  runtimeContributions: {',
-        '    protocolBuiltInBackendProfiles: {',
-        '      kind: "providerBuiltInBackendProfilesV1",',
-        `      providerId: ${JSON.stringify(packageId)},`,
-        '      source: "./agent/protocolProjection",',
-        `      exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
-        '    },',
+        '  protocolBuiltInBackendProfiles: {',
+        '    kind: "providerBuiltInBackendProfilesV1",',
+        `    providerId: ${JSON.stringify(packageId)},`,
+        '    source: "./agent/protocolProjection",',
+        `    exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
+        '  },',
         ...(memoryBackendId === undefined
           ? []
           : [
-            '    protocolMemoryDefaults: {',
-            '      kind: "providerMemoryDefaultsV1",',
-            `      providerId: ${JSON.stringify(packageId)},`,
-            '      source: "./agent/protocolProjection",',
-            `      exportName: ${JSON.stringify(`${constPrefix}_MEMORY_DEFAULTS`)},`,
-            '    },',
+            '  protocolMemoryDefaults: {',
+            '    kind: "providerMemoryDefaultsV1",',
+            `    providerId: ${JSON.stringify(packageId)},`,
+            '    source: "./agent/protocolProjection",',
+            `    exportName: ${JSON.stringify(`${constPrefix}_MEMORY_DEFAULTS`)},`,
+            '  },',
           ]),
-        '  },',
         '});',
         '',
       ].join('\n'),
@@ -7548,13 +7522,11 @@ test('targeted protocol projection refuses to replace a missing private sidecar'
       [
         'export const AGENT_DEFINITION = Object.freeze({',
         `  id: ${JSON.stringify(packageId)},`,
-        '  runtimeContributions: {',
-        '    protocolBuiltInBackendProfiles: {',
-        '      kind: "providerBuiltInBackendProfilesV1",',
-        `      providerId: ${JSON.stringify(packageId)},`,
-        '      source: "./agent/protocolProjection",',
-        `      exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
-        '    },',
+        '  protocolBuiltInBackendProfiles: {',
+        '    kind: "providerBuiltInBackendProfilesV1",',
+        `    providerId: ${JSON.stringify(packageId)},`,
+        '    source: "./agent/protocolProjection",',
+        `    exportName: ${JSON.stringify(`${constPrefix}_PROFILES`)},`,
         '  },',
         '});',
         '',

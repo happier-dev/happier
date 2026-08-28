@@ -186,7 +186,8 @@ test('the authoritative protocol wire compatibility inventory pins canonical run
   assert.ok(!entry.protocolModules.includes('packages/protocol/src/sessionMetadata/agentRuntimeDescriptorV1.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/metadata/runtimeDescriptorV1.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/agents/generated/runtime/descriptors/codex.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/metadata/metadataOverridesV1.ts'));
+  assert.ok(!entry.protocolModules.some((modulePath) => modulePath.includes('/agents/generated/runtime/descriptors/')));
   assert.ok(!entry.protocolModules.includes('packages/protocol/src/agents/codex/runtimeDescriptorCompat.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/control/handoff/handoffSchemas.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/external/daemonRpcV1.ts'));

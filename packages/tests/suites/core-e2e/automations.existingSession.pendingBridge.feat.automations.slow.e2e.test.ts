@@ -160,23 +160,30 @@ describe('core e2e: existing_session automation target', () => {
     );
 
     const prompt = 'E2E_AUTOMATION_EXISTING_SESSION_PENDING_BRIDGE';
+    const automationId = 'e2e-existing-session-pending-bridge';
+    const triggerId = 'e2e-existing-session-pending-bridge-schedule';
     const created = await requestJson<AutomationDefinitionResponse>({
       baseUrl: server.baseUrl,
       token: auth.token,
       path: '/v3/automations',
       method: 'POST',
       body: {
+        automationId,
         name: 'Existing-session pending bridge',
         enabled: true,
-        trigger: {
-          kind: 'schedule',
-          schedule: {
-            kind: 'interval',
-            scheduleExpr: null,
-            everyMs: 86_400_000,
-            timezone: null,
+        triggers: [{
+          triggerId,
+          trigger: {
+            kind: 'schedule',
+            enabled: true,
+            schedule: {
+              kind: 'interval',
+              scheduleExpr: null,
+              everyMs: 86_400_000,
+              timezone: null,
+            },
           },
-        },
+        }],
         executionRecipe: {
           v: 1,
           templateVersion: 1,
@@ -187,6 +194,7 @@ describe('core e2e: existing_session automation target', () => {
         assignments: [{ machineId: daemonAuth.machineId, enabled: true, priority: 1 }],
       },
     });
+    expect(created.id).toBe(automationId);
     expect(created.targetType).toBe('existingSession');
 
     const runNow = await requestJson<{ run: AutomationRunResponse }>({

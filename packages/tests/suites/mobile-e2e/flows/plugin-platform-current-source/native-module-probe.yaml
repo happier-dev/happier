@@ -1,0 +1,45 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Current-managed-stack variant of the canonical native-module probe. It forces
+# this run's no-dev Metro URL without deleting the authenticated Account or the
+# daemon/plugin state the human-owned managed Stack prepared.
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: ../_shared/connectUsingLaunchUrl.yaml
+
+- runFlow:
+    file: ../_shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    when:
+      platform: IOS
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_ID}:///dev/native-crypto-worker
+
+- runFlow:
+    when:
+      platform: ANDROID
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///dev/native-crypto-worker
+
+- extendedWaitUntil:
+    visible:
+      id: native-crypto-worker-probe-status:pass
+    timeout: 240000
+- assertVisible:
+    id: native-crypto-worker-probe-module-available:pass
+- assertVisible:
+    id: native-crypto-worker-probe-batch-source:pass
+- assertVisible:
+    id: native-crypto-worker-probe-data-key:pass
+- assertVisible:
+    id: native-crypto-worker-probe-secretbox:pass
+- assertVisible:
+    id: native-crypto-worker-probe-aes-gcm:pass
+- assertVisible:
+    id: native-crypto-worker-probe-invalid-items:pass
+- assertVisible:
+    id: native-crypto-worker-probe-js-responsive:pass

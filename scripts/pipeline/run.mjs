@@ -1376,7 +1376,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           tarball: { type: 'string', default: '' },
           'tarball-dir': { type: 'string', default: '' },
           'authorized-sha': { type: 'string', default: '' },
-          'approve-public-sdk-release': { type: 'string', default: 'false' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1471,6 +1470,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'sdk-version': { type: 'string', default: '' },
           'channels-protocol-version': { type: 'string', default: '' },
           'authorized-sha': { type: 'string', default: '' },
+          'approve-public-sdk-release': { type: 'string', default: 'false' },
+          'plugin-sdk-ready': { type: 'string', default: 'false' },
+          'plugin-sdk-api-classification': { type: 'string', default: '' },
+          'plugin-sdk-migration-notes': { type: 'string', default: '' },
+          'sdk-auth-readiness': { type: 'string', default: '' },
+          'sdk-auth-waiver': { type: 'string', default: '' },
+          'sdk-api-classification': { type: 'string', default: '' },
+          'sdk-migration-notes': { type: 'string', default: '' },
+          'release-notes-id': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1502,6 +1510,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       values['approve-public-sdk-release'],
       '--approve-public-sdk-release',
     );
+    const pluginSdkReady = parseBoolString(values['plugin-sdk-ready'], '--plugin-sdk-ready');
+    const pluginSdkApiClassification = String(values['plugin-sdk-api-classification'] ?? '').trim();
+    const pluginSdkMigrationNotes = String(values['plugin-sdk-migration-notes'] ?? '').trim();
+    const sdkAuthReadiness = String(values['sdk-auth-readiness'] ?? '').trim();
+    const sdkAuthWaiver = String(values['sdk-auth-waiver'] ?? '').trim();
+    const sdkApiClassification = String(values['sdk-api-classification'] ?? '').trim();
+    const sdkMigrationNotes = String(values['sdk-migration-notes'] ?? '').trim();
+    const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
     const runnerDir = String(values['server-runner-dir'] ?? '').trim();
     const runTests = String(values['run-tests'] ?? '').trim();
     const mode = String(values.mode ?? '').trim();
@@ -1534,6 +1550,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       ...(channelsProtocolVersion ? ['--channels-protocol-version', channelsProtocolVersion] : []),
       ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
       '--approve-public-sdk-release', String(approvePublicSdkRelease),
+      '--plugin-sdk-ready', String(pluginSdkReady),
+      ...(pluginSdkApiClassification ? ['--plugin-sdk-api-classification', pluginSdkApiClassification] : []),
+      ...(pluginSdkMigrationNotes ? ['--plugin-sdk-migration-notes', pluginSdkMigrationNotes] : []),
+      ...(sdkAuthReadiness ? ['--sdk-auth-readiness', sdkAuthReadiness] : []),
+      ...(sdkAuthWaiver ? ['--sdk-auth-waiver', sdkAuthWaiver] : []),
+      ...(sdkApiClassification ? ['--sdk-api-classification', sdkApiClassification] : []),
+      ...(sdkMigrationNotes ? ['--sdk-migration-notes', sdkMigrationNotes] : []),
+      ...(releaseNotesId ? ['--release-notes-id', releaseNotesId] : []),
       ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
       ...(runTests ? ['--run-tests', runTests] : []),
       ...(mode ? ['--mode', mode] : []),
@@ -4433,6 +4457,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'release-profile': { type: 'string', default: '' },
               'waive-ci': { type: 'string', default: 'false' },
               'approve-public-sdk-release': { type: 'string', default: 'false' },
+              'plugin-sdk-ready': { type: 'string', default: 'false' },
+              'plugin-sdk-api-classification': { type: 'string', default: '' },
+              'plugin-sdk-migration-notes': { type: 'string', default: 'not_required' },
+              'sdk-auth-readiness': { type: 'string', default: 'not_ready' },
+              'sdk-auth-waiver': { type: 'string', default: '' },
+              'sdk-api-classification': { type: 'string', default: '' },
+              'sdk-migration-notes': { type: 'string', default: 'not_required' },
               'include-validation-suites': { type: 'string', default: '' },
               'waive-validation-suites': { type: 'string', default: '' },
               'override-reason': { type: 'string', default: '' },
@@ -4533,11 +4564,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             values['approve-public-sdk-release'],
             '--approve-public-sdk-release',
           );
+          const pluginSdkReady = parseBoolString(values['plugin-sdk-ready'], '--plugin-sdk-ready');
+          const pluginSdkApiClassification = String(values['plugin-sdk-api-classification'] ?? '').trim();
+          const pluginSdkMigrationNotes = String(values['plugin-sdk-migration-notes'] ?? '').trim();
+          const sdkAuthReadiness = String(values['sdk-auth-readiness'] ?? '').trim();
+          const sdkAuthWaiver = String(values['sdk-auth-waiver'] ?? '').trim();
+          const sdkApiClassification = String(values['sdk-api-classification'] ?? '').trim();
+          const sdkMigrationNotes = String(values['sdk-migration-notes'] ?? '').trim();
           const includeValidationSuites = parseCsvList(String(values['include-validation-suites'] ?? ''));
           const waiveValidationSuites = parseCsvList(String(values['waive-validation-suites'] ?? ''));
           const overrideReason = String(values['override-reason'] ?? '').trim();
-          if ((waiveCi || approvePublicSdkRelease || waiveValidationSuites.length > 0) && !overrideReason) {
-            fail('--override-reason is required when CI/validation evidence is waived or a public SDK release is approved.');
+          if ((waiveCi || waiveValidationSuites.length > 0) && !overrideReason) {
+            fail('--override-reason is required when CI or validation evidence is waived.');
           }
 
           const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
@@ -4605,6 +4643,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                   waiveValidationSuiteIds: waiveValidationSuites,
                   reason: overrideReason,
                 },
+                publicSdkApproval: {
+                  pluginSdkReady,
+                  pluginSdkApiClassification,
+                  pluginSdkMigrationNotes,
+                  sdkAuthReadiness,
+                  sdkAuthWaiver,
+                  sdkApiClassification,
+                  sdkMigrationNotes,
+                },
                 operationId,
                 releaseNotesId,
                 ...(resumeRunId ? { resumeRunId } : {}),
@@ -4640,6 +4687,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `validation_profile=${releaseProfile.id}`,
               '-f', `waive_ci=${waiveCi}`,
               '-f', `approve_public_sdk_release=${approvePublicSdkRelease}`,
+              '-f', `plugin_sdk_ready=${pluginSdkReady}`,
+              '-f', `plugin_sdk_api_classification=${pluginSdkApiClassification || 'unreviewed'}`,
+              '-f', `plugin_sdk_migration_notes=${pluginSdkMigrationNotes}`,
+              '-f', `sdk_auth_readiness=${sdkAuthReadiness}`,
+              '-f', `sdk_auth_waiver=${sdkAuthWaiver}`,
+              '-f', `sdk_api_classification=${sdkApiClassification || 'unreviewed'}`,
+              '-f', `sdk_migration_notes=${sdkMigrationNotes}`,
               '-f', `include_validation_suites=${includeValidationSuites.join(',')}`,
               '-f', `waive_validation_suites=${waiveValidationSuites.join(',')}`,
               '-f', `override_reason=${overrideReason}`,
@@ -4909,6 +4963,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             console.log(`- confirm: ${action}`);
             console.log(`- waive_ci: ${waiveCi}`);
             console.log(`- approve_public_sdk_release: ${approvePublicSdkRelease}`);
+            console.log(`- plugin_sdk_ready: ${pluginSdkReady}`);
+            console.log(`- plugin_sdk_api_classification: ${pluginSdkApiClassification || 'unreviewed'}`);
+            console.log(`- sdk_auth_readiness: ${sdkAuthReadiness}`);
+            console.log(`- sdk_api_classification: ${sdkApiClassification || 'unreviewed'}`);
             console.log(`- include_validation_suites: ${includeValidationSuites.join(',') || 'none'}`);
             console.log(`- waive_validation_suites: ${waiveValidationSuites.join(',') || 'none'}`);
             if (overrideReason) console.log(`- override_reason: ${overrideReason}`);

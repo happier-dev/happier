@@ -1,0 +1,33 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- openLink: ${HAPPIER_E2E_CURRENT_SOURCE_RN_SURFACE_URL}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_RN_SENTINEL}
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_TARGETED_SENTINEL}
+    timeout: 120000
+- assertVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_TARGETED_READY_ID}
+# The shared surface observes the fixture's public dynamic Resource through the
+# real host; only the exact revision sentinel renders when the read returns
+# this generation's bytes.
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_RESOURCE_SENTINEL}
+    timeout: 60000
+# Exercise the daemon Action through the shared execution owner and observe the
+# busy -> settled -> revision-qualified result transition on the real host.
+- tapOn:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_ACTION_RUN_ID}
+- assertVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_ACTION_BUSY_ID}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_CURRENT_SOURCE_ACTION_SETTLED_ID}
+    timeout: 60000
+- assertVisible:
+    id: ${HAPPIER_E2E_CURRENT_SOURCE_ACTION_RESULT_SENTINEL}
+- takeScreenshot: plugin-platform-current-source-public-native-${HAPPIER_E2E_MOBILE_PLATFORM}

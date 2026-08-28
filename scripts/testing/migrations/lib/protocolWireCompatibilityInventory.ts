@@ -341,7 +341,7 @@ export const PROTOCOL_WIRE_COMPATIBILITY_INVENTORY: readonly ProtocolWireCompati
       'packages/protocol/src/backends/targets/backendTargetRefV2.ts',
       'packages/protocol/src/sessions/metadata/runtimeDescriptorV1.ts',
       'packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.ts',
-      'packages/protocol/src/agents/generated/runtime/descriptors/codex.ts',
+      'packages/protocol/src/sessions/metadata/metadataOverridesV1.ts',
       'packages/protocol/src/sessions/control/handoff/handoffSchemas.ts',
       'packages/protocol/src/sessions/external/daemonRpcV1.ts',
     ],

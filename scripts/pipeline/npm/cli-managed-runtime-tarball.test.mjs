@@ -55,6 +55,8 @@ async function createCliPackFixture({
   omitChecksumManifest = false,
   omitChecksumName = '',
   includeUnpacked = false,
+  extraArchiveName = '',
+  extraChecksumName = '',
 } = {}) {
   const packageRoot = await mkdtemp(join(tmpdir(), 'happier-cli-runtime-tarball-'));
   const archivesDir = join(packageRoot, 'tools', 'archives');
@@ -88,11 +90,17 @@ async function createCliPackFixture({
       }
     }
     if (!omitChecksumManifest) {
+      if (extraChecksumName) {
+        checksums.push(`${crypto.createHash('sha256').update('extra\n').digest('hex')}  ${extraChecksumName}`);
+      }
       await writeFile(
         join(archivesDir, RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME),
         `${checksums.join('\n')}\n`,
         'utf8',
       );
+    }
+    if (extraArchiveName) {
+      await writeFile(join(archivesDir, extraArchiveName), 'extra\n', 'utf8');
     }
     if (includeUnpacked) {
       const unpackedDir = join(packageRoot, 'tools', 'unpacked');
@@ -122,7 +130,7 @@ async function createUnpackedTarball() {
   }
 }
 
-test('CLI publication candidate validates the real npm packlist of every runtime archive and excludes tools/unpacked', async () => {
+test('CLI publication validates the real npm packlist of every runtime archive and excludes tools/unpacked', async () => {
   const fixture = await createCliPackFixture({ includeUnpacked: true });
   try {
     const entries = archiveEntries(fixture.tarballPath);
@@ -150,13 +158,16 @@ test('CLI publication candidate validates the real npm packlist of every runtime
   }
 });
 
-test('CLI publication candidate fails closed for an incomplete archive inventory or unpacked runtime bytes', async () => {
+test('CLI publication fails closed for an incomplete archive inventory or unpacked runtime bytes', async () => {
   const [firstRuntimeAsset] = getCliRuntimeAssetArchiveManifest();
   assert.ok(firstRuntimeAsset);
   const missingArchive = await createCliPackFixture({ omitArchiveName: firstRuntimeAsset.archiveName });
   const missingManifest = await createCliPackFixture({ omitChecksumManifest: true });
   const missingChecksum = await createCliPackFixture({ omitChecksumName: firstRuntimeAsset.archiveName });
   const unpacked = await createUnpackedTarball();
+  const extraArchiveName = 'happier-cliproxyapi-managed-riscv64-linux.tar.gz';
+  const extraArchive = await createCliPackFixture({ extraArchiveName });
+  const extraChecksum = await createCliPackFixture({ extraChecksumName: extraArchiveName });
   try {
     assert.throws(
       () => assertCliManagedRuntimeTarballPublication(missingArchive.tarballPath),
@@ -174,12 +185,22 @@ test('CLI publication candidate fails closed for an incomplete archive inventory
       () => assertCliManagedRuntimeTarballPublication(unpacked.tarballPath),
       /must not contain tools\/unpacked runtime content/u,
     );
+    assert.throws(
+      () => assertCliManagedRuntimeTarballPublication(extraArchive.tarballPath),
+      /unexpected managed runtime archives/u,
+    );
+    assert.throws(
+      () => assertCliManagedRuntimeTarballPublication(extraChecksum.tarballPath),
+      /checksum inventory contains unexpected entries/u,
+    );
   } finally {
     await Promise.all([
       rm(missingArchive.packageRoot, { recursive: true, force: true }),
       rm(missingManifest.packageRoot, { recursive: true, force: true }),
       rm(missingChecksum.packageRoot, { recursive: true, force: true }),
       rm(unpacked.root, { recursive: true, force: true }),
+      rm(extraArchive.packageRoot, { recursive: true, force: true }),
+      rm(extraChecksum.packageRoot, { recursive: true, force: true }),
     ]);
   }
 });

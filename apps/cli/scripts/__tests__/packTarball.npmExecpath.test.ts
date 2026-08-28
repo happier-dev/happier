@@ -16,6 +16,10 @@ const loadCliCommonWorkspacesModuleFromSource = async () => ({
 
 const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => packTarballImpl({
   ...options,
+  // Synthetic package roots in this suite are not nested beneath a repository.
+  // Keep the production lock owner active, but give it a fixture-owned path
+  // instead of letting the fallback repository projection resolve to `/`.
+  lockPath: options.lockPath ?? join(options.packageRoot, '.project', 'tmp', 'pack-test.lock'),
   npmCliExistsSync: options.npmCliExistsSync ?? (() => true),
   assertInputCurrentnessImpl: async () => undefined,
   // These cases drive npm invocation and artifact sanitization against a synthetic

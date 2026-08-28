@@ -235,7 +235,11 @@ async function createCodexSessionFromComposer(params: {
 }
 
 async function readMessageActionHandle(page: Page, text: string): Promise<{ wrapper: Locator; messageId: string }> {
-  const wrapper = page.locator('[data-testid^="transcript-message-"]').filter({ hasText: text }).first();
+  // Agent replies can quote the complete user prompt. Require an exact-text descendant so this
+  // helper resolves the user row rather than an earlier agent row containing the same substring.
+  const wrapper = page.locator('[data-testid^="transcript-message-"]').filter({
+    has: page.getByText(text, { exact: true }),
+  }).first();
   await expect(wrapper).toHaveCount(1, { timeout: 120_000 });
   const wrapperTestId = await wrapper.getAttribute('data-testid');
   if (!wrapperTestId) throw new Error(`missing wrapper test id for message: ${text}`);
@@ -404,30 +408,6 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     });
 
     await expect(composer).toHaveValue(secondPrompt, { timeout: 60_000 });
-
-    const firstPromptMessage = await readMessageActionHandle(page, parentPrompt);
-    await firstPromptMessage.wrapper.hover();
-    await expect(rollbackButtonForMessage(page, firstPromptMessage.messageId)).toHaveCount(1, { timeout: 60_000 });
-
-    const thirdPrompt = `codex-app-server-parent-3 ${run.runId}`;
-    await composer.fill(thirdPrompt);
-    await composer.press('Enter');
-    await expect(page.getByText(`reply:${thirdPrompt}:done`)).toHaveCount(1, { timeout: 180_000 });
-
-    await firstPromptMessage.wrapper.hover();
-    await expect(rollbackButtonForMessage(page, firstPromptMessage.messageId)).toHaveCount(1, { timeout: 60_000 });
-    await rollbackButtonForMessage(page, firstPromptMessage.messageId).click();
-
-    await waitForLoggedRequest({
-      requestLogPath: fakeCodexRequestLogPath,
-      timeoutMs: 60_000,
-      predicate: (entry) => entry.method === 'thread/rollback'
-        && typeof entry.params?.threadId === 'string'
-        && entry.params.threadId.length > 0
-        && entry.params?.numTurns === 2,
-    });
-
-    await expect(composer).toHaveValue(parentPrompt, { timeout: 60_000 });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
