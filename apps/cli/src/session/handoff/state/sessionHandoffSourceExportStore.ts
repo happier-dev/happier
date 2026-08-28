@@ -224,6 +224,7 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
     async writeProviderBundleFile(params: Readonly<{
       handoffId: string;
       providerBundle: SessionHandoffProviderBundle;
+      onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
     }>): Promise<z.infer<typeof ProviderBundleFileSchema>> {
       const handoffId = assertSafeHandoffId(params.handoffId);
       assertCanonicalSessionHandoffProviderBundle(params.providerBundle);
@@ -233,6 +234,7 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       const artifact = await writeSessionHandoffProviderBundleArtifact({
         providerBundle: params.providerBundle,
         filePath,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       });
       return {
         transferId: buildSessionHandoffProviderBundleTransferId(handoffId),

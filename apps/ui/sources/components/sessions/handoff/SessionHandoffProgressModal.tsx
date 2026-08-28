@@ -7,6 +7,7 @@ import {
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
     resolveSessionHandoffProgressTimeline,
+    type ActionOperationSnapshotV1,
     type SessionHandoffProgressCheckpoint,
     type SessionHandoffStatus,
 } from '@happier-dev/protocol';
@@ -23,6 +24,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
     message?: string;
     status?: SessionHandoffStatus;
+    operation?: ActionOperationSnapshotV1;
 }>;
 
 type ProgressStatCounts = Readonly<{
@@ -317,7 +319,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ setChrome, title, message, status }: Props) {
+export function SessionHandoffProgressModal({ setChrome, title, message, status, operation }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -430,6 +432,11 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                 ? t('sessionHandoff.failure.message')
                 : t('sessionHandoff.progress.message'));
     const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover;
+    const operationProgress = operation?.progress;
+    const operationProgressFraction = operationProgress?.kind === 'determinate'
+        ? Math.max(0, Math.min(1, operationProgress.current / operationProgress.total))
+        : null;
+    const operationProgressLabel = operationProgress?.label ?? null;
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
@@ -455,6 +462,36 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                 )}
                 <Text style={styles.message}>{resolvedMessage}</Text>
             </View>
+            {operationProgress ? (
+                <View testID="session-handoff-operation-progress" style={styles.progressSection}>
+                    {operationProgressFraction !== null ? (
+                        <View
+                            testID="session-handoff-operation-progress-bar"
+                            accessibilityRole="progressbar"
+                            accessibilityValue={{
+                                min: 0,
+                                max: 100,
+                                now: Math.round(operationProgressFraction * 100),
+                            }}
+                            style={styles.progressTrack}
+                        >
+                            <View style={[styles.progressFill, { width: `${Math.max(operationProgressFraction * 100, 4)}%` }]} />
+                        </View>
+                    ) : null}
+                    {operationProgressLabel || operationProgressFraction !== null ? (
+                        <View style={styles.progressMetaRow}>
+                            {operationProgressFraction !== null ? (
+                                <Text style={styles.progressMetaText}>
+                                    {Math.round(operationProgressFraction * 100)}%
+                                </Text>
+                            ) : null}
+                            {operationProgressLabel ? (
+                                <Text style={styles.currentPath}>{operationProgressLabel}</Text>
+                            ) : null}
+                        </View>
+                    ) : null}
+                </View>
+            ) : null}
             {effectiveStatus ? (
                 <View style={styles.progressSection}>
                     {currentCheckpoint && currentCheckpointIndex >= 0 ? (
@@ -506,7 +543,12 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                         </View>
                     ) : null}
                     {progressFraction !== null ? (
-                        <View testID="session-handoff-progress-bar" style={styles.progressTrack}>
+                        <View
+                            testID="session-handoff-progress-bar"
+                            accessibilityRole="progressbar"
+                            accessibilityValue={{ min: 0, max: 100, now: Math.round(progressFraction * 100) }}
+                            style={styles.progressTrack}
+                        >
                             <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
                         </View>
                     ) : null}

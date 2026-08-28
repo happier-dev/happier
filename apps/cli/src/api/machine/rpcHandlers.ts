@@ -1197,7 +1197,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       wrapStartHandler: (startUntracked) => createTrackedSessionHandoffStart({
         runner: actionOperationRuntime.runner,
         getScope: actionOperationRuntime.getScope,
-        startUntracked: async (request) => await startUntracked(request),
+        startUntracked: async (request, options) => await startUntracked(request, options),
         coordinate: async (request, context, startSource) => {
           const scope = await actionOperationRuntime.getScope();
           if (request.sourceMachineId !== scope.machineId) {

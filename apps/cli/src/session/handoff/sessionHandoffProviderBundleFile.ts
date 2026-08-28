@@ -93,7 +93,11 @@ async function projectBundleFiles(value: unknown): Promise<Readonly<{
   return { bundle: await visit(value, false), entries };
 }
 
-async function appendFile(target: Awaited<ReturnType<typeof open>>, source: SessionHandoffFileSlice): Promise<void> {
+async function appendFile(
+  target: Awaited<ReturnType<typeof open>>,
+  source: SessionHandoffFileSlice,
+  onBytesWritten?: (bytesWritten: number) => void,
+): Promise<void> {
   const input = await open(source.filePath, 'r');
   try {
     let remaining = source.sizeBytes;
@@ -106,6 +110,7 @@ async function appendFile(target: Awaited<ReturnType<typeof open>>, source: Sess
       await target.write(buffer.subarray(0, bytesRead));
       position += bytesRead;
       remaining -= bytesRead;
+      onBytesWritten?.(bytesRead);
     }
   } finally {
     await input.close();
@@ -122,21 +127,10 @@ function assertCanonicalSessionHandoffProviderBundle(providerBundle: SessionHand
   }
 }
 
-function parseCanonicalSessionHandoffProviderBundle(value: unknown): SessionHandoffProviderBundle {
-  try {
-    const providerBundle = SessionHandoffProviderBundleSchema.parse(value);
-    assertCanonicalSessionHandoffProviderBundle(providerBundle);
-    return providerBundle;
-  } catch {
-    // Keep malformed structured payloads on the same fail-closed protocol boundary as malformed
-    // JSON/artifact bytes. Callers must never reinterpret schema failures as transport outages.
-    throw new Error('Invalid session handoff transfer payload');
-  }
-}
-
 export async function writeSessionHandoffProviderBundleArtifact(params: Readonly<{
   providerBundle: SessionHandoffProviderBundle;
   filePath: string;
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
 }>): Promise<Readonly<{ sizeBytes: number; manifestHash: string }>> {
   const normalized = SessionHandoffProviderBundleSchema.parse(params.providerBundle);
   assertCanonicalSessionHandoffProviderBundle(normalized);
@@ -154,13 +148,29 @@ export async function writeSessionHandoffProviderBundleArtifact(params: Readonly
   const temporaryPath = `${params.filePath}.${randomUUID()}.tmp`;
   const target = await open(temporaryPath, 'wx', 0o600);
   let published = false;
+  const totalBytes = projected.entries.reduce((sum, entry) => sum + entry.source.sizeBytes, 0);
+  let currentBytes = 0;
+  let lastReportedBytes = 0;
+  const reportProgress = (force = false) => {
+    if (!params.onProgress) return;
+    if (!force && currentBytes - lastReportedBytes < 16 * 1024 * 1024) return;
+    lastReportedBytes = currentBytes;
+    params.onProgress({ currentBytes, totalBytes });
+  };
   try {
+    reportProgress(true);
     const manifestLength = Buffer.alloc(ARTIFACT_LENGTH_BYTES);
     manifestLength.writeBigUInt64BE(BigInt(manifestBytes.length));
     await target.write(ARTIFACT_MAGIC);
     await target.write(manifestLength);
     await target.write(manifestBytes);
-    for (const entry of projected.entries) await appendFile(target, entry.source);
+    for (const entry of projected.entries) {
+      await appendFile(target, entry.source, (bytesWritten) => {
+        currentBytes += bytesWritten;
+        reportProgress();
+      });
+    }
+    reportProgress(true);
     await target.close();
     await rename(temporaryPath, params.filePath);
     published = true;
@@ -175,10 +185,15 @@ export async function writeSessionHandoffProviderBundleArtifact(params: Readonly
 
 export async function createSessionHandoffProviderBundlePayloadSource(
   providerBundle: SessionHandoffProviderBundle,
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void,
 ): Promise<TransferPayloadSource> {
   await mkdir(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, { recursive: true });
   const filePath = join(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, `provider-bundle-${randomUUID()}.bin`);
-  const artifact = await writeSessionHandoffProviderBundleArtifact({ providerBundle, filePath });
+  const artifact = await writeSessionHandoffProviderBundleArtifact({
+    providerBundle,
+    filePath,
+    ...(onProgress ? { onProgress } : {}),
+  });
   return createFileTransferPayloadSource({
     filePath,
     ...artifact,
@@ -240,7 +255,9 @@ export async function readSessionHandoffProviderBundleFile(
       } catch {
         throw new Error('Invalid session handoff transfer payload');
       }
-      return parseCanonicalSessionHandoffProviderBundle(payload);
+      const providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
+      assertCanonicalSessionHandoffProviderBundle(providerBundle);
+      return providerBundle;
     }
 
     const lengthBytes = await readExactly(file, ARTIFACT_LENGTH_BYTES, ARTIFACT_MAGIC.length);
@@ -275,11 +292,13 @@ export async function readSessionHandoffProviderBundleFile(
       offsetBytes += entry.sizeBytes;
     }
     if ((await file.stat()).size !== offsetBytes) throw new Error('Invalid session handoff transfer payload');
-    return parseCanonicalSessionHandoffProviderBundle(materializeBundleFiles({
+    const providerBundle = SessionHandoffProviderBundleSchema.parse(materializeBundleFiles({
       value: manifest.bundle,
       filePath: providerBundleFilePath,
       slices,
     }));
+    assertCanonicalSessionHandoffProviderBundle(providerBundle);
+    return providerBundle;
   } finally {
     await file.close();
   }

@@ -9,6 +9,7 @@ const executeSessionHandoffActionMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffProgressModalMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffFailureRecoveryModalMock = vi.hoisted(() => vi.fn());
 const performSessionHandoffRecoveryActionMock = vi.hoisted(() => vi.fn());
+const randomUUIDMock = vi.hoisted(() => vi.fn(() => 'handoff-action-request-1'));
 
 installSessionHandoffCommonModuleMocks({
     modal: async () => {
@@ -41,6 +42,7 @@ vi.mock('../../ops/sessionHandoffs', () => ({
 }));
 
 vi.mock('@/sync/sync', () => ({ sync: { acquireUserRequestLease: () => () => {} } }));
+vi.mock('@/platform/randomUUID', () => ({ randomUUID: () => randomUUIDMock() }));
 
 describe('runSessionHandoffUiFlow', () => {
   beforeEach(() => {
@@ -73,7 +75,7 @@ describe('runSessionHandoffUiFlow', () => {
     expect(result).toEqual({ ok: true, handoffId: 'handoff_1' });
   });
 
-  it('updates the open progress modal when matching handoff status events are published while the flow is running', async () => {
+  it('updates the open progress modal from the canonical parent action operation while the flow is running', async () => {
     const actionResolution: {
       current: ((value: { ok: true; handoffId: string }) => void) | null;
     } = { current: null };
@@ -84,7 +86,7 @@ describe('runSessionHandoffUiFlow', () => {
     );
 
     const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
-    const { publishSessionHandoffProgress } = await import('./sessionHandoffProgressEvents');
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
 
     const flowPromise = runSessionHandoffUiFlow({
       execute: vi.fn() as any,
@@ -97,52 +99,25 @@ describe('runSessionHandoffUiFlow', () => {
       expect(openSessionHandoffProgressModalMock).toHaveBeenCalledTimes(1);
     });
 
-    publishSessionHandoffProgress({
-      sessionId: 'sess_1',
-      targetMachineId: 'machine_target',
-      status: {
-        handoffId: 'handoff_1',
-        status: 'pending',
-        phase: 'staging_target',
-        workspacePreflightSummary: {
-          addedPathsCount: 3,
-          changedPathsCount: 2,
-          removedPathsCount: 1,
-          totalBytes: 2048,
-        },
-        progress: {
-          updatedAtMs: 123,
-          checkpoint: 'transfer_blobs',
-          planned: {
-            totalFiles: 6,
-            totalBytes: 2048,
-          },
-          transferred: {
-            files: 3,
-            bytes: 1024,
-            blobs: 2,
-          },
-          current: {
-            relativePath: 'README.md',
-          },
-          resumable: true,
-        },
-        recoveryActions: [],
-      },
+    actionOperationStore.merge({
+      version: 1,
+      operationId: 'handoff-operation-1',
+      requestId: 'handoff-action-request-1',
+      revision: 1,
+      actionId: 'session.handoff',
+      state: 'running',
+      scope: { accountId: 'account-1', machineId: 'machine-source', sessionId: 'sess_1' },
+      title: 'Hand off session',
+      createdAt: 1,
+      startedAt: 1,
+      progress: { kind: 'determinate', current: 1024, total: 2048, label: 'Packaging session state' },
+      cancellation: 'supported',
     });
 
     expect(modalUpdateMock).toHaveBeenCalledWith('modal_1', {
-      status: expect.objectContaining({
-        handoffId: 'handoff_1',
-        phase: 'staging_target',
-        workspacePreflightSummary: expect.objectContaining({
-          addedPathsCount: 3,
-          changedPathsCount: 2,
-          removedPathsCount: 1,
-        }),
-        progress: expect.objectContaining({
-          checkpoint: 'transfer_blobs',
-        }),
+      operation: expect.objectContaining({
+        requestId: 'handoff-action-request-1',
+        progress: { kind: 'determinate', current: 1024, total: 2048, label: 'Packaging session state' },
       }),
     });
 

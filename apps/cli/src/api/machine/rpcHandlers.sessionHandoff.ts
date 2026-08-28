@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import {
   type AgentRuntimeDescriptorV1,
+  type ActionOperationProgressV1,
   DirectSessionsSourceSchema,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
@@ -164,6 +165,15 @@ type SessionHandoffStartFastPathResult =
       errorCode: 'source_stop_failed';
       error: string;
     }>;
+
+type SessionHandoffStartLocalOptions = Readonly<{
+  onProgress?: (progress: ActionOperationProgressV1) => void;
+}>;
+
+type SessionHandoffStartHandler = (
+  raw: unknown,
+  options?: SessionHandoffStartLocalOptions,
+) => Promise<unknown>;
 
 export type SessionHandoffDirectPeerTransferHandle = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -1303,7 +1313,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
-  wrapStartHandler?: (handler: RpcHandler<unknown, unknown>) => RpcHandler<unknown, unknown>;
+  wrapStartHandler?: (handler: SessionHandoffStartHandler) => RpcHandler<unknown, unknown>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
@@ -1624,6 +1634,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	    request: SessionHandoffStartRequest;
 	    metadata: Record<string, unknown>;
 	    sourceStopState: 'stopped' | 'already_inactive';
+	    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
 	    preExportedProviderBundle?: Readonly<{
 	      providerBundle: SessionHandoffProviderBundle;
 	      targetPath: string;
@@ -1652,6 +1663,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
             handoffId: input.handoffId,
             providerBundle: exported.providerBundle,
+            ...(input.onProgress ? { onProgress: input.onProgress } : {}),
           });
 
           await sourceExportStore.save({
@@ -1922,9 +1934,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
   }
 
-	  const startHandler: RpcHandler<unknown, unknown> = async (raw: unknown) => {
+	  const startHandler: SessionHandoffStartHandler = async (raw: unknown, localOptions) => {
 	    const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
 	    if (!parsed.success) return invalidRequest();
+
+    const reportBundleProgress = (label: string) => (
+      progress: Readonly<{ currentBytes: number; totalBytes: number }>,
+    ) => {
+      localOptions?.onProgress?.(
+        progress.totalBytes > 0
+          ? {
+              kind: 'determinate',
+              current: Math.min(progress.currentBytes, progress.totalBytes),
+              total: progress.totalBytes,
+              label,
+            }
+          : { kind: 'indeterminate', label },
+      );
+    };
 
     const metadata = await loadSessionMetadata(parsed.data.sessionId, parsed.data.sourceMachineId);
     if (!metadata) {
@@ -2063,6 +2090,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	          request: parsed.data,
 	          metadata,
 	          sourceStopState,
+	          onProgress: reportBundleProgress('Packaging session state'),
 	        });
 
 	        return {
@@ -2290,7 +2318,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                 let providerBundlePayloadSource: TransferPayloadSource | null = null;
                 try {
                   const exported = await exportSessionBundle(metadata);
-                  providerBundlePayloadSource = await createSessionHandoffProviderBundlePayloadSource(exported.providerBundle);
+                  providerBundlePayloadSource = await createSessionHandoffProviderBundlePayloadSource(
+                    exported.providerBundle,
+                    reportBundleProgress('Packaging session state'),
+                  );
 
 		              const actualSourceStopState =
 		                params.stopSessionForHandoff
@@ -2308,6 +2339,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                     request: parsed.data,
                     metadata,
                     sourceStopState: actualSourceStopState,
+                    onProgress: reportBundleProgress('Staging session state'),
                     preExportedProviderBundle: {
                       providerBundle: exported.providerBundle,
                       targetPath: exported.targetPath,
@@ -2336,6 +2368,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
               handoffId,
               providerBundle: exported.providerBundle,
+              onProgress: reportBundleProgress('Packaging session state'),
             });
 		        const providerBundlePayloadSource = createFileTransferPayloadSource({
               filePath: persistedProviderBundle.filePath,
@@ -2482,6 +2515,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 			            request: parsed.data,
 			            metadata,
 			            sourceStopState: actualSourceStopState,
+			            onProgress: reportBundleProgress('Packaging session state'),
 			            ...(preExportedProviderBundle ? { preExportedProviderBundle } : {}),
 			          });
 			        })();
@@ -2515,6 +2549,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		        request: parsed.data,
 		        metadata,
 		        sourceStopState: stopState,
+		        onProgress: reportBundleProgress('Packaging session state'),
 		      });
 
 	      return {

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { importCodexSessionBundle } from '../../../backends/codex/handoff/importCodexSessionBundle';
 import { readSessionHandoffProviderBundleFile } from '../sessionHandoffProviderBundleFile';
@@ -110,8 +110,10 @@ describe('sessionHandoffSourceExportStore', () => {
       await writeFile(sourcePath, content);
 
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const onProgress = vi.fn();
       const persisted = await store.writeProviderBundleFile({
         handoffId: 'handoff-binary-1',
+        onProgress,
         providerBundle: {
           providerId: 'codex',
           remoteSessionId: 'thread-large',
@@ -126,6 +128,11 @@ describe('sessionHandoffSourceExportStore', () => {
           }],
         },
       });
+
+      expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual(expect.arrayContaining([
+        { currentBytes: 0, totalBytes: content.length },
+        { currentBytes: content.length, totalBytes: content.length },
+      ]));
 
       expect(persisted.sizeBytes).toBeGreaterThan(content.length);
       expect(persisted.sizeBytes).toBeLessThan(content.length + 64 * 1024);

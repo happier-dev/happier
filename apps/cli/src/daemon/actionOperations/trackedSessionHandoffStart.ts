@@ -15,7 +15,12 @@ type OperationContext = Readonly<{
   }>) => void;
 }>;
 
-type HistoricalStart = (request: SessionHandoffStartRequest) => Promise<unknown>;
+type HistoricalStart = (
+  request: SessionHandoffStartRequest,
+  options?: Readonly<{
+    onProgress?: (progress: import('@happier-dev/protocol').ActionOperationProgressV1) => void;
+  }>,
+) => Promise<unknown>;
 
 export function createTrackedSessionHandoffStart(params: Readonly<{
   runner: ActionOperationRunner;
@@ -71,7 +76,9 @@ export function createTrackedSessionHandoffStart(params: Readonly<{
       execute: async (context) => {
         if (!attempt.coordinate) {
           attempt.coordinate = params.coordinate(request, context, async (startRequest) => {
-            const response = await params.startUntracked(startRequest);
+            const response = await params.startUntracked(startRequest, {
+              onProgress: (progress) => context.update({ progress }),
+            });
             if (!attempt.receiptSettled) {
               attempt.receiptSettled = true;
               attempt.resolveReceipt(response);
