@@ -635,6 +635,7 @@ describe('registered SCM backend registry', () => {
 
     it('adapts workspace integration leaves through plugin handlers', async () => {
         let prepareReviewWorkspaceSignal: AbortSignal | null = null;
+        let verifyPreparedReviewWorkspaceSignal: AbortSignal | null = null;
         const registration: ScmBackendRuntimeRegistration = {
             id: 'acme-vcs',
             handlers: {
@@ -654,6 +655,16 @@ describe('registered SCM backend registry', () => {
                             branchName: 'feature',
                             created: true,
                             currentness: { kind: 'currentAtObservedHead' },
+                        };
+                    },
+                    verifyPreparedReviewWorkspace: async ({ request, signal }) => {
+                        verifyPreparedReviewWorkspaceSignal = signal;
+                        return {
+                            success: true,
+                            verification: {
+                                targetPath: request.verification!.targetPath,
+                                sourceHeadSha: request.sourceTip.sourceHeadSha,
+                            },
                         };
                     },
                     inspectWorkspaceLocation: async () => ({
@@ -735,6 +746,33 @@ describe('registered SCM backend registry', () => {
             },
         })).resolves.toEqual(expect.objectContaining({ success: true }));
         expect(prepareReviewWorkspaceSignal).toBe(operationController.signal);
+
+        await expect(backend.workspaceIntegration?.verifyPreparedReviewWorkspace?.({
+            context: operationContext,
+            request: {
+                cwd: '/repo',
+                displayName: 'feature',
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://github.com',
+                        repository: 'acme/repository',
+                    },
+                    cloneUrl: 'https://github.com/acme/repository.git',
+                    branch: 'feature',
+                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                    fetchRef: 'refs/heads/feature',
+                },
+                verification: { targetPath: '/repo/.dev/worktree/feature' },
+            },
+        })).resolves.toEqual({
+            success: true,
+            verification: {
+                targetPath: '/repo/.dev/worktree/feature',
+                sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+            },
+        });
+        expect(verifyPreparedReviewWorkspaceSignal).toBe(operationController.signal);
 
         await expect(backend.workspaceIntegration?.inspectWorkspaceLocation?.({ context })).resolves.toEqual({
             rootPath: '/repo',

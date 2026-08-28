@@ -48,6 +48,7 @@ type SessionHandoffSourceExportStoreLike = Readonly<{
   writeAgentBundleFile: (params: Readonly<{
     handoffId: string;
     agentBundle: SessionHandoffAgentBundle;
+    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   }>) => Promise<PersistedAgentBundleFile>;
   save: (record: Readonly<Omit<SessionHandoffSourceExportRecord, 't' | 'schemaVersion'>>) => Promise<void>;
 }>;
@@ -88,10 +89,12 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
     metadata: Record<string, unknown>;
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
     preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
+    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   }>) => Promise<unknown>;
   sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
   recordDeferredStartFailure: (error: unknown) => void;
   claimMaintenance: ExternalSessionOperationClaimMaintenance;
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
 }>): Promise<DeferredDirectPeerStartResult> {
   let deferredStartEndpointCandidates: readonly TransferEndpointCandidate[] = [];
   let deferredStartWorkPromise: Promise<void> | null = null;
@@ -200,7 +203,7 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
       input.claimMaintenance.throwIfLost();
       exported = await input.claimMaintenance.race(() => input.exportSessionBundle(input.metadata));
       createdAgentBundlePayloadSource = await input.claimMaintenance.race(
-        () => createSessionHandoffAgentBundlePayloadSource(exported.agentBundle),
+        () => createSessionHandoffAgentBundlePayloadSource(exported.agentBundle, input.onProgress),
       );
     } catch (error) {
       input.directPeerTransfer.clearPublishedTransfer(agentBundleCarrierTransferId);
@@ -233,6 +236,7 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
           request: input.request,
           metadata: input.metadata,
           sourceStopState: input.sourceStopState,
+          ...(input.onProgress ? { onProgress: input.onProgress } : {}),
           preExportedAgentBundle: {
             agentBundle: exported.agentBundle,
             targetPath: exported.targetPath,
@@ -255,6 +259,7 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
     const persistedAgentBundle = await input.claimMaintenance.race(() => input.sourceExportStore.writeAgentBundleFile({
       handoffId: input.handoffId,
       agentBundle: exported.agentBundle,
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     }));
     const agentBundlePayloadSource = createFileTransferPayloadSource({
       filePath: persistedAgentBundle.filePath,

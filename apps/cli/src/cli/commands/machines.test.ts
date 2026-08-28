@@ -8,7 +8,7 @@ afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
 describe('machines root command', () => {
   it('uses the real stored-credential source so a token-only PAT reaches machine transport', async () => {
-    credentialBoundary.readStoredCredentials.mockResolvedValue({ token: 'pat', credentialProvenance: 'api_token' });
+    credentialBoundary.readStoredCredentials.mockResolvedValue({ token: 'pat', encryption: null, credentialProvenance: 'api_token' });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const listMachinesFn = vi.fn(async () => []);
     await handleMachinesCommand(['list'], { listMachinesFn });
@@ -31,9 +31,11 @@ describe('machines root command', () => {
 
   it.each(['stored_session', 'api_token'] as const)('lists account inventory for %s credentials', async (credentialProvenance) => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const listMachinesFn = vi.fn(async () => [{ id: 'machine-1', label: 'desk', active: true, revokedAt: null, replacedByMachineId: null }]);
+    const listMachinesFn = vi.fn(async () => [{ id: 'machine-1', active: true, revokedAt: null, replacedByMachineId: null }]);
     await handleMachinesCommand(['list'], {
-      readCredentialsFn: async () => ({ token: 'token', credentialProvenance } as any),
+      readCredentialsFn: async () => credentialProvenance === 'api_token'
+        ? { token: 'token', encryption: null, credentialProvenance }
+        : { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) }, credentialProvenance },
       listMachinesFn,
     });
     expect(listMachinesFn).toHaveBeenCalledOnce();
@@ -52,7 +54,11 @@ describe('machines root command', () => {
   it('classifies unexpected inventory exceptions as exit 2', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await handleMachinesCommand(['list'], {
-      readCredentialsFn: async () => ({ token: 'token', credentialProvenance: 'stored_session' } as any),
+      readCredentialsFn: async () => ({
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32) },
+        credentialProvenance: 'stored_session',
+      }),
       listMachinesFn: async () => { throw new Error('dependency exploded'); },
     });
     expect(process.exitCode).toBe(2);

@@ -345,13 +345,19 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       registration: {
         id: 'github',
         adapter: {
-          async probe() {
-            return await services.resolveScmHostingTokenMaterialization?.({
-              kind: 'scm_hosting_token',
-              providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
-              host: 'github.com',
-              provider: githubProvider,
-            });
+          pullRequests: {
+            getPullRequestAuthProfileKey: () => null,
+            async listPullRequests() {
+              await services.resolveScmHostingTokenMaterialization?.({
+                kind: 'scm_hosting_token',
+                providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+                host: 'github.com',
+                provider: githubProvider,
+              });
+              return [];
+            },
+            getPullRequest: async () => null,
+            createPullRequest: async () => { throw new Error('not used'); },
           },
         },
       },
@@ -362,11 +368,9 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
     });
     const registry = await services.resolveScmHostingProviderRegistry?.();
-    const adapter = registry?.getAdapter(
-      GITHUB_SCM_HOSTING_PROVIDER_ID,
-    ) as Readonly<{ probe(): Promise<unknown> }>;
+    const adapter = registry?.getPullRequests(GITHUB_SCM_HOSTING_PROVIDER_ID);
 
-    const pending = adapter.probe();
+    const pending = adapter!.listPullRequests({ provider: githubProvider, head: 'feature' });
     await vi.waitFor(() => {
       expect(materialize).toHaveBeenCalledOnce();
     });
@@ -411,12 +415,18 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       registration: {
         id: 'github',
         adapter: {
-          async probe() {
-            return await services.executeCommand?.({
-              executable: { kind: 'systemTool', id: 'github-cli' },
-              args: ['--version'],
-              timeoutMs: 1_000,
-            });
+          pullRequests: {
+            getPullRequestAuthProfileKey: () => null,
+            async listPullRequests() {
+              await services.executeCommand?.({
+                executable: { kind: 'systemTool', id: 'github-cli' },
+                args: ['--version'],
+                timeoutMs: 1_000,
+              });
+              return [];
+            },
+            getPullRequest: async () => null,
+            createPullRequest: async () => { throw new Error('not used'); },
           },
         },
       },
@@ -442,10 +452,8 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         allowedOrigins: [],
       },
     });
-    const adapter = registry?.getAdapter(GITHUB_SCM_HOSTING_PROVIDER_ID) as Readonly<{
-      probe(): Promise<unknown>;
-    }>;
-    await expect(adapter.probe()).resolves.toMatchObject({ ok: true, stdout: 'ok' });
+    const adapter = registry?.getPullRequests(GITHUB_SCM_HOSTING_PROVIDER_ID);
+    await expect(adapter?.listPullRequests({ provider: githubProvider, head: 'feature' })).resolves.toEqual([]);
     expect(executeCommand).toHaveBeenCalledWith(expect.objectContaining({
       executable: { kind: 'systemTool', id: 'github-cli' },
     }), undefined);
@@ -467,12 +475,18 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         registration: {
           id: 'scm.github',
           adapter: {
-            async probe() {
-              return await services.executeCommand?.({
-                executable: { kind: 'managedDependency', id: 'forge-cli' },
-                args: [],
-                timeoutMs: 2_000,
-              });
+            pullRequests: {
+              getPullRequestAuthProfileKey: () => null,
+              async listPullRequests() {
+                await services.executeCommand?.({
+                  executable: { kind: 'managedDependency', id: 'forge-cli' },
+                  args: [],
+                  timeoutMs: 2_000,
+                });
+                return [];
+              },
+              getPullRequest: async () => null,
+              createPullRequest: async () => { throw new Error('not used'); },
             },
           },
         },
@@ -495,9 +509,9 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       managedDependencies: { resolveExecutable },
     });
     const registry = await services.resolveScmHostingProviderRegistry?.();
-    const adapter = registry?.getAdapter('scm-github/scm.github') as Readonly<{ probe(): Promise<unknown> }>;
+    const adapter = registry?.getPullRequests('scm-github/scm.github');
 
-    await expect(adapter.probe()).resolves.toMatchObject({ ok: true, stdout: 'managed-ok' });
+    await expect(adapter?.listPullRequests({ provider: githubProvider, head: 'feature' })).resolves.toEqual([]);
     expect(resolveExecutable).toHaveBeenCalledWith(
       { kind: 'managedDependency', id: 'forge-cli' },
       'scm-github',
@@ -644,7 +658,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         generation: 'test-generation',
         registration: {
           id: 'github',
-          adapter: githubPullRequestAdapter,
+          adapter: { pullRequests: githubPullRequestAdapter },
         },
       });
       const services = createHostScmHostingProviderRuntimeServices({
@@ -653,11 +667,11 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
         resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
       });
       const registry = await services.resolveScmHostingProviderRegistry?.();
-      const adapter = registry?.getAdapter(
+      const adapter = registry?.getPullRequests(
         GITHUB_SCM_HOSTING_PROVIDER_ID,
-      ) as typeof githubPullRequestAdapter;
+      );
 
-      await expect(adapter.listPullRequests({
+      await expect(adapter!.listPullRequests({
         provider: githubProvider,
         head: 'feature/connected-account',
         runtimeServices: services,
@@ -744,18 +758,18 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
             generation: 'test-generation',
             registration: {
               id: 'bitbucket',
-              adapter: bitbucketApiAdapter,
+              adapter: { pullRequests: bitbucketApiAdapter },
             },
           },
         ]]),
         resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
       });
       const registry = await services.resolveScmHostingProviderRegistry?.();
-      const adapter = registry?.getAdapter(
+      const adapter = registry?.getPullRequests(
         BITBUCKET_SCM_HOSTING_PROVIDER_ID,
-      ) as typeof bitbucketApiAdapter;
+      );
 
-      await expect(adapter.listPullRequests({
+      await expect(adapter!.listPullRequests({
         provider: bitbucketProvider,
         head: 'feature/connected-account',
         runtimeServices: services,

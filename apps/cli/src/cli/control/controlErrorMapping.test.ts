@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { mapUnknownErrorToControlError } from './controlErrorMapping';
 
 describe('mapUnknownErrorToControlError', () => {
+  it('maps SDK transport authentication and network failures as expected errors', () => {
+    expect(mapUnknownErrorToControlError(Object.assign(new Error('Unauthorized'), { name: 'HappierTransportError', statusCode: 401 }))).toMatchObject({ code: 'not_authenticated', unexpected: false });
+    expect(mapUnknownErrorToControlError(Object.assign(new Error('Bad gateway'), { name: 'HappierTransportError', statusCode: 502 }))).toMatchObject({ code: 'server_unreachable', unexpected: false });
+  });
+
+  it('keeps inventory and subcommand failures expected', () => {
+    expect(mapUnknownErrorToControlError(Object.assign(new Error('inventory'), { code: 'machine_inventory_unavailable' }))).toMatchObject({ code: 'machine_inventory_unavailable', unexpected: false });
+    expect(mapUnknownErrorToControlError(Object.assign(new Error('subcommand'), { code: 'unknown_subcommand' }))).toMatchObject({ code: 'unknown_subcommand', unexpected: false });
+  });
   it('maps an invalid external API token to the canonical authentication error', () => {
     const error = Object.assign(new Error('The Happier API returned HTTP 401.'), {
       code: 'invalid_token',

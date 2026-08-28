@@ -4,7 +4,6 @@ import { CODEX_ACP_RUNTIME_LAUNCH_HELPERS } from '@happier-dev/plugins-codex/age
 
 import {
   getCodexAcpDepStatus,
-  installCodexAcp,
   resolveExistingCodexAcpManagedBinPath,
 } from '@/capabilities/deps/codexAcp';
 import { logger } from '@/ui/logger';
@@ -22,7 +21,7 @@ type DetectDeps = Readonly<{
 
 type BackgroundUpdateDeps = Readonly<{
   getCodexAcpDepStatus: typeof getCodexAcpDepStatus;
-  installCodexAcp: typeof installCodexAcp;
+  installOrUpgrade: RuntimeInstallableAdapter['installOrUpgrade'];
 }>;
 
 function hasExplicitCodexAcpOverride(env: NodeJS.ProcessEnv): boolean {
@@ -129,13 +128,8 @@ export async function resolveCodexAcpLaunchCommand(
 }
 
 export async function runCodexAcpBackgroundAutoUpdateCheck(
-  depsOverrides: Partial<BackgroundUpdateDeps> = {},
+  deps: BackgroundUpdateDeps,
 ): Promise<void> {
-  const deps: BackgroundUpdateDeps = {
-    getCodexAcpDepStatus: depsOverrides.getCodexAcpDepStatus ?? getCodexAcpDepStatus,
-    installCodexAcp: depsOverrides.installCodexAcp ?? installCodexAcp,
-  };
-
   const status = await deps.getCodexAcpDepStatus({ includeLatestVersion: true, onlyIfInstalled: true });
   if (status.installed !== true) return;
 
@@ -144,7 +138,7 @@ export async function runCodexAcpBackgroundAutoUpdateCheck(
   if (!installedVersion || !latestVersion) return;
   if (compareVersions(latestVersion, installedVersion) <= 0) return;
 
-  const installResult = await deps.installCodexAcp();
+  const installResult = await deps.installOrUpgrade();
   if (!installResult.ok) {
     logger.warn(
       `[codex-acp] background upgrade failed: ${installResult.errorMessage}${
@@ -156,14 +150,19 @@ export async function runCodexAcpBackgroundAutoUpdateCheck(
 
 export function createCodexAcpRuntimeInstallableAdapter(
   descriptor: Readonly<Pick<InstallableDependencyDescriptor, 'key' | 'capabilityId'>>,
+  hostAdapter: RuntimeInstallableAdapter,
 ): RuntimeInstallableAdapter {
   return {
+    ...hostAdapter,
     key: descriptor.key as InstallableKey,
     capabilityId: descriptor.capabilityId as Extract<CapabilityId, `dep.${string}`>,
     detectCapabilityStatus: getCodexAcpDepStatus,
     detectLaunchResolution: (params) => detectCodexAcpLaunchResolution(params),
     resolveLaunchCommand: (params) => resolveCodexAcpLaunchCommand(params),
-    installOrUpgrade: installCodexAcp,
-    runBackgroundAutoUpdateCheck: runCodexAcpBackgroundAutoUpdateCheck,
+    installOrUpgrade: hostAdapter.installOrUpgrade,
+    runBackgroundAutoUpdateCheck: () => runCodexAcpBackgroundAutoUpdateCheck({
+      getCodexAcpDepStatus,
+      installOrUpgrade: hostAdapter.installOrUpgrade,
+    }),
   };
 }

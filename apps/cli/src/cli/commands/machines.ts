@@ -6,12 +6,15 @@ import { assertCommandArguments, readCommandPositionals } from '@/cli/commands/s
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 const USAGE = 'Usage: happier machines list [--json]';
-type Machine = Readonly<{ id: string; label?: string; active?: boolean; revokedAt?: number | null; replacedByMachineId?: string | null }>;
+type AccountMachines = Awaited<ReturnType<
+  ReturnType<typeof createCliActionExecutorFromCredentials>['listAccountMachines']
+>>;
 type MachinesDeps = Readonly<{
   readCredentialsFn: () => Promise<StoredCredentials | null>;
-  listMachinesFn?: (credentials: StoredCredentials, signal?: AbortSignal) => Promise<readonly Machine[]>;
+  listMachinesFn?: (credentials: StoredCredentials, signal?: AbortSignal) => Promise<AccountMachines>;
 }>;
 
 function showHelp(): void {
@@ -23,9 +26,9 @@ function showHelp(): void {
   }));
 }
 
-async function list(credentials: StoredCredentials, signal?: AbortSignal): Promise<readonly Machine[]> {
+async function list(credentials: StoredCredentials, signal?: AbortSignal): Promise<AccountMachines> {
   const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
-  const executor = createCliActionExecutorFromCredentials({ credentials } as any) as any;
+  const executor = createCliActionExecutorFromCredentials({ credentials });
   return await executor.listAccountMachines(signal);
 }
 
@@ -43,7 +46,7 @@ export async function handleMachinesCommand(args: string[], deps: Partial<Machin
     if (wantsJson(args)) { await printJsonEnvelope({ ok: true, kind: 'machines_list', data: { machines } }); return; }
     console.log(machines.length ? definitionList(machines.map((machine) => ({
       label: machine.id,
-      value: `${machine.label && machine.label !== machine.id ? `${machine.label} — ` : ''}${machine.revokedAt !== null && machine.revokedAt !== undefined ? 'revoked' : machine.active === false ? 'inactive' : 'active'}${machine.replacedByMachineId ? ` -> ${machine.replacedByMachineId}` : ''}`,
+      value: `${machine.revokedAt !== null ? 'revoked' : machine.active ? 'active' : 'inactive'}${machine.replacedByMachineId ? ` -> ${machine.replacedByMachineId}` : ''}`,
     }))) : '(no machines registered)');
   } catch (error) {
     const mapped = mapUnknownErrorToControlError(error);

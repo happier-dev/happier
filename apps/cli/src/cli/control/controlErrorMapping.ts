@@ -20,6 +20,19 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
   }
 
+  if (rawCode === 'unknown_subcommand' || rawCode === 'machine_inventory_unavailable') {
+    return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
+  }
+
+  if (anyErr?.name === 'HappierTransportError') {
+    const statusCode = Number(anyErr?.statusCode ?? anyErr?.status);
+    return {
+      code: statusCode === 401 || statusCode === 403 ? 'not_authenticated' : 'server_unreachable',
+      unexpected: false,
+      ...(error instanceof Error && error.message ? { message: error.message } : {}),
+    };
+  }
+
   // Common network failures from axios/node.
   if (rawCode === 'ECONNREFUSED' || rawCode === 'ECONNRESET' || rawCode === 'ENOTFOUND' || rawCode === 'EAI_AGAIN') {
     return { code: 'server_unreachable', unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };

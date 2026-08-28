@@ -608,7 +608,6 @@ export type ExternalSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetada
     observedAtMs?: number,
     viewedAtMs?: number,
   },
-  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
 };
 
 export type ExternalHistoryImportMetadataV1 = {
@@ -676,7 +675,6 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
   claudeLastAssistantUuid?: string | null, // Legacy Claude SDK assistant message UUID metadata (not used for normal resume)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
-  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   grokSessionId?: string, // Grok ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)

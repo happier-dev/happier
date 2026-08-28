@@ -58,6 +58,7 @@ type SessionHandoffSourceExportStoreLike = Readonly<{
   writeAgentBundleFile: (params: Readonly<{
     handoffId: string;
     agentBundle: SessionHandoffAgentBundle;
+    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   }>) => Promise<Readonly<{
     transferId: string;
     filePath: string;
@@ -94,6 +95,7 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
     metadata: Record<string, unknown>;
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
     preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
+    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   }>) => Promise<PrepareStartedStateResult>;
   exportSessionBundle: (
     metadata: Record<string, unknown>,
@@ -219,6 +221,21 @@ export function createSessionHandoffStartActionHandler(
   return async (raw: unknown, context?: RpcHandlerContext) => {
     const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
+
+    const reportBundleProgress = (label: string) => (
+      progress: Readonly<{ currentBytes: number; totalBytes: number }>,
+    ) => {
+      context?.localActionContext?.operationOwnerUpdate?.update({
+        progress: progress.totalBytes > 0
+          ? {
+              phase: 'packaging_session_state',
+              current: Math.min(progress.currentBytes, progress.totalBytes),
+              total: progress.totalBytes,
+              label,
+            }
+          : { phase: 'packaging_session_state', label },
+      });
+    };
 
     const metadata = await loadSessionMetadata(parsed.data.sessionId, parsed.data.sourceMachineId);
     if (!metadata) {
@@ -417,6 +434,7 @@ export function createSessionHandoffStartActionHandler(
           request: parsed.data,
           metadata,
           sourceStopState,
+          onProgress: reportBundleProgress('Packaging session state'),
         }));
 
         return {
@@ -554,6 +572,7 @@ export function createSessionHandoffStartActionHandler(
             sourceStopState,
             recordDeferredStartFailure,
             claimMaintenance,
+            onProgress: reportBundleProgress('Packaging session state'),
           }));
           deferredStartEndpointCandidates = deferredDirectPeerStart.deferredStartEndpointCandidates;
           deferredStartWorkPromise = deferredDirectPeerStart.deferredStartWorkPromise;
@@ -591,6 +610,7 @@ export function createSessionHandoffStartActionHandler(
         prepareStartedState,
         recordDeferredStartFailure,
         claimMaintenance,
+        onProgress: reportBundleProgress('Packaging session state'),
       });
 
       return {
@@ -623,6 +643,7 @@ export function createSessionHandoffStartActionHandler(
         request: parsed.data,
         metadata,
         sourceStopState: stopState,
+        onProgress: reportBundleProgress('Packaging session state'),
       }));
 
       return {

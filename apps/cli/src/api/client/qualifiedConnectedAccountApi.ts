@@ -26,10 +26,12 @@ import {
     QualifiedConnectedServiceUsageSourceResolveV4Schema,
     QualifiedConnectedServiceUsageSourceResolutionV4Schema,
     QualifiedProviderAccountUsageRecordQueryV4Schema,
+    QualifiedProviderAccountUsageReadErrorV4Schema,
     QualifiedProviderAccountUsageRecordResponseV4Schema,
     QualifiedProviderAccountUsageWriteSuccessV4Schema,
     QualifiedProviderAccountUsageWriteV4Schema,
     encodeQualifiedConnectedAccountV4StructuredQueryValue,
+    sameQualifiedConnectedAccountGroupRef,
     type BuiltInLegacyConnectedAccountOperation,
     type BuiltInLegacyConnectedServiceId,
     type QualifiedConnectedAccountConfigurationTargetV4,
@@ -132,6 +134,16 @@ export class QualifiedConnectedAccountGroupConflictError extends Error {
         this.generation = params.generation ?? null;
         this.runtimeStateRevision =
             params.runtimeStateRevision ?? null;
+    }
+}
+
+export class QualifiedProviderAccountUsageReadConflictError extends HttpStatusError {
+    readonly status = 409;
+    readonly code = "provider_account_usage_storage_mode_mismatch";
+
+    constructor() {
+        super(409, "provider_account_usage_storage_mode_mismatch");
+        this.name = "QualifiedProviderAccountUsageReadConflictError";
     }
 }
 
@@ -547,9 +559,15 @@ export async function readQualifiedConnectedAccountGroupV4(
             `Qualified Connected Account group read returned ${response.status}`,
         );
     }
-    return QualifiedConnectedAccountGroupResponseV4Schema.parse(
+    const resolvedGroup = QualifiedConnectedAccountGroupResponseV4Schema.parse(
         response.data,
     ).group;
+    if (!sameQualifiedConnectedAccountGroupRef(resolvedGroup.ref, group)) {
+        throw new QualifiedConnectedAccountCompatibilityError(
+            "connected_account_v4_contract_violation",
+        );
+    }
+    return resolvedGroup;
 }
 
 export async function setQualifiedConnectedAccountGroupActiveAccountV4(
@@ -996,11 +1014,16 @@ export async function readQualifiedProviderAccountUsageRecordV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
-            validateStatus: (status) => status === 200 || status === 404,
+            validateStatus: (status) =>
+                status === 200 || status === 404 || status === 409,
             ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
+    if (response.status === 409) {
+        QualifiedProviderAccountUsageReadErrorV4Schema.parse(response.data);
+        throw new QualifiedProviderAccountUsageReadConflictError();
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified provider-account usage record read returned ${response.status}`,

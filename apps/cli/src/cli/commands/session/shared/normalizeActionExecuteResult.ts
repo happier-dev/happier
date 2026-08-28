@@ -37,7 +37,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     };
   }
 
-  const data = (result as any).result;
+  const data = result.result;
   const dataObj = data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
   if (dataObj && dataObj.ok === false) {
     const errorCode = normalizeErrorCode(dataObj.errorCode) ?? normalizeErrorCode(dataObj.code) ?? 'action_failed';

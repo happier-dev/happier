@@ -2,7 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 const { kiroHandlerSpy, primeResolvedContributionRegistryMock } = vi.hoisted(() => ({
   kiroHandlerSpy: vi.fn(async () => {}),
-  primeResolvedContributionRegistryMock: vi.fn(async () => {}),
+  primeResolvedContributionRegistryMock: vi.fn(async () => ({
+    commands: [],
+    catalogEntriesById: {
+      kiro: {
+        id: 'kiro',
+        cliSubcommand: 'kiro',
+        getCliCommandHandler: async () => kiroHandlerSpy,
+      },
+    },
+    agentDefinitionsById: new Map(),
+  })),
 }));
 
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
@@ -29,6 +39,7 @@ import {
   commandRegistry,
   ensureMergedAgentCommandRegistryLoaded,
   findCommandDispatchDescriptor,
+  resolveCommandCompletionCandidates,
   resolveCommandDispatchRegistry,
 } from './commandRegistry';
 import { resolveCommandSurfaceCatalog } from './commandSurfaceManifest';
@@ -84,6 +95,19 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.machine).toBeTypeOf('function');
   });
 
+  it('keeps root actions and machines aligned across dispatch, help, and completion', () => {
+    const surfaceCatalog = resolveCommandSurfaceCatalog();
+
+    for (const command of ['actions', 'machines']) {
+      expect(findCommandDispatchDescriptor(command)).toMatchObject({ command });
+      expect(surfaceCatalog.findByCommand(command)).toMatchObject({
+        command,
+        rootHelpLabel: `happier ${command}`,
+      });
+      expect(resolveCommandCompletionCandidates([command.slice(0, 3)])).toContain(command);
+    }
+  });
+
   it('registers bridge command namespace', () => {
     expect(commandRegistry.bridge).toBeTypeOf('function');
   });
@@ -112,11 +136,13 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.providers).toBeTypeOf('function');
   });
 
-  it('reserves singular provider without registering it as an executable alias', () => {
+  it('keeps the dated singular agent and provider aliases executable', () => {
     const surfaceCatalog = resolveCommandSurfaceCatalog();
 
-    expect(commandRegistry.provider).toBeUndefined();
-    expect(findCommandDispatchDescriptor('provider')).toBeNull();
+    expect(commandRegistry.agent).toBe(commandRegistry.agents);
+    expect(commandRegistry.provider).toBe(commandRegistry.providers);
+    expect(findCommandDispatchDescriptor('agent')).toMatchObject({ command: 'agent' });
+    expect(findCommandDispatchDescriptor('provider')).toMatchObject({ command: 'provider' });
     expect(surfaceCatalog.findByCommand('provider')).toMatchObject({
       command: 'provider',
       allowTmux: false,

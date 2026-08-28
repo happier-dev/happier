@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { PublicActionResultById } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -48,7 +49,7 @@ export async function cmdSessionStop(
     { sessionId: idOrPrefix },
     { surface: 'cli', defaultSessionId: null },
   );
-  const normalized = normalizeActionExecuteResult(actionRes as any);
+  const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -61,7 +62,7 @@ export async function cmdSessionStop(
     throw new Error(normalized.errorCode);
   }
 
-  const result = normalized.data as any;
+  const result = normalized.data as PublicActionResultById['session.stop'];
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
     return;
   }

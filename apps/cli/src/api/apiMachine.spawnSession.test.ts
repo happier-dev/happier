@@ -88,7 +88,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     });
   });
 
-  it('forwards resume-session vendor resume id using canonical codex backend mode', async () => {
+  it('normalizes released resume-session Codex mode into runtimeDescriptorV1', async () => {
     const machine: Machine = {
       id: 'machine-test',
       encryptionKey: new Uint8Array(32).fill(7),
@@ -140,7 +140,11 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         existingSessionId: 'happy-session-1',
         resume: 'codex-session-123',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer' },
+        },
         attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
         initialTranscriptAfterSeq: 199,
         environmentVariables: {
@@ -149,6 +153,7 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
         },
       }),
     );
+    expect(captured).not.toHaveProperty('codexBackendMode');
     expect(captured).not.toHaveProperty('experimentalCodexAcp');
   });
 
@@ -196,9 +201,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         agentModeId: 'plan',
         agentModeUpdatedAt: 321,
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer' },
+        },
       }),
     );
+    expect(captured).not.toHaveProperty('codexBackendMode');
     expect(captured).not.toHaveProperty('workspaceId');
     expect(captured).not.toHaveProperty('workspaceLocationId');
     expect(captured).not.toHaveProperty('workspaceCheckoutId');

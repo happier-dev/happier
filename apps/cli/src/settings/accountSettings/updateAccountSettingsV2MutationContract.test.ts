@@ -8,6 +8,7 @@ import {
 
 import type { Credentials, TokenOnlyCredentials } from '@/persistence';
 import {
+  updateAccountSettingsV2OnceAgainstLatest,
   updateAccountSettingsV2Once,
   updateAccountSettingsV2WithRetry,
   type UpdateAccountSettingsV2WithRetryParams,
@@ -28,6 +29,7 @@ const callbackRetryParams = {
   credentials: createCredentials(),
   mutate: (settings: Readonly<Record<string, unknown>>) => settings,
 };
+// @ts-expect-error callback-derived semantic mutations are one-shot, never retryable
 const callbackRetryMustBeAccepted: UpdateAccountSettingsV2WithRetryParams = callbackRetryParams;
 void callbackRetryMustBeAccepted;
 
@@ -179,12 +181,12 @@ describe('updateAccountSettingsV2WithRetry canonical mutation contract', () => {
     });
   });
 
-  it('re-evaluates a retryable callback against every CAS winner instead of replaying its first raw result', async () => {
+  it('evaluates a callback mutation once and returns the first CAS conflict without replay', async () => {
     const observedSourceValues: unknown[] = [];
     const posts: AccountSettingsStoredContentEnvelope[] = [];
     let attempt = 0;
 
-    const result = await updateAccountSettingsV2WithRetry({
+    const result = await updateAccountSettingsV2OnceAgainstLatest({
       credentials: createCredentials(),
       mutate: (settings) => {
         observedSourceValues.push(settings.providerMigrationSource);
@@ -215,11 +217,10 @@ describe('updateAccountSettingsV2WithRetry canonical mutation contract', () => {
       },
     });
 
-    expect(result).toMatchObject({ status: 'applied', version: 9 });
-    expect(observedSourceValues).toEqual(['initial', 'winner']);
+    expect(result).toEqual({ status: 'conflict', currentVersion: 8 });
+    expect(observedSourceValues).toEqual(['initial']);
     expect(posts).toEqual([
       { t: 'plain', v: { providerMigrationSource: 'initial', providerMigrationWitness: 'derived:initial' } },
-      { t: 'plain', v: { providerMigrationSource: 'winner', providerMigrationWitness: 'derived:winner' } },
     ]);
   });
 

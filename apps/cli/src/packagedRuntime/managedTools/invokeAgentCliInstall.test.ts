@@ -5,6 +5,53 @@ import type { InstallAgentCliResult } from '@happier-dev/cli-common/agents';
 import { invokeAgentCliInstall } from './invokeAgentCliInstall';
 
 describe('invokeAgentCliInstall', () => {
+  it('installs an external Agent through its normalized runtime descriptor', async () => {
+    const runtimeSpec = {
+      kindVersion: 1 as const,
+      id: 'acme-agent',
+      title: 'Acme Agent CLI',
+      binaryName: 'acme-agent',
+      sourcePreferenceDefault: 'system-first' as const,
+      managedInstall: {
+        kind: 'managed_package' as const,
+        packageName: '@acme/agent-cli',
+        binaryName: 'acme-agent',
+      },
+      manualInstallKind: 'command' as const,
+      manualInstallRecipes: null,
+      acceptsJavaScriptFileOverride: false,
+    };
+    const installAgentCliForRuntime = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>()
+      .mockResolvedValue({
+        ok: true,
+        alreadyInstalled: false,
+        logPath: null,
+        plan: {
+          agentId: 'acme-agent',
+          title: 'Acme Agent CLI',
+          binaries: ['acme-agent'],
+          platform: 'linux',
+          docsUrl: null,
+          commands: [],
+          requiresAdmin: false,
+          installMode: 'managed_package',
+          managedInstall: runtimeSpec.managedInstall,
+        },
+      });
+    const bundledInstaller = vi.fn();
+
+    await invokeAgentCliInstall({
+      agentId: 'acme-agent',
+      runtimeSpec,
+      nodePlatform: 'linux',
+      installAgentCli: bundledInstaller,
+      installAgentCliForRuntime,
+    });
+
+    expect(installAgentCliForRuntime).toHaveBeenCalledWith(expect.objectContaining({ runtimeSpec }));
+    expect(bundledInstaller).not.toHaveBeenCalled();
+  });
+
   it('returns unsupported-platform when the current platform cannot install agent CLIs', async () => {
     const result = await invokeAgentCliInstall({
       agentId: 'codex',

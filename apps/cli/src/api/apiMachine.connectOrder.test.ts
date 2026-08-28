@@ -35,6 +35,7 @@ function registerRequiredMachineControlHandlers(rpcHandlerManager: RpcHandlerMan
     RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
     RPC_METHODS.STOP_SESSION,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+    RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
   ]) {
     rpcHandlerManager.registerHandler(method, async () => ({ ok: true }));
   }
@@ -70,6 +71,11 @@ vi.mock('@/ui/logger', () => ({
     warn: loggerWarnMock,
     debugLargeJson: () => undefined,
   },
+}));
+
+vi.mock('@/plugins/daemon/currentCatalog', () => ({
+  readCurrentDaemonPluginCatalog: async () => [],
+  readCurrentDaemonPluginCatalogSnapshot: async () => ({ plugins: [], tools: [] }),
 }));
 
 describe('ApiMachineClient connect ordering', () => {
@@ -180,8 +186,10 @@ describe('ApiMachineClient connect ordering', () => {
       expect(callOrder).toEqual([
         'attach:machine-socket-1',
         'register:machine-socket-1',
+        'register:machine-socket-1',
         'state:machine-socket-1',
         'attach:machine-socket-2',
+        'register:machine-socket-2',
         'register:machine-socket-2',
         'state:machine-socket-2',
       ]);
@@ -247,6 +255,7 @@ describe('ApiMachineClient connect ordering', () => {
         expect.arrayContaining([
           RPC_METHODS.SESSION_SPAWN_NEW,
           SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+          RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
         ]),
         expect.any(Object),
       ));
@@ -364,6 +373,7 @@ describe('ApiMachineClient connect ordering', () => {
       RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
       RPC_METHODS.STOP_SESSION,
       SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
     ];
     const registrationAttempts = new Map<string, number>();
     const acknowledgeReplay: { current: (() => void) | null } = { current: null };
@@ -533,6 +543,7 @@ describe('ApiMachineClient connect ordering', () => {
         RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
         RPC_METHODS.STOP_SESSION,
         SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
       ]) {
         firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
       }
@@ -546,6 +557,7 @@ describe('ApiMachineClient connect ordering', () => {
         RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
         RPC_METHODS.STOP_SESSION,
         SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
       ]) {
         secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
       }
@@ -714,7 +726,7 @@ describe('ApiMachineClient connect ordering', () => {
     }
   }, 5_000);
 
-  it('republishes capabilities on a later registration acknowledgement when the readiness publication failed', async () => {
+  it('republishes capabilities while registration acknowledgements continue after a readiness publication fails', async () => {
     vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
     const capabilityPayloads: unknown[] = [];
     let failNextAdvertisedCapabilityPublish = true;
@@ -775,15 +787,13 @@ describe('ApiMachineClient connect ordering', () => {
         RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
         RPC_METHODS.STOP_SESSION,
         SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+        RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
       ]) {
         socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
       }
-      await vi.waitFor(() => expect(advertisedCapabilityPublishCount()).toBe(1));
-
       // The server rejected that publication, so the machine is not advertising
-      // sessionSpawn. A failed publication must not latch the connection into a
-      // state where no later acknowledgement can restore it.
-      socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${RPC_METHODS.STOP_SESSION}` });
+      // sessionSpawn. A failed publication must not latch the connection while
+      // the remaining registration acknowledgements can still restore it.
       await vi.waitFor(() => expect(advertisedCapabilityPublishCount()).toBe(2));
       expect(capabilityPayloads.at(-1)).toEqual({
         machineId: 'machine-1',

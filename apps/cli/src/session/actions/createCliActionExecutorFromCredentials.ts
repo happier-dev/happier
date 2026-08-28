@@ -122,17 +122,13 @@ function actionResolutionFailure(params: Readonly<{
   code: string;
   candidates?: readonly string[];
 }>): ActionExecuteResult {
-  // CLI Session commands historically expose selector candidates through their
-  // existing nested Action-result normalization. Preserve that command contract
-  // while the public Action request has not yet been admitted.
   return {
-    ok: true,
-    result: {
-      ok: false,
-      errorCode: params.code,
-      error: params.code,
-      ...(params.candidates && params.candidates.length > 0 ? { candidates: params.candidates } : {}),
-    },
+    ok: false,
+    errorCode: params.code,
+    error: params.code,
+    ...(params.candidates && params.candidates.length > 0
+      ? { details: { candidates: params.candidates } }
+      : {}),
   };
 }
 

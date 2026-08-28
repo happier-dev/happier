@@ -65,76 +65,79 @@ describe('buildPythonPtyRelaySpawnCommand', () => {
     expect(relaySource).toContain('_write_all(master_fd, data)');
   });
 
-  const pythonExecutable = resolvePythonPtyRelayExecutable({
-    platform: process.platform,
-    env: process.env,
-  });
-  const itIfPythonRelayCanRun = pythonExecutable ? it : it.skip;
+  describe.skipIf(!resolvePythonPtyRelayExecutable({ platform: process.platform, env: process.env }))(
+    'POSIX Python relay process integration (requires a discovered Python executable)', () => {
+      const pythonExecutable = resolvePythonPtyRelayExecutable({
+        platform: process.platform,
+        env: process.env,
+      })!;
 
-  itIfPythonRelayCanRun('terminates the child process when relay stdin closes', async () => {
-    const invocation = buildPythonPtyRelaySpawnCommand({
-      pythonExecutable: pythonExecutable!,
-      file: pythonExecutable!,
-      args: ['-c', 'import time; time.sleep(60)'],
-    });
-    const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
-    const timeout = Symbol('timeout');
-    const closePromise = new Promise<unknown>((resolve) => {
-      child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
-      child.once('error', resolve);
-    });
+      it('terminates the child process when relay stdin closes', async () => {
+        const invocation = buildPythonPtyRelaySpawnCommand({
+          pythonExecutable,
+          file: pythonExecutable,
+          args: ['-c', 'import time; time.sleep(60)'],
+        });
+        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
+        const timeout = Symbol('timeout');
+        const closePromise = new Promise<unknown>((resolve) => {
+          child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
+          child.once('error', resolve);
+        });
 
-    child.stdin.end();
+        child.stdin.end();
 
-    try {
-      await expect(Promise.race([
-        closePromise,
-        new Promise((resolve) => setTimeout(() => resolve(timeout), 1_500)),
-      ])).resolves.not.toBe(timeout);
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-      }
-    }
-  }, 5_000);
+        try {
+          await expect(Promise.race([
+            closePromise,
+            new Promise((resolve) => setTimeout(() => resolve(timeout), 1_500)),
+          ])).resolves.not.toBe(timeout);
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGKILL');
+          }
+        }
+      }, 5_000);
 
-  itIfPythonRelayCanRun('creates a controlling terminal for the child process', async () => {
-    const childScript = [
-      'import os, sys',
-      'try:',
-      '    ok = os.isatty(0) and os.tcgetpgrp(0) == os.getpgrp()',
-      'except OSError:',
-      '    ok = False',
-      'sys.stdout.write("controlling=" + ("yes" if ok else "no"))',
-    ].join('\n');
-    const invocation = buildPythonPtyRelaySpawnCommand({
-      pythonExecutable: pythonExecutable!,
-      file: pythonExecutable!,
-      args: ['-c', childScript],
-    });
-    const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
-    const output: Buffer[] = [];
-    child.stdout.on('data', (chunk: string | Buffer) => {
-      output.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
-    });
-    const timeout = Symbol('timeout');
-    const closePromise = new Promise<unknown>((resolve) => {
-      child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
-      child.once('error', resolve);
-    });
+      it('creates a controlling terminal for the child process', async () => {
+        const childScript = [
+          'import os, sys',
+          'try:',
+          '    ok = os.isatty(0) and os.tcgetpgrp(0) == os.getpgrp()',
+          'except OSError:',
+          '    ok = False',
+          'sys.stdout.write("controlling=" + ("yes" if ok else "no"))',
+        ].join('\n');
+        const invocation = buildPythonPtyRelaySpawnCommand({
+          pythonExecutable,
+          file: pythonExecutable,
+          args: ['-c', childScript],
+        });
+        const child = spawnChildProcess(invocation.command, [...invocation.args], { stdio: 'pipe' });
+        const output: Buffer[] = [];
+        child.stdout.on('data', (chunk: string | Buffer) => {
+          output.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
+        });
+        const timeout = Symbol('timeout');
+        const closePromise = new Promise<unknown>((resolve) => {
+          child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
+          child.once('error', resolve);
+        });
 
-    try {
-      await expect(Promise.race([
-        closePromise,
-        new Promise((resolve) => setTimeout(() => resolve(timeout), 1_500)),
-      ])).resolves.not.toBe(timeout);
-      expect(Buffer.concat(output).toString('utf8')).toContain('controlling=yes');
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-      }
-    }
-  }, 5_000);
+        try {
+          await expect(Promise.race([
+            closePromise,
+            new Promise((resolve) => setTimeout(() => resolve(timeout), 1_500)),
+          ])).resolves.not.toBe(timeout);
+          expect(Buffer.concat(output).toString('utf8')).toContain('controlling=yes');
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGKILL');
+          }
+        }
+      }, 5_000);
+    },
+  );
 });
 
 describe('createPythonPtyRelayProvider', () => {

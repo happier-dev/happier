@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, open, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { readWorkspaceReplicationManifestFromFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 import type { SessionHandoffAgentBundle } from '../types';
@@ -110,8 +110,10 @@ describe('sessionHandoffSourceExportStore', () => {
       await writeFile(sourcePath, sourceContents);
 
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const onProgress = vi.fn();
       const persisted = await store.writeAgentBundleFile({
         handoffId: 'handoff-binary-1',
+        onProgress,
         agentBundle: {
           agentId: 'codex',
           remoteSessionId: 'remote-session-large',
@@ -126,6 +128,11 @@ describe('sessionHandoffSourceExportStore', () => {
           }],
         } satisfies SessionHandoffAgentBundle,
       });
+
+      expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual(expect.arrayContaining([
+        { currentBytes: 0, totalBytes: sourceContents.length },
+        { currentBytes: sourceContents.length, totalBytes: sourceContents.length },
+      ]));
 
       expect(persisted.sizeBytes).toBeGreaterThan(sourceContents.length);
       expect(persisted.sizeBytes).toBeLessThan(sourceContents.length + 64 * 1024);

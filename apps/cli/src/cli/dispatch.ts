@@ -331,23 +331,6 @@ export async function dispatchCli(params: Readonly<{
   let commandDescriptor = subcommand ? findCommandDispatchDescriptor(subcommand) : null;
   let mergedCommandRegistryForSubcommand = false;
 
-  if (!commandDescriptor && subcommand === 'agent' && (args[1] === 'help' || args[1] === '--help' || args[1] === '-h')) {
-    const agentsHandler = commandRegistry.agents;
-    if (agentsHandler) {
-      await agentsHandler(buildCommandContext(['agents', ...args.slice(1)]));
-      return;
-    }
-  }
-
-  // Keep the singular discovery alias aligned with the canonical model-provider namespace.
-  if (!commandDescriptor && subcommand === 'provider' && (args[1] === 'help' || args[1] === '--help' || args[1] === '-h')) {
-    const providersHandler = commandRegistry.providers;
-    if (providersHandler) {
-      await providersHandler(buildCommandContext(['providers', ...args.slice(1)]));
-      return;
-    }
-  }
-
   if (
     !commandDescriptor
     && subcommand

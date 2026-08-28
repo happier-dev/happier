@@ -14,6 +14,7 @@ export function startDeferredWork(input: Readonly<{
   request: SessionHandoffStartRequest;
   metadata: Record<string, unknown>;
   preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   stopSessionForHandoff?: (sessionId: string) => Promise<SessionHandoffSourceStopState>;
   prepareStartedState: (params: Readonly<{
     handoffId: string;
@@ -21,6 +22,7 @@ export function startDeferredWork(input: Readonly<{
     metadata: Record<string, unknown>;
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
     preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
+    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   }>) => Promise<unknown>;
   recordDeferredStartFailure: (error: unknown) => void;
   claimMaintenance: ExternalSessionOperationClaimMaintenance;
@@ -42,6 +44,7 @@ export function startDeferredWork(input: Readonly<{
         request: input.request,
         metadata: input.metadata,
         sourceStopState: actualSourceStopState,
+        ...(input.onProgress ? { onProgress: input.onProgress } : {}),
         ...(input.preExportedAgentBundle ? { preExportedAgentBundle: input.preExportedAgentBundle } : {}),
       }));
     })();

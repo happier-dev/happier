@@ -212,6 +212,7 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
     async writeAgentBundleFile(params: Readonly<{
       handoffId: string;
       agentBundle: SessionHandoffAgentBundle;
+      onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
     }>): Promise<z.infer<typeof AgentBundleFileSchema>> {
       const handoffId = assertSafeHandoffId(params.handoffId);
       const directory = resolveHandoffDirectory(activeServerDir, handoffId);
@@ -220,6 +221,7 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       const artifact = await writeSessionHandoffAgentBundleArtifact({
         agentBundle: params.agentBundle,
         filePath,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       });
       return {
         transferId: buildSessionHandoffAgentBundleTransferId(handoffId),

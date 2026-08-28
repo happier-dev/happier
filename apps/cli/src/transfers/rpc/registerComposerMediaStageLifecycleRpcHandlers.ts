@@ -1,11 +1,16 @@
 import {
   COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
   ComposerContentHandleV1Schema,
+  ComposerInstanceIdSchema,
+  ComposerRefV1Schema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import type { ComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
+import type {
+  ComposerMediaStageClaimant,
+  ComposerMediaStageStore,
+} from '@/transfers/staging/composerMediaStageStore';
 
 type ComposerMediaStageReleaseResponse =
   | Readonly<{ success: true }>
@@ -17,18 +22,32 @@ type ComposerMediaStageCapabilityResponse = Readonly<{
   capability: typeof COMPOSER_MEDIA_CONTENT_CAPABILITY_V1;
 }>;
 
-function readReleaseHandle(value: unknown) {
+function readReleaseRequest(value: unknown): Readonly<{
+  handle: ReturnType<typeof ComposerContentHandleV1Schema.parse>;
+  claimant?: ComposerMediaStageClaimant;
+}> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, unknown>>;
-  if (Object.keys(record).length !== 1 || !Object.hasOwn(record, 'handle')) return null;
+  const keys = Object.keys(record);
+  if (!keys.every((key) => key === 'handle' || key === 'claimant') || !Object.hasOwn(record, 'handle')) return null;
   const handle = ComposerContentHandleV1Schema.safeParse(record.handle);
-  return handle.success ? handle.data : null;
+  if (!handle.success) return null;
+  if (record.claimant === undefined) return { handle: handle.data };
+  if (!record.claimant || typeof record.claimant !== 'object' || Array.isArray(record.claimant)) return null;
+  const claimantRecord = record.claimant as Readonly<Record<string, unknown>>;
+  if (Object.keys(claimantRecord).length !== 2) return null;
+  const composer = ComposerRefV1Schema.safeParse(claimantRecord.composer);
+  const attachmentInstanceId = ComposerInstanceIdSchema.safeParse(claimantRecord.attachmentInstanceId);
+  return composer.success && attachmentInstanceId.success
+    ? { handle: handle.data, claimant: { composer: composer.data, attachmentInstanceId: attachmentInstanceId.data } }
+    : null;
 }
 
 /**
  * The transfer-stage owner alone releases completed Composer media. The caller
- * supplies the public opaque claim; target and contribution bindings are read
- * from that claim and verified by the store.
+ * supplies the public opaque handle and, once attached, the host-private exact
+ * Composer claimant. Target, contribution, and custody bindings are verified
+ * by the store.
  */
 export function registerComposerMediaStageLifecycleRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
@@ -51,14 +70,15 @@ export function registerComposerMediaStageLifecycleRpcHandlers(
   rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE,
     async (raw: unknown): Promise<ComposerMediaStageReleaseResponse> => {
-      const handle = readReleaseHandle(raw);
-      if (!handle) return { success: false, error: 'Invalid Composer media release request' };
+      const request = readReleaseRequest(raw);
+      if (!request) return { success: false, error: 'Invalid Composer media release request' };
 
       try {
         const released = await deps.store.release({
-          handle,
-          executionTarget: handle.executionTarget,
-          owner: handle.owner,
+          handle: request.handle,
+          executionTarget: request.handle.executionTarget,
+          owner: request.handle.owner,
+          ...(request.claimant ? { claimant: request.claimant } : {}),
         });
         if (released.status === 'released') return { success: true };
         if (released.reason === 'notFound' || released.reason === 'expired') return { success: true };

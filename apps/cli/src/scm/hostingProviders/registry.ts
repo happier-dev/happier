@@ -1,9 +1,15 @@
 import {
     ScmHostingProviderKindSchema,
     type ScmHostingProviderContribution,
+    type ScmHostingProviderKind,
 } from '@happier-dev/protocol';
 import type {
-    HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+    HostingProviderResolvedRemote,
+    HostingProviderPullRequestCheckoutCapability,
+    HostingProviderPullRequestsCapability,
+    HostingProviderRepositoryCloneCapability,
+    HostingProviderRepositoryPublishingCapability,
+    HostingProviderRoutingCapability,
     HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration,
 } from '@happier-dev/plugin-sdk/scm/hosting';
 import { createGuardedRuntimeView } from '@/plugins/runtime/guardedRuntimeView';
@@ -52,29 +58,17 @@ type UnresolvedScmHostingProvider = Readonly<{
 
 type ScmHostingProviderResolvedRemote = Readonly<{
     id: string;
-    kind: string;
+    kind: ScmHostingProviderKind;
     displayName: string;
     baseUrl: string;
     repositoryWebUrl?: string;
     nameWithOwner?: string;
-    remoteName?: string | null;
-    urlSafety?: Readonly<{
-        allowedSchemes: readonly string[];
-        allowedBaseUrls?: readonly string[];
-        allowedOrigins?: readonly string[];
+    remoteName?: string;
+    urlSafety: Readonly<{
+        allowedSchemes: string[];
+        allowedBaseUrls?: string[];
+        allowedOrigins?: string[];
     }>;
-}>;
-
-type ScmHostingProviderDetectionAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
-    detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderResolvedRemote | null;
-}>;
-
-type ScmHostingProviderCompareAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
-    buildCompareUrl: (input: Readonly<{
-        provider: ScmHostingProviderResolvedRemote;
-        base: string;
-        head: string;
-    }>) => string | null;
 }>;
 
 type ScmHostingProviderRemoteDetectionResult =
@@ -96,7 +90,7 @@ type ScmHostingProviderCompareUrlResult =
     | Readonly<{
         kind: 'unsupported';
         reason: 'unknown_provider' | 'adapter_unavailable' | 'unsupported_by_provider';
-        provider: ScmHostingProviderResolvedRemote | UnresolvedScmHostingProvider;
+        provider: HostingProviderResolvedRemote | UnresolvedScmHostingProvider;
     }>;
 
 export type ResolvedScmHostingProviderRegistry = Readonly<{
@@ -104,10 +98,14 @@ export type ResolvedScmHostingProviderRegistry = Readonly<{
     providersById: ReadonlyMap<string, ResolvedScmHostingProvider>;
     diagnostics: readonly ScmHostingProviderRegistryDiagnostic[];
     getProvider: (id: string) => ResolvedScmHostingProvider | undefined;
-    getAdapter: (id: string) => ScmHostingProviderRuntimeAdapter | undefined;
+    getRouting: (id: string) => HostingProviderRoutingCapability | undefined;
+    getPullRequests: (id: string) => HostingProviderPullRequestsCapability | undefined;
+    getPullRequestCheckout: (id: string) => HostingProviderPullRequestCheckoutCapability | undefined;
+    getRepositoryPublishing: (id: string) => HostingProviderRepositoryPublishingCapability | undefined;
+    getRepositoryClone: (id: string) => HostingProviderRepositoryCloneCapability | undefined;
     detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
-        provider: ScmHostingProviderResolvedRemote | UnresolvedScmHostingProvider;
+        provider: HostingProviderResolvedRemote | UnresolvedScmHostingProvider;
         base: string;
         head: string;
     }>) => ScmHostingProviderCompareUrlResult;
@@ -165,24 +163,10 @@ function readScmHostingProviderUrlSafety(
     });
 }
 
-function isScmHostingProviderDetectionAdapter(
-    adapter: unknown,
-): adapter is ScmHostingProviderDetectionAdapter {
-    return Boolean(adapter)
-        && typeof (adapter as Readonly<{ detectRemote?: unknown }>).detectRemote === 'function';
-}
-
-function isScmHostingProviderCompareAdapter(
-    adapter: unknown,
-): adapter is ScmHostingProviderCompareAdapter {
-    return Boolean(adapter)
-        && typeof (adapter as Readonly<{ buildCompareUrl?: unknown }>).buildCompareUrl === 'function';
-}
-
-function bindRuntimeAdapter(
+function bindRuntimeCapability<TCapability extends object>(
     binding: ScmHostingProviderRuntimeBinding,
-): ScmHostingProviderRuntimeAdapter {
-    const target = binding.registration.adapter;
+    target: TCapability,
+): TCapability {
     const boundMethods = new WeakMap<Function, Function>();
 
     // Registration already published a frozen, receiver-bound callback map.
@@ -206,7 +190,7 @@ function bindRuntimeAdapter(
             boundMethods.set(method, bound);
             return bound;
         },
-    });
+    }) as TCapability;
 }
 
 function createUnknownProvider(remoteName: string | null): UnresolvedScmHostingProvider {
@@ -299,7 +283,7 @@ function isProviderBaseAllowedByDescriptor(
 }
 
 function resolveDetectedRepositoryWebUrl(
-    detectedProvider: ScmHostingProviderResolvedRemote,
+    detectedProvider: HostingProviderResolvedRemote,
     descriptor: ResolvedScmHostingProvider,
 ): string | undefined {
     if (!detectedProvider.repositoryWebUrl) {
@@ -328,7 +312,7 @@ function resolveDetectedRepositoryWebUrl(
 }
 
 function normalizeDetectedProvider(
-    provider: ScmHostingProviderResolvedRemote,
+    provider: HostingProviderResolvedRemote,
     descriptor: ResolvedScmHostingProvider,
 ): ScmHostingProviderResolvedRemote | null {
     const allowedSchemes = readDetectedProviderAllowedSchemes(descriptor);
@@ -356,11 +340,11 @@ function normalizeDetectedProvider(
         baseUrl: normalizedBaseUrl,
         ...(repositoryWebUrl ? { repositoryWebUrl } : {}),
         ...(provider.nameWithOwner ? { nameWithOwner: provider.nameWithOwner } : {}),
-        ...(provider.remoteName !== undefined ? { remoteName: provider.remoteName } : {}),
+        ...(provider.remoteName ? { remoteName: provider.remoteName } : {}),
         urlSafety: Object.freeze({
-            allowedSchemes: Object.freeze([...allowedSchemes]),
-            allowedBaseUrls: Object.freeze([normalizedBaseUrl]),
-            allowedOrigins: Object.freeze([providerBaseUrl.origin]),
+            allowedSchemes: [...allowedSchemes],
+            allowedBaseUrls: [normalizedBaseUrl],
+            allowedOrigins: [providerBaseUrl.origin],
         }),
     });
 }
@@ -469,18 +453,37 @@ export function createScmHostingProviderRegistry(params: Readonly<{
         getProvider(id) {
             return providersById.get(id);
         },
-        getAdapter(id) {
+        getRouting(id) {
             const runtime = providersById.get(id)?.runtime;
-            return runtime ? bindRuntimeAdapter(runtime) : undefined;
+            const capability = runtime?.registration.adapter.routing;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+        },
+        getPullRequests(id) {
+            const runtime = providersById.get(id)?.runtime;
+            const capability = runtime?.registration.adapter.pullRequests;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+        },
+        getPullRequestCheckout(id) {
+            const runtime = providersById.get(id)?.runtime;
+            const capability = runtime?.registration.adapter.pullRequestCheckout;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+        },
+        getRepositoryPublishing(id) {
+            const runtime = providersById.get(id)?.runtime;
+            const capability = runtime?.registration.adapter.repositoryPublishing;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+        },
+        getRepositoryClone(id) {
+            const runtime = providersById.get(id)?.runtime;
+            const capability = runtime?.registration.adapter.repositoryClone;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
         },
         detectRemote(input) {
             for (const provider of providers) {
                 try {
-                    const adapter = provider.runtime?.registration.adapter;
-                    if (!isScmHostingProviderDetectionAdapter(adapter)) {
-                        continue;
-                    }
-                    const detected = adapter.detectRemote(input);
+                    const routing = provider.runtime?.registration.adapter.routing;
+                    if (!routing) continue;
+                    const detected = routing.detectRemote(input);
                     if (!detected) {
                         continue;
                     }
@@ -513,27 +516,35 @@ export function createScmHostingProviderRegistry(params: Readonly<{
                 });
             }
             const descriptor = providersById.get(provider.id);
-            let adapter: ScmHostingProviderRuntimeAdapter | undefined;
+            let routing: HostingProviderRoutingCapability | undefined;
             try {
-                adapter = descriptor?.runtime?.registration.adapter;
+                routing = descriptor?.runtime?.registration.adapter.routing;
             } catch {
-                adapter = undefined;
+                routing = undefined;
             }
-            if (!descriptor || !isScmHostingProviderCompareAdapter(adapter)) {
+            if (!descriptor || !routing) {
                 return Object.freeze({
                     kind: 'unsupported' as const,
                     reason: 'adapter_unavailable' as const,
                     provider,
                 });
             }
+            const normalizedProvider = normalizeDetectedProvider(provider, descriptor);
+            if (!normalizedProvider) {
+                return Object.freeze({
+                    kind: 'unsupported' as const,
+                    reason: 'unsupported_by_provider' as const,
+                    provider,
+                });
+            }
             let url: string | null;
             try {
-                const candidate = adapter.buildCompareUrl({
-                    provider,
+                const candidate = routing.buildCompareUrl({
+                    provider: normalizedProvider,
                     base: input.base,
                     head: input.head,
                 });
-                url = candidate ? resolveSafeCompareUrl(candidate, provider, descriptor) : null;
+                url = candidate ? resolveSafeCompareUrl(candidate, normalizedProvider, descriptor) : null;
             } catch {
                 url = null;
             }

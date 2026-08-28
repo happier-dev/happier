@@ -1,12 +1,17 @@
-import { access, chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
-import { GH_INSTALLABLE_DESCRIPTOR, INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { GH_INSTALLABLE_DESCRIPTOR, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol';
+import {
+  CODEX_ACP_RUNTIME_INSTALLABLE_POLICY,
+  hasCodexAcpRuntimeInstallableAdapterPolicy,
+} from '@happier-dev/plugins-codex/agent/installables/codexAcp';
 import {
   createManagedToolScratchDir,
   downloadGitHubReleaseAsset,
+  extractGitHubReleaseAsset,
   promoteManagedCurrentInstall,
 } from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -14,7 +19,7 @@ import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
-import { ghRuntimeInstallable } from '../ghRuntimeInstallable';
+import { createGhRuntimeInstallableAdapter } from '../ghRuntimeInstallable';
 import { createCodexAcpRuntimeInstallableAdapter } from './codexAcpRuntimeInstallable';
 import type { RuntimeInstallableAdapter } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -31,6 +36,16 @@ type GitHubReleaseAsset = Readonly<{
 type GitHubReleaseBinaryInstallableDescriptor = InstallableDependencyDescriptor & Readonly<{
   source: Extract<InstallableDependencyDescriptor['source'], { kind: 'github_release_binary' }>;
 }>;
+
+type GitHubReleaseBinaryInstallPolicy = Readonly<{
+  archiveLayout: 'bin_directory' | 'single_executable';
+  selectReleaseAsset: (
+    release: unknown,
+    runtime: Readonly<{ platform: string; arch: string }>,
+  ) => GitHubReleaseAsset;
+}>;
+
+const currentReleaseRuntime = () => ({ platform: process.platform, arch: process.arch });
 
 const githubFetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
 
@@ -173,13 +188,45 @@ async function writeInstallLog(params: Readonly<{ logPath: string; lines: readon
   await writeFile(params.logPath, `${params.lines.join('\n')}\n`, 'utf8');
 }
 
+type ManagedInstallState = Readonly<{
+  installedVersion: string | null;
+  lastInstallLogPath: string | null;
+}>;
+
+function installStatePath(descriptor: InstallableDependencyDescriptor): string {
+  return join(managedInstallDir(descriptor), 'install-state.json');
+}
+
+async function readManagedInstallState(descriptor: InstallableDependencyDescriptor): Promise<ManagedInstallState> {
+  try {
+    const parsed = JSON.parse(await readFile(installStatePath(descriptor), 'utf8')) as Partial<ManagedInstallState>;
+    return {
+      installedVersion: typeof parsed.installedVersion === 'string' ? parsed.installedVersion : null,
+      lastInstallLogPath: typeof parsed.lastInstallLogPath === 'string' ? parsed.lastInstallLogPath : null,
+    };
+  } catch {
+    return { installedVersion: null, lastInstallLogPath: null };
+  }
+}
+
+async function writeManagedInstallState(
+  descriptor: InstallableDependencyDescriptor,
+  state: ManagedInstallState,
+): Promise<void> {
+  await mkdir(managedInstallDir(descriptor), { recursive: true });
+  await writeFile(installStatePath(descriptor), JSON.stringify(state, null, 2), 'utf8');
+}
+
 function isGitHubReleaseBinaryDescriptor(
   descriptor: InstallableDependencyDescriptor,
 ): descriptor is GitHubReleaseBinaryInstallableDescriptor {
   return descriptor.source.kind === 'github_release_binary';
 }
 
-async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstallableDescriptor): Promise<Readonly<{ ok: true; logPath: string } | { ok: false; errorMessage: string; logPath: string }>> {
+async function installGitHubReleaseBinary(
+  descriptor: GitHubReleaseBinaryInstallableDescriptor,
+  policy: GitHubReleaseBinaryInstallPolicy,
+): Promise<Readonly<{ ok: true; logPath: string } | { ok: false; errorMessage: string; logPath: string }>> {
   const logPath = join(configuration.logsDir, `install-${descriptor.key}-${Date.now()}.log`);
   try {
     const release = await fetchGitHubLatestRelease({
@@ -188,7 +235,7 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
       githubToken: process.env.GITHUB_TOKEN,
       ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
     });
-    const asset = selectReleaseAsset(release);
+    const asset = policy.selectReleaseAsset(release, currentReleaseRuntime());
     const installRoot = managedInstallDir(descriptor);
     const scratchDir = await createManagedToolScratchDir({
       installDir: installRoot,
@@ -208,16 +255,25 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
         digest: asset.digest,
         userAgent: 'happier-cli',
       });
-      const payloadRoot = await extractReleasePayloadRootFromArchive({
-        archivePath,
-        archiveName: asset.name,
-        extractDir,
-      });
-      const payloadBinPath = join(payloadRoot, 'bin', process.platform === 'win32' && !primaryCommand(descriptor).endsWith('.exe')
-        ? `${primaryCommand(descriptor)}.exe`
-        : primaryCommand(descriptor));
       await mkdir(dirname(candidateBinPath), { recursive: true });
-      await rename(payloadBinPath, candidateBinPath);
+      if (policy.archiveLayout === 'single_executable') {
+        await extractGitHubReleaseAsset({
+          archivePath,
+          archiveName: asset.name,
+          extractDir,
+          outputPath: candidateBinPath,
+        });
+      } else {
+        const payloadRoot = await extractReleasePayloadRootFromArchive({
+          archivePath,
+          archiveName: asset.name,
+          extractDir,
+        });
+        const payloadBinPath = join(payloadRoot, 'bin', process.platform === 'win32' && !primaryCommand(descriptor).endsWith('.exe')
+          ? `${primaryCommand(descriptor)}.exe`
+          : primaryCommand(descriptor));
+        await rename(payloadBinPath, candidateBinPath);
+      }
       if (process.platform !== 'win32') {
         await chmod(candidateBinPath, 0o755);
       }
@@ -236,6 +292,13 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
         installRoot,
         candidatePath: candidateDir,
       });
+      await rm(join(installRoot, 'node_modules'), { recursive: true, force: true });
+      await rm(join(installRoot, 'package.json'), { force: true });
+      await rm(join(installRoot, 'package-lock.json'), { force: true });
+      await writeManagedInstallState(descriptor, {
+        installedVersion: asset.version,
+        lastInstallLogPath: logPath,
+      });
       return { ok: true, logPath };
     } finally {
       await rm(scratchDir, { recursive: true, force: true });
@@ -244,6 +307,10 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
     const errorMessage = error instanceof Error ? error.message : 'Install failed';
     try {
       await writeInstallLog({ logPath, lines: [errorMessage] });
+      await writeManagedInstallState(descriptor, {
+        installedVersion: (await readManagedInstallState(descriptor)).installedVersion,
+        lastInstallLogPath: logPath,
+      });
     } catch {
     }
     return { ok: false, errorMessage, logPath };
@@ -252,6 +319,10 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
 
 function createGenericGitHubReleaseBinaryRuntimeInstallable(
   descriptor: GitHubReleaseBinaryInstallableDescriptor,
+  policy: GitHubReleaseBinaryInstallPolicy = {
+    archiveLayout: 'bin_directory',
+    selectReleaseAsset,
+  },
 ): RuntimeInstallableAdapter {
   return {
     key: descriptor.key,
@@ -306,7 +377,7 @@ function createGenericGitHubReleaseBinaryRuntimeInstallable(
         source: resolvedPath === managedPath ? 'managed' : 'system',
       };
     },
-    installOrUpgrade: () => installGitHubReleaseBinary(descriptor),
+    installOrUpgrade: () => installGitHubReleaseBinary(descriptor, policy),
     runBackgroundAutoUpdateCheck: async () => {
       const binPath = await resolveManagedBinPath(descriptor);
       if (!binPath) return;
@@ -317,10 +388,10 @@ function createGenericGitHubReleaseBinaryRuntimeInstallable(
         githubToken: process.env.GITHUB_TOKEN,
         ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
       });
-      const latestVersion = selectReleaseAsset(release).version;
+      const latestVersion = policy.selectReleaseAsset(release, currentReleaseRuntime()).version;
       await writeRuntimeInstallableLastCheckAtMs(descriptor.key, Date.now());
       if (!installedVersion || !latestVersion || installedVersion === latestVersion) return;
-      await installGitHubReleaseBinary(descriptor);
+      await installGitHubReleaseBinary(descriptor, policy);
     },
   };
 }
@@ -331,11 +402,19 @@ export async function getGitHubReleaseBinaryRuntimeInstallableAdapter(
   if (!isGitHubReleaseBinaryDescriptor(descriptor)) {
     return null;
   }
-  if (descriptor.key === INSTALLABLE_KEYS.CODEX_ACP) {
-    return createCodexAcpRuntimeInstallableAdapter(descriptor);
+  if (hasCodexAcpRuntimeInstallableAdapterPolicy(descriptor)) {
+    const hostAdapter = createGenericGitHubReleaseBinaryRuntimeInstallable(
+      descriptor,
+      CODEX_ACP_RUNTIME_INSTALLABLE_POLICY,
+    );
+    return createCodexAcpRuntimeInstallableAdapter(descriptor, hostAdapter);
   }
   if (descriptor.key === GH_INSTALLABLE_DESCRIPTOR.key) {
-    return ghRuntimeInstallable;
+    const hostAdapter = createGenericGitHubReleaseBinaryRuntimeInstallable(
+      descriptor,
+      GH_RUNTIME_INSTALLABLE_POLICY,
+    );
+    return createGhRuntimeInstallableAdapter(hostAdapter);
   }
   return createGenericGitHubReleaseBinaryRuntimeInstallable(descriptor);
 }

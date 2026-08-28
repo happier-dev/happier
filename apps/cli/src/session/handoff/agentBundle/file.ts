@@ -99,7 +99,11 @@ async function projectBundleFiles(value: unknown): Promise<Readonly<{
   return { bundle: await visit(value, false), entries };
 }
 
-async function appendFile(target: Awaited<ReturnType<typeof open>>, source: HandoffSourceFile): Promise<void> {
+async function appendFile(
+  target: Awaited<ReturnType<typeof open>>,
+  source: HandoffSourceFile,
+  onBytesWritten?: (bytesWritten: number) => void,
+): Promise<void> {
   const input = await open(source.filePath, 'r');
   try {
     let remaining = source.sizeBytes;
@@ -112,6 +116,7 @@ async function appendFile(target: Awaited<ReturnType<typeof open>>, source: Hand
       await target.write(buffer.subarray(0, bytesRead));
       position += bytesRead;
       remaining -= bytesRead;
+      onBytesWritten?.(bytesRead);
     }
   } finally {
     await input.close();
@@ -121,6 +126,7 @@ async function appendFile(target: Awaited<ReturnType<typeof open>>, source: Hand
 export async function writeSessionHandoffAgentBundleArtifact(params: Readonly<{
   agentBundle: SessionHandoffAgentBundle;
   filePath: string;
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
 }>): Promise<Readonly<{ sizeBytes: number; manifestHash: string }>> {
   const { agentBundle, filePath } = params;
   const normalized = parseCanonicalSessionHandoffAgentBundle(agentBundle);
@@ -137,13 +143,29 @@ export async function writeSessionHandoffAgentBundleArtifact(params: Readonly<{
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   const target = await open(temporaryPath, 'wx', 0o600);
   let published = false;
+  const totalBytes = projected.entries.reduce((sum, entry) => sum + entry.source.sizeBytes, 0);
+  let currentBytes = 0;
+  let lastReportedBytes = 0;
+  const reportProgress = (force = false) => {
+    if (!params.onProgress) return;
+    if (!force && currentBytes - lastReportedBytes < 16 * 1024 * 1024) return;
+    lastReportedBytes = currentBytes;
+    params.onProgress({ currentBytes, totalBytes });
+  };
   try {
+    reportProgress(true);
     const length = Buffer.alloc(ARTIFACT_LENGTH_BYTES);
     length.writeBigUInt64BE(BigInt(manifestBytes.length));
     await target.write(ARTIFACT_MAGIC);
     await target.write(length);
     await target.write(manifestBytes);
-    for (const entry of projected.entries) await appendFile(target, entry.source);
+    for (const entry of projected.entries) {
+      await appendFile(target, entry.source, (bytesWritten) => {
+        currentBytes += bytesWritten;
+        reportProgress();
+      });
+    }
+    reportProgress(true);
     await target.close();
     await rename(temporaryPath, filePath);
     published = true;
@@ -158,10 +180,15 @@ export async function writeSessionHandoffAgentBundleArtifact(params: Readonly<{
 
 export async function createSessionHandoffAgentBundlePayloadSource(
   agentBundle: SessionHandoffAgentBundle,
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void,
 ): Promise<TransferPayloadSource> {
   await mkdir(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, { recursive: true });
   const filePath = join(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, `provider-bundle-${randomUUID()}.bin`);
-  const artifact = await writeSessionHandoffAgentBundleArtifact({ agentBundle, filePath });
+  const artifact = await writeSessionHandoffAgentBundleArtifact({
+    agentBundle,
+    filePath,
+    ...(onProgress ? { onProgress } : {}),
+  });
   return createFileTransferPayloadSource({
     filePath,
     ...artifact,

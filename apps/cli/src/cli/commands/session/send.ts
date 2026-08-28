@@ -22,12 +22,14 @@ import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 const SESSION_SEND_USAGE = `Usage: ${SESSION_HELP_LINES.send}`;
 const AMBIGUOUS_MESSAGE_USAGE = 'Provide the message either positionally or with --message/--prompt, not both.';
 
+function invalidArguments(message: string): Error & Readonly<{ code: 'invalid_arguments' }> {
+  return Object.assign(new Error(message), { code: 'invalid_arguments' as const });
+}
+
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
   if (!parsed) {
-    const err = new Error(`Invalid permission mode: ${raw}`);
-    (err as any).code = 'invalid_arguments';
-    throw err;
+    throw invalidArguments(`Invalid permission mode: ${raw}`);
   }
   return parsed;
 }
@@ -68,14 +70,10 @@ export async function cmdSessionSend(
   const messageFlag = readFlagValueUnlessFlagToken(argv, '--message');
   const promptFlag = readFlagValueUnlessFlagToken(argv, '--prompt');
   if (positionalMessage && (hasMessageFlag || hasPromptFlag)) {
-    const err = new Error(AMBIGUOUS_MESSAGE_USAGE);
-    (err as any).code = 'invalid_arguments';
-    throw err;
+    throw invalidArguments(AMBIGUOUS_MESSAGE_USAGE);
   }
   if (messageFlag && promptFlag) {
-    const err = new Error('Provide the message with --message or --prompt, not both.');
-    (err as any).code = 'invalid_arguments';
-    throw err;
+    throw invalidArguments('Provide the message with --message or --prompt, not both.');
   }
   const message = positionalMessage || messageFlag || promptFlag || '';
   const wait = hasFlag(argv, '--wait');
@@ -101,9 +99,7 @@ export async function cmdSessionSend(
       : 300;
 
   if (!idOrPrefix || !message) {
-    const err = new Error(SESSION_SEND_USAGE);
-    (err as any).code = 'invalid_arguments';
-    throw err;
+    throw invalidArguments(SESSION_SEND_USAGE);
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -121,9 +117,7 @@ export async function cmdSessionSend(
     hasModelFlag
       ? (() => {
           if (!modelFlag) {
-            const err = new Error('Invalid --model');
-            (err as any).code = 'invalid_arguments';
-            throw err;
+            throw invalidArguments('Invalid --model');
           }
           return modelFlag === 'default' ? null : modelFlag;
         })()
@@ -136,9 +130,7 @@ export async function cmdSessionSend(
   if (providerConnectionId !== undefined
     && (modelOverride === undefined
       || (providerConnectionId !== null && typeof modelOverride !== 'string'))) {
-    const err = new Error('--provider-connection requires --model <model-id>');
-    (err as any).code = 'invalid_arguments';
-    throw err;
+    throw invalidArguments('--provider-connection requires --model <model-id>');
   }
 
   const executor = createCliActionExecutorFromCredentials({
@@ -159,7 +151,7 @@ export async function cmdSessionSend(
     },
     { surface: 'cli', defaultSessionId: null },
   );
-  const normalized = normalizeActionExecuteResult(actionRes as any);
+  const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
       await printJsonEnvelope({

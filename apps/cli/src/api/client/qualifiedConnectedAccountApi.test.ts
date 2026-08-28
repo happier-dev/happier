@@ -20,7 +20,9 @@ import {
     resolveQualifiedProviderAccountUsageSourceV4,
     requestQualifiedConnectedAccountQuotaRefreshV4,
     QualifiedConnectedAccountCredentialConflictError,
+    QualifiedConnectedAccountCompatibilityError,
     QualifiedConnectedAccountGroupConflictError,
+    QualifiedProviderAccountUsageReadConflictError,
     mutateQualifiedConnectedAccountCredentialV4,
     updateQualifiedConnectedAccountGroupRuntimeStateV4,
     setQualifiedConnectedAccountGroupActiveAccountV4,
@@ -141,6 +143,35 @@ describe("qualified Connected Account V4 API", () => {
         );
     });
 
+    it("rejects a group read projection for a different qualified identity", async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            status: 200,
+            data: {
+                group: {
+                    v: 1,
+                    ref: { service, groupId: "other-group" },
+                    incarnation: "qualified-group-row-other",
+                    displayName: null,
+                    policy: {},
+                    activeConnectedAccountId: null,
+                    generation: 0,
+                    runtimeStateRevision: 0,
+                    state: {},
+                    createdAt: 100,
+                    updatedAt: 100,
+                    members: [],
+                },
+            },
+        });
+
+        await expect(readQualifiedConnectedAccountGroupV4({
+            token: "token",
+            group: { service, groupId: "primary-group" },
+        })).rejects.toMatchObject<QualifiedConnectedAccountCompatibilityError>({
+            code: "connected_account_v4_contract_violation",
+        });
+    });
+
     it("resolves, reads, and refreshes provider-account usage through the V4 record owner", async () => {
         const ref = {
             service,
@@ -214,6 +245,19 @@ describe("qualified Connected Account V4 API", () => {
             content: { t: "plain" },
             sources: [source],
         });
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            status: 409,
+            data: {
+                error:
+                    "provider_account_usage_storage_mode_mismatch",
+            },
+        });
+        await expect(readQualifiedProviderAccountUsageRecordV4({
+            token: "token",
+            recordId,
+        })).rejects.toBeInstanceOf(
+            QualifiedProviderAccountUsageReadConflictError,
+        );
         await expect(requestQualifiedProviderAccountUsageRefreshV4({
             token: "token",
             recordId,
@@ -319,6 +363,7 @@ describe("qualified Connected Account V4 API", () => {
         const patch = {
             service,
             groupId: group.ref.groupId,
+            expectedGeneration: group.generation,
             expectedIncarnation: group.incarnation,
             expectedRuntimeStateRevision: 2,
             runtimeState: {

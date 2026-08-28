@@ -11,7 +11,7 @@ import { readHostingProviderExecutionAuthority } from './executionAuthority';
 import { createScmHostingProviderRegistry } from './registry';
 
 type DetectedProviderFixture = NonNullable<
-    ReturnType<NonNullable<ScmHostingProviderRuntimeRegistration['adapter']['detectRemote']>>
+    ReturnType<NonNullable<ScmHostingProviderRuntimeRegistration['adapter']['routing']>['detectRemote']>
 >;
 
 function createRegistryWithDetectedProvider(
@@ -20,8 +20,10 @@ function createRegistryWithDetectedProvider(
     const registration: ScmHostingProviderRuntimeRegistration = {
         id: detectedProvider.id,
         adapter: {
-            detectRemote: () => detectedProvider,
-            buildCompareUrl: () => null,
+            routing: {
+                detectRemote: () => detectedProvider,
+                buildCompareUrl: () => null,
+            },
         },
     };
 
@@ -56,6 +58,10 @@ describe('SCM hosting provider registry', () => {
                     authority: readHostingProviderExecutionAuthority(),
                 };
             }
+
+            buildCompareUrl() {
+                return null;
+            }
         }
 
         const adapter = new Adapter();
@@ -69,7 +75,7 @@ describe('SCM hosting provider registry', () => {
             }],
         });
         scope.api.scm.registerHostingProvider('forge', {
-            adapter,
+            adapter: { routing: adapter },
         } as unknown as Parameters<PluginApi['scm']['registerHostingProvider']>[1]);
         const [registration] = scope.commit();
         if (registration?.family !== 'scmHostingProviders') {
@@ -109,8 +115,8 @@ describe('SCM hosting provider registry', () => {
             runtimeRegistrations: runtimeEntries.hostingProviders,
         });
 
-        const exposed = registry.getAdapter('acme.forge/forge');
-        expect(exposed?.detectRemote?.({
+        const exposed = registry.getRouting('acme.forge/forge');
+        expect(exposed?.detectRemote({
             remoteName: 'origin',
             remoteUrl: 'https://forge.example.test/acme/repo',
         })).toMatchObject({
@@ -124,7 +130,7 @@ describe('SCM hosting provider registry', () => {
         expect(adapter.calls).toBe(1);
 
         active = false;
-        expect(() => exposed?.detectRemote?.({
+        expect(() => exposed?.detectRemote({
             remoteName: 'origin',
             remoteUrl: 'https://forge.example.test/acme/repo',
         })).toThrow(/no longer active/i);
@@ -139,7 +145,7 @@ describe('SCM hosting provider registry', () => {
             baseUrl: 'https://forge.example.test',
         });
 
-        const exposed = registry.getAdapter('happier.scm.forge/forge');
+        const exposed = registry.getRouting('happier.scm.forge/forge');
         if (!exposed) throw new Error('Expected bound hosting adapter');
 
         expect(Object.keys(exposed)).toEqual(['detectRemote', 'buildCompareUrl']);
@@ -165,7 +171,10 @@ describe('SCM hosting provider registry', () => {
             registration: {
                 id: 'shared',
                 adapter: {
-                    detectRemote: () => null,
+                    routing: {
+                        detectRemote: () => null,
+                        buildCompareUrl: () => null,
+                    },
                 },
             },
         }));
@@ -175,8 +184,8 @@ describe('SCM hosting provider registry', () => {
             'acme.scm.one/shared',
             'acme.scm.two/shared',
         ]);
-        expect(registry.getAdapter('acme.scm.one/shared')).not.toBe(runtimeRegistrations[0]?.registration.adapter);
-        expect(registry.getAdapter('acme.scm.two/shared')).not.toBe(runtimeRegistrations[1]?.registration.adapter);
+        expect(registry.getRouting('acme.scm.one/shared')).not.toBe(runtimeRegistrations[0]?.registration.adapter.routing);
+        expect(registry.getRouting('acme.scm.two/shared')).not.toBe(runtimeRegistrations[1]?.registration.adapter.routing);
         expect(registry.diagnostics).toEqual([]);
     });
 
@@ -201,8 +210,11 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'broken',
                     adapter: {
-                        detectRemote() {
-                            throw new Error('private adapter failure');
+                        routing: {
+                            detectRemote() {
+                                throw new Error('private adapter failure');
+                            },
+                            buildCompareUrl: () => null,
                         },
                     },
                 },
@@ -212,13 +224,16 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'working',
                     adapter: {
-                        detectRemote() {
-                            return {
-                                id: 'working',
-                                kind: 'working',
-                                displayName: 'Working forge',
-                                baseUrl: 'https://working.example.test',
-                            };
+                        routing: {
+                            detectRemote() {
+                                return {
+                                    id: 'working',
+                                    kind: 'working',
+                                    displayName: 'Working forge',
+                                    baseUrl: 'https://working.example.test',
+                                };
+                            },
+                            buildCompareUrl: () => null,
                         },
                     },
                 },
@@ -249,13 +264,16 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'declared',
                     adapter: {
-                        detectRemote() {
-                            return {
-                                id: 'other-provider',
-                                kind: 'other-kind',
-                                displayName: 'Impersonated forge',
-                                baseUrl: 'https://declared.example.test',
-                            };
+                        routing: {
+                            detectRemote() {
+                                return {
+                                    id: 'other-provider',
+                                    kind: 'other-kind',
+                                    displayName: 'Impersonated forge',
+                                    baseUrl: 'https://declared.example.test',
+                                };
+                            },
+                            buildCompareUrl: () => null,
                         },
                     },
                 },
@@ -303,12 +321,15 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'bounded',
                     adapter: {
-                        detectRemote: () => ({
-                            id: 'bounded',
-                            kind: 'custom',
-                            displayName: 'Bounded forge',
-                            baseUrl: 'https://attacker.example.test',
-                        }),
+                        routing: {
+                            detectRemote: () => ({
+                                id: 'bounded',
+                                kind: 'custom',
+                                displayName: 'Bounded forge',
+                                baseUrl: 'https://attacker.example.test',
+                            }),
+                            buildCompareUrl: () => null,
+                        },
                     },
                 },
             }],
@@ -335,7 +356,10 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'forge',
                     adapter: {
-                        buildCompareUrl: () => 'javascript:alert(document.domain)',
+                        routing: {
+                            detectRemote: () => null,
+                            buildCompareUrl: () => 'javascript:alert(document.domain)',
+                        },
                     },
                 },
             }],
@@ -371,12 +395,15 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'forge',
                     adapter: {
-                        detectRemote: () => ({
-                            id: 'ignored',
-                            kind: 'ignored',
-                            displayName: 'Ignored',
-                            baseUrl: 'https://forge.example.test',
-                        }),
+                        routing: {
+                            detectRemote: () => ({
+                                id: 'ignored',
+                                kind: 'ignored',
+                                displayName: 'Ignored',
+                                baseUrl: 'https://forge.example.test',
+                            }),
+                            buildCompareUrl: () => null,
+                        },
                     },
                 },
             }],
@@ -395,7 +422,7 @@ describe('SCM hosting provider registry', () => {
         });
     });
 
-    it('routes compare-only adapters without requiring remote detection support', () => {
+    it('routes compare URLs when the grouped detector reports no match', () => {
         const registry = createScmHostingProviderRegistry({
             providers: [{
                 id: 'compare-only',
@@ -410,7 +437,10 @@ describe('SCM hosting provider registry', () => {
                 registration: {
                     id: 'compare-only',
                     adapter: {
-                        buildCompareUrl: () => 'https://forge.example.test/acme/repo/compare/main...feature',
+                        routing: {
+                            detectRemote: () => null,
+                            buildCompareUrl: () => 'https://forge.example.test/acme/repo/compare/main...feature',
+                        },
                     },
                 },
             }],

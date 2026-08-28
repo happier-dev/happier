@@ -17,15 +17,19 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
   return {
     ...actual,
     getResolvedContributionRegistry: getResolvedContributionRegistryMock,
+    primeResolvedContributionRegistry: async () => getResolvedContributionRegistryMock(),
   };
 });
 
+import { ensureMergedAgentCommandRegistryLoaded } from './commandRegistry';
+
 describe('CLI command-surface manifest', () => {
   it('exposes the current root help command list from static and projected command surfaces', async () => {
+    await ensureMergedAgentCommandRegistryLoaded();
     await primeProjectedCommandSurfaceEntries();
     const entries = listRootHelpCommands();
     const commands = entries.map((entry) => entry.command);
-    expect(commands.slice(0, 34)).toEqual([
+    expect(commands.slice(0, 36)).toEqual([
       null,
       'setup',
       'auth',
@@ -45,6 +49,8 @@ describe('CLI command-surface manifest', () => {
       'service',
       'daemon',
       'machine',
+      'machines',
+      'actions',
       'relay',
       'doctor',
       'uninstall',
@@ -61,7 +67,7 @@ describe('CLI command-surface manifest', () => {
       'resume',
       'server',
     ]);
-    expect(new Set(commands.slice(34))).toEqual(new Set([
+    expect(new Set(commands.slice(36))).toEqual(new Set([
       'claude',
       'opencode',
       'antigravity',
@@ -172,6 +178,7 @@ describe('CLI command-surface manifest', () => {
       backendDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: {},
     });
+    await ensureMergedAgentCommandRegistryLoaded();
     await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands();
@@ -227,6 +234,7 @@ describe('CLI command-surface manifest', () => {
       backendDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: {},
     });
+    await ensureMergedAgentCommandRegistryLoaded();
     await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands().filter((entry) => entry.command === 'opencode');

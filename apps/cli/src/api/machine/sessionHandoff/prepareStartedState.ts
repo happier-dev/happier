@@ -28,6 +28,7 @@ export type PrepareStartedStateCallInput = Readonly<{
   request: SessionHandoffStartRequest;
   metadata: Record<string, unknown>;
   sourceStopState: 'stopped' | 'already_inactive';
+  onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
   preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
 }>;
 
@@ -88,6 +89,7 @@ export async function prepareStartedState(input: Readonly<{
     const persistedAgentBundle = await input.sourceExportStore.writeAgentBundleFile({
       handoffId: callInput.handoffId,
       agentBundle: exported.agentBundle,
+      ...(callInput.onProgress ? { onProgress: callInput.onProgress } : {}),
     });
 
     await input.sourceExportStore.save({

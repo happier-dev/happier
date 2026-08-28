@@ -10,10 +10,6 @@ import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/s
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { ExternalActionRequestIdV1Schema, getActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
-import {
-  normalizeActionExecuteResult,
-  unwrapCliActionSuccessPayload,
-} from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutor>, 'execute'>;
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
@@ -50,6 +46,15 @@ function hasSpawnNonce(details: unknown): boolean {
     && (details as { accepted?: unknown }).accepted === true
     && typeof (details as { spawnNonce?: unknown }).spawnNonce === 'string'
     && (details as { spawnNonce: string }).spawnNonce.trim());
+}
+
+function readFailureCandidates(details: unknown): readonly string[] | undefined {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  const candidates = (details as Readonly<Record<string, unknown>>).candidates;
+  if (!Array.isArray(candidates) || !candidates.every((candidate) => typeof candidate === 'string')) {
+    return undefined;
+  }
+  return candidates;
 }
 
 export async function cmdSessionActionsExecute(
@@ -156,19 +161,18 @@ export async function cmdSessionActionsExecute(
       ...(resumeActionRequest ? { resumeActionRequest: true } : {}),
     },
   );
-  const result = normalizeActionExecuteResult(actionRes);
-
-  if (!result.ok) {
-    const isAmbiguousSpawn = hasSpawnNonce(result.details);
+  if (!actionRes.ok) {
+    const candidates = readFailureCandidates(actionRes.details);
+    const isAmbiguousSpawn = hasSpawnNonce(actionRes.details);
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_actions_execute',
         error: {
-          code: result.errorCode,
-          ...(result.errorMessage ? { message: result.errorMessage } : {}),
-          ...(result.candidates ? { candidates: result.candidates } : {}),
-          ...(result.details !== undefined ? { details: result.details } : {}),
+          code: actionRes.errorCode,
+          message: actionRes.error,
+          ...(candidates ? { candidates } : {}),
+          ...(actionRes.details !== undefined ? { details: actionRes.details } : {}),
           ...(isAmbiguousSpawn && effectiveActionRequestId
             ? { actionRequestId: effectiveActionRequestId }
             : {}),
@@ -179,12 +183,12 @@ export async function cmdSessionActionsExecute(
     const retryHint = isAmbiguousSpawn && effectiveActionRequestId
       ? ` Retry with --action-request-id ${effectiveActionRequestId} --resume-action-request.`
       : '';
-    throw Object.assign(new Error(`${result.errorMessage ?? result.errorCode}${retryHint}`), {
-      ...(result.details !== undefined ? { details: result.details } : {}),
+    throw Object.assign(new Error(`${actionRes.error}${retryHint}`), {
+      ...(actionRes.details !== undefined ? { details: actionRes.details } : {}),
     });
   }
 
-  const successPayload = unwrapCliActionSuccessPayload(result.data);
+  const successPayload = actionRes.result;
 
   if (json) {
     await printJsonEnvelope({

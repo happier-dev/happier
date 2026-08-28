@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
+import type { ComposerContentHandleV1, ComposerRefV1 } from '@happier-dev/protocol';
 
 import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
 
@@ -120,6 +120,111 @@ describe('Composer media stage store', () => {
       executionTarget,
       owner,
     })).resolves.toEqual({ status: 'unavailable', reason: 'notFound' });
+  });
+
+  it('gives one Composer attachment linear custody across restarted stores', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-custody-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'claimed.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const composer: ComposerRefV1 = { kind: 'session', sessionId: 'session-a' };
+    const claimant = { composer, attachmentInstanceId: 'attachment-a' } as const;
+    const otherClaimant = {
+      composer: { kind: 'session', sessionId: 'session-b' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const restartedStore = createComposerMediaStageStore({ rootDirectory, executionTarget });
+
+    await expect(Promise.all([
+      store.claim({ handle: finalized.handle, executionTarget, owner, claimant }),
+      restartedStore.claim({ handle: finalized.handle, executionTarget, owner, claimant }),
+    ])).resolves.toEqual([
+      { status: 'claimed' },
+      { status: 'claimed' },
+    ]);
+    await expect(restartedStore.claim({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: otherClaimant,
+    })).resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+    await expect(restartedStore.inspectForFinalization({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: otherClaimant,
+    })).resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+    await expect(restartedStore.release({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: otherClaimant,
+    })).resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+    await expect(restartedStore.release({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toEqual({ status: 'released' });
+  });
+
+  it('allows an unattached stage to be explicitly released but refuses an anonymous release after claim', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-unattached-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const createStage = async () => await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'unattached.png',
+    });
+    const unattached = await createStage();
+    expect(unattached.success).toBe(true);
+    if (!unattached.success) throw new Error(unattached.error);
+    await expect(store.release({ handle: unattached.handle, executionTarget, owner }))
+      .resolves.toEqual({ status: 'released' });
+
+    const attached = await createStage();
+    expect(attached.success).toBe(true);
+    if (!attached.success) throw new Error(attached.error);
+    const claimant = {
+      composer: { kind: 'newSession', instanceId: 'composer-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    await expect(store.claim({ handle: attached.handle, executionTarget, owner, claimant }))
+      .resolves.toEqual({ status: 'claimed' });
+    await expect(store.release({ handle: attached.handle, executionTarget, owner }))
+      .resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+    await expect(store.inspectForFinalization({
+      handle: attached.handle,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
   });
 
   it('completes a stage for a valid image the dimension probe cannot decode', async () => {

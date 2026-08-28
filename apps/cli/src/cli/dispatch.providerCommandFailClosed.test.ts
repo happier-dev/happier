@@ -37,7 +37,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
 
 import { dispatchCli } from './dispatch';
 
-describe('dispatchCli provider namespace fail-closed behavior', () => {
+describe('dispatchCli provider compatibility alias', () => {
   beforeEach(() => {
     defaultHandlerSpy.mockClear();
     resolveMergedContributionRegistryMock.mockClear();
@@ -45,36 +45,20 @@ describe('dispatchCli provider namespace fail-closed behavior', () => {
     process.exitCode = undefined;
   });
 
-  it('fails closed for singular provider commands instead of starting a default session', async () => {
-    for (const subcommand of ['status', 'probe']) {
-      process.exitCode = undefined;
-      defaultHandlerSpy.mockClear();
-      resolveMergedContributionRegistryMock.mockClear();
-      primeResolvedContributionRegistryMock.mockClear();
-
-      const output = captureConsoleJsonOutput<{
-        ok: boolean;
-        kind: string;
-        error?: { code?: string; message?: string };
-      }>();
-      try {
-        await dispatchCli({
-          args: ['provider', subcommand, 'kimi', '--json'],
-          rawArgv: ['happier', 'provider', subcommand, 'kimi', '--json'],
-          terminalRuntime: null,
-        });
-        const parsed = output.json();
-        expect(parsed.ok).toBe(false);
-        expect(parsed.kind).toBe('cli_dispatch');
-        expect(parsed.error?.code).toBe('unknown_command');
-        expect(parsed.error?.message).toEqual(expect.stringContaining('providers'));
-        expect(process.exitCode).toBe(1);
-      } finally {
-        output.restore();
-      }
-
-      expect(defaultHandlerSpy).not.toHaveBeenCalled();
-      expect(resolveMergedContributionRegistryMock).not.toHaveBeenCalled();
+  it('routes singular provider invocations without starting the default Agent', async () => {
+    const output = captureConsoleJsonOutput<{ ok: boolean; kind: string }>();
+    try {
+      await dispatchCli({
+        args: ['provider', '--help', '--json'],
+        rawArgv: ['happier', 'provider', '--help', '--json'],
+        terminalRuntime: null,
+      });
+      expect(output.json()).toMatchObject({ ok: true, kind: 'providers_help' });
+    } finally {
+      output.restore();
     }
+
+    expect(defaultHandlerSpy).not.toHaveBeenCalled();
+    expect(resolveMergedContributionRegistryMock).not.toHaveBeenCalled();
   });
 });

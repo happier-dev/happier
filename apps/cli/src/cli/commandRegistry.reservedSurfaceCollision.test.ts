@@ -1,27 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { codexHandlerSpy, primeResolvedContributionRegistryMock, providerHandlerSpy } = vi.hoisted(() => ({
   providerHandlerSpy: vi.fn(async () => {}),
   codexHandlerSpy: vi.fn(async () => {}),
-  primeResolvedContributionRegistryMock: vi.fn(async () => {}),
-}));
-
-vi.mock('@/agent/catalog/registry', () => ({
-  AGENTS: {
-    codex: {
-      id: 'codex',
-      cliSubcommand: 'codex',
-      cliCommandPolicy: {
-        daemonAutostartDefault: 'preferLocalTui',
-      },
-      getCliCommandHandler: async () => codexHandlerSpy,
-    },
-    externalProviderCollision: {
-      id: 'externalProviderCollision',
-      cliSubcommand: 'provider',
-      getCliCommandHandler: async () => providerHandlerSpy,
-    },
-  },
+  primeResolvedContributionRegistryMock: vi.fn(),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -42,6 +24,29 @@ import {
 } from './commandRegistry';
 
 describe('commandRegistry reserved command-surface collisions', () => {
+  beforeEach(() => {
+    codexHandlerSpy.mockClear();
+    providerHandlerSpy.mockClear();
+    primeResolvedContributionRegistryMock.mockReset();
+    primeResolvedContributionRegistryMock.mockResolvedValue({
+      commands: [],
+      catalogEntriesById: {
+        codex: {
+          id: 'codex',
+          cliSubcommand: 'codex',
+          cliCommandPolicy: { daemonAutostartDefault: 'preferLocalTui' },
+          getCliCommandHandler: async () => codexHandlerSpy,
+        },
+        externalProviderCollision: {
+          id: 'externalProviderCollision',
+          cliSubcommand: 'provider',
+          getCliCommandHandler: async () => providerHandlerSpy,
+        },
+      },
+      agentDefinitionsById: new Map(),
+    });
+  });
+
   it('lets catalog-owned provider commands claim static root-help placeholders', async () => {
     await ensureMergedAgentCommandRegistryLoaded();
 
@@ -63,9 +68,10 @@ describe('commandRegistry reserved command-surface collisions', () => {
     expect(codexHandlerSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not let projected provider commands claim reserved command surfaces', () => {
-    expect(commandRegistry.provider).toBeUndefined();
-    expect(findCommandDispatchDescriptor('provider')).toBeNull();
-    expect(resolveCommandDispatchRegistry().findByCommand('provider')).toBeNull();
+  it('keeps the singular provider alias owned by the canonical providers namespace', () => {
+    expect(commandRegistry.provider).toBe(commandRegistry.providers);
+    expect(findCommandDispatchDescriptor('provider')).toMatchObject({ command: 'provider' });
+    expect(resolveCommandDispatchRegistry().findByCommand('provider')).toMatchObject({ command: 'provider' });
+    expect(providerHandlerSpy).not.toHaveBeenCalled();
   });
 });

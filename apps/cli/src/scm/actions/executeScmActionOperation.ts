@@ -31,6 +31,7 @@ import {
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { resolveCwd } from '@/scm/runtime';
 import { notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import {
     runScmHostingRepositoryDescribePublishTargetsRoute,
@@ -148,6 +149,36 @@ function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmReviewWorkspaceMaterializePreparedResponse>(),
                 runWithBackend: async ({ context, selection }) => {
+                    if (request.verification !== undefined) {
+                        const verifiedTarget = resolveCwd(
+                            request.verification.targetPath,
+                            params.workingDirectory,
+                            params.accessPolicy,
+                        );
+                        if (!verifiedTarget.ok) {
+                            return {
+                                success: false,
+                                error: verifiedTarget.error,
+                                errorCode: 'INVALID_PATH',
+                            };
+                        }
+                        const verifyPreparedReviewWorkspace = selection.backend.workspaceIntegration
+                            ?.verifyPreparedReviewWorkspace;
+                        if (!verifyPreparedReviewWorkspace) {
+                            return {
+                                success: false,
+                                error: 'SCM prepared review-workspace verification is unavailable',
+                                errorCode: 'FEATURE_UNSUPPORTED',
+                            };
+                        }
+                        return await verifyPreparedReviewWorkspace({
+                            context,
+                            request: {
+                                ...request,
+                                verification: { targetPath: verifiedTarget.cwd },
+                            },
+                        });
+                    }
                     const prepareReviewWorkspace = selection.backend.workspaceIntegration?.prepareReviewWorkspace;
                     if (!prepareReviewWorkspace) {
                         return {

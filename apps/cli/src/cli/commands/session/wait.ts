@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import { ok } from '@happier-dev/cli-common/output';
+import type { PublicActionResultById } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
@@ -94,7 +95,7 @@ export async function cmdSessionWait(
     throw new Error(normalized.errorCode);
   }
 
-  const result = normalized.data as any;
+  const result = normalized.data as PublicActionResultById['session.wait.idle'];
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_wait', json, result })) {
     return;
   }

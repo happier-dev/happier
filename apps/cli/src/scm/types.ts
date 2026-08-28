@@ -177,6 +177,13 @@ export type ScmWorkspaceIntegrationPrepareReviewWorkspaceInput = Readonly<{
     request: ScmReviewWorkspaceMaterializePreparedRequest;
 }>;
 
+export type ScmWorkspaceIntegrationVerifyPreparedReviewWorkspaceInput = Readonly<{
+    context: ScmBackendContext;
+    request: ScmReviewWorkspaceMaterializePreparedRequest & Readonly<{
+        verification: Readonly<{ targetPath: string }>;
+    }>;
+}>;
+
 export type ScmWorkspaceIntegrationPortableWorkspaceEntriesInput = Readonly<{
     entries: readonly Readonly<{
         relativePath: string;
@@ -196,6 +203,9 @@ export type ScmWorkspaceIntegration = Readonly<{
     reconcilePostMaterialization?: (input: ScmWorkspaceIntegrationPostMaterializationInput) => Promise<void>;
     prepareReviewWorkspace?: (
         input: ScmWorkspaceIntegrationPrepareReviewWorkspaceInput,
+    ) => Promise<ScmReviewWorkspaceMaterializePreparedResponse>;
+    verifyPreparedReviewWorkspace?: (
+        input: ScmWorkspaceIntegrationVerifyPreparedReviewWorkspaceInput,
     ) => Promise<ScmReviewWorkspaceMaterializePreparedResponse>;
     realizeWorkspaceCheckout?: (
         input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationInput,

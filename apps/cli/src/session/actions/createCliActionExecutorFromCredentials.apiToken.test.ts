@@ -569,13 +569,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
 
     await expect(executor.execute('session.list', { limit: 1 }, { surface: 'cli' })).resolves.toEqual({
-      ok: true,
-      result: {
-        ok: false,
-        errorCode: 'machine_selection_required',
-        error: 'machine_selection_required',
-        candidates: ['machine-a', 'machine-b'],
-      },
+      ok: false,
+      errorCode: 'machine_selection_required',
+      error: 'machine_selection_required',
+      details: { candidates: ['machine-a', 'machine-b'] },
     });
   });
 

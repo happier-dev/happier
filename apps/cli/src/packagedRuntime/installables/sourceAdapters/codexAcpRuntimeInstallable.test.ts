@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { detectCodexAcpLaunchResolution, runCodexAcpBackgroundAutoUpdateCheck } from './codexAcpRuntimeInstallable';
+import {
+  createCodexAcpRuntimeInstallableAdapter,
+  detectCodexAcpLaunchResolution,
+  runCodexAcpBackgroundAutoUpdateCheck,
+} from './codexAcpRuntimeInstallable';
 
 describe('codexAcpRuntimeInstallable', () => {
   it('marks an unresolved PATH fallback as auto-installable', async () => {
@@ -52,10 +56,35 @@ describe('codexAcpRuntimeInstallable', () => {
           lastBackgroundUpdateCheckAtMs: null,
           latestVersionCheck: { ok: true as const, latestVersion: '0.2.0', label: 'v0.2.0' },
         }),
-        installCodexAcp: installOrUpgrade,
+        installOrUpgrade,
       },
     );
 
     expect(installOrUpgrade).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the host source adapter installer instead of owning a Codex installer', async () => {
+    const installOrUpgrade = vi.fn(async () => ({ ok: true as const, logPath: '/tmp/host-install.log' }));
+    const runBackgroundAutoUpdateCheck = vi.fn(async () => {});
+
+    const adapter = createCodexAcpRuntimeInstallableAdapter(
+      { key: 'codex-acp', capabilityId: 'dep.codex-acp' },
+      {
+        key: 'codex-acp',
+        capabilityId: 'dep.codex-acp',
+        detectLaunchResolution: async () => ({
+          availability: { ok: false as const, errorMessage: 'not installed' },
+          canAutoInstall: true,
+          canBackgroundAutoUpdate: false,
+        }),
+        installOrUpgrade,
+        runBackgroundAutoUpdateCheck,
+      },
+    );
+
+    await adapter.installOrUpgrade();
+
+    expect(installOrUpgrade).toHaveBeenCalledTimes(1);
+    expect(adapter.installOrUpgrade).toBe(installOrUpgrade);
   });
 });

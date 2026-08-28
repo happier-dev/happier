@@ -403,6 +403,7 @@ Provider CLI Options:
       Object.freeze([]);
     let profileSecretRequirementNamesMissingBinding: readonly string[] =
       Object.freeze([]);
+    let foregroundNativeHomeSourceEnvironmentKey: string | undefined;
     let foregroundAdmissionClaim: Readonly<{
       admissionFilePath: string;
       bootstrapFilePath: string;
@@ -415,6 +416,7 @@ Provider CLI Options:
           claim: NonNullable<typeof foregroundAdmissionClaim>;
           reservedEnvironmentVariableNames: readonly string[];
           profileSecretRequirementNamesMissingBinding: readonly string[];
+          nativeHomeSourceEnvironmentKey?: string;
         }>>)
       | null = null;
     if (
@@ -488,6 +490,12 @@ Provider CLI Options:
           profileSecretRequirementNamesMissingBinding:
             admission.launchPolicy
               .profileSecretRequirementNamesMissingBinding,
+          ...(admission.launchPolicy.nativeHomeSourceEnvironmentKey
+            ? {
+                nativeHomeSourceEnvironmentKey:
+                  admission.launchPolicy.nativeHomeSourceEnvironmentKey,
+              }
+            : {}),
         });
       };
       const initialAdmission = await admitForegroundRuntime();
@@ -496,6 +504,8 @@ Provider CLI Options:
         initialAdmission.reservedEnvironmentVariableNames;
       profileSecretRequirementNamesMissingBinding =
         initialAdmission.profileSecretRequirementNamesMissingBinding;
+      foregroundNativeHomeSourceEnvironmentKey =
+        initialAdmission.nativeHomeSourceEnvironmentKey;
       const releaseActiveForegroundAdmission = async () => {
         const activeClaim = foregroundAdmissionClaim;
         foregroundAdmissionClaim = null;
@@ -600,7 +610,17 @@ Provider CLI Options:
         ...(readUnsetEnvironmentVariables(
           params.context.scopedEnvironment?.unsetEnvKeys,
         ) ?? []),
-      ]));
+        ]));
+    const foregroundNativeHomeSourceEnvironmentValue =
+      foregroundNativeHomeSourceEnvironmentKey
+        ? stripUnsetEnvironmentVariables({
+            ...process.env,
+            ...profileEnvironmentVariables,
+            ...baseMergedEnvironmentVariables,
+          }, baseUnsetEnvironmentVariables)[
+            foregroundNativeHomeSourceEnvironmentKey
+          ]
+        : undefined;
     const finalizeEnvironment = (
       admissionEnvironment: Readonly<Record<string, string>>,
       admissionUnsetEnvironmentVariableNames: readonly string[],
@@ -706,6 +726,12 @@ Provider CLI Options:
             attemptId: activeClaim.attemptId,
             foregroundPid: process.pid,
             foregroundSatisfiedProfileSecretRequirementNames,
+            ...(foregroundNativeHomeSourceEnvironmentKey === undefined
+              ? {}
+              : {
+                  nativeHomeSourceEnvironmentValue:
+                    foregroundNativeHomeSourceEnvironmentValue ?? null,
+                }),
             ...(params.context.signal
               ? { signal: params.context.signal }
               : {}),
@@ -781,6 +807,8 @@ Provider CLI Options:
             || [...priorReservedNames].some((name) =>
               !retryReservedNames.has(name)
             )
+            || foregroundNativeHomeSourceEnvironmentKey
+              !== retryAdmission.nativeHomeSourceEnvironmentKey
           ) {
             await releaseDaemonForegroundAgentRuntime({
               v: 1,

@@ -10,6 +10,9 @@ import {
 import type {
   DaemonTerminalErrorCode,
   DaemonTerminalStreamEvent,
+  TerminalStreamFrame,
+  TerminalStreamReadRequest,
+  TerminalStreamReadResponse,
   TerminalStreamInputRequest,
   TerminalStreamInputResponse,
 } from '@happier-dev/protocol';
@@ -75,67 +78,11 @@ export type TerminalByteReadResult =
     }>
   | ErrorResult;
 
-export type TerminalByteStreamReadRequest = Readonly<{
-  terminalId: string;
-  byteOffset: number;
-  ackedByteOffset?: number;
-  creditBytes?: number;
-  maxBytes?: number;
-  maxFrames?: number;
-  rendererId?: string;
-  surfaceEpoch?: number;
-}>;
+export type TerminalByteStreamReadRequest = TerminalStreamReadRequest;
 
-export type TerminalByteStreamFrame =
-  | Readonly<{
-      t: 'bytes';
-      terminalId: string;
-      seq: number;
-      byteOffset: number;
-      byteLength: number;
-      encoding: 'base64';
-      data: string;
-    }>
-  | Readonly<{
-      t: 'gap';
-      terminalId: string;
-      droppedBeforeByteOffset: number;
-      nextAvailableByteOffset: number;
-      reason: 'ring_overflow' | 'consumer_too_slow' | 'session_restarted';
-    }>
-  | Readonly<{
-      t: 'legacyOnly';
-      terminalId: string;
-      provider: 'windows-conpty' | 'python-relay' | 'unknown';
-      reason: string;
-    }>
-  | Readonly<{
-      t: 'url';
-      terminalId: string;
-      byteOffset: number;
-      url: string;
-      kind: 'auth' | 'generic';
-      suggestOpen?: boolean;
-    }>
-  | Readonly<{
-      t: 'exit';
-      terminalId: string;
-      byteOffset: number;
-      exitCode: number | null;
-      signal: number | null;
-    }>;
+export type TerminalByteStreamFrame = TerminalStreamFrame;
 
-export type TerminalByteStreamReadResponse =
-  | Readonly<{
-      ok: true;
-      terminalId: string;
-      frames: TerminalByteStreamFrame[];
-      nextByteOffset: number;
-      availableByteOffset: number;
-      droppedBeforeByteOffset: number;
-      done: boolean;
-    }>
-  | Readonly<{ ok: false; code: string; message: string }>;
+export type TerminalByteStreamReadResponse = TerminalStreamReadResponse;
 
 export type TerminalByteStreamAckRequest = Readonly<{
   terminalId: string;
@@ -248,6 +195,11 @@ type ByteMode =
   | Readonly<{ kind: 'bytes' }>
   | Readonly<{ kind: 'legacyOnly'; provider: 'windows-conpty' | 'python-relay' | 'unknown'; reason: string }>;
 
+type SequencedTerminalControlFrame = Readonly<{
+  seq: number;
+  frame: Extract<TerminalByteStreamFrame, { t: 'url' }>;
+}>;
+
 type PtySession = {
   terminalId: string;
   terminalKey: string;
@@ -265,7 +217,8 @@ type PtySession = {
   lastActivityAtMs: number;
   urlDetector: ReturnType<typeof createTerminalUrlDetector>;
   decoder: ReturnType<typeof createUtf8StreamDecoder>;
-  controlFrames: TerminalByteStreamFrame[];
+  controlFrames: SequencedTerminalControlFrame[];
+  nextControlFrameSeq: number;
   rendererAcks: Map<string, number>;
 };
 
@@ -301,8 +254,13 @@ function isByteCapablePlatform(platform: NodeJS.Platform): boolean {
   return platform !== 'win32';
 }
 
-function pushControlFrame(session: PtySession, frame: TerminalByteStreamFrame, config: TerminalPtySessionManagerConfig): void {
-  session.controlFrames.push(frame);
+function pushControlFrame(
+  session: PtySession,
+  frame: Extract<TerminalByteStreamFrame, { t: 'url' }>,
+  config: TerminalPtySessionManagerConfig,
+): void {
+  session.controlFrames.push({ seq: session.nextControlFrameSeq, frame });
+  session.nextControlFrameSeq += 1;
   const maxFrames = Math.max(1, Math.trunc(config.bufferMaxEvents));
   while (session.controlFrames.length > maxFrames) {
     session.controlFrames.shift();
@@ -510,6 +468,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       urlDetector,
       decoder: createUtf8StreamDecoder(),
       controlFrames: [],
+      nextControlFrameSeq: 0,
       rendererAcks: new Map(),
     };
     if (session.byteMode.kind === 'legacyOnly') {
@@ -685,6 +644,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
       TERMINAL_STREAM_MAX_FRAMES,
       Math.max(1, Math.trunc(input.maxFrames ?? config.bufferMaxEvents)),
     );
+    const controlCursorRequested = input.controlCursor !== undefined;
+    const controlCursor = normalizeByteOffset(input.controlCursor ?? 0);
     if (input.ackedByteOffset !== undefined) {
       const ack = acknowledgeByteStream({
         terminalId: input.terminalId,
@@ -728,12 +689,15 @@ export function createTerminalPtySessionManager(params: Readonly<{
             reason: 'ring_overflow',
           }]
         : [];
-      session.controlFrames = session.controlFrames.filter((frame) => frame.t !== 'url' || frame.byteOffset >= bounds.droppedBeforeByteOffset);
-      for (const frame of session.controlFrames) {
+      session.controlFrames = session.controlFrames.filter(({ frame }) => frame.byteOffset >= bounds.droppedBeforeByteOffset);
+      let nextControlCursor = controlCursor;
+      for (const entry of session.controlFrames) {
         if (frames.length >= maxFrames) break;
-        if (frame.t !== 'url') continue;
+        if (entry.seq < controlCursor) continue;
+        const frame = entry.frame;
         if (frame.byteOffset < requested || frame.byteOffset > bounds.totalBytesWritten) continue;
         frames.push(frame);
+        nextControlCursor = entry.seq + 1;
       }
       const deliveredAllBytes = nextByteOffset >= bounds.totalBytesWritten;
       let deliveredExit = false;
@@ -754,6 +718,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
         nextByteOffset,
         availableByteOffset: bounds.totalBytesWritten,
         droppedBeforeByteOffset: bounds.droppedBeforeByteOffset,
+        ...(controlCursorRequested ? { nextControlCursor } : {}),
         done: session.ended && deliveredAllBytes && (!session.exit || deliveredExit),
       };
     }
@@ -786,6 +751,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
 
     const session = sessionsById.get(raw.terminalId);
     const frames: TerminalByteStreamFrame[] = [];
+    let nextControlCursor = controlCursor;
     let streamNextByteOffset = raw.chunks[0]?.byteOffset ?? raw.nextByteOffset;
     if (raw.gap) {
       frames.push({
@@ -823,12 +789,14 @@ export function createTerminalPtySessionManager(params: Readonly<{
     }
     if (session) {
       const droppedBefore = raw.droppedBeforeByteOffset;
-      session.controlFrames = session.controlFrames.filter((frame) => frame.t !== 'url' || frame.byteOffset >= droppedBefore);
-      for (const frame of session.controlFrames) {
+      session.controlFrames = session.controlFrames.filter(({ frame }) => frame.byteOffset >= droppedBefore);
+      for (const entry of session.controlFrames) {
         if (frames.length >= maxFrames) break;
-        if (frame.t !== 'url') continue;
+        if (entry.seq < controlCursor) continue;
+        const frame = entry.frame;
         if (frame.byteOffset < input.byteOffset || frame.byteOffset > streamNextByteOffset) continue;
         frames.push(frame);
+        nextControlCursor = entry.seq + 1;
       }
     }
     const deliveredAllReadBytes = streamNextByteOffset >= raw.nextByteOffset;
@@ -851,6 +819,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       nextByteOffset: streamNextByteOffset,
       availableByteOffset: raw.availableByteOffset,
       droppedBeforeByteOffset: raw.droppedBeforeByteOffset,
+      ...(controlCursorRequested ? { nextControlCursor } : {}),
       done: raw.done && deliveredAllReadBytes && (!raw.exit || deliveredExit),
     };
   };

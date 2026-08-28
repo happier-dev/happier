@@ -132,13 +132,16 @@ describe('external SCM runtime consumer parity', () => {
                     }
                     api.scm.registerHostingProvider('shared', {
                         adapter: {
-                            detectRemote: () => ({
-                                id: 'shared',
-                                kind: 'acme',
-                                displayName: 'Acme forge',
-                                baseUrl: 'https://forge.example',
-                                repositoryWebUrl: 'https://forge.example/acme/repo',
-                            }),
+                            routing: {
+                                detectRemote: () => ({
+                                    id: 'shared',
+                                    kind: 'acme',
+                                    displayName: 'Acme forge',
+                                    baseUrl: 'https://forge.example',
+                                    repositoryWebUrl: 'https://forge.example/acme/repo',
+                                }),
+                                buildCompareUrl: () => null,
+                            },
                         },
                     });
                 },

@@ -127,6 +127,9 @@ import type { AgentProviderCatalogObservationService } from '@/providers/probe/a
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import {
+    readAuthoritativeSessionDeletionChangeV1,
+} from '@happier-dev/protocol/changes';
+import {
     registerMachineRpcHandlers,
     type MachineRpcHandlerDeps,
     type MachineRpcHandlers,
@@ -216,6 +219,7 @@ const REQUIRED_MACHINE_CONTROL_RPC_METHODS = Object.freeze([
     RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
     RPC_METHODS.STOP_SESSION,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+    RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
 ]);
 const MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS = 10_000;
 
@@ -239,6 +243,11 @@ export type PendingSessionActivationHintNotification = Readonly<{
     requestId: string;
     pendingVersion: number;
     source: 'changes' | 'live';
+}>;
+
+export type SessionDeletedChangeNotification = Readonly<{
+    sessionId: string;
+    cursor: number;
 }>;
 
 export type ConnectedServicesProjectionNotification = Readonly<{
@@ -322,6 +331,9 @@ export class ApiMachineClient {
     private accountSettingsVersionHintListeners = new Set<(hint: AccountSettingsVersionHintNotification) => void | Promise<void>>();
     private pendingSessionActivationHintListeners = new Set<(
         hint: PendingSessionActivationHintNotification,
+    ) => void | Promise<void>>();
+    private sessionDeletedChangeListeners = new Set<(
+        change: SessionDeletedChangeNotification,
     ) => void | Promise<void>>();
     private connectedServicesProjectionListener: ((notification: ConnectedServicesProjectionNotification) => void | Promise<void>) | null = null;
     private machineTransferListeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
@@ -445,6 +457,14 @@ export class ApiMachineClient {
             const published = await this.machineControlReadinessPublication.promise;
             return { ready: published, readiness };
         }
+
+        // A successful core registration receipt proves that the server has
+        // installed its post-authentication RPC listener. Replay the manager's
+        // complete current set once for this readiness publication so optional
+        // registrations emitted during the admission fence are not silently
+        // lost. The guards above prevent later optional acknowledgements from
+        // repeatedly replaying the remaining set.
+        this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations();
 
         const promise = (async () => {
             const capabilities = this.currentMachineOperationProtocolCapabilities();
@@ -908,6 +928,8 @@ export class ApiMachineClient {
                         });
                         return true;
                     })),
+                subscribeSessionDeletedChanges: (listener) =>
+                    this.onSessionDeletedChange(listener),
                 workingDirectory: deps?.workingDirectory ?? this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: deps?.filesystemAccessPolicy ?? this.filesystemAccessPolicy,
                 getAdditionalAllowedWriteDirs: deps?.getAdditionalAllowedWriteDirs ?? (() => this.additionalAllowedWriteDirs),
@@ -1012,6 +1034,17 @@ export class ApiMachineClient {
         };
     }
 
+    onSessionDeletedChange(
+        listener: (
+            change: SessionDeletedChangeNotification,
+        ) => void | Promise<void>,
+    ): () => void {
+        this.sessionDeletedChangeListeners.add(listener);
+        return () => {
+            this.sessionDeletedChangeListeners.delete(listener);
+        };
+    }
+
     getSessionSyncPendingInputServerContractResult():
         SessionSyncPendingInputServerContractResult | null {
         const result = this.sessionSyncPendingInputServerContractResult;
@@ -1039,6 +1072,14 @@ export class ApiMachineClient {
                     message: error instanceof Error ? error.message : String(error),
                 });
             }
+        }
+    }
+
+    private async notifySessionDeletedChange(
+        change: SessionDeletedChangeNotification,
+    ): Promise<void> {
+        for (const listener of this.sessionDeletedChangeListeners) {
+            await Promise.resolve(listener(change));
         }
     }
 
@@ -1780,9 +1821,7 @@ export class ApiMachineClient {
                                 registrationResult.readiness.status === 'timeout'
                                 && isCurrentTransport()
                             ) {
-                                this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations(
-                                    REQUIRED_MACHINE_CONTROL_RPC_METHODS,
-                                );
+                                this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations();
                                 registrationResult =
                                     await this.publishMachineControlReadinessWhenReady({
                                         socket,
@@ -1864,14 +1903,31 @@ export class ApiMachineClient {
         });
 
         socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: unknown }, callback: (response: unknown) => void) => {
+            const isCurrentTransport = () => (
+                this.isActiveTransportGeneration(transportGeneration)
+                && socket === this.socket
+            );
+            if (!isCurrentTransport()) {
+                return;
+            }
             logger.debugLargeJson(
                 `[API MACHINE] Received RPC request:`,
                 projectIncomingMachineRpcDebugPayload(data),
             );
             try {
                 await this.requirePlainMachineCompatibility();
-                callback(await this.rpcHandlerManager.handleRequest(data));
+                if (!isCurrentTransport()) {
+                    return;
+                }
+                const response = await this.rpcHandlerManager.handleRequest(data);
+                if (!isCurrentTransport()) {
+                    return;
+                }
+                callback(response);
             } catch (error) {
+                if (!isCurrentTransport()) {
+                    return;
+                }
                 callback({
                     ok: false,
                     error: error instanceof Error ? error.message : 'Machine RPC is unavailable',
@@ -2405,6 +2461,10 @@ export class ApiMachineClient {
             ) return [];
             return [{ sessionId, requestId, pendingVersion, source: 'changes' }];
         });
+        const deletedSessionChanges = changes.flatMap((change) => {
+            const deletion = readAuthoritativeSessionDeletionChangeV1(change);
+            return deletion ? [deletion] : [];
+        });
 
         if (changes.length >= CHANGES_PAGE_LIMIT || hasRelevantMachineChange) {
             await this.refreshMachineFromServer(signal);
@@ -2447,6 +2507,13 @@ export class ApiMachineClient {
         for (const activationHint of pendingActivationHints) {
             signal.throwIfAborted();
             await this.notifyPendingSessionActivationHint(activationHint);
+        }
+        for (const deletion of deletedSessionChanges) {
+            signal.throwIfAborted();
+            // Cleanup is part of consuming this durable deletion fact. A
+            // listener failure leaves the Account cursor untouched so the
+            // incumbent changes retry owner replays the exact same deletion.
+            await this.notifySessionDeletedChange(deletion);
         }
 
         signal.throwIfAborted();

@@ -247,7 +247,6 @@ export type AccountSettingsUpdateV2Deps = Readonly<{
 type UpdateAccountSettingsV2WithRetryCommonParams = Readonly<{
   credentials: StoredCredentials;
   deps?: AccountSettingsUpdateV2Deps;
-  maxAttempts?: number;
   signal?: AbortSignal;
   /**
    * A caller-owned lifetime fence evaluated only before the transport write is
@@ -264,23 +263,17 @@ type AccountSettingsMutationCallback = (
   | Readonly<Record<string, unknown>>
   | Promise<Readonly<Record<string, unknown>>>;
 
-type UpdateAccountSettingsV2WithRetryImmutableParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
+export type UpdateAccountSettingsV2WithRetryParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
   mutation: AccountSettingMutationV1;
+  maxAttempts?: number;
   mutate?: never;
 }>;
 
-type UpdateAccountSettingsV2WithRetryCallbackParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
-  /**
-   * Re-evaluated for every CAS candidate. Provider migrations and connection
-   * authoring use this to derive their next document from the latest winner.
-   */
+export type UpdateAccountSettingsV2OnceAgainstLatestParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
+  /** Evaluated exactly once against the fetched Account Settings version. */
   mutate: AccountSettingsMutationCallback;
   mutation?: never;
 }>;
-
-export type UpdateAccountSettingsV2WithRetryParams =
-  | UpdateAccountSettingsV2WithRetryImmutableParams
-  | UpdateAccountSettingsV2WithRetryCallbackParams;
 
 export type UpdateAccountSettingsV2OnceParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
   /**
@@ -539,17 +532,11 @@ function maySubmitAccountSettingsMutation(params: Readonly<{
   return !isCancelledBeforeSubmission(params.signal) && params.shouldSubmit?.() !== false;
 }
 
-function hasRetryableAccountSettingsCallback(
-  params: UpdateAccountSettingsV2WithRetryParams,
-): params is UpdateAccountSettingsV2WithRetryCallbackParams {
-  return typeof params.mutate === 'function';
-}
-
 /**
- * Narrows a total Account Settings CAS result for legacy callback callers
- * whose follow-up operation requires a confirmed Settings version. Keeping
- * this assertion at the CAS owner prevents provider migrations and connection
- * authoring from interpreting an unsubmitted or unknown result as current.
+ * Narrows a total Account Settings CAS result for callers whose follow-up
+ * operation requires a confirmed Settings version. Keeping this assertion at
+ * the CAS owner prevents provider migrations and connection authoring from
+ * interpreting an unsubmitted or unknown result as current.
  */
 export function requireAccountSettingsMutationSuccess(
   result: AccountSettingsMutationResult,
@@ -656,13 +643,7 @@ export async function updateAccountSettingsV2WithRetry(
 ): Promise<AccountSettingsMutationResult> {
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
   if (params.shouldCommit?.() === false) return cancelledBeforeSubmission();
-  // Callback applications are deliberately recomputed inside the retry loop.
-  // Provider migrations and connection mutations derive from current registry
-  // facts and the current raw winner, so replaying the first callback result
-  // after a CAS conflict would be a stale write.
-  const application = hasRetryableAccountSettingsCallback(params)
-    ? { kind: 'callback' as const, mutate: params.mutate }
-    : { kind: 'immutable' as const, mutation: params.mutation };
+  const application = { kind: 'immutable' as const, mutation: params.mutation };
   const requestedMaxAttempts = params.maxAttempts;
   const maxAttempts = typeof requestedMaxAttempts === 'number'
     && Number.isFinite(requestedMaxAttempts)
@@ -727,11 +708,6 @@ export async function updateAccountSettingsV2WithRetry(
     try {
       response = await deps.updateSettings(updateRequest);
     } catch {
-      if (application.kind === 'callback') {
-        // A callback can derive different values for each live baseline, so a
-        // post-write reread cannot prove this submitted candidate's outcome.
-        return Object.freeze({ status: 'outcomeUnknown', lastKnownVersion: version });
-      }
       return await settleSubmittedImmutableWrite({
         credentials: params.credentials,
         deps,
@@ -764,13 +740,13 @@ export async function updateAccountSettingsV2WithRetry(
 }
 
 /**
- * Executes one Account Settings CAS against the caller-observed version.
- * This is intentionally separate from the general retrying helper: callers
- * that create immutable SavedSecret records must never replay a mutation onto
- * a later document after a conflict.
+ * Evaluates one semantic Account Settings mutation against the latest fetched
+ * version and submits exactly one CAS. A conflict is terminal: callers may
+ * begin a new user/domain operation, but this owner never re-enters arbitrary
+ * callback code behind their back.
  */
-export async function updateAccountSettingsV2Once(
-  params: UpdateAccountSettingsV2OnceParams,
+async function updateAccountSettingsV2OnceInternal(
+  params: UpdateAccountSettingsV2OnceAgainstLatestParams & Readonly<{ expectedVersion?: number }>,
 ): Promise<UpdateAccountSettingsV2OnceResult> {
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
   const deps = resolveAccountSettingsV2UpdateDeps(params);
@@ -782,7 +758,7 @@ export async function updateAccountSettingsV2Once(
     return unavailableResultForBoundaryError(error);
   }
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
-  if (fetched.version !== params.expectedVersion) {
+  if (params.expectedVersion !== undefined && fetched.version !== params.expectedVersion) {
     return Object.freeze({ status: 'conflict', currentVersion: fetched.version });
   }
 
@@ -806,26 +782,22 @@ export async function updateAccountSettingsV2Once(
   }
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
   if (!prepared.didChange) {
-    await deps.writeCacheSnapshot(fetched.content, fetched.version);
+    if (params.shouldCommit?.() !== false) {
+      await deps.writeCacheSnapshot(fetched.content, fetched.version);
+    }
     return Object.freeze({ status: 'unchanged', version: fetched.version, settings: prepared.settings });
   }
 
-  const updateRequest = {
-    expectedVersion: params.expectedVersion,
-    content: prepared.content,
-  };
+  const updateRequest = { expectedVersion: fetched.version, content: prepared.content };
   if (!accountSettingsV2WriteFitsProtocolLimits(updateRequest)) {
     return Object.freeze({ status: 'invalid', reason: 'tooLarge' });
   }
-  // See the retrying owner above: this is the last pre-submission boundary.
-  // Do not evaluate it after calling updateSettings, even if the caller
-  // retires while the server response is in flight.
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
   let response: AccountSettingsV2UpdateResponse;
   try {
     response = await deps.updateSettings(updateRequest);
   } catch {
-    return Object.freeze({ status: 'outcomeUnknown', lastKnownVersion: params.expectedVersion });
+    return Object.freeze({ status: 'outcomeUnknown', lastKnownVersion: fetched.version });
   }
   if (response.success === false && response.error === 'invalid') {
     return Object.freeze({ status: 'invalid', reason: response.reason });
@@ -833,6 +805,26 @@ export async function updateAccountSettingsV2Once(
   if (response.success === false) {
     return Object.freeze({ status: 'conflict', currentVersion: response.currentVersion });
   }
-  await deps.writeCacheSnapshot(prepared.content, response.version);
+  if (params.shouldCommit?.() !== false) {
+    await deps.writeCacheSnapshot(prepared.content, response.version);
+  }
   return Object.freeze({ status: 'applied', version: response.version, settings: prepared.settings });
+}
+
+export async function updateAccountSettingsV2OnceAgainstLatest(
+  params: UpdateAccountSettingsV2OnceAgainstLatestParams,
+): Promise<UpdateAccountSettingsV2OnceResult> {
+  return await updateAccountSettingsV2OnceInternal(params);
+}
+
+/**
+ * Executes one Account Settings CAS against the caller-observed version.
+ * This is intentionally separate from the general retrying helper: callers
+ * that create immutable SavedSecret records must never replay a mutation onto
+ * a later document after a conflict.
+ */
+export async function updateAccountSettingsV2Once(
+  params: UpdateAccountSettingsV2OnceParams,
+): Promise<UpdateAccountSettingsV2OnceResult> {
+  return await updateAccountSettingsV2OnceInternal(params);
 }

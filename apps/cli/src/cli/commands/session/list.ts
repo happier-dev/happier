@@ -9,6 +9,7 @@ import { assertSessionCommandArguments } from '@/cli/commands/session/shared/ass
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { configuration } from '@/configuration';
 import { cmd, errorFrame, gray, yellow } from '@happier-dev/cli-common/output';
+import type { PublicActionResultById } from '@happier-dev/protocol';
 
 const SESSION_LIST_USAGE = `Usage: ${SESSION_HELP_LINES.list}`;
 const SESSION_LIST_BOOLEAN_FLAGS = ['--active', '--archived', '--include-system', '--resumable', '--plain', '--json'] as const;
@@ -103,7 +104,7 @@ export async function cmdSessionList(
     }
     throw new Error(result.errorMessage ?? result.errorCode);
   }
-  const payload = result.data as any;
+  const payload = result.data as PublicActionResultById['session.list'];
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: payload })) {
     return;
   }

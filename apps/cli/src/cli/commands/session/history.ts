@@ -282,7 +282,7 @@ export async function cmdSessionHistory(
     },
     { surface: 'cli', defaultSessionId: null },
   );
-  const normalized = normalizeActionExecuteResult(actionRes as any);
+  const normalized = normalizeActionExecuteResult(actionRes);
   if (!normalized.ok) {
     if (json) {
       await printJsonEnvelope({

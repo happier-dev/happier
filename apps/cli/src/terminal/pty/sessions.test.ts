@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -178,8 +179,8 @@ describe('TerminalPtySessionManager', () => {
     expect(second).toEqual({ ok: true, terminalId: first.terminalId, reused: true });
   });
 
-  it('derives active terminal metrics from live sessions without retaining terminal content', () => {
-    const provider = new FakePtyProvider();
+  it('keeps terminal bytes and decoded content out of durable sinks and content-free metrics', () => {
+    const provider = new FakeByteHookProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
       config: defaultConfig(),
@@ -196,9 +197,23 @@ describe('TerminalPtySessionManager', () => {
     expect(second.ok).toBe(true);
     if (!first.ok || !second.ok) throw new Error('expected terminal sessions');
 
-    provider.spawned[0]?.pty.emitData('terminal-content-must-not-appear-in-metrics');
+    const rawPrefix = Buffer.from('TERM-1-private-output-');
+    const splitUtf8 = Buffer.from('€');
+    provider.spawned[0]?.pty.emitByteHookData(Buffer.concat([rawPrefix, splitUtf8.subarray(0, 2)]));
+    provider.spawned[0]?.pty.emitByteHookData(splitUtf8.subarray(2));
+    const metrics = JSON.stringify(manager.metrics());
     expect(manager.metrics()).toMatchObject({ activeTerminals: 2 });
-    expect(JSON.stringify(manager.metrics())).not.toContain('terminal-content-must-not-appear-in-metrics');
+    expect(metrics).not.toContain(rawPrefix.toString('utf8'));
+    expect(metrics).not.toContain(rawPrefix.toString('base64'));
+    expect(metrics).not.toContain('€');
+
+    const bytePathSource = [
+      './sessions.ts',
+      './byteRing.ts',
+      './decode.ts',
+      './metrics.ts',
+    ].map((relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')).join('\n');
+    expect(bytePathSource).not.toMatch(/@\/ui\/logger|@\/persistence|node:fs|console\.(?:debug|info|log|warn|error)/);
 
     expect(manager.close({ terminalId: first.terminalId })).toEqual({ ok: true });
     expect(manager.metrics()).toMatchObject({ activeTerminals: 1 });
@@ -524,18 +539,25 @@ describe('TerminalPtySessionManager', () => {
 
     pty.emitData(Buffer.from('Open https://example.com/path\n', 'utf8'));
 
-    const firstRead = manager.readByteStream({ terminalId: ensured.terminalId, byteOffset: 0, maxBytes: 1024, maxFrames: 1 });
-    expect(firstRead).toMatchObject({ ok: true, nextByteOffset: 30 });
+    const firstRead = manager.readByteStream({
+      terminalId: ensured.terminalId,
+      byteOffset: 0,
+      controlCursor: 0,
+      maxBytes: 1024,
+      maxFrames: 1,
+    });
+    expect(firstRead).toMatchObject({ ok: true, nextByteOffset: 30, nextControlCursor: 0 });
     if (!firstRead.ok) throw new Error('expected ok');
     expect(firstRead.frames.map((frame) => frame.t)).toEqual(['bytes']);
 
     const secondRead = manager.readByteStream({
       terminalId: ensured.terminalId,
       byteOffset: firstRead.nextByteOffset,
+      controlCursor: firstRead.nextControlCursor,
       maxBytes: 1024,
       maxFrames: 1,
     });
-    expect(secondRead).toMatchObject({ ok: true, terminalId: ensured.terminalId });
+    expect(secondRead).toMatchObject({ ok: true, terminalId: ensured.terminalId, nextControlCursor: 1 });
     if (!secondRead.ok) throw new Error('expected ok');
     expect(secondRead.frames).toEqual([
       expect.objectContaining({
@@ -545,6 +567,20 @@ describe('TerminalPtySessionManager', () => {
         kind: 'generic',
       }),
     ]);
+
+    const thirdRead = manager.readByteStream({
+      terminalId: ensured.terminalId,
+      byteOffset: secondRead.nextByteOffset,
+      controlCursor: secondRead.nextControlCursor,
+      maxBytes: 1024,
+      maxFrames: 1,
+    });
+    expect(thirdRead).toMatchObject({
+      ok: true,
+      terminalId: ensured.terminalId,
+      frames: [],
+      nextControlCursor: 1,
+    });
   });
 
   it('splits protocol-facing byte-stream frames at the decoded frame cap', () => {

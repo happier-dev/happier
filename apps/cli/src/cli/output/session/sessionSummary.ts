@@ -12,8 +12,9 @@ export type SessionSummary = Readonly<ProtocolSessionSummary>;
 function readShare(value: unknown): { accessLevel: string; canApprovePermissions: boolean } | null | undefined {
   if (value === null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const accessLevel = (value as any).accessLevel;
-  const canApprovePermissions = (value as any).canApprovePermissions;
+  const record = value as Readonly<Record<string, unknown>>;
+  const accessLevel = record.accessLevel;
+  const canApprovePermissions = record.canApprovePermissions;
   if (typeof accessLevel !== 'string') return undefined;
   if (typeof canApprovePermissions !== 'boolean') return undefined;
   return { accessLevel, canApprovePermissions };
@@ -30,13 +31,16 @@ export function summarizeSessionRow(params: Readonly<{
     accountEncryptionMode: params.accountEncryptionMode,
     rawSession: params.row,
   });
-  const tag = typeof (metadata as any)?.tag === 'string' ? String((metadata as any).tag) : undefined;
-  const title = typeof (metadata as any)?.summary?.text === 'string' ? String((metadata as any).summary.text).trim() : undefined;
-  const path = typeof (metadata as any)?.path === 'string' ? String((metadata as any).path) : undefined;
-  const host = typeof (metadata as any)?.host === 'string' ? String((metadata as any).host) : undefined;
+  const summary = metadata?.summary && typeof metadata.summary === 'object' && !Array.isArray(metadata.summary)
+    ? metadata.summary as Readonly<Record<string, unknown>>
+    : null;
+  const tag = typeof metadata?.tag === 'string' ? metadata.tag : undefined;
+  const title = typeof summary?.text === 'string' ? summary.text.trim() : undefined;
+  const path = typeof metadata?.path === 'string' ? metadata.path : undefined;
+  const host = typeof metadata?.host === 'string' ? metadata.host : undefined;
   const systemMetadata = metadata === null ? null : readSystemSessionMetadataFromMetadata({ metadata });
   const isSystem = systemMetadata !== null;
-  const archivedAt = (params.row as any)?.archivedAt;
+  const archivedAt = params.row.archivedAt;
   const archivedAtValue = typeof archivedAt === 'number' && Number.isFinite(archivedAt) && archivedAt >= 0 ? archivedAt : archivedAt === null ? null : undefined;
 
   return {
@@ -47,14 +51,14 @@ export function summarizeSessionRow(params: Readonly<{
     activeAt: params.row.activeAt,
     ...(archivedAtValue !== undefined ? { archivedAt: archivedAtValue } : {}),
     ...(typeof params.row.pendingCount === 'number' ? { pendingCount: params.row.pendingCount } : {}),
-    ...(typeof (params.row as any).pendingBlockedCount === 'number' ? { pendingBlockedCount: (params.row as any).pendingBlockedCount } : {}),
+    ...(typeof params.row.pendingBlockedCount === 'number' ? { pendingBlockedCount: params.row.pendingBlockedCount } : {}),
     ...(tag ? { tag } : {}),
     ...(title ? { title } : {}),
     ...(path ? { path } : {}),
     ...(host ? { host } : {}),
     ...(isSystem ? { isSystem, systemPurpose: systemMetadata?.key ?? null } : {}),
     ...(readShare(params.row.share) !== undefined ? { share: readShare(params.row.share) } : {}),
-    ...((params.row as any)?.encryptionMode ? { encryptionMode: (params.row as any).encryptionMode } : {}),
+    ...(params.row.encryptionMode ? { encryptionMode: params.row.encryptionMode } : {}),
     encryption: params.credentials.encryption
       ? { type: params.credentials.encryption.type }
       : null,

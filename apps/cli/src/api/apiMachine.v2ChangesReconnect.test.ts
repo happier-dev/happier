@@ -1896,6 +1896,133 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(failure).toBeInstanceOf(Error);
     });
 
+    it('delivers only the durable Session-deletion hint before acknowledging its Account cursor', async () => {
+        const machine: Machine = {
+            id: 'machine-session-deletion-change',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const order: string[] = [];
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-a' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            {
+                                cursor: 11,
+                                kind: 'session',
+                                entityId: 'session-revoked',
+                                changedAt: 1,
+                                hint: null,
+                            },
+                            {
+                                cursor: 12,
+                                kind: 'session',
+                                entityId: 'session-deleted',
+                                changedAt: 2,
+                                hint: { v: 1, lifecycle: 'deleted' },
+                            },
+                        ],
+                        nextCursor: 12,
+                        sessionAccessWitness: {
+                            v: 1,
+                            throughCursor: 12,
+                            entries: [
+                                { sessionId: 'session-revoked', cursor: 11, status: 'unavailable' },
+                                { sessionId: 'session-deleted', cursor: 12, status: 'unavailable' },
+                            ],
+                        },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        writeAccountChangesCursor.mockImplementation(async () => {
+            order.push('cursor');
+        });
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        const deleted = vi.fn(async () => {
+            order.push('deleted');
+        });
+        client.onSessionDeletedChange(deleted);
+
+        await (client as any).syncChangesOnConnect({ reason: 'connect' });
+
+        expect(deleted).toHaveBeenCalledExactlyOnceWith({
+            sessionId: 'session-deleted',
+            cursor: 12,
+        });
+        expect(order).toEqual(['deleted', 'cursor']);
+    });
+
+    it('retains the Account cursor when authoritative Session cleanup is deferred', async () => {
+        vi.useFakeTimers();
+        const machine: Machine = {
+            id: 'machine-session-deletion-deferred',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'account-a' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [{
+                            cursor: 12,
+                            kind: 'session',
+                            entityId: 'session-deleted',
+                            changedAt: 2,
+                            hint: { v: 1, lifecycle: 'deleted' },
+                        }],
+                        nextCursor: 12,
+                        sessionAccessWitness: {
+                            v: 1,
+                            throughCursor: 12,
+                            entries: [{ sessionId: 'session-deleted', cursor: 12, status: 'unavailable' }],
+                        },
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        const cleanup = vi.fn()
+            .mockRejectedValueOnce(new Error('operation claim active'))
+            .mockResolvedValueOnce(undefined);
+        client.onSessionDeletedChange(cleanup);
+
+        try {
+            (client as any).startChangesSyncWithRetry({ reason: 'connect' });
+            await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(1));
+            expect(writeAccountChangesCursor).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(2_000);
+            await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(2));
+            expect(writeAccountChangesCursor).toHaveBeenCalledExactlyOnceWith(
+                'account-a',
+                12,
+            );
+        } finally {
+            await client.shutdown();
+            vi.useRealTimers();
+        }
+    });
+
     it('applies an empty first Account-lifetime witness before acknowledging its cursor', async () => {
         const machine: Machine = {
             id: 'machine-resource-session-account-transition',

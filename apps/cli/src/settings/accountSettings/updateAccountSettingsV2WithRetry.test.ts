@@ -412,7 +412,7 @@ describe('updateAccountSettingsV2WithRetry', () => {
     expect(opened?.value).toMatchObject({ reviewPromptLikedApp: true });
   });
 
-  it('reapplies one derived mutation to the fresh base without replaying its callback', async () => {
+  it('reapplies one immutable mutation to the fresh base after a CAS conflict', async () => {
     const credentials = createLegacyCredentialsStub();
     const calls: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
     let attempt = 0;

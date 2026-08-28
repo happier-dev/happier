@@ -1,11 +1,8 @@
 import { compareVersions } from '@happier-dev/cli-common/update';
 import { GH_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 
-import { getGhDepStatus, INSTALL_GH_CONSENT_TOKEN, installGh } from '@/capabilities/deps/gh';
+import { getGhDepStatus } from '@/capabilities/deps/gh';
 import { logger } from '@/ui/logger';
-
-// `installGh` is referenced by `installOrUpgrade` below; the consent-gated
-// auto-update path uses `runGhBackgroundAutoUpdateCheck` which only logs.
 
 import type { RuntimeInstallableAdapter, RuntimeInstallableLaunchResolution } from './registry';
 
@@ -47,17 +44,23 @@ export async function runGhBackgroundAutoUpdateCheck(): Promise<void> {
   if (compareVersions(latestVersion, installedVersion) <= 0) return;
 
   // Notify-only: log the available upgrade so the daemon/UI can surface a prompt
-  // (or the user can run `happier install gh` explicitly). Do not call installGh()
-  // here — that would bypass `consent.update: 'required'`.
+  // (or the user can run `happier install gh` explicitly). Do not invoke the
+  // shared installer here — that would bypass `consent.update: 'required'`.
   logger.info(
     `[gh] managed install ${installedVersion} has an upgrade available to ${latestVersion}; awaiting explicit consent (descriptor consent.update=required).`,
   );
 }
 
-export const ghRuntimeInstallable: RuntimeInstallableAdapter = {
-  key: INSTALLABLE_KEYS.GH,
-  capabilityId: GH_DEP_ID,
-  detectLaunchResolution: detectGhLaunchResolution,
-  installOrUpgrade: () => installGh(INSTALL_GH_CONSENT_TOKEN),
-  runBackgroundAutoUpdateCheck: runGhBackgroundAutoUpdateCheck,
-};
+export function createGhRuntimeInstallableAdapter(
+  hostAdapter: RuntimeInstallableAdapter,
+): RuntimeInstallableAdapter {
+  return {
+    ...hostAdapter,
+    key: INSTALLABLE_KEYS.GH,
+    capabilityId: GH_DEP_ID,
+    detectCapabilityStatus: getGhDepStatus,
+    detectLaunchResolution: detectGhLaunchResolution,
+    installOrUpgrade: hostAdapter.installOrUpgrade,
+    runBackgroundAutoUpdateCheck: runGhBackgroundAutoUpdateCheck,
+  };
+}

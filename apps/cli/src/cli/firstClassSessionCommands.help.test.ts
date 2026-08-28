@@ -72,7 +72,8 @@ describe('first-class CLI session command help', () => {
         terminalRuntime: null,
       });
 
-      expect(output.text()).toContain('happier history <session-id-or-prefix-or-tag> ([--machine-id <machineId>] [--tail N|--limit N]');
+      expect(output.text()).toContain('happier history <session-id-or-prefix-or-tag> [--machine-id <machineId>]');
+      expect(output.text()).toContain('([--tail N|--limit N]');
       expect(output.text()).toContain('| --follow [--jsonl])');
     } finally {
       output.restore();

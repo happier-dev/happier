@@ -180,7 +180,7 @@ describe('happier session actions (unit)', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('lifts nested action failures into a JSON error envelope for actions execute', async () => {
+  it('preserves an inner {ok:false} domain result as opaque success data for actions execute', async () => {
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,
       sessionId: 'sess-1',
@@ -212,12 +212,17 @@ describe('happier session actions (unit)', () => {
       const parsed = output.json();
       expect(parsed).toEqual({
         v: 1,
-        ok: false,
+        ok: true,
         kind: 'session_actions_execute',
-        error: {
-          code: 'session_not_found',
-          message: 'Session not found',
-          candidates: ['sess-2'],
+        data: {
+          sessionId: 'sess-1',
+          actionId: 'session.status.get',
+          result: {
+            ok: false,
+            errorCode: 'session_not_found',
+            error: 'Session not found',
+            candidates: ['sess-2'],
+          },
         },
       });
     } finally {
@@ -225,7 +230,7 @@ describe('happier session actions (unit)', () => {
     }
   });
 
-  it('unwraps nested success action payloads before printing the JSON envelope for actions execute', async () => {
+  it('preserves an inner {ok:true} domain result byte-shape for actions execute', async () => {
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,
       sessionId: 'sess-1',
@@ -263,9 +268,54 @@ describe('happier session actions (unit)', () => {
           sessionId: 'sess-1',
           actionId: 'review.start',
           result: {
-            started: true,
-            runId: 'run-1',
+            ok: true,
+            data: {
+              started: true,
+              runId: 'run-1',
+            },
           },
+        },
+      });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('uses only the outer Action transport failure to produce the CLI error envelope', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        metadata: {},
+      },
+      ctx: null,
+      mode: 'plain' as const,
+    });
+    execute.mockResolvedValueOnce({
+      ok: false,
+      errorCode: 'session_not_found',
+      error: 'Session not found',
+      details: { candidates: ['sess-2'] },
+    });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['actions', 'execute', 'sess-1', 'session.status.get', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_actions_execute',
+        error: {
+          code: 'session_not_found',
+          message: 'Session not found',
+          candidates: ['sess-2'],
+          details: { candidates: ['sess-2'] },
         },
       });
     } finally {

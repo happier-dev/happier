@@ -1,7 +1,9 @@
 import type { AgentId, AgentCliInstallPlatform } from '@happier-dev/agents';
 import {
   installAgentCli as installAgentCliDefault,
+  installAgentCliForRuntime as installAgentCliForRuntimeDefault,
   resolvePlatformFromNodePlatform,
+  type AgentCliRuntimeDescriptor,
   type InstallAgentCliResult,
 } from '@happier-dev/cli-common/agents';
 
@@ -40,10 +42,12 @@ function resolveAgentCliInstallPlatform(params: Readonly<{
 
 export async function invokeAgentCliInstall(params: Readonly<{
   agentId: AgentId;
+  runtimeSpec?: AgentCliRuntimeDescriptor;
   params?: AgentCliInstallInvocationParams;
   env?: NodeJS.ProcessEnv;
   nodePlatform?: string;
   installAgentCli?: typeof installAgentCliDefault;
+  installAgentCliForRuntime?: typeof installAgentCliForRuntimeDefault;
 }>): Promise<AgentCliInstallInvocationResult> {
   const nodePlatform = params.nodePlatform ?? process.platform;
   const platform = resolveAgentCliInstallPlatform({
@@ -59,7 +63,6 @@ export async function invokeAgentCliInstall(params: Readonly<{
     };
   }
 
-  const installAgentCli = params.installAgentCli ?? installAgentCliDefault;
   const dryRun = Boolean(params.params?.dryRun);
   const intent = params.params?.intent === 'update' ? 'update' : 'install';
   const skipIfInstalled = intent === 'update'
@@ -71,15 +74,23 @@ export async function invokeAgentCliInstall(params: Readonly<{
     typeof params.params?.allowVendorRecipeExecution === 'boolean'
       ? params.params.allowVendorRecipeExecution
       : !dryRun;
-  const result = await installAgentCli({
-    agentId: params.agentId,
+  const commonInstallParams = {
     platform,
     dryRun,
     skipIfInstalled,
-    ...(params.params?.intent === 'update' ? { intent } : {}),
+    ...(params.params?.intent === 'update' ? { intent: 'update' as const } : {}),
     allowVendorRecipeExecution,
     env: params.env ?? process.env,
-  });
+  } as const;
+  const result = params.runtimeSpec
+    ? await (params.installAgentCliForRuntime ?? installAgentCliForRuntimeDefault)({
+      runtimeSpec: params.runtimeSpec,
+      ...commonInstallParams,
+    })
+    : await (params.installAgentCli ?? installAgentCliDefault)({
+      agentId: params.agentId,
+      ...commonInstallParams,
+    });
 
   if (!result.ok) {
     const errorCode = String(result.errorCode);

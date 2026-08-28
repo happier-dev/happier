@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -175,6 +175,7 @@ afterEach(() => {
   spawnSyncSpy.mockReset();
   delete process.env.HAPPIER_CODEX_PATH;
   delete process.env.HAPPIER_OPENCODE_PATH;
+  delete process.env.PI_CODING_AGENT_DIR;
   delete process.env.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP;
   selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroupMock.mockReset();
   ensureDaemonRunningForSessionCommandMock.mockReset();
@@ -335,6 +336,64 @@ describe('runBackendSessionCliCommand', () => {
     const preferenceInput = resolvePreferences.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(preferenceInput).not.toHaveProperty('processEnv');
     expect(preferenceInput).not.toHaveProperty('startedBy');
+  });
+
+  it('claims native-home state sharing from the exact plugin-resolved launch environment', async () => {
+    const credentials = { token: 'x' } as Credentials;
+    process.env.PI_CODING_AGENT_DIR = '/ambient/pi-home';
+    vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+      environmentVariables: {
+        PI_CODING_AGENT_DIR: join(homedir(), 'isolated', 'pi'),
+      },
+    });
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings: { piAgentDir: '~/isolated/pi' },
+      settingsVersion: 0,
+      scopeKey: 'scope-test',
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+    foregroundAdmissionMocks.admit.mockResolvedValueOnce({
+      ok: true,
+      capability: {
+        attemptId: 'attempt-test',
+        admissionFilePath: '/private/foreground-admission.json',
+        bootstrapFilePath: '/private/foreground-bootstrap.json',
+        authorityFilePath: '/private/foreground-authority.json',
+        descriptor: {
+          v: 1,
+          pluginId: 'pi-plugin',
+          pluginVersion: '1.0.0',
+          agentId: 'pi',
+          backendId: 'pi',
+          generation: 'generation-1',
+        },
+      },
+      launchPolicy: {
+        reservedEnvironmentVariableNames: [],
+        profileSecretRequirementNamesMissingBinding: [],
+        nativeHomeSourceEnvironmentKey: 'PI_CODING_AGENT_DIR',
+      },
+    });
+    runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
+      await resolveLateSessionCommandOptions(options);
+    });
+
+    await runBackendSessionCliCommand({
+      context: { args: ['pi'], terminalRuntime: null } as CommandContext,
+      backendIdForSessionRuntime: 'pi',
+      agentIdForAccountSettings: 'pi' as any,
+    });
+
+    expect(foregroundAdmissionMocks.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nativeHomeSourceEnvironmentValue: join(homedir(), 'isolated', 'pi'),
+      }),
+    );
   });
 
   it('sends persisted terminal-resume Connected Services intent through foreground admission', async () => {
@@ -839,6 +898,9 @@ describe('runBackendSessionCliCommand', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
+    vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+      codexBackendMode: 'acp',
+    });
 
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -868,6 +930,11 @@ describe('runBackendSessionCliCommand', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
+    vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+      environmentVariables: {
+        HAPPIER_KIMI_ACP_SELECTOR: 'poll',
+      },
+    });
 
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -977,6 +1044,9 @@ describe('runBackendSessionCliCommand', () => {
         loadedAtMs: Date.now(),
         whenRefreshed: null,
       } as any);
+      vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+        codexBackendMode: 'acp',
+      });
 
       runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -1011,6 +1081,9 @@ describe('runBackendSessionCliCommand', () => {
       loadedAtMs: Date.now(),
       whenRefreshed: null,
     } as any);
+    vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+      codexBackendMode: 'acp',
+    });
 
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -1047,6 +1120,9 @@ describe('runBackendSessionCliCommand', () => {
         loadedAtMs: Date.now(),
         whenRefreshed: null,
       } as any);
+      vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+        codexBackendMode: 'appServer',
+      });
 
       runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -1097,6 +1173,9 @@ describe('runBackendSessionCliCommand', () => {
       vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
       vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' });
       vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue(accountSettingsContext);
+      vi.spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences').mockResolvedValue({
+        codexBackendMode: 'acp',
+      });
 
       runSessionCommandSpy.mockResolvedValue(undefined);
 
