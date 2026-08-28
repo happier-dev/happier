@@ -1,3 +1,6 @@
+export const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
+export const HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES = 4 * 1024 * 1024 * 1024;
+
 function escapeSystemdEnvValue(value: string): string {
   const s = String(value ?? '');
   if (/^[A-Za-z0-9_./:@%+-]+$/.test(s)) return s.includes('%') ? s.replaceAll('%', '%%') : s;
@@ -54,6 +57,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   env?: Record<string, string>;
   restart?: string;
   killMode?: 'control-group' | 'mixed' | 'process' | 'none';
+  slice?: string;
   managedOomPreference?: 'none' | 'avoid' | 'omit';
   runAsUser?: string;
   stdoutPath?: string;
@@ -72,6 +76,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
     'killMode',
     String(params.killMode ?? '').trim(),
   );
+  const slice = assertSingleLineSystemdField('slice', String(params.slice ?? '').trim());
   const managedOomPreference = assertSingleLineSystemdField(
     'managedOomPreference',
     String(params.managedOomPreference ?? '').trim(),
@@ -92,6 +97,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const workDirLine = workDir ? `WorkingDirectory=${workDir}\n` : '';
   const userLine = runAsUser ? `User=${runAsUser}\n` : '';
   const killModeLine = killMode ? `KillMode=${killMode}\n` : '';
+  const sliceLine = slice ? `Slice=${slice}\n` : '';
   const managedOomPreferenceLine =
     managedOomPreference && managedOomPreference !== 'none'
       ? `ManagedOOMPreference=${managedOomPreference}\n`
@@ -112,7 +118,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${workDirLine}${userLine}${killModeLine}${managedOomPreferenceLine}${envBlock}ExecStart=${execStart}
+${workDirLine}${userLine}${killModeLine}${sliceLine}${managedOomPreferenceLine}${envBlock}ExecStart=${execStart}
 Restart=${restartPolicy}
 RestartSec=2
 ${outLine}${errLine}[Install]

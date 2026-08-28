@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { delimiter, dirname, isAbsolute, join, relative } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
@@ -19,7 +19,7 @@ import { buildManagedPnpmEnvironment, ensureManagedPnpmCommand, readRawPnpmOverr
 import { promoteManagedCurrentInstall } from '../promoteManagedCurrentInstall.js';
 import { resolveHappyHomeDirFromEnvironment } from '../resolveHappyHomeDir.js';
 import {
-  resolveAgentCliManagedCommandPathForRuntime,
+  resolveAgentCliManagedCommandRelativePathForRuntime,
   type AgentCliRuntimeDescriptor,
 } from '../resolution.js';
 
@@ -64,21 +64,7 @@ function resolveManagedAgentCommandPathInInstallDir(
   installDir: string,
   env: NodeJS.ProcessEnv,
 ): string {
-  const currentPath = resolveAgentCliManagedCommandPathForRuntime(runtimeSpec, {
-    happyHomeDir: resolveHappyHomeDirFromEnvironment(env),
-    processEnv: env,
-  });
-  const currentInstallDir = join(resolveManagedAgentInstallDir(runtimeSpec.id, env), 'current');
-  const commandRelativePath = relative(currentInstallDir, currentPath);
-  if (
-    !commandRelativePath
-    || commandRelativePath === '..'
-    || commandRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
-    || isAbsolute(commandRelativePath)
-  ) {
-    throw new Error(`Managed agent path is outside ${currentInstallDir}: ${currentPath}`);
-  }
-  return join(installDir, commandRelativePath);
+  return join(installDir, resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec));
 }
 
 function buildManagedPackageInstallEnvironment(env: NodeJS.ProcessEnv, workspaceDir: string): NodeJS.ProcessEnv {
@@ -634,6 +620,7 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
       installRoot,
       candidatePath: candidateDir,
       reportWarning: (message) => params.appendLogLine(params.logPath, `# ${message}`),
+      activateVersionedRelease: params.platform !== 'win32',
     });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });

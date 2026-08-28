@@ -39,6 +39,7 @@ import type {
 import { ensureBundledWorkspacePackagesBuilt } from './ensureBundledWorkspacePackagesBuilt.js';
 import { shouldReuseCliDistSnapshot } from './shouldReuseCliDistSnapshot.js';
 import { stageCliProxyApiManagedRuntime } from './stageCliProxyApiManagedRuntime.js';
+import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 
@@ -307,11 +308,13 @@ export function readCliBinaryArtifactSupportIdentity({
   target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }),
   goVersion,
   cliProxyApiManagedRuntimeExecutablePath,
+  processCustodyRuntimeExecutablePath,
 }: Readonly<{
   repoRoot: string;
   target?: BinaryTarget;
   goVersion: string;
   cliProxyApiManagedRuntimeExecutablePath?: string;
+  processCustodyRuntimeExecutablePath?: string;
 }>): CliBinaryArtifactSupportIdentity {
   assertCliNativeRuntimeTargetMatchesHost(target);
   const normalizedGoVersion = String(goVersion ?? '').trim();
@@ -394,6 +397,28 @@ export function readCliBinaryArtifactSupportIdentity({
       sourcePath: cliProxyApiManagedRuntimeExecutablePath,
       label: 'cliproxyapi:prebuilt-runtime',
     });
+  }
+
+  // The native process-custody runtime is part of the same publication
+  // closure. Its Go module source is always an identity input; the staged
+  // bytes are hashed when provisioned and their deliberate absence is hashed
+  // as a marker so a payload without the helper can never share a fingerprint
+  // with one that has it.
+  hashRequiredSupportInputPath({
+    hash,
+    repoRoot,
+    sourcePath: join(repoRoot, 'apps', 'cli', 'native', 'processcustody'),
+    label: 'process-custody:module-source',
+  });
+  if (processCustodyRuntimeExecutablePath) {
+    hashRequiredSupportInputPath({
+      hash,
+      repoRoot,
+      sourcePath: processCustodyRuntimeExecutablePath,
+      label: 'process-custody:prebuilt-runtime',
+    });
+  } else {
+    hash.update('process-custody:prebuilt-runtime\0absent\0');
   }
 
   // The support payload can change when its owner’s staging/finalization
@@ -715,6 +740,7 @@ async function stageCliBinaryArtifactSupportPayload({
   runCommand = execOrThrow,
   commandProbe = commandExists,
   cliProxyApiManagedRuntimeExecutablePath,
+  processCustodyRuntimeExecutablePath,
   expectedWorkspaceRuntimeIdentity,
   supportArtifactFingerprint,
   goVersion,
@@ -726,6 +752,7 @@ async function stageCliBinaryArtifactSupportPayload({
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   cliProxyApiManagedRuntimeExecutablePath?: string;
+  processCustodyRuntimeExecutablePath?: string;
   expectedWorkspaceRuntimeIdentity?: string;
   supportArtifactFingerprint?: string;
   goVersion?: string;
@@ -747,6 +774,7 @@ async function stageCliBinaryArtifactSupportPayload({
       target,
       goVersion: normalizedGoVersion,
       cliProxyApiManagedRuntimeExecutablePath,
+      processCustodyRuntimeExecutablePath,
     });
     if (before.fingerprint !== expectedSupportFingerprint) {
       throw new Error(
@@ -783,6 +811,12 @@ async function stageCliBinaryArtifactSupportPayload({
     runCommand,
     prebuiltExecutablePath: cliProxyApiManagedRuntimeExecutablePath,
   });
+  await stageProcessCustodyRuntime({
+    repoRoot,
+    payloadDir,
+    target,
+    prebuiltExecutablePath: processCustodyRuntimeExecutablePath,
+  });
   await stageDeferredVoiceInferenceRuntimeArchive(payloadDir, target);
   if (expectedSupportFingerprint) {
     await writeFile(
@@ -799,6 +833,7 @@ async function stageCliBinaryArtifactSupportPayload({
       target,
       goVersion: normalizedGoVersion,
       cliProxyApiManagedRuntimeExecutablePath,
+      processCustodyRuntimeExecutablePath,
     });
     if (after.fingerprint !== expectedSupportFingerprint) {
       throw new Error(
@@ -824,6 +859,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   runCommand = execOrThrow,
   commandProbe = commandExists,
   cliProxyApiManagedRuntimeExecutablePath,
+  processCustodyRuntimeExecutablePath,
   expectedWorkspaceRuntimeIdentity,
   supportArtifactFingerprint,
   goVersion,
@@ -835,6 +871,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   cliProxyApiManagedRuntimeExecutablePath?: string;
+  processCustodyRuntimeExecutablePath?: string;
   expectedWorkspaceRuntimeIdentity?: string;
   supportArtifactFingerprint?: string;
   goVersion?: string;
@@ -851,6 +888,7 @@ export async function buildCliBinaryArtifactSupportPayload({
     runCommand,
     commandProbe,
     cliProxyApiManagedRuntimeExecutablePath,
+    processCustodyRuntimeExecutablePath,
     expectedWorkspaceRuntimeIdentity,
     supportArtifactFingerprint,
     goVersion,
@@ -878,6 +916,7 @@ export async function buildCliBinaryArtifactPayload({
   compileBinary = compileBunBinary,
   ensureWorkspacePackagesBuiltByName,
   cliProxyApiManagedRuntimeExecutablePath,
+  processCustodyRuntimeExecutablePath,
   requiredCliDistInputFingerprint,
 }: {
   repoRoot: string;
@@ -889,6 +928,7 @@ export async function buildCliBinaryArtifactPayload({
   compileBinary?: typeof compileBunBinary;
   ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
   cliProxyApiManagedRuntimeExecutablePath?: string;
+  processCustodyRuntimeExecutablePath?: string;
   requiredCliDistInputFingerprint?: string;
 }): Promise<{ executableName: string; entrypoint: string }> {
   await rm(payloadDir, { recursive: true, force: true });
@@ -911,6 +951,7 @@ export async function buildCliBinaryArtifactPayload({
     runCommand,
     commandProbe,
     cliProxyApiManagedRuntimeExecutablePath,
+    processCustodyRuntimeExecutablePath,
     expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
     // The release payload preserves legitimate assets emitted alongside the
     // Bun executable (for example its managed JS runtime). New immutable

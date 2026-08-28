@@ -1140,6 +1140,11 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     const sharpDir = join(repoRoot, 'node_modules', 'sharp');
     const sharpLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-linux-x64');
     const sharpLibvipsLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-libvips-linux-x64');
+    const serverRuntimeScriptsDir = join(repoRoot, 'apps', 'server', 'scripts', 'runtime');
+    const runtimeMigrationEngineDir = join(repoRoot, 'apps', 'server', 'generated', 'runtime-migration-engines', 'linux-x64');
+    const postgresMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'migrations');
+    const mysqlMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations');
+    const prismaBuildDir = join(repoRoot, 'node_modules', 'prisma', 'build');
 
     mkdirSync(serverSourcesDir, { recursive: true });
     mkdirSync(uiDistDir, { recursive: true });
@@ -1151,12 +1156,24 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     mkdirSync(sharpDir, { recursive: true });
     mkdirSync(sharpLinuxX64Dir, { recursive: true });
     mkdirSync(sharpLibvipsLinuxX64Dir, { recursive: true });
+    mkdirSync(serverRuntimeScriptsDir, { recursive: true });
+    mkdirSync(runtimeMigrationEngineDir, { recursive: true });
+    mkdirSync(postgresMigrationsDir, { recursive: true });
+    mkdirSync(mysqlMigrationsDir, { recursive: true });
+    mkdirSync(prismaBuildDir, { recursive: true });
 
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(serverRuntimeScriptsDir, 'migrateFullRuntime.ts'), 'export {};\n', 'utf8');
     writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(mysqlClientDir, 'schema.prisma'), '// mysql\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), '// postgres\n', 'utf8');
+    writeFileSync(join(postgresMigrationsDir, 'migration_lock.toml'), 'provider = "postgresql"\n', 'utf8');
+    writeFileSync(join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), '// mysql\n', 'utf8');
+    writeFileSync(join(mysqlMigrationsDir, 'migration_lock.toml'), 'provider = "mysql"\n', 'utf8');
+    writeFileSync(join(runtimeMigrationEngineDir, 'schema-engine-debian-openssl-3.0.x'), 'schema engine\n', 'utf8');
+    writeFileSync(join(prismaBuildDir, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
     writeServerPrismaEngineFixtures({
       sqliteClientDir,
       mysqlClientDir,
@@ -1217,12 +1234,13 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
           symlinkSync(join('..', 'runtime-assets', 'inside.txt'), join(runtimeLinksDir, 'internal-link'));
         }
       },
+      compilePrismaBinary: async ({ outfile }) => writeFileSync(outfile, 'prisma migrate\n', 'utf8'),
     });
 
     assert.equal(result.executableName, 'happier-server');
     assert.equal(result.entrypoint, 'happier-server');
-    assert.equal(result.migrationEntrypoint, undefined);
-    assert.equal(compileCalls.length, 1);
+    assert.equal(result.migrationEntrypoint, 'happier-server-migrate');
+    assert.equal(compileCalls.length, 2);
     assert.deepEqual(runCalls, [
       {
         cmd: process.execPath,
@@ -1232,13 +1250,23 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
       },
+      {
+        cmd: process.execPath,
+        args: [
+          'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
+          '--binary-target',
+          'debian-openssl-3.0.x',
+          '--out-dir',
+          runtimeMigrationEngineDir,
+        ],
+      },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'happier-server'), 'utf8'), '#!/bin/sh\necho happier-server\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'), '// sqlite\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'mysql-client', 'schema.prisma'), 'utf8'), '// mysql\n');
     assert.equal(readFileSync(join(payloadDir, 'prisma', 'sqlite', 'migrations', 'migration.sql'), 'utf8'), '-- sql\n');
-    assert.equal(existsSync(join(payloadDir, 'happier-server-migrate')), false);
-    assert.equal(existsSync(join(payloadDir, 'prisma', 'schema.prisma')), false);
+    assert.equal(existsSync(join(payloadDir, 'happier-server-migrate')), true);
+    assert.equal(existsSync(join(payloadDir, 'prisma', 'schema.prisma')), true);
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui</html>\n');
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'), 'utf8'),
@@ -1298,7 +1326,9 @@ test('buildServerBinaryArtifactPayload builds managed server code without UI or 
     const payloadDir = join(tempRoot, 'payload');
     const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
     mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(join(repoRoot, 'apps', 'server', 'scripts', 'runtime'), { recursive: true });
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(repoRoot, 'apps', 'server', 'scripts', 'runtime', 'migrateFullRuntime.ts'), 'export {};\n', 'utf8');
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const runCalls = [];
@@ -1323,6 +1353,7 @@ test('buildServerBinaryArtifactPayload builds managed server code without UI or 
       args: ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'],
     }]);
     assert.equal(existsSync(join(payloadDir, 'happier-server')), true);
+    assert.equal(existsSync(join(payloadDir, 'happier-server-migrate')), true);
     assert.equal(existsSync(join(payloadDir, 'ui-web')), false);
     assert.equal(existsSync(join(payloadDir, 'generated')), false);
     assert.equal(existsSync(join(payloadDir, 'node_modules')), false);
@@ -1331,7 +1362,7 @@ test('buildServerBinaryArtifactPayload builds managed server code without UI or 
   }
 });
 
-test('buildServerRuntimeSupportPayload keeps full-server Prisma migration runtime in support', async () => {
+test('buildServerRuntimeSupportPayload keeps provider migration runtime in support for every preset', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-full-support-'));
   try {
     const repoRoot = join(tempRoot, 'repo');
@@ -1364,7 +1395,7 @@ test('buildServerRuntimeSupportPayload keeps full-server Prisma migration runtim
       ],
       target,
       buildDbProviders: 'mysql',
-      serverComponent: 'happier-server',
+      serverComponent: 'happier-server-light',
       commandProbe: () => true,
       compilePrismaBinary: async ({ outfile }) => writeFileSync(outfile, 'prisma migrate\n', 'utf8'),
     });
@@ -1377,7 +1408,7 @@ test('buildServerRuntimeSupportPayload keeps full-server Prisma migration runtim
   }
 });
 
-test('buildServerBinaryArtifactPayload packages full PostgreSQL and MySQL migration capability only for full server', async () => {
+test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration capability independently of the preset', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-full-server-'));
   try {
     const repoRoot = join(tempRoot, 'repo');

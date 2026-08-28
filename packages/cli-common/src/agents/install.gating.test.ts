@@ -778,7 +778,7 @@ describe('installAgentCli vendor_recipe execution gating', () => {
         await chmod(managedCodexPath, 0o755);
       }
 
-      const res = await installAgentCli({
+      const installUpdate = () => installAgentCli({
         agentId: 'codex',
         platform,
         intent: 'update',
@@ -806,11 +806,19 @@ describe('installAgentCli vendor_recipe execution gating', () => {
           },
         },
       });
+      const updates = [await installUpdate(), await installUpdate(), await installUpdate()];
+      const res = updates[0];
 
       expect(res.ok).toBe(true);
       if (!res.ok) return;
+      expect(updates.every((update) => update.ok)).toBe(true);
       expect(res.alreadyInstalled).toBe(false);
-      expect(downloadCalls).toEqual([`https://example.test/${expectedAssetName}`]);
+      expect((await stat(join(homeDir, 'tools', 'providers', 'codex', 'active', 'bin', 'codex'))).isFile()).toBe(true);
+      expect(downloadCalls).toEqual([
+        `https://example.test/${expectedAssetName}`,
+        `https://example.test/${expectedAssetName}`,
+        `https://example.test/${expectedAssetName}`,
+      ]);
     } finally {
       await rm(homeDir, { recursive: true, force: true });
       await rm(logDir, { recursive: true, force: true });

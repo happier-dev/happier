@@ -112,9 +112,21 @@ export {
   parseEnvText,
   renderPrismaCompatibleSqliteDatabaseUrl,
   renderSelfHostServerEnvText,
+  mergeSelfHostServerEnvText,
+  resolveSelfHostServerMigrationPlan,
+  resolveServerMigrationsEnabled,
   resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from './selfHostServerEnv.js';
-export type { PrismaSqliteDatabaseUrlOptions } from './selfHostServerEnv.js';
+export type { PrismaSqliteDatabaseUrlOptions, SelfHostServerMigrationPlan } from './selfHostServerEnv.js';
+
+export {
+  SERVER_RUNTIME_DIRECTORY_ENTRY_NAMES,
+  assertPackagedServerRuntimeClosure,
+  relocateServerRuntimeArtifactClosure,
+  resolveManagedServerRuntimePaths,
+  resolveServerRuntimeExecutableNames,
+  resolveServerRuntimePayloadRootFromBinaryPath,
+} from './serverRuntimeArtifactLayout.js';
 
 export { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';

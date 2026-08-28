@@ -101,6 +101,7 @@ module.exports = { unpackTools };
   await writeFixtureFile(join(root, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'main.go'), 'package main\n');
   await writeFixtureFile(join(root, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'CLIProxyAPI-LICENSE'), 'license\n');
   await writeFixtureFile(join(root, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'THIRD-PARTY-NOTICES'), 'notices\n');
+  await writeFixtureFile(join(root, 'apps', 'cli', 'native', 'processcustody', 'main.go'), 'package main\n');
 
   for (const relativePath of [
     'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts',
@@ -164,6 +165,42 @@ describe('daemon runtime support identity', () => {
     expect(changedTool.fingerprint).not.toBe(changedRuntimeDependency.fingerprint);
     expect(changedSidecar.fingerprint).not.toBe(changedTool.fingerprint);
     expect(changedSidecar.workspaceRuntimeIdentity).toBe(initial.workspaceRuntimeIdentity);
+  });
+
+  it('binds native custody provisioning so a helper-less payload cannot share a fingerprint', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    const prebuiltCustodyPath = join(root, 'prebuilt', 'happier-process-custody');
+    await writeFixtureFile(prebuiltCustodyPath, 'prebuilt custody\n');
+
+    const absent = readCliBinaryArtifactSupportIdentity({
+      repoRoot: root,
+      target: targetForHost(),
+      goVersion: 'go version go1.fixture',
+    });
+    const present = readCliBinaryArtifactSupportIdentity({
+      repoRoot: root,
+      target: targetForHost(),
+      goVersion: 'go version go1.fixture',
+      processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
+    });
+    expect(present.fingerprint).not.toBe(absent.fingerprint);
+
+    await writeFixtureFile(prebuiltCustodyPath, 'changed custody bytes\n');
+    const changedBytes = readCliBinaryArtifactSupportIdentity({
+      repoRoot: root,
+      target: targetForHost(),
+      goVersion: 'go version go1.fixture',
+      processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
+    });
+    expect(changedBytes.fingerprint).not.toBe(present.fingerprint);
+
+    await writeFixtureFile(join(root, 'apps', 'cli', 'native', 'processcustody', 'main.go'), 'package main // changed\n');
+    expect(readCliBinaryArtifactSupportIdentity({
+      repoRoot: root,
+      target: targetForHost(),
+      goVersion: 'go version go1.fixture',
+    }).fingerprint).not.toBe(absent.fingerprint);
   });
 
   it('uses a root-hoisted workspace package when the CLI-local copy is absent', async () => {

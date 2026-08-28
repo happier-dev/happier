@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   isPidPresent,
   isPidProvablyAbsent,
+  probeProcessGroupLiveness,
   probeProcessLiveness,
   type ProcessLiveness,
 } from './processLiveness.js';
@@ -63,6 +64,32 @@ describe('probeProcessLiveness', () => {
     const probe = vi.fn();
     expect(probeProcessLiveness(2_147_483_647, probe)).toBe<ProcessLiveness>('alive');
     expect(probe).toHaveBeenCalledWith(2_147_483_647, 0);
+  });
+});
+
+describe('probeProcessGroupLiveness', () => {
+  it('addresses the exact positive process-group id through its negative POSIX kill target', () => {
+    const probe = vi.fn();
+
+    expect(probeProcessGroupLiveness(4_321, probe)).toBe<ProcessLiveness>('alive');
+    expect(probe).toHaveBeenCalledWith(-4_321, 0);
+  });
+
+  it('reports only ESRCH as absent and fails closed for denied or unknown probes', () => {
+    expect(probeProcessGroupLiveness(4_321, throwing('ESRCH'))).toBe<ProcessLiveness>('absent');
+    for (const code of ['EPERM', 'EACCES', 'EIO', undefined]) {
+      expect(probeProcessGroupLiveness(4_321, throwing(code))).toBe<ProcessLiveness>('access_denied');
+    }
+  });
+
+  it('refuses a group id that cannot name a process group instead of addressing the caller group', () => {
+    const probe = vi.fn();
+    // Group id 1 is also invalid for this helper: translating it to the POSIX kill address -1
+    // would address every signalable process rather than process group 1.
+    for (const processGroupId of [0, 1, -1, -4_321, 1.5, Number.NaN, 2_147_483_648, Number.MAX_SAFE_INTEGER]) {
+      expect(probeProcessGroupLiveness(processGroupId, probe)).toBe<ProcessLiveness>('absent');
+    }
+    expect(probe).not.toHaveBeenCalled();
   });
 });
 

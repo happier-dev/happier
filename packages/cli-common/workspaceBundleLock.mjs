@@ -323,11 +323,55 @@ function classifyRetainedLockSnapshots(
   return retainedPaths;
 }
 
+function authenticatedRetainedOwnerIdentity(snapshot) {
+  if (!snapshot.exists || !snapshot.readable) return null;
+  const pid = Number(snapshot.owner?.pid);
+  const createdAtMs = Number(snapshot.owner?.createdAtMs);
+  const token = String(snapshot.owner?.token ?? '').trim();
+  const processInstanceFingerprint = String(
+    snapshot.owner?.processInstanceFingerprint ?? '',
+  ).trim();
+  if (
+    !Number.isInteger(pid)
+    || pid <= 0
+    || !Number.isFinite(createdAtMs)
+    || createdAtMs <= 0
+    || !token
+    || !processInstanceFingerprint
+  ) return null;
+  return JSON.stringify([pid, token, processInstanceFingerprint, createdAtMs]);
+}
+
 function recoverRetainedLockSnapshot(lockPath, classificationOptions) {
   const retainedPaths = classifyRetainedLockSnapshots(lockPath, classificationOptions);
   if (retainedPaths.length === 0) return false;
   if (retainedPaths.length > 1) {
-    throw new Error(`Workspace bundle lock recovery is ambiguous: ${lockPath}`);
+    const retainedSnapshots = retainedPaths.map((retainedPath) => ({
+      retainedPath,
+      snapshot: readLockOwnerSnapshot(retainedPath),
+    }));
+    const ownerIdentities = new Set(
+      retainedSnapshots.map(({ snapshot }) => authenticatedRetainedOwnerIdentity(snapshot)),
+    );
+    if (ownerIdentities.size !== 1 || ownerIdentities.has(null)) {
+      throw new Error(`Workspace bundle lock recovery is ambiguous: ${lockPath}`);
+    }
+    retainedSnapshots.sort((left, right) => {
+      const updatedAtDifference = Number(right.snapshot.owner?.updatedAtMs ?? 0)
+        - Number(left.snapshot.owner?.updatedAtMs ?? 0);
+      return updatedAtDifference || left.retainedPath.localeCompare(right.retainedPath);
+    });
+    const [preferred, ...duplicates] = retainedSnapshots;
+    const restored = restoreQuarantinedLockSnapshot(lockPath, preferred.retainedPath);
+    if (!restored) {
+      throw new Error(`Workspace bundle lock recovery is pending: ${lockPath}`);
+    }
+    for (const duplicate of duplicates) {
+      if (!reclaimLockSnapshot(duplicate.retainedPath, duplicate.snapshot.raw)) {
+        throw new Error(`Workspace bundle lock recovery cleanup failed: ${lockPath}`);
+      }
+    }
+    return true;
   }
   const restored = restoreQuarantinedLockSnapshot(
     lockPath,

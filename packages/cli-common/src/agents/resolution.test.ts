@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 
@@ -12,6 +12,7 @@ import {
   type AgentCliRuntimeDescriptor,
   resolveAgentCliCommand,
   resolveAgentCliCommandForRuntime,
+  resolveAgentCliManagedCommandPath,
 } from './resolution';
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -44,6 +45,34 @@ describe('readBackendCliSourcePreference', () => {
 
   it('falls back to the default source preference for compatibility-only agent ids', () => {
     expect(readBackendCliSourcePreferenceForAgent('customAcp', 'system-first', {} as NodeJS.ProcessEnv)).toBe('system-first');
+  });
+});
+
+describe('resolveAgentCliManagedCommandPath', () => {
+  it('prefers a complete active managed release over the retained legacy current install on POSIX', () => {
+    if (process.platform === 'win32') return;
+
+    const root = mkdtempSync(join(tmpdir(), 'happier-agent-active-release-'));
+    const happyHomeDir = join(root, 'home');
+    const installRoot = join(happyHomeDir, 'tools', 'providers', 'codex');
+    const activeReleaseDir = join(installRoot, '.releases', 'release-one');
+    const activeCommandPath = join(activeReleaseDir, 'bin', 'codex');
+    const legacyCommandPath = join(installRoot, 'current', 'bin', 'codex');
+    try {
+      mkdirSync(join(activeReleaseDir, 'bin'), { recursive: true });
+      writeFileSync(activeCommandPath, '#!/bin/sh\nexit 0\n', 'utf8');
+      chmodSync(activeCommandPath, 0o755);
+      mkdirSync(join(installRoot, 'current', 'bin'), { recursive: true });
+      writeFileSync(legacyCommandPath, '#!/bin/sh\nexit 0\n', 'utf8');
+      chmodSync(legacyCommandPath, 0o755);
+      symlinkSync(join('.releases', 'release-one'), join(installRoot, 'active'));
+
+      expect(resolveAgentCliManagedCommandPath('codex', { happyHomeDir })).toBe(
+        join(installRoot, 'active', 'bin', 'codex'),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

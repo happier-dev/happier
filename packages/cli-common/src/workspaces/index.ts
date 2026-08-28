@@ -85,7 +85,7 @@ function isPrepublicationAuthorPackage(rawPackageJson: any): boolean {
     && !!publicSdkRelease
     && typeof publicSdkRelease === 'object'
     && !Array.isArray(publicSdkRelease)
-    && publicSdkRelease.posture === 'prepublish_hold'
+    && publicSdkRelease.posture === 'developer_preview'
   );
 }
 
@@ -914,15 +914,30 @@ function assertMaterializedPrepublicationWorkspaceClosure(params: Readonly<{
  */
 export function materializePrepublicationWorkspacePackageRoots(params: Readonly<{
   bundles: ReadonlyArray<WorkspacePackageBundle>;
+  rootPackageNames?: readonly string[];
 }>): void {
   const bundlesByPackageName = new Map(params.bundles.map((bundle) => [bundle.packageName, bundle] as const));
   if (bundlesByPackageName.size !== params.bundles.length) {
     throw new Error('Prepublication materialization received duplicate workspace package bundles');
   }
+  const selectedRootNames = params.rootPackageNames === undefined
+    ? null
+    : new Set(params.rootPackageNames);
+  if (selectedRootNames && selectedRootNames.size !== params.rootPackageNames?.length) {
+    throw new Error('Prepublication materialization received duplicate root package names');
+  }
   const prepublicationRoots = params.bundles
     .map((bundle) => ({ bundle, rawPackageJson: readPrepublicationWorkspacePackageManifest(bundle) }))
     .filter(({ rawPackageJson }) => isPrepublicationAuthorPackage(rawPackageJson))
+    .filter(({ bundle }) => selectedRootNames === null || selectedRootNames.has(bundle.packageName))
     .sort((left, right) => left.bundle.packageName.localeCompare(right.bundle.packageName));
+  if (selectedRootNames) {
+    const resolvedRootNames = new Set(prepublicationRoots.map(({ bundle }) => bundle.packageName));
+    const unsupportedRootName = params.rootPackageNames?.find((packageName) => !resolvedRootNames.has(packageName));
+    if (unsupportedRootName) {
+      throw new Error(`Bundled host package '${unsupportedRootName}' is not classified for public author use`);
+    }
+  }
   if (prepublicationRoots.length === 0) return;
 
   const rootNames = new Set(prepublicationRoots.map(({ bundle }) => bundle.packageName));

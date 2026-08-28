@@ -102,6 +102,11 @@
       "import": "./dist/service/index.js",
       "default": "./dist/service/index.js"
     },
+    "./firstPartyRuntime/serverRuntimeArtifactLayout": {
+      "types": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.d.ts",
+      "import": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js",
+      "default": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js"
+    },
     "./service/discovery": {
       "types": "./dist/service/discovery/index.d.ts",
       "import": "./dist/service/discovery/index.js",

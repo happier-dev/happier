@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   bundleInstalledPackageWithRuntimeDependencies,
   bundleWorkspacePackageWithRuntimeDependencies,
+  materializePrepublicationWorkspacePackageRoots,
   sanitizeBundledPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from './index';
@@ -64,7 +65,7 @@ describe('sanitizeBundledPackageJson', () => {
       name: '@happier-dev/plugin-sdk',
       version: '0.0.0',
       files: declaredAuthorFiles,
-      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      happier: { publicSdkRelease: { posture: 'developer_preview' } },
     }).files).toEqual([
       'dist',
       'package.json',
@@ -91,7 +92,7 @@ describe('sanitizeBundledPackageJson', () => {
       name: '@happier-dev/plugin-sdk',
       version: '0.0.0',
       bin: { 'happier-plugin-build-ui': './dist/ui/build/bin.js' },
-      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      happier: { publicSdkRelease: { posture: 'developer_preview' } },
     }).bin).toEqual({ 'happier-plugin-build-ui': './dist/ui/build/bin.js' });
 
     expect(sanitizeBundledPackageJson({
@@ -115,7 +116,7 @@ describe('sanitizeBundledPackageJson', () => {
       name: '@happier-dev/plugin-sdk',
       version: '0.0.0',
       files: ['dist', declaredFile],
-      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      happier: { publicSdkRelease: { posture: 'developer_preview' } },
     })).toThrow(/exact relative path/u);
   });
 });
@@ -166,6 +167,53 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
 
     expect(readFileSync(join(destinationDir, 'dist', 'index.js'), 'utf8'))
       .toBe('export const generation = "last-green";\n');
+  });
+});
+
+describe('materializePrepublicationWorkspacePackageRoots', () => {
+  it('materializes only requested packages carrying the canonical public author classification', () => {
+    const root = createTempRoot('cli-common-public-author-roots-');
+    const sourceRoot = join(root, 'source');
+    const destinationRoot = join(root, 'destination');
+    const writePublicPackage = (packageName: string, directoryName: string) => {
+      const packageRoot = join(sourceRoot, directoryName);
+      writePackage(packageRoot, {
+        name: packageName,
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        types: './dist/index.d.ts',
+        files: ['dist', 'package.json'],
+        happier: {
+          publicSdkRelease: {
+            posture: 'developer_preview',
+            externalPublicationRequiresApproval: true,
+          },
+        },
+      }, {
+        'dist/index.js': 'export const packageMarker = true;\n',
+        'dist/index.d.ts': 'export declare const packageMarker: true;\n',
+      });
+      return {
+        packageName,
+        srcDir: packageRoot,
+        destDir: join(destinationRoot, 'node_modules', ...packageName.split('/')),
+      };
+    };
+    const sdk = writePublicPackage('@happier-dev/plugin-sdk', 'plugin-sdk');
+    const channels = writePublicPackage('@happier-dev/channels-protocol', 'channels-protocol');
+
+    materializePrepublicationWorkspacePackageRoots({
+      bundles: [sdk, channels],
+      rootPackageNames: ['@happier-dev/channels-protocol'],
+    });
+
+    expect(existsSync(join(channels.destDir, 'dist', 'index.js'))).toBe(true);
+    expect(existsSync(sdk.destDir)).toBe(false);
+    expect(() => materializePrepublicationWorkspacePackageRoots({
+      bundles: [sdk, channels],
+      rootPackageNames: ['@happier-dev/protocol'],
+    })).toThrow(/not classified for public author use/u);
   });
 });
 

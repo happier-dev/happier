@@ -9,6 +9,7 @@ export {
 export {
   isPidPresent,
   isPidProvablyAbsent,
+  probeProcessGroupLiveness,
   probeProcessLiveness,
   type ProcessLiveness,
   type ProcessSignalProbe,

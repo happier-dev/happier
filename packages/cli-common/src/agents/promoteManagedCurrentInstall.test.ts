@@ -1,5 +1,6 @@
 import type { RmOptions } from 'node:fs';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -119,6 +120,44 @@ describe('promoteManagedCurrentInstall', () => {
     await expect(secondPromise).resolves.toBeUndefined();
     expect(secondBeforeRelease).toBe('blocked');
     await expect(readFile(join(currentPath, 'bin', 'tool'), 'utf8')).resolves.toBe('release-two');
+  });
+
+  it('keeps the managed binary command reachable while an update is being activated', async () => {
+    if (process.platform === 'win32') return;
+
+    const { promoteManagedCurrentInstall } = await import('./promoteManagedCurrentInstall.js');
+    const installRoot = await makeTempRoot();
+    const currentPath = join(installRoot, 'current');
+    const candidatePath = join(installRoot, 'candidate');
+    const currentCommandPath = join(currentPath, 'bin', 'tool');
+    const activeCommandPath = join(installRoot, 'active', 'bin', 'tool');
+    let signalPaused!: () => void;
+    const paused = new Promise<void>((resolve) => { signalPaused = resolve; });
+    let releasePromotion!: () => void;
+    const release = new Promise<void>((resolve) => { releasePromotion = resolve; });
+
+    await mkdir(join(currentPath, 'bin'), { recursive: true });
+    await writeFile(currentCommandPath, '#!/bin/sh\nexit 0\n', 'utf8');
+    await chmod(currentCommandPath, 0o755);
+    await mkdir(join(candidatePath, 'bin'), { recursive: true });
+    await writeFile(join(candidatePath, 'bin', 'tool'), '#!/bin/sh\nexit 0\n', 'utf8');
+    await chmod(join(candidatePath, 'bin', 'tool'), 0o755);
+    filesystemFailureState.pausedPromotionSource = candidatePath;
+    filesystemFailureState.onPromotionPaused = signalPaused;
+    filesystemFailureState.promotionRelease = release;
+
+    const promotion = promoteManagedCurrentInstall({
+      installRoot,
+      candidatePath,
+      activateVersionedRelease: true,
+    });
+    await paused;
+
+    expect(spawnSync(currentCommandPath).status).toBe(0);
+    releasePromotion();
+    await expect(promotion).resolves.toBeUndefined();
+    expect(spawnSync(currentCommandPath).status).toBe(0);
+    expect(spawnSync(activeCommandPath).status).toBe(0);
   });
 
   it('keeps promoted current usable when Windows locks the retired binary and allows the next promotion', async () => {

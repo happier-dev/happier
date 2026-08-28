@@ -113,6 +113,14 @@ function resolveManagedCommandBasename(spec: AgentCliManagedInstallSpec): string
   return spec.kind === 'github_release_binary' ? `${spec.binaryName}.exe` : `${spec.binaryName}.cmd`;
 }
 
+export function resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec: AgentCliRuntimeDescriptor): string {
+  const managedInstall = runtimeSpec.managedInstall;
+  if (!managedInstall) {
+    throw new Error(`Agent ${runtimeSpec.id} does not define a managed CLI install path`);
+  }
+  return join('bin', resolveManagedCommandBasename(managedInstall));
+}
+
 function resolveAgentCliOverrideEnvKey(agentId: string): string {
   const normalized = agentId.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
   return `HAPPIER_${normalized || agentId.toUpperCase()}_PATH`;
@@ -178,7 +186,12 @@ export function resolveAgentCliManagedCommandPathForRuntime(
     ? opts.happyHomeDir.trim()
     : resolveHappyHomeDirFromEnvironment(processEnv);
   // On-disk layout contract: tools/providers/<agentId> is where existing managed installs live (kept in R.16).
-  return join(happyHomeDir, 'tools', 'providers', runtimeSpec.id, 'current', 'bin', resolveManagedCommandBasename(managedInstall));
+  const installRoot = join(happyHomeDir, 'tools', 'providers', runtimeSpec.id);
+  const commandRelativePath = resolveAgentCliManagedCommandRelativePathForRuntime(runtimeSpec);
+  const activeCommandPath = join(installRoot, 'active', commandRelativePath);
+  // Legacy runner snapshots keep resolving current; new POSIX promotions retain it and atomically switch active.
+  if (process.platform !== 'win32' && existsSync(activeCommandPath)) return activeCommandPath;
+  return join(installRoot, 'current', commandRelativePath);
 }
 
 export function resolveAgentCliManagedCommandPath(

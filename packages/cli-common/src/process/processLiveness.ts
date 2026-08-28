@@ -56,6 +56,28 @@ function canNameAProcess(pid: number): boolean {
   return Number.isInteger(pid) && pid > 0 && pid <= MAX_PROCESS_ID;
 }
 
+function canNameAProcessGroup(processGroupId: number): boolean {
+  // `kill(-1, signal)` addresses every signalable process, not process group 1.
+  return canNameAProcess(processGroupId) && processGroupId > 1;
+}
+
+function probeValidatedProcessAddress(
+  address: number,
+  probe: ProcessSignalProbe,
+): ProcessLiveness {
+  try {
+    probe(address, 0);
+    return 'alive';
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code === 'ESRCH') return 'absent';
+    // EPERM (POSIX) and EACCES (libuv's mapping of the Windows access denial) both mean the
+    // target is there. Any other errno means the probe itself failed, which is equally not
+    // evidence of absence — so it resolves the same way and never as `absent`.
+    return 'access_denied';
+  }
+}
+
 /**
  * `signal 0` performs no kill but reports whether the pid can be addressed.
  *
@@ -68,17 +90,23 @@ export function probeProcessLiveness(
   probe: ProcessSignalProbe = defaultProbe,
 ): ProcessLiveness {
   if (!canNameAProcess(pid)) return 'absent';
-  try {
-    probe(pid, 0);
-    return 'alive';
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException | null)?.code;
-    if (code === 'ESRCH') return 'absent';
-    // EPERM (POSIX) and EACCES (libuv's mapping of the Windows access denial) both mean the
-    // process is there. Any other errno means the probe itself failed, which is equally not
-    // evidence of absence — so it resolves the same way and never as `absent`.
-    return 'access_denied';
-  }
+  return probeValidatedProcessAddress(pid, probe);
+}
+
+/**
+ * Tri-state POSIX process-group presence using the same fail-closed errno policy as pid probes.
+ *
+ * A positive `processGroupId` is deliberately required and translated here to the negative
+ * `kill(2)` address. This keeps callers from accidentally passing `0`, which addresses their own
+ * process group, and prevents process supervisors from disagreeing about whether EPERM means an
+ * owned group disappeared.
+ */
+export function probeProcessGroupLiveness(
+  processGroupId: number,
+  probe: ProcessSignalProbe = defaultProbe,
+): ProcessLiveness {
+  if (!canNameAProcessGroup(processGroupId)) return 'absent';
+  return probeValidatedProcessAddress(-processGroupId, probe);
 }
 
 /**
