@@ -5,6 +5,7 @@ import {
     AutomationOccurrenceKeyV1Schema,
     PluginMachineMaterializationRefV1Schema,
     serializeAutomationRunExecutionRecipeV1,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
 import { claimAutomationRun } from "@/app/automations/automationClaimService";
@@ -14,41 +15,72 @@ const provider = String(process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_
     .trim()
     .toLowerCase();
 
-function serializeClaimablePlainRecipe(params: Readonly<{
-    machineId: string;
-    occurrenceKey: string | null;
-}>): string {
-    const serialized = serializeAutomationRunExecutionRecipeV1({
-        v: 1,
+function plainRecipeShape(machineId: string) {
+    return {
+        v: 1 as const,
         templateVersion: 1,
         template: {
-            t: "plain",
-            v: { v: 1, prompt: "Run the MySQL occurrence-identity contract" },
+            t: "plain" as const,
+            v: { v: 1 as const, prompt: "Run the MySQL occurrence-identity contract" },
         },
-        triggerEvidence: params.occurrenceKey === null
-            ? null
-            : {
-                t: "plain",
-                v: {
-                    v: 1,
-                    kind: "pluginEvent",
-                    occurrenceKey: params.occurrenceKey,
-                },
-            },
         target: {
-            kind: "newSession",
+            kind: "newSession" as const,
             spawn: {
                 executionTarget: {
                     serverId: "mysql-contract-server",
-                    machineId: params.machineId,
+                    machineId,
                 },
                 directory: "/tmp/mysql-occurrence-identity-contract",
                 agentTarget: {
-                    kind: "agent",
+                    kind: "agent" as const,
                     identity: { pluginId: "happier.agent.codex", localId: "codex" },
                 },
             },
         },
+    };
+}
+
+function serializeDefinitionRecipe(machineId: string): string {
+    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1({
+        ...plainRecipeShape(machineId),
+        triggerEvidence: null,
+    });
+    if (serialized.kind !== "available") {
+        throw new Error("Failed to construct the strict MySQL occurrence-identity definition");
+    }
+    return serialized.serialized;
+}
+
+function serializeClaimablePlainRecipe(params: Readonly<{
+    machineId: string;
+    evidence: Readonly<{
+        sourceSelectorId: string;
+        occurrenceId: string;
+        occurredAt: number;
+    }>;
+}>): string {
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        ...plainRecipeShape(params.machineId),
+        triggerEvidence: {
+            t: "plain",
+            v: {
+                v: 1,
+                kind: "pluginEvent",
+                eventRef: {
+                    pluginId: "com.happier.mysql-contract",
+                    localId: "occurrence-identity",
+                },
+                sourceSelectorId: params.evidence.sourceSelectorId,
+                occurrenceId: params.evidence.occurrenceId,
+                occurredAt: params.evidence.occurredAt,
+                payload: {},
+                sourceInstanceId: "mysql-occurrence-identity",
+                sourceContractVersion: 1,
+                observationReceivedAt: params.evidence.occurredAt,
+                filter: { version: null, result: "matched" },
+            },
+        },
+        assignmentMachineIds: [params.machineId],
     });
     if (serialized.kind !== "available") {
         throw new Error("Failed to construct the strict MySQL occurrence-identity recipe");
@@ -94,49 +126,81 @@ describe.skipIf(provider !== "mysql")("MySQL AutomationRun occurrence identity c
             select: { id: true },
         });
         const sourceSelectorId = randomUUID();
-        const definitionRecipe = serializeClaimablePlainRecipe({ machineId, occurrenceKey: null });
-        const firstRunRecipe = serializeClaimablePlainRecipe({ machineId, occurrenceKey });
+        const now = Date.now();
+        const firstDueAt = new Date(now - 20_000);
+        const secondDueAt = new Date(now - 10_000);
+        const definitionRecipe = serializeDefinitionRecipe(machineId);
+        const firstEvidence = {
+            v: 1 as const,
+            kind: "pluginEvent" as const,
+            eventRef: {
+                pluginId: "com.happier.mysql-contract",
+                localId: "occurrence-identity",
+            },
+            sourceSelectorId,
+            occurrenceId: "mysql-occurrence-first",
+            occurredAt: firstDueAt.getTime(),
+            payload: {},
+        };
+        const secondEvidence = {
+            ...firstEvidence,
+            occurrenceId: "mysql-occurrence-second",
+            occurredAt: secondDueAt.getTime(),
+        };
+        const firstRunRecipe = serializeClaimablePlainRecipe({
+            machineId,
+            evidence: firstEvidence,
+        });
         const secondRunRecipe = serializeClaimablePlainRecipe({
             machineId,
-            occurrenceKey: caseVariantOccurrenceKey,
+            evidence: secondEvidence,
         });
+        const triggerId = `mysql-automation-trigger-${randomUUID()}`;
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "MySQL canonical occurrence identity contract",
-                scheduleKind: null,
                 targetType: "new_session",
                 templateCiphertext: definitionRecipe,
                 templateVersion: 1,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.happier.mysql-contract",
-                triggerEventLocalId: "occurrence-identity",
-                triggerSourceSelectorId: sourceSelectorId,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+                triggers: {
+                    create: {
+                        id: triggerId,
+                        kind: "pluginEvent",
+                        enabled: true,
+                        revision: 1,
+                        eventPluginId: "com.happier.mysql-contract",
+                        eventLocalId: "occurrence-identity",
+                        sourceSelectorId,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: '{"t":"plain","v":{}}',
+                    },
+                },
                 assignments: {
                     create: [{ machineId, enabled: true, priority: 0 }],
                 },
             },
             select: { id: true },
         });
-        const now = Date.now();
-        const firstDueAt = new Date(now - 20_000);
-        const secondDueAt = new Date(now - 10_000);
-
         const firstRun = await db.automationRun.create({
             data: {
                 accountId: account.id,
                 automationId: automation.id,
-                originKind: "pluginEvent",
-                originOccurredAt: firstDueAt,
+                triggerId,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: "com.happier.mysql-contract",
+                causeEventLocalId: "occurrence-identity",
+                causeOccurredAt: firstDueAt,
                 occurrenceKey,
-                originSourceSelectorId: sourceSelectorId,
-                triggerEvidenceEnvelope: '{"t":"plain","v":{}}',
+                causeSourceSelectorId: sourceSelectorId,
+                triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: firstEvidence }),
                 executionInputEnvelope: firstRunRecipe,
                 scheduledAt: firstDueAt,
                 dueAt: firstDueAt,
+                assignments: { create: [{ machineId, priority: 0 }] },
             },
             select: { id: true },
         });
@@ -144,14 +208,20 @@ describe.skipIf(provider !== "mysql")("MySQL AutomationRun occurrence identity c
             data: {
                 accountId: account.id,
                 automationId: automation.id,
-                originKind: "pluginEvent",
-                originOccurredAt: secondDueAt,
+                triggerId,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 1,
+                causeEventPluginId: "com.happier.mysql-contract",
+                causeEventLocalId: "occurrence-identity",
+                causeOccurredAt: secondDueAt,
                 occurrenceKey: caseVariantOccurrenceKey,
-                originSourceSelectorId: sourceSelectorId,
-                triggerEvidenceEnvelope: '{"t":"plain","v":{}}',
+                causeSourceSelectorId: sourceSelectorId,
+                triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: secondEvidence }),
                 executionInputEnvelope: secondRunRecipe,
                 scheduledAt: secondDueAt,
                 dueAt: secondDueAt,
+                assignments: { create: [{ machineId, priority: 0 }] },
             },
             select: { id: true },
         });
@@ -161,14 +231,20 @@ describe.skipIf(provider !== "mysql")("MySQL AutomationRun occurrence identity c
                 data: {
                     accountId: account.id,
                     automationId: automation.id,
-                    originKind: "pluginEvent",
-                    originOccurredAt: firstDueAt,
+                    triggerId,
+                    causeKind: "trigger",
+                    causeTriggerKind: "pluginEvent",
+                    causeTriggerRevision: 1,
+                    causeEventPluginId: "com.happier.mysql-contract",
+                    causeEventLocalId: "occurrence-identity",
+                    causeOccurredAt: firstDueAt,
                     occurrenceKey,
-                    originSourceSelectorId: sourceSelectorId,
-                    triggerEvidenceEnvelope: '{"t":"plain","v":{}}',
+                    causeSourceSelectorId: sourceSelectorId,
+                    triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: firstEvidence }),
                     executionInputEnvelope: firstRunRecipe,
                     scheduledAt: firstDueAt,
                     dueAt: firstDueAt,
+                    assignments: { create: [{ machineId, priority: 0 }] },
                 },
                 select: { id: true },
             });
@@ -252,6 +328,7 @@ describe.skipIf(provider !== "mysql")("MySQL AutomationRun occurrence identity c
             eventPluginId: "com.happier.mysql-contract",
             reporterMachineId: "mysql-contract-machine",
             reporterMachineInstallationId: "mysql-contract-installation",
+            reporterImmutableGenerationId: "mysql-contract-generation",
             scopeKey: "checkpointedPull",
             observedRevision: 1n,
             adoptedRevision: 1n,

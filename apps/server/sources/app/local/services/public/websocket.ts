@@ -131,7 +131,7 @@ async function readOptionalBearerUserId(headers: Record<string, unknown>): Promi
     }
     try {
         const verified = await auth.verifyToken(authorization.slice("Bearer ".length));
-        return verified?.userId ?? null;
+        return verified?.authTokenKind === "api_token" ? null : verified?.userId ?? null;
     } catch {
         return null;
     }

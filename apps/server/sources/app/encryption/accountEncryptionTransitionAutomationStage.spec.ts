@@ -41,8 +41,11 @@ function runSourceItem(
         runId: RUN_ID,
         automationId: AUTOMATION_ID,
         revision: 4,
-        originKind: "conversation",
-        occurrenceKey: null,
+        cause: {
+            kind: "conversation",
+            occurrenceKey: "A".repeat(43),
+            occurredAt: 1_723_247_200_000,
+        },
         source: {
             triggerEvidenceEnvelope: null,
             occurrenceEvidenceEqualityTag: null,
@@ -50,6 +53,7 @@ function runSourceItem(
             resultEnvelope: null,
             replyContextEnvelope,
             replyHandoffReceiptEnvelope: null,
+            failureDetailEnvelope: null,
             summaryCiphertext: null,
         },
     };
@@ -77,6 +81,39 @@ function storedStageForSource(
 }
 
 describe("accountEncryptionTransitionAutomationStage stored content bounds", () => {
+    it("round-trips every Event trigger definition without inventing a per-Automation trigger ceiling", () => {
+        const source: AutomationAccountEncryptionTransitionInventoryItem = {
+            kind: "definition",
+            automationId: AUTOMATION_ID,
+            revision: 4,
+            source: {
+                templateCiphertext: JSON.stringify({ t: "plain", v: {} }),
+                triggerDefinitionEnvelopes: Array.from({ length: 51 }, (_, index) => ({
+                    triggerId: `automation-trigger-${index}`,
+                    triggerRevision: index,
+                    envelope: JSON.stringify({ t: "plain", v: { index } }),
+                })),
+            },
+        };
+        const stage: AccountEncryptionTransitionAutomationStoredStage = {
+            id: randomUUID(),
+            transitionId: TRANSITION_ID,
+            participantKind: "definition",
+            participantId: AUTOMATION_ID,
+            automationId: AUTOMATION_ID,
+            sourceRevision: source.revision,
+            sourceContent: JSON.stringify(source),
+            targetContent: null,
+            sourceEncodedBytes:
+                measureAccountEncryptionTransitionAutomationSourceItemBytes(source),
+            targetEncodedBytes: null,
+        };
+
+        expect(
+            sourceItemFromAccountEncryptionTransitionAutomationStage(stage),
+        ).toEqual(source);
+    });
+
     it("round-trips a retained envelope at the released Protocol ceiling instead of reporting an incomplete migration", () => {
         const replyContextEnvelope = nearMaximumStoredEnvelope("source");
         expect(
@@ -92,8 +129,11 @@ describe("accountEncryptionTransitionAutomationStage stored content bounds", () 
             runId: RUN_ID,
             automationId: AUTOMATION_ID,
             expectedRevision: 4,
-            originKind: "conversation",
-            occurrenceKey: null,
+            cause: {
+                kind: "conversation",
+                occurrenceKey: "A".repeat(43),
+                occurredAt: 1_723_247_200_000,
+            },
             source: source.kind === "run" ? source.source : (() => {
                 throw new Error("Expected a Run source fixture");
             })(),
@@ -104,6 +144,7 @@ describe("accountEncryptionTransitionAutomationStage stored content bounds", () 
                 resultEnvelope: null,
                 replyContextEnvelope: nearMaximumStoredEnvelope("target"),
                 replyHandoffReceiptEnvelope: null,
+                failureDetailEnvelope: null,
             },
         };
         const stage = storedStageForSource(source, target);

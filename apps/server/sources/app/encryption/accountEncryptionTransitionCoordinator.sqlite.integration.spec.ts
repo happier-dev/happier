@@ -362,9 +362,13 @@ describe("Account encryption transition coordinator Collection participant", () 
                 accountId: ACCOUNT_ID,
                 name: "Account transition definition participant",
                 enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: encryptedAutomationTemplate(
                     "source-encrypted-template",
@@ -439,13 +443,18 @@ describe("Account encryption transition coordinator Collection participant", () 
                 accountId: ACCOUNT_ID,
                 name: "Account transition target definition participant",
                 enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        id: `${automationId}-schedule`,
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                        nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: sourceTemplate,
                 templateVersion: 1,
-                nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
             },
         });
         const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints({
@@ -486,11 +495,11 @@ describe("Account encryption transition coordinator Collection participant", () 
             expectedRevision: 1,
             source: {
                 templateCiphertext: sourceTemplate,
-                triggerDefinitionEnvelope: null,
+                triggerDefinitionEnvelopes: [],
             },
             target: {
                 templateCiphertext: targetTemplate,
-                triggerDefinitionEnvelope: null,
+                triggerDefinitionEnvelopes: [],
             },
         };
         await expect(inTx(async (tx) => (
@@ -517,16 +526,14 @@ describe("Account encryption transition coordinator Collection participant", () 
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
-                nextRunAt: true,
+                triggers: { select: { nextRunAt: true } },
             },
         })).resolves.toEqual({
             templateCiphertext: targetTemplate,
             templateVersion: 2,
-            triggerDefinitionEnvelope: null,
             // Re-sealing Account content changes no scheduling semantics, so
             // the retained next-run projection survives the transition.
-            nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
+            triggers: [{ nextRunAt: new Date("2026-02-12T10:01:00.000Z") }],
         });
         await expect(db.account.findUniqueOrThrow({
             where: { id: ACCOUNT_ID },
@@ -544,22 +551,29 @@ describe("Account encryption transition coordinator Collection participant", () 
                 encryptionMode: "e2ee",
             },
         });
-        await db.automation.create({
+        const automation = await db.automation.create({
             data: {
                 id: automationId,
                 accountId: ACCOUNT_ID,
                 name: "Account transition retained Run limit",
                 enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        id: `${automationId}-schedule`,
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: encryptedAutomationTemplate(
                     "run-limit-source-template",
                 ),
                 templateVersion: 1,
             },
+            select: { triggers: { select: { id: true, revision: true } } },
         });
+        const scheduleTrigger = automation.triggers[0]!;
         const legacySummary = "retained-run-source-summary";
         await db.automationRun.createMany({
             data: Array.from({ length: 10_001 }, (_, index) => ({
@@ -567,7 +581,13 @@ describe("Account encryption transition coordinator Collection participant", () 
                 accountId: ACCOUNT_ID,
                 automationId,
                 state: "queued" as const,
-                originKind: "scheduled" as const,
+                triggerId: scheduleTrigger.id,
+                causeKind: "trigger" as const,
+                causeTriggerKind: "schedule" as const,
+                causeTriggerRevision: scheduleTrigger.revision,
+                causeOccurredAt: new Date(1_700_000_000_000 + index),
+                causeScheduledFor: new Date(1_700_000_000_000 + index),
+                occurrenceKey: `schedule-occurrence-${index}`,
                 resultEnvelope: JSON.stringify({
                     t: "legacySummaryCiphertext",
                     c: legacySummary,
@@ -638,22 +658,29 @@ describe("Account encryption transition coordinator Collection participant", () 
         await db.account.create({
             data: { id: ACCOUNT_ID, ...binding, encryptionMode: "e2ee" },
         });
-        await db.automation.create({
+        const automation = await db.automation.create({
             data: {
                 id: automationId,
                 accountId: ACCOUNT_ID,
                 name: "Account transition measured ceiling",
                 enabled: false,
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        id: `${automationId}-schedule`,
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: encryptedAutomationTemplate(
                     "measured-ceiling-source-template",
                 ),
                 templateVersion: 1,
             },
+            select: { triggers: { select: { id: true, revision: true } } },
         });
+        const scheduleTrigger = automation.triggers[0]!;
         const legacySummary = "measured-ceiling-source-summary";
         await db.automationRun.createMany({
             data: Array.from({ length: 10_001 }, (_, index) => ({
@@ -661,7 +688,13 @@ describe("Account encryption transition coordinator Collection participant", () 
                 accountId: ACCOUNT_ID,
                 automationId,
                 state: "queued" as const,
-                originKind: "scheduled" as const,
+                triggerId: scheduleTrigger.id,
+                causeKind: "trigger" as const,
+                causeTriggerKind: "schedule" as const,
+                causeTriggerRevision: scheduleTrigger.revision,
+                causeOccurredAt: new Date(1_700_000_000_000 + index),
+                causeScheduledFor: new Date(1_700_000_000_000 + index),
+                occurrenceKey: `schedule-occurrence-${index}`,
                 resultEnvelope: JSON.stringify({
                     t: "legacySummaryCiphertext",
                     c: legacySummary,

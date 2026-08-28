@@ -2,6 +2,8 @@ import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
     AutomationRunStateV3,
+    AutomationRunCause,
+    AutomationRunStateChangedHostEventV1,
     ExternalSessionTranscriptInvalidationV1,
     ExecutionRunPublicState,
     PrimaryTurnStatusV1,
@@ -163,11 +165,12 @@ export type UpdateEvent = {
     type: 'automation-run-state-changed';
     runId: string;
     automationId: string;
-    originKind: 'scheduled' | 'manual' | 'pluginEvent' | 'conversation';
+    runCause: AutomationRunCause;
     previousState: AutomationRunStateV3 | null;
     currentState: AutomationRunStateV3;
     transitionedAt: number;
     claimedByMachineId: string | null;
+    transitionCause?: AutomationRunStateChangedHostEventV1['transitionCause'];
 } | {
     type: 'automation-assignment-updated';
     machineId: string;

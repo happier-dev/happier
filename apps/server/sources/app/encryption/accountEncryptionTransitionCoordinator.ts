@@ -93,13 +93,13 @@ export const ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE = Object.freeze({
 });
 
 /**
- * PEP2's only fixed participant ceiling is the complete all-origin retained
+ * PEP2's only fixed participant ceiling is the complete all-cause retained
  * Run census. It is distinct from the Account owner's measured aggregate
  * stage capacity, which also reserves the paired Definition/Collection facts.
  *
  * The number is not a nearby capacity guess: the Account-transition owner
  * approved `PLAINTEXT-ACCOUNTS-2026-08-11.PEP2` only for at most 10,000
- * retained participating Automation Runs across all origins, so this bound is
+ * retained participating Automation Runs across all causes, so this bound is
  * the authorization scope itself. The measured aggregate capacity subsumes it
  * whenever `participantLimit` is the tighter of the two, but it must not be
  * removed in favour of that capacity: a measurement above the approved scope
@@ -2366,8 +2366,7 @@ function automationStageMatchesRequestedSource(
         && source.runId === item.runId
         && source.automationId === item.automationId
         && source.revision === item.expectedRevision
-        && source.originKind === item.originKind
-        && source.occurrenceKey === item.occurrenceKey
+        && pluginJsonValuesEqual(source.cause, item.cause)
         && pluginJsonValuesEqual(source.source, item.source);
 }
 

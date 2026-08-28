@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-    ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS,
+    AccountEncryptionMigrateAutomationInventoryItemSchema,
+    AccountEncryptionMigrateAutomationStageItemSchema,
     pluginJsonValuesEqual,
 } from "@happier-dev/protocol";
 import { z } from "zod";
@@ -50,80 +51,6 @@ export type AccountEncryptionTransitionAutomationStagePage = Readonly<{
 
 type RawStageClient = Pick<Tx, "$queryRaw" | "$executeRaw">;
 
-const StageAutomationIdSchema = z.string().min(1).max(256);
-const StageAutomationRevisionSchema = z
-    .number()
-    .int()
-    .min(0)
-    .max(Number.MAX_SAFE_INTEGER);
-// A stage row re-parses the same retained Automation private-content fields the
-// migrate wire carries, so it binds to that one Protocol declaration. A local
-// ceiling here would silently make a validly persisted envelope unmigratable.
-const StageAutomationDefinitionContentSchema = z.object({
-    templateCiphertext: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
-    triggerDefinitionEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope.nullable(),
-}).strict();
-const StageAutomationRunTargetContentShape = {
-    triggerEvidenceEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
-    occurrenceEvidenceEqualityTag:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.occurrenceEvidenceEqualityTag.nullable(),
-    executionInputEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.executionInputEnvelope.nullable(),
-    resultEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
-    replyContextEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
-    replyHandoffReceiptEnvelope:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
-} as const;
-const StageAutomationRunSourceContentSchema = z.object({
-    ...StageAutomationRunTargetContentShape,
-    // Retained only on the source side: the released summary column is not
-    // rewritten by a transition target.
-    summaryCiphertext:
-        ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.summaryCiphertext.nullable(),
-}).strict();
-const StageAutomationRunTargetContentSchema = z
-    .object(StageAutomationRunTargetContentShape)
-    .strict();
-const StageAutomationInventoryItemSchema = z.discriminatedUnion("kind", [
-    z.object({
-        kind: z.literal("definition"),
-        automationId: StageAutomationIdSchema,
-        revision: StageAutomationRevisionSchema,
-        source: StageAutomationDefinitionContentSchema,
-    }).strict(),
-    z.object({
-        kind: z.literal("run"),
-        runId: StageAutomationIdSchema,
-        automationId: StageAutomationIdSchema,
-        revision: StageAutomationRevisionSchema,
-        originKind: z.enum(["scheduled", "manual", "pluginEvent", "conversation"]),
-        occurrenceKey: z.string().min(1).max(256).nullable(),
-        source: StageAutomationRunSourceContentSchema,
-    }).strict(),
-]);
-const StageAutomationStageItemSchema = z.discriminatedUnion("kind", [
-    z.object({
-        kind: z.literal("definition"),
-        automationId: StageAutomationIdSchema,
-        expectedRevision: StageAutomationRevisionSchema,
-        source: StageAutomationDefinitionContentSchema,
-        target: StageAutomationDefinitionContentSchema,
-    }).strict(),
-    z.object({
-        kind: z.literal("run"),
-        runId: StageAutomationIdSchema,
-        automationId: StageAutomationIdSchema,
-        expectedRevision: StageAutomationRevisionSchema,
-        originKind: z.enum(["scheduled", "manual", "pluginEvent", "conversation"]),
-        occurrenceKey: z.string().min(1).max(256).nullable(),
-        source: StageAutomationRunSourceContentSchema,
-        target: StageAutomationRunTargetContentSchema,
-    }).strict(),
-]);
 
 function transitionAutomationStageSql() {
     const prisma = getActivePrismaRuntime();
@@ -327,7 +254,7 @@ export function sourceItemFromAccountEncryptionTransitionAutomationStage(
     stage: AccountEncryptionTransitionAutomationStoredStage,
 ): AutomationAccountEncryptionTransitionInventoryItem | null {
     const raw = parseJson(stage.sourceContent);
-    const parsed = StageAutomationInventoryItemSchema.safeParse(raw);
+    const parsed = AccountEncryptionMigrateAutomationInventoryItemSchema.safeParse(raw);
     if (!parsed.success || !storedStageMatchesSource(stage, parsed.data)) return null;
     return parsed.data as AutomationAccountEncryptionTransitionInventoryItem;
 }
@@ -342,7 +269,7 @@ export function targetItemFromAccountEncryptionTransitionAutomationStage(
 ): AutomationAccountEncryptionTransitionStageItem | null {
     if (stage.targetContent === null || stage.targetEncodedBytes === null) return null;
     const raw = parseJson(stage.targetContent);
-    const parsed = StageAutomationStageItemSchema.safeParse(raw);
+    const parsed = AccountEncryptionMigrateAutomationStageItemSchema.safeParse(raw);
     if (
         !parsed.success
         || stage.targetEncodedBytes
@@ -364,8 +291,7 @@ export function targetItemFromAccountEncryptionTransitionAutomationStage(
         && parsed.data.runId === source.runId
         && parsed.data.automationId === source.automationId
         && parsed.data.expectedRevision === source.revision
-        && parsed.data.originKind === source.originKind
-        && parsed.data.occurrenceKey === source.occurrenceKey
+        && pluginJsonValuesEqual(parsed.data.cause, source.cause)
         && pluginJsonValuesEqual(parsed.data.source, source.source)
         ? parsed.data as AutomationAccountEncryptionTransitionStageItem
         : null;
