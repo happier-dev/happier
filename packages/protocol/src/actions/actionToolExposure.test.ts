@@ -206,7 +206,7 @@ describe('actionToolExposure', () => {
     }));
   });
 
-  it('derives public Action projections from reasoned exclusions and reachable execution placement', () => {
+  it('derives public Action projections from reasoned exclusions independently of execution placement', () => {
     const internalActionIds = new Set(INTERNAL_ACTION_IDS);
     const pluginProvenanceOnlyActionIds = new Set(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS);
     const pluginSurfaceExcludedActionIds = new Set(PLUGIN_SURFACE_EXCLUSION_ACTION_IDS);
@@ -220,33 +220,32 @@ describe('actionToolExposure', () => {
     }
 
     for (const spec of listActionSpecs()) {
-      const isClientPlaced = spec.executionPlacement === 'client';
       if (internalActionIds.has(spec.id)) {
         expect(spec.surfaces.api).toBe(false);
         expect(spec.surfaces.plugin).toBe(false);
       } else {
         expect(spec.surfaces.api, spec.id).toBe(
-          !isClientPlaced && !pluginProvenanceOnlyActionIds.has(spec.id),
+          !pluginProvenanceOnlyActionIds.has(spec.id),
         );
         expect(spec.surfaces.plugin, spec.id).toBe(
-          !isClientPlaced && !pluginSurfaceExcludedActionIds.has(spec.id),
+          !pluginSurfaceExcludedActionIds.has(spec.id),
         );
       }
     }
 
     expect(getActionSpec('projects.list').surfaces).toEqual(expect.objectContaining({
-      api: false,
-      plugin: false,
+      api: true,
+      plugin: true,
     }));
     expect(getActionSpec('ui.current_context.read').surfaces).toEqual(expect.objectContaining({
       voice: true,
-      api: false,
-      plugin: false,
+      api: true,
+      plugin: true,
     }));
     expect(getActionSpec('ui.current_context.command.invoke').surfaces).toEqual(expect.objectContaining({
       voice: true,
-      api: false,
-      plugin: false,
+      api: true,
+      plugin: true,
     }));
     expect(getActionSpec('voice_agent.start').surfaces).toEqual(expect.objectContaining({
       api: true,
@@ -254,19 +253,32 @@ describe('actionToolExposure', () => {
     }));
   });
 
-  it('keeps all six raw subagent registry Actions internal', () => {
-    const rawSubagentActionIds = [
+  it('publishes safe subagent reads and keeps lifecycle mutations internal', () => {
+    const safeSubagentReadActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
+    ] as const;
+    const safeSubagentReadActionIdSet = new Set<string>(safeSubagentReadActionIds);
+    expect(INTERNAL_ACTION_IDS.filter((actionId) => safeSubagentReadActionIdSet.has(actionId)))
+      .toEqual([]);
+    for (const actionId of safeSubagentReadActionIds) {
+      expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
+        rpc: true,
+        api: true,
+        plugin: true,
+      }));
+    }
+
+    const lifecycleMutationActionIds = [
       'sessions.subagents.upsert',
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
 
     expect(INTERNAL_ACTION_IDS.filter((actionId) => actionId.startsWith('sessions.subagents.')))
-      .toEqual(rawSubagentActionIds);
-    for (const actionId of rawSubagentActionIds) {
+      .toEqual(lifecycleMutationActionIds);
+    for (const actionId of lifecycleMutationActionIds) {
       expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
         rpc: true,
         api: false,

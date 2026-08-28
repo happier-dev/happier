@@ -523,53 +523,59 @@ describe('session metadata privacy envelopes v1', () => {
   it('strictly admits the public Agent runtime capability vocabulary', () => {
     const ownerMetadata = {
       v: 1 as const,
-      agentRuntimeCapabilitiesV1: {
-        localControl: {
-          supported: true,
-          topology: 'shared' as const,
-          attachStrategy: 'provider_attach' as const,
-          remoteWritable: true,
-        },
-        sessionStorage: { direct: true, persisted: true },
-        sessionCapabilities: {
-          sessionListing: 'supported' as const,
-          sessionFork: {
-            conversation: 'supported' as const,
-            fromMessage: 'unsupported' as const,
-            protocol: 'acp' as const,
+      runtime: {
+        agentRuntimeCapabilitiesV1: {
+          localControl: {
+            supported: true,
+            topology: 'shared' as const,
+            attachStrategy: 'provider_attach' as const,
+            remoteWritable: true,
           },
-          sessionRollback: { conversation: 'unsupported' as const },
+          sessionStorage: { direct: true, persisted: true },
+          sessionCapabilities: {
+            sessionListing: 'supported' as const,
+            sessionFork: {
+              conversation: 'supported' as const,
+              fromMessage: 'unsupported' as const,
+              protocol: 'acp' as const,
+            },
+            sessionRollback: { conversation: 'unsupported' as const },
+          },
+          tools: { delivery: 'native_mcp' as const, support: 'supported' as const },
+          handoff: {
+            vendorStateTransfer: 'unsupported' as const,
+            requiresExplicitSessionId: true,
+          },
+          executionRun: { supported: true },
         },
-        tools: { delivery: 'native_mcp' as const, support: 'supported' as const },
-        handoff: {
-          vendorStateTransfer: 'unsupported' as const,
-          requiresExplicitSessionId: true,
-        },
-        executionRun: { supported: true },
       },
     };
 
     expect(SessionOwnerMetadataV1Schema.parse(ownerMetadata)).toEqual(ownerMetadata);
     expect(SessionOwnerMetadataV1Schema.safeParse({
       ...ownerMetadata,
-      agentRuntimeCapabilitiesV1: {
-        ...ownerMetadata.agentRuntimeCapabilitiesV1,
-        sessionCapabilities: {
-          ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities,
-          sessionFork: {
-            ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities.sessionFork,
-            providerBackendMode: 'acp',
+      runtime: {
+        agentRuntimeCapabilitiesV1: {
+          ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1,
+          sessionCapabilities: {
+            ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1.sessionCapabilities,
+            sessionFork: {
+              ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1.sessionCapabilities.sessionFork,
+              providerBackendMode: 'acp',
+            },
           },
         },
       },
     }).success).toBe(false);
     expect(SessionOwnerMetadataV1Schema.safeParse({
       ...ownerMetadata,
-      agentRuntimeCapabilitiesV1: {
-        ...ownerMetadata.agentRuntimeCapabilitiesV1,
-        sessionCapabilities: {
-          ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities,
-          usageLimitRecovery: { checkNow: 'supported' },
+      runtime: {
+        agentRuntimeCapabilitiesV1: {
+          ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1,
+          sessionCapabilities: {
+            ...ownerMetadata.runtime.agentRuntimeCapabilitiesV1.sessionCapabilities,
+            usageLimitRecovery: { checkNow: 'supported' },
+          },
         },
       },
     }).success).toBe(false);

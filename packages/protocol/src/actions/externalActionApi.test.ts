@@ -71,6 +71,19 @@ describe('External Action API envelope v1', () => {
     });
   });
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['positive infinity', Number.POSITIVE_INFINITY],
+    ['negative infinity', Number.NEGATIVE_INFINITY],
+    ['undefined', undefined],
+    ['bigint', 1n],
+  ])('rejects non-JSON Action input at the external envelope owner: %s', (_label, input) => {
+    expect(ExternalActionRequestEnvelopeV1Schema.safeParse({
+      v: 1,
+      input,
+    }).success).toBe(false);
+  });
+
   it('admits only an exact machine or Session transport target', () => {
     expect(ExternalActionTargetV1Schema.safeParse({ kind: 'machine', machineId: 'machine-1' }).success).toBe(true);
     expect(ExternalActionTargetV1Schema.safeParse({ kind: 'session', sessionId: 'session-1' }).success).toBe(true);

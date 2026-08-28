@@ -935,18 +935,16 @@ describe('Action Spec Registry', () => {
 
   it('classifies every current ActionSpec explicitly for API and plugin invocation', () => {
     for (const spec of listActionSpecs()) {
-      const isClientPlaced = spec.executionPlacement === 'client';
       expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'api')).toBe(true);
       expect(typeof spec.surfaces.api).toBe('boolean');
       expect(spec.surfaces.api, spec.id).toBe(
-        !isClientPlaced
-          && !isInternalActionId(spec.id)
+        !isInternalActionId(spec.id)
           && !isPluginProvenanceOnlyActionId(spec.id),
       );
       expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'plugin')).toBe(true);
       expect(typeof spec.surfaces.plugin).toBe('boolean');
       expect(spec.surfaces.plugin, spec.id).toBe(
-        !isClientPlaced && !isPluginSurfaceExcludedActionId(spec.id),
+        !isPluginSurfaceExcludedActionId(spec.id),
       );
       expect(PublicActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.api);
       expect(PluginInvocableActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.plugin);
@@ -1246,20 +1244,37 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('keeps all raw subagent registry Actions RPC-only', () => {
-    const internalSubagentActionIds = [
+  it('publishes safe subagent reads while keeping lifecycle mutations RPC-only', () => {
+    const publicSubagentReadActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
+    ] as const;
+    for (const actionId of publicSubagentReadActionIds) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.api).toBe(true);
+      expect(spec.surfaces.plugin).toBe(true);
+      expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(true);
+      expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
+      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(false);
+      expect(isInternalActionId(actionId)).toBe(false);
+    }
+
+    const internalSubagentMutationActionIds = [
       'sessions.subagents.upsert',
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    for (const actionId of internalSubagentActionIds) {
+    for (const actionId of internalSubagentMutationActionIds) {
       const spec = getActionSpec(actionId);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(false);
@@ -3135,6 +3150,25 @@ describe('Action Spec Registry', () => {
         },
       },
     }).success).toBe(false);
+  });
+
+  it('admits machineId as a named agents.backends.list input field', () => {
+    const spec = getActionSpec('agents.backends.list');
+
+    expect(spec.inputSchema.parse({
+      machineId: 'machine-1',
+      limit: 10,
+    })).toMatchObject({
+      machineId: 'machine-1',
+      limit: 10,
+    });
+  });
+
+  it('rejects a non-string agents.backends.list machineId instead of trusting passthrough', () => {
+    const spec = getActionSpec('agents.backends.list');
+
+    expect(() => spec.inputSchema.parse({ machineId: '' })).toThrow();
+    expect(() => spec.inputSchema.parse({ machineId: 7 })).toThrow();
   });
 
   it('requires backendTargetKey when listing models for customAcp', () => {

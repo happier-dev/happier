@@ -46,5 +46,42 @@
         "error": { "code": "request_auth_unavailable" }
       }
     }
+  ],
+  "invalidResponses": [
+    {
+      "name": "non-200-success",
+      "status": 201,
+      "body": {
+        "ok": true,
+        "value": { "status": "current_unchanged" }
+      }
+    },
+    {
+      "name": "malformed-unauthorized",
+      "status": 401,
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "request_auth_unauthorized",
+          "message": "must not cross the closed wire"
+        }
+      }
+    },
+    {
+      "name": "mismatched-status-code",
+      "status": 403,
+      "body": {
+        "ok": false,
+        "error": { "code": "request_auth_not_active" }
+      }
+    },
+    {
+      "name": "unknown-error-code",
+      "status": 503,
+      "body": {
+        "ok": false,
+        "error": { "code": "fixture_error" }
+      }
+    }
   ]
 }

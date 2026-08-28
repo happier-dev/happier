@@ -1,11 +1,11 @@
 import {
     ConnectedServiceAuthGroupIdSchema,
     ConnectedServiceBindingsV1Schema,
-    ConnectedServiceIdSchema,
     ConnectedServiceProfileIdSchema,
+    readBuiltInLegacyConnectedAccountServiceKeyIngress,
     type ConnectedServiceBindingSelectionV1,
     type ConnectedServiceBindingsV1,
-    type ConnectedServiceId,
+    type ConnectedAccountServiceKey,
 } from './connectedServiceBindings.js';
 
 /**
@@ -43,7 +43,7 @@ export type NormalizeConnectedServiceSelectionResult =
         ok: true;
         bindings: ConnectedServiceBindingsV1 | undefined;
         /** Services whose bare token requested their stored account default (explicit per-service intent). */
-        defaultServiceIds: readonly ConnectedServiceId[];
+        defaultServiceIds: readonly ConnectedAccountServiceKey[];
     }>
     | Readonly<{ ok: false; error: string }>;
 
@@ -66,7 +66,7 @@ type SelectionVariant =
     | Readonly<{ kind: 'binding'; binding: ConnectedServiceBindingSelectionV1 }>;
 
 type TokenParse =
-    | Readonly<{ ok: true; serviceId: ConnectedServiceId; variant: SelectionVariant }>
+    | Readonly<{ ok: true; serviceId: ConnectedAccountServiceKey; variant: SelectionVariant }>
     | Readonly<{ ok: false; error: string }>;
 
 function parseSelectionToken(rawToken: string): TokenParse {
@@ -77,11 +77,10 @@ function parseSelectionToken(rawToken: string): TokenParse {
     // recognised kind keyword are consumed. profileId legally contains ':' — group ids never do.
     const parts = token.split(':');
     const serviceIdRaw = (parts[0] ?? '').trim();
-    const serviceParsed = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
-    if (!serviceParsed.success) {
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceIdRaw);
+    if (!serviceId) {
         return invalid(`Unknown connected service id "${serviceIdRaw}".`);
     }
-    const serviceId = serviceParsed.data;
 
     // "<serviceId>" → the named service's account default (explicit per-service intent).
     if (parts.length === 1) {
@@ -134,7 +133,7 @@ function parseSelectionToken(rawToken: string): TokenParse {
 
 function normalizeTokens(tokens: readonly string[]): NormalizeConnectedServiceSelectionResult {
     const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV1> = {};
-    const defaultServiceIds: ConnectedServiceId[] = [];
+    const defaultServiceIds: ConnectedAccountServiceKey[] = [];
     const seen = new Set<string>();
 
     for (const rawToken of tokens) {

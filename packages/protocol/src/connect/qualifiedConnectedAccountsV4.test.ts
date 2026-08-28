@@ -18,11 +18,14 @@ import {
   QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema,
   QualifiedConnectedAccountGroupListResponseV4Schema,
   QualifiedConnectedAccountGroupResponseV4Schema,
+  QualifiedConnectedAccountGroupDeleteV4Schema,
+  QualifiedConnectedAccountGroupMemberDeleteV4Schema,
   QualifiedConnectedAccountGroupMemberMutationV4Schema,
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
   QualifiedConnectedAccountQuotaResponseV4Schema,
   QualifiedProviderAccountUsageRecordResponseV4Schema,
+  QualifiedProviderAccountUsageReadErrorV4Schema,
   QualifiedProviderAccountUsageWriteV4Schema,
   QualifiedConnectedAccountRefSchema,
   QualifiedConnectedServiceUsageSourceV4Schema,
@@ -31,6 +34,7 @@ import {
   openQualifiedConnectedAccountQuotaResponseV4,
   projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
   resolveQualifiedConnectedAccountGroupActiveAccountV4,
+  sameQualifiedConnectedAccountGroupRef,
 } from './qualifiedConnectedAccountsV4.js';
 import { PluginConnectedAccountAuthenticationV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedServicesCapabilitiesSchema } from '../features/payload/capabilities/connectedServicesCapabilities.js';
@@ -47,6 +51,23 @@ const service = {
 const credentialRevision = 'csr_abcdefghijklmnopqrstuvwxyz';
 
 describe('qualified connected-account V4 wire contract', () => {
+  it('compares every field in a qualified group identity', () => {
+    const group = { service, groupId: 'team' };
+    expect(sameQualifiedConnectedAccountGroupRef(group, group)).toBe(true);
+    expect(sameQualifiedConnectedAccountGroupRef(group, {
+      ...group,
+      groupId: 'other',
+    })).toBe(false);
+    expect(sameQualifiedConnectedAccountGroupRef(group, {
+      ...group,
+      service: { ...service, localId: 'other' },
+    })).toBe(false);
+    expect(sameQualifiedConnectedAccountGroupRef(group, {
+      ...group,
+      service: { ...service, pluginId: 'other.plugin' },
+    })).toBe(false);
+  });
+
   it('uses one revision-fenced active-account predicate for direct and group targets', () => {
     const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({
       defaultModeId: 'oauth',
@@ -202,6 +223,7 @@ describe('qualified connected-account V4 wire contract', () => {
     const parsed = QualifiedConnectedAccountGroupMemberMutationV4Schema.parse({
       group: { service, groupId: 'fallback-pool' },
       connectedAccountId: 'team/primary',
+      expectedGeneration: 2,
       expectedRuntimeStateRevision: 1,
       priority: 4,
       enabled: true,
@@ -223,18 +245,21 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(QualifiedConnectedAccountGroupPatchV4Schema.parse({
       service,
       groupId: 'fallback-pool',
+      expectedGeneration: 2,
       displayName: 'Fallback pool',
     })).not.toHaveProperty('state');
 
     expect(QualifiedConnectedAccountGroupMemberMutationV4Schema.parse({
       group: { service, groupId: 'fallback-pool' },
       connectedAccountId: 'team/primary',
+      expectedGeneration: 2,
       priority: 4,
     })).not.toHaveProperty('state');
 
     expect(QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema.parse({
       service,
       groupId: 'fallback-pool',
+      expectedGeneration: 2,
       expectedRuntimeStateRevision: 1,
       runtimeState: {
         memberStates: [{
@@ -243,6 +268,53 @@ describe('qualified connected-account V4 wire contract', () => {
         }],
       },
     }).runtimeState).not.toHaveProperty('state');
+  });
+
+  it('requires the caller-observed group generation for every generation-sensitive V4 mutation', () => {
+    const group = { service, groupId: 'fallback-pool' } as const;
+    const withoutGeneration = [
+      QualifiedConnectedAccountGroupPatchV4Schema.safeParse({
+        service,
+        groupId: group.groupId,
+        displayName: 'Renamed',
+      }),
+      QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema.safeParse({
+        service,
+        groupId: group.groupId,
+        expectedRuntimeStateRevision: 1,
+        runtimeState: { memberStates: [] },
+      }),
+      QualifiedConnectedAccountGroupMemberMutationV4Schema.safeParse({
+        group,
+        connectedAccountId: 'team/primary',
+      }),
+      QualifiedConnectedAccountGroupMemberDeleteV4Schema.safeParse({
+        group,
+        connectedAccountId: 'team/primary',
+      }),
+      QualifiedConnectedAccountGroupActiveAccountV4Schema.safeParse({
+        group,
+        connectedAccountId: 'team/primary',
+      }),
+      QualifiedConnectedAccountGroupDeleteV4Schema.safeParse({
+        group,
+        expectedIncarnation: 'qualified-group-row-fallback-pool',
+      }),
+    ];
+
+    expect(withoutGeneration.every((result) => !result.success)).toBe(true);
+  });
+
+  it('names qualified usage disclosure refusal as a closed storage-mode conflict', () => {
+    expect(QualifiedProviderAccountUsageReadErrorV4Schema.parse({
+      error: 'provider_account_usage_storage_mode_mismatch',
+    })).toEqual({
+      error: 'provider_account_usage_storage_mode_mismatch',
+    });
+    expect(QualifiedProviderAccountUsageReadErrorV4Schema.safeParse({
+      error: 'provider_account_usage_storage_mode_mismatch',
+      recordId: 'must-not-disclose',
+    }).success).toBe(false);
   });
 
   it('accepts the structural generation CAS for active-account mutation', () => {
@@ -585,6 +657,7 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(QualifiedConnectedAccountGroupPatchV4Schema.parse({
       service,
       groupId: 'fallback-pool',
+      expectedGeneration: 2,
       expectedRuntimeStateRevision: 3,
       policy: {
         strategy: 'priority',
@@ -593,6 +666,7 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(QualifiedConnectedAccountGroupPatchV4Schema.safeParse({
       service,
       groupId: 'fallback-pool',
+      expectedGeneration: 2,
       expectedRuntimeStateRevision: '3',
     }).success).toBe(false);
     expect(QualifiedConnectedAccountGroupCreateV4Schema.safeParse({
@@ -605,6 +679,7 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(QualifiedConnectedAccountGroupPatchV4Schema.safeParse({
       service,
       groupId: 'fallback-pool',
+      expectedGeneration: 2,
       policy: { arbitraryPolicyKey: true },
     }).success).toBe(false);
   });

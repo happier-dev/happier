@@ -54,6 +54,10 @@
       "types": "./dist/actions/index.d.ts",
       "default": "./dist/actions/index.js"
     },
+    "./actions/externalActionLimits": {
+      "types": "./dist/actions/externalActionLimits.d.ts",
+      "default": "./dist/actions/externalActionLimits.js"
+    },
     "./actions/permissionPrivilege": {
       "types": "./dist/actions/permissionPrivilege.d.ts",
       "default": "./dist/actions/permissionPrivilege.js"
@@ -187,10 +191,6 @@
       "types": "./dist/filesystem/portablePathSegment.d.ts",
       "default": "./dist/filesystem/portablePathSegment.js"
     },
-    "./agents/runtimeDescriptorContributionsV1": {
-      "types": "./dist/agents/runtimeDescriptorContributionsV1.d.ts",
-      "default": "./dist/agents/runtimeDescriptorContributionsV1.js"
-    },
     "./agents/claude": {
       "types": "./dist/agents/claude/index.d.ts",
       "default": "./dist/agents/claude/index.js"
@@ -274,6 +274,10 @@
     "./plugins/data/collectionLimitsV1": {
       "types": "./dist/plugins/data/collectionLimitsV1.d.ts",
       "default": "./dist/plugins/data/collectionLimitsV1.js"
+    },
+    "./plugins/settings/accountSettingsLimits": {
+      "types": "./dist/plugins/settings/accountSettingsLimits.d.ts",
+      "default": "./dist/plugins/settings/accountSettingsLimits.js"
     },
     "./plugins/availability": {
       "types": "./dist/plugins/availability/index.d.ts",

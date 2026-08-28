@@ -12,7 +12,7 @@ import {
   type SessionUsageLimitRecoveryOperationResultV1,
 } from '../../control/sessionUsageLimitRecoveryOperationResultV1.js';
 import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '../../state/valueSchemas/usageLimitRecovery.js';
-import { ConnectedServiceIdSchema } from '../../../connect/connectedServiceBindings.js';
+import { ConnectedAccountServiceKeyIngressSchema } from '../../../connect/connectedServiceBindings.js';
 import { ConnectedServiceQuotaSnapshotV1Schema } from '../../../connect/connectedServiceSchemas.js';
 import { SessionWorkStateStatusV1Schema, SessionWorkStateV1Schema } from './sessionWorkStateV1.js';
 import { PendingLocalIdSchema } from '../../pending/pendingLocalId.js';
@@ -72,7 +72,7 @@ export const ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema = z
   .object({
     serviceId: z.preprocess(
       (value) => (typeof value === 'string' ? value.trim() : value),
-      ConnectedServiceIdSchema,
+      ConnectedAccountServiceKeyIngressSchema,
     ),
     profileId: z.string().trim().min(1),
     idempotencyKey: ConnectedServiceQuotaRecoveryCreditIdempotencyKeyV1Schema,
@@ -125,7 +125,7 @@ export type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 =
 const ConnectedServiceRuntimeControlIdV1Schema = z.string().trim().min(1);
 const ConnectedServiceRuntimeControlServiceIdV1Schema = z.preprocess(
   (value) => (typeof value === 'string' ? value.trim() : value),
-  ConnectedServiceIdSchema,
+  ConnectedAccountServiceKeyIngressSchema,
 );
 const ConnectedServiceRuntimeControlGenerationV1Schema = z.union([
   z.string().trim().min(1),

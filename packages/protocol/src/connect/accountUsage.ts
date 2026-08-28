@@ -19,6 +19,8 @@ import {
     type ConnectedServiceQuotaSourceV1,
     type ConnectedServiceUsageSourceV1,
 } from './connectedServiceSchemas.js';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from './connectedServiceBindings.js';
+import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import {
     ProviderAccountUsageConfidenceV1Schema,
     ProviderAccountUsageRecordIdSchema,
@@ -171,9 +173,14 @@ export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
     source: ConnectedServiceUsageSourceV1,
 ): ConnectedServiceQuotaSnapshotV1 | null {
     const parsedSource = ConnectedServiceUsageSourceV1Schema.parse(source);
+    const service = parseQualifiedPluginContributionKey(parsedSource.serviceId);
+    const legacyServiceId = service
+        ? readBuiltInLegacyConnectedServiceIdForQualifiedService(service)
+        : null;
+    if (!legacyServiceId) return null;
     return {
         ...projectProviderAccountUsageSnapshotToQuotaFieldsV1(snapshot),
-        serviceId: parsedSource.serviceId,
+        serviceId: legacyServiceId,
         profileId: parsedSource.profileId,
     };
 }

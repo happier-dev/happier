@@ -17,6 +17,7 @@ import {
     ConnectedServiceAuthGroupV1Schema,
     ConnectedServiceBindingSelectionV1Schema,
     ConnectedServiceBindingsV1Schema,
+    BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
     PersistedConnectedServiceBindingsV1Schema,
     ConnectedServiceCredentialHealthV1Schema,
     ConnectedServiceCredentialCompatibleMutationSuccessV1Schema,
@@ -27,6 +28,7 @@ import {
     ConnectedServiceCredentialRecordV1Schema,
     ConnectedServiceCredentialRevisionV1Schema,
     readConnectedServiceCredentialRevisionBoundaryV1,
+    readBuiltInLegacyConnectedServiceIdForQualifiedService,
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
     ConnectedServiceUsageSourceV1Schema,
@@ -252,7 +254,7 @@ describe('connectedServiceSchemas', () => {
             profileId: 'work',
             bindingKind: 'profile',
         })).toEqual({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             profileId: 'work',
             bindingKind: 'profile',
         });
@@ -264,7 +266,7 @@ describe('connectedServiceSchemas', () => {
             groupId: 'team',
             groupGeneration: 7,
         })).toEqual({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             profileId: 'work',
             bindingKind: 'group_member',
             groupId: 'team',
@@ -276,6 +278,16 @@ describe('connectedServiceSchemas', () => {
             profileId: 'work',
             bindingKind: 'group_member',
         }).success).toBe(false);
+
+        expect(ConnectedServiceUsageSourceV1Schema.parse({
+            serviceId: 'com.acme.agent/novel-service',
+            profileId: 'external-work',
+            bindingKind: 'profile',
+        })).toEqual({
+            serviceId: 'com.acme.agent/novel-service',
+            profileId: 'external-work',
+            bindingKind: 'profile',
+        });
 
         expect(ConnectedServiceUsageSourceV1Schema.safeParse({
             serviceId: 'openai-codex',
@@ -893,7 +905,7 @@ describe('connectedServiceSchemas', () => {
         }).success).toBe(false);
     });
 
-    it('parses profile and group connected-service session bindings', () => {
+    it('keys current session bindings by exact qualified Connected Account service identity', () => {
         expect(ConnectedServiceBindingSelectionV1Schema.parse({
             source: 'connected',
             profileId: 'work',
@@ -906,7 +918,7 @@ describe('connectedServiceSchemas', () => {
         const parsed = ConnectedServiceBindingsV1Schema.parse({
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'group',
                     groupId: 'codex-main',
@@ -915,7 +927,19 @@ describe('connectedServiceSchemas', () => {
             },
         });
 
-        expect(parsed.bindingsByServiceId['openai-codex']?.selection).toBe('group');
+        expect(parsed.bindingsByServiceId['happier.agent.codex/openai-codex']?.selection).toBe('group');
+        expect(ConnectedServiceBindingsV1Schema.safeParse({
+            v: 1,
+            bindingsByServiceId: {
+                'novel-service': { source: 'native' },
+            },
+        }).success).toBe(false);
+        expect(ConnectedServiceBindingsV1Schema.parse({
+            v: 1,
+            bindingsByServiceId: {
+                'com.acme.agent/novel-service': { source: 'native' },
+            },
+        }).bindingsByServiceId).toHaveProperty('com.acme.agent/novel-service');
         expect(ConnectedServiceBindingSelectionV1Schema.parse({
             source: 'connected',
             selection: 'group',
@@ -932,15 +956,15 @@ describe('connectedServiceSchemas', () => {
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    anthropic: {
+                    'happier.agent.claude/anthropic': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
                     },
                 },
             },
-            rematerializeServiceId: 'anthropic',
-            expectedGroupGenerationByServiceId: { anthropic: 4 },
+            rematerializeServiceId: 'happier.agent.claude/anthropic',
+            expectedGroupGenerationByServiceId: { 'happier.agent.claude/anthropic': 4 },
             accountSettingsVersionHint: 42,
         })).toEqual({
             sessionId: 'sess_1',
@@ -948,24 +972,79 @@ describe('connectedServiceSchemas', () => {
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    anthropic: {
+                    'happier.agent.claude/anthropic': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
                     },
                 },
             },
-            rematerializeServiceId: 'anthropic',
-            expectedGroupGenerationByServiceId: { anthropic: 4 },
+            rematerializeServiceId: 'happier.agent.claude/anthropic',
+            expectedGroupGenerationByServiceId: { 'happier.agent.claude/anthropic': 4 },
             accountSettingsVersionHint: 42,
         });
+    });
+
+    it('normalizes released bundled short service ids only at the named legacy ingress', () => {
+        const normalized = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.parse({
+            v: 1,
+            bindingsByServiceId: {
+                'openai-codex': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                },
+            },
+        });
+
+        expect(normalized).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                'happier.agent.codex/openai-codex': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                },
+            },
+        });
+        expect(BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse({
+            v: 1,
+            bindingsByServiceId: {
+                'novel-service': { source: 'native' },
+            },
+        }).success).toBe(false);
+    });
+
+    it('reads the bundled scalar id for a qualified service only through the generated mapping and fails closed for novel services', () => {
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'happier.agent.codex',
+            localId: 'openai-codex',
+        })).toBe('openai-codex');
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'happier.agent.claude',
+            localId: 'claude-subscription',
+        })).toBe('claude-subscription');
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'happier.voice.openai',
+            localId: 'openai',
+        })).toBe('openai');
+        // A qualified identity without a generated legacy member has no scalar
+        // representation — including a foreign plugin reusing a bundled local id.
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'acme.review',
+            localId: 'reviewer-service',
+        })).toBeNull();
+        expect(readBuiltInLegacyConnectedServiceIdForQualifiedService({
+            pluginId: 'acme.review',
+            localId: 'openai-codex',
+        })).toBeNull();
     });
 
     it('keeps mixed-version binding reads permissive while persisted writes reject unknown fields', () => {
         const mixedVersionBinding = {
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',

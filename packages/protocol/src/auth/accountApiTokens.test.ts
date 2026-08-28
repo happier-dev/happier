@@ -8,6 +8,7 @@ import {
 } from './accountApiTokens.js';
 
 const CREDENTIAL_ID = '2c67deea-5ae7-4706-9ad6-b5b992df1cba';
+const PAT = `hap_v1_${CREDENTIAL_ID}_${'A'.repeat(43)}`;
 
 describe('auth/accountApiTokens PAT introspection', () => {
   it('owns the strict introspection path and request envelope', () => {
@@ -15,12 +16,21 @@ describe('auth/accountApiTokens PAT introspection', () => {
       '/v1/auth/api-tokens/introspect',
     );
     expect(
-      AccountApiTokenIntrospectionRequestV1Schema.parse({ token: 'pat' }),
-    ).toEqual({ token: 'pat' });
+      AccountApiTokenIntrospectionRequestV1Schema.parse({ token: PAT }),
+    ).toEqual({ token: PAT });
     expect(
       AccountApiTokenIntrospectionRequestV1Schema.safeParse({
-        token: 'pat',
+        token: PAT,
         accountId: 'caller-selected-account',
+      }).success,
+    ).toBe(false);
+    expect(
+      AccountApiTokenIntrospectionRequestV1Schema.safeParse({ token: 'pat' })
+        .success,
+    ).toBe(false);
+    expect(
+      AccountApiTokenIntrospectionRequestV1Schema.safeParse({
+        token: `hap_v1_${CREDENTIAL_ID}_${'A'.repeat(4_300)}`,
       }).success,
     ).toBe(false);
     expect(

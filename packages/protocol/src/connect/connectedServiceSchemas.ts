@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
     ConnectedServiceAuthGroupIdSchema,
+    ConnectedAccountServiceKeyIngressSchema,
     ConnectedServiceBindingSelectionV1Schema,
     ConnectedServiceBindingsV1Schema,
     ConnectedServiceIdSchema,
@@ -25,6 +26,11 @@ export {
 } from './connectedServiceLimitCategory.js';
 
 export {
+    BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+    readBuiltInLegacyConnectedAccountServiceKeyIngress,
+    readBuiltInLegacyConnectedServiceIdForQualifiedService,
+    ConnectedAccountServiceKeyIngressSchema,
+    ConnectedAccountServiceKeySchema,
     ConnectedServiceAuthGroupIdSchema,
     ConnectedServiceBindingSelectionV1Schema,
     ConnectedServiceBindingsV1Schema,
@@ -34,6 +40,8 @@ export {
     PersistedConnectedServiceBindingsV1Schema,
     SessionConnectedServiceAuthSwitchRpcParamsSchema,
     type ConnectedServiceAuthGroupId,
+    type ConnectedAccountServiceKey,
+    type ConnectedAccountServiceKeyIngress,
     type ConnectedServiceBindingSelectionV1,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceId,
@@ -472,12 +480,12 @@ export type ConnectedServiceUsageSourceBindingKindV1 = z.infer<typeof ConnectedS
 
 export const ConnectedServiceUsageSourceV1Schema = z.discriminatedUnion('bindingKind', [
     z.object({
-        serviceId: ConnectedServiceIdSchema,
+        serviceId: ConnectedAccountServiceKeyIngressSchema,
         profileId: ConnectedServiceProfileIdSchema,
         bindingKind: z.literal('profile'),
     }).strict(),
     z.object({
-        serviceId: ConnectedServiceIdSchema,
+        serviceId: ConnectedAccountServiceKeyIngressSchema,
         profileId: ConnectedServiceProfileIdSchema,
         bindingKind: z.literal('group_member'),
         groupId: z.string().trim().min(1),

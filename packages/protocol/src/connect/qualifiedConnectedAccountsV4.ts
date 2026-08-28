@@ -240,6 +240,7 @@ export const QualifiedConnectedAccountGroupQueryV4Schema = z.object({
 export const QualifiedConnectedAccountGroupPatchV4Schema = z.object({
   service: ServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
+  expectedGeneration: z.number().int().nonnegative(),
   expectedIncarnation:
     QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   displayName: z.string().trim().min(1).max(512).nullable().optional(),
@@ -252,6 +253,7 @@ export const QualifiedConnectedAccountGroupPatchV4Schema = z.object({
 export const QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema = z.object({
   service: ServiceRefZodSchema,
   groupId: ConnectedServiceAuthGroupIdSchema,
+  expectedGeneration: z.number().int().nonnegative(),
   expectedIncarnation:
     QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
@@ -266,6 +268,7 @@ export const QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema = z.object(
 
 export const QualifiedConnectedAccountGroupMemberMutationV4Schema = z.object({
   group: QualifiedConnectedAccountGroupRefSchema,
+  expectedGeneration: z.number().int().nonnegative(),
   expectedIncarnation:
     QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
@@ -278,6 +281,7 @@ export const QualifiedConnectedAccountGroupMemberMutationV4Schema = z.object({
 
 export const QualifiedConnectedAccountGroupMemberDeleteV4Schema = z.object({
   group: QualifiedConnectedAccountGroupRefSchema,
+  expectedGeneration: z.number().int().nonnegative(),
   expectedIncarnation:
     QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
@@ -289,7 +293,7 @@ export const QualifiedConnectedAccountGroupActiveAccountV4Schema = z.object({
   expectedIncarnation:
     QualifiedConnectedAccountGroupIncarnationV4Schema.optional(),
   connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
-  expectedGeneration: z.number().int().nonnegative().optional(),
+  expectedGeneration: z.number().int().nonnegative(),
   expectedRuntimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema.optional(),
   expectedSource: z.object({
     connectedAccountId: asProtocolZod(QualifiedConnectedAccountIdSchema),
@@ -297,6 +301,14 @@ export const QualifiedConnectedAccountGroupActiveAccountV4Schema = z.object({
     configurationRevision: RevisionSchema.nullable(),
   }).strict().optional(),
   overrideRuntimeCooldown: z.boolean().optional(),
+}).strict();
+
+export const QualifiedConnectedAccountGroupDeleteV4Schema = z.object({
+  group: QualifiedConnectedAccountGroupRefSchema,
+  expectedGeneration: z.number().int().nonnegative(),
+  expectedIncarnation: QualifiedConnectedAccountGroupIncarnationV4Schema,
+  expectedRuntimeStateRevision:
+    ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema.optional(),
 }).strict();
 
 /** Every group the Account holds. */
@@ -349,6 +361,10 @@ export const QualifiedProviderAccountUsageWriteV4Schema = z.object({
 
 export const QualifiedProviderAccountUsageRecordQueryV4Schema = z.object({
   recordId: ProviderAccountUsageRecordIdSchema,
+}).strict();
+
+export const QualifiedProviderAccountUsageReadErrorV4Schema = z.object({
+  error: z.literal('provider_account_usage_storage_mode_mismatch'),
 }).strict();
 
 export const QualifiedConnectedAccountSuccessV4Schema = z.object({
@@ -546,6 +562,16 @@ export type QualifiedConnectedAccountServiceRef = PluginContributionIdentityV1;
 export type QualifiedConnectedAccountGroupRef = z.infer<
   typeof QualifiedConnectedAccountGroupRefSchema
 >;
+
+/** Canonical equality for the complete qualified group identity. */
+export function sameQualifiedConnectedAccountGroupRef(
+  left: QualifiedConnectedAccountGroupRef,
+  right: QualifiedConnectedAccountGroupRef,
+): boolean {
+  return left.service.pluginId === right.service.pluginId
+    && left.service.localId === right.service.localId
+    && left.groupId === right.groupId;
+}
 export type QualifiedConnectedAccountConfigurationTargetV4 = z.infer<
   typeof QualifiedConnectedAccountConfigurationTargetV4Schema
 >;

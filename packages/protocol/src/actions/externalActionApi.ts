@@ -546,7 +546,7 @@ export const ExternalActionRequestEnvelopeV1Schema = z.object({
   v: z.literal(1),
   requestId: ExternalActionRequestIdV1Schema.optional(),
   target: ExternalActionTargetV1Schema.optional(),
-  input: z.unknown(),
+  input: StrictJsonValueSchema,
 }).strict().superRefine((value, context) => {
   if (!Object.prototype.hasOwnProperty.call(value, 'input')) {
     context.addIssue({

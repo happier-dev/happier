@@ -459,7 +459,9 @@ describe('TranscriptRawRecordV1Schema', () => {
           ok: true,
           action: 'hot_applied',
           verificationByServiceId: {
-            'openai-codex': {
+            // Released bundled scalar keys normalize to the canonical qualified
+            // key; qualified keys pass through unchanged.
+            'happier.agent.codex/openai-codex': {
               status: 'weakly_verified',
               reason: 'provider_account_email_verified_without_account_id',
             },
@@ -478,11 +480,41 @@ describe('TranscriptRawRecordV1Schema', () => {
       throw new Error('expected connected-service account switch attempt');
     }
     expect(content.data.verificationByServiceId).toEqual({
-      'openai-codex': {
+      'happier.agent.codex/openai-codex': {
         status: 'weakly_verified',
         reason: 'provider_account_email_verified_without_account_id',
       },
     });
+  });
+
+  it('normalizes released bundled scalar verification keys to canonical qualified keys', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'hot_applied',
+      verificationByServiceId: {
+        'openai-codex': { status: 'verified' },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error('expected parse success');
+    expect(parsed.data.verificationByServiceId).toEqual({
+      'happier.agent.codex/openai-codex': { status: 'verified' },
+    });
+  });
+
+  it('rejects unknown scalar and malformed switch-attempt verification keys', () => {
+    const parsed = TranscriptRawAgentEventV1Schema.safeParse({
+      type: 'connected-service-account-switch-attempt',
+      ok: true,
+      action: 'hot_applied',
+      verificationByServiceId: {
+        'not-a-real-service': { status: 'verified' },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it('keeps legacy connected-service switch attempt rows valid without outcome fields', () => {

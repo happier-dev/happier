@@ -5,6 +5,10 @@ import {
     normalizeConnectedServiceSelectionInput,
 } from './normalizeConnectedServiceSelectionInput.js';
 
+const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
+const ANTHROPIC_SERVICE_KEY = 'happier.agent.claude/anthropic';
+const EXTERNAL_SERVICE_KEY = 'com.acme.agent/novel-service';
+
 describe('normalizeConnectedServiceSelectionInput', () => {
     it('treats undefined/null/empty array as no explicit selection (account default)', () => {
         expect(normalizeConnectedServiceSelectionInput(undefined)).toEqual({
@@ -30,7 +34,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
         expect(normalizeConnectedServiceSelectionInput('openai-codex')).toEqual({
             ok: true,
             bindings: undefined,
-            defaultServiceIds: ['openai-codex'],
+            defaultServiceIds: [CODEX_SERVICE_KEY],
         });
     });
 
@@ -41,7 +45,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
             bindings: {
                 v: 1,
                 bindingsByServiceId: {
-                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'team' },
+                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'team' },
                 },
             },
             defaultServiceIds: [],
@@ -51,7 +55,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
     it('normalizes the explicit "<service>:profile:<profileId>" form', () => {
         const result = normalizeConnectedServiceSelectionInput('openai-codex:profile:team');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'profile',
             profileId: 'team',
@@ -61,7 +65,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
     it('preserves colons inside a profile id for the explicit form (RO-F6)', () => {
         const result = normalizeConnectedServiceSelectionInput('openai-codex:profile:work:us');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'profile',
             profileId: 'work:us',
@@ -71,7 +75,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
     it('preserves colons inside a profile id for the shorthand form (RO-F6)', () => {
         const result = normalizeConnectedServiceSelectionInput('openai-codex:work:us');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'profile',
             profileId: 'work:us',
@@ -81,7 +85,7 @@ describe('normalizeConnectedServiceSelectionInput', () => {
     it('normalizes "<service>:group:<groupId>" to a group binding', () => {
         const result = normalizeConnectedServiceSelectionInput('openai-codex:group:happier');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'group',
             groupId: 'happier',
@@ -97,13 +101,13 @@ describe('normalizeConnectedServiceSelectionInput', () => {
     it('normalizes "<service>:native" to a native (opt-out) binding', () => {
         const result = normalizeConnectedServiceSelectionInput('openai-codex:native');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({ source: 'native' });
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({ source: 'native' });
     });
 
     it('accepts an array of tokens across services', () => {
         const result = normalizeConnectedServiceSelectionInput(['openai-codex:group:happier', 'anthropic:work']);
         expect(result.ok).toBe(true);
-        expect(result.ok && Object.keys(result.bindings?.bindingsByServiceId ?? {})).toEqual(['openai-codex', 'anthropic']);
+        expect(result.ok && Object.keys(result.bindings?.bindingsByServiceId ?? {})).toEqual([CODEX_SERVICE_KEY, ANTHROPIC_SERVICE_KEY]);
         expect(result.ok && result.defaultServiceIds).toEqual([]);
     });
 
@@ -111,8 +115,8 @@ describe('normalizeConnectedServiceSelectionInput', () => {
         const result = normalizeConnectedServiceSelectionInput(['openai-codex', 'anthropic:work']);
         expect(result.ok).toBe(true);
         // anthropic is an explicit binding; openai-codex is represented as a per-service default.
-        expect(result.ok && Object.keys(result.bindings?.bindingsByServiceId ?? {})).toEqual(['anthropic']);
-        expect(result.ok && result.defaultServiceIds).toEqual(['openai-codex']);
+        expect(result.ok && Object.keys(result.bindings?.bindingsByServiceId ?? {})).toEqual([ANTHROPIC_SERVICE_KEY]);
+        expect(result.ok && result.defaultServiceIds).toEqual([CODEX_SERVICE_KEY]);
     });
 
     it('rejects a bare + explicit selection for the SAME service as a duplicate (RO-F5)', () => {
@@ -125,12 +129,25 @@ describe('normalizeConnectedServiceSelectionInput', () => {
         const input = {
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+                [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'happier' },
             },
         };
         expect(normalizeConnectedServiceSelectionInput(input)).toEqual({
             ok: true,
             bindings: input,
+            defaultServiceIds: [],
+        });
+    });
+
+    it('accepts a genuinely novel external qualified service without a bundled compatibility entry', () => {
+        expect(normalizeConnectedServiceSelectionInput(`${EXTERNAL_SERVICE_KEY}:profile:team`)).toEqual({
+            ok: true,
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    [EXTERNAL_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'team' },
+                },
+            },
             defaultServiceIds: [],
         });
     });
@@ -170,7 +187,7 @@ describe('normalizeConnectedServiceSelectionForRunStart (settings-less boundary 
     it('passes explicit-only selections through as canonical bindings', () => {
         const result = normalizeConnectedServiceSelectionForRunStart('openai-codex:group:happier');
         expect(result.ok).toBe(true);
-        expect(result.ok && result.bindings?.bindingsByServiceId['openai-codex']).toEqual({
+        expect(result.ok && result.bindings?.bindingsByServiceId[CODEX_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'group',
             groupId: 'happier',

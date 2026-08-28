@@ -1461,9 +1461,17 @@ const ReviewEnginesListInputSchema = z.object({
   includeDisabled: z.boolean().optional(),
 }).passthrough();
 
+/**
+ * `machineId` scopes the answer to the installed/external Agents one machine's
+ * daemon projection admits. The executor forwards it to the host inventory
+ * owner, so it is part of this canonical contract rather than passthrough
+ * residue: an input the schema does not name is a contract the schema lies
+ * about.
+ */
 const AgentsBackendsListInputSchema = z.object({
   includeDisabled: z.boolean().optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  machineId: z.string().min(1).optional(),
 }).passthrough();
 
 const AgentsModelsListInputSchema = z.object({
@@ -8611,10 +8619,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 /**
  * The only host Actions that are not genuine user operations. Each entry is
  * deliberately small and names the existing owner that keeps the operation
- * private; every non-client host Action is public on the `api` and
- * trusted-plugin projections by default. The canonical execution placement
- * excludes client-only operations because no daemon transport can reach them;
- * this reason map remains the only additional host-private decision owner.
+ * private; every other host Action is public on the `api` and trusted-plugin
+ * projections by default. Execution placement remains typed routing metadata:
+ * an unavailable executor returns a typed placement outcome rather than
+ * silently removing the Action from discovery.
  */
 export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target': 'Private handoff lifecycle preparation phase; users invoke session.handoff instead.',
@@ -8622,9 +8630,6 @@ export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
   'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
   'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',
-  'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.',
   'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
@@ -8682,11 +8687,9 @@ const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.companion_controls,
 ] as const satisfies readonly ActionId[];
 
-type ClientExecutionPlacementActionId = (typeof CLIENT_EXECUTION_PLACEMENT_ACTION_IDS)[number];
-
 export type PublicActionId = Exclude<
   ActionId,
-  InternalActionId | PluginProvenanceOnlyActionId | ClientExecutionPlacementActionId
+  InternalActionId | PluginProvenanceOnlyActionId
 >;
 
 export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS = Object.freeze(
@@ -8932,15 +8935,14 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   const isPluginProvenanceOnly = isPluginProvenanceOnlyActionId(spec.id);
   const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
   const executionPlacement = resolveActionExecutionPlacement(spec);
-  const isClientPlaced = executionPlacement === 'client';
   return {
     ...spec,
     requiredAuthority: resolveActionRequiredAuthority(spec),
     executionPlacement,
     surfaces: {
       ...spec.surfaces,
-      api: !isClientPlaced && !isInternal && !isPluginProvenanceOnly,
-      plugin: !isClientPlaced && !isPluginSurfaceExcluded,
+      api: !isInternal && !isPluginProvenanceOnly,
+      plugin: !isPluginSurfaceExcluded,
     },
   };
 }

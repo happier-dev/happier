@@ -190,6 +190,18 @@ function collectSourceFiles(relativeRoot: string): string[] {
 }
 
 describe('protocol canonical layout', () => {
+    it('keeps external Action response limits under one browser-safe owner', () => {
+        const exports = readProtocolExports();
+
+        expect(exports['./actions/externalActionLimits']).toEqual({
+            types: './dist/actions/externalActionLimits.d.ts',
+            default: './dist/actions/externalActionLimits.js',
+        });
+        expect(exports).not.toHaveProperty('./actions/externalActionApi');
+        expect(exports).not.toHaveProperty('./actions/externalActionResultLimits');
+        expect(existsSync(resolve(srcDir, 'actions/externalActionResultLimits.ts'))).toBe(false);
+    });
+
     it('keeps A.17-owned flat protocol root entries folded into canonical domains', () => {
         const rootEntries = new Set(readdirSync(srcDir));
         const violations = [...forbiddenRootEntries].filter((entry) => rootEntries.has(entry));
@@ -200,9 +212,9 @@ describe('protocol canonical layout', () => {
         }
     });
 
-    it('keeps Codex protocol facts in generated/runtime or plugin-owned leaves', () => {
+    it('keeps Agent descriptor codecs in plugin-owned leaves', () => {
         expect(existsSync(resolve(srcDir, 'agents/codex'))).toBe(false);
-        expect(existsSync(resolve(srcDir, 'agents/generated/runtime/descriptors/codex.ts'))).toBe(true);
+        expect(existsSync(resolve(srcDir, 'agents/generated/runtime/descriptors/codex.ts'))).toBe(false);
     });
 
     it('keeps published package subpath specifiers mapped to source entrypoints', () => {
@@ -218,8 +230,10 @@ describe('protocol canonical layout', () => {
             './marketplace/internal',
             './crypto/base64',
             './crypto/canonicalDigest',
+            './crypto/canonicalJson',
             './machines/administration/pluginMachineExecutionOriginV1',
             './actions',
+            './actions/externalActionLimits',
             './actions/permissionPrivilege',
             './actions/actionSpecs',
             './actions/actionExecutionResult',
@@ -253,7 +267,6 @@ describe('protocol canonical layout', () => {
             './bugs/reports',
             './diagnostics/sensitive-keys',
             './filesystem/portablePathSegment',
-            './agents/runtimeDescriptorContributionsV1',
             './agents/claude',
             './backends',
             './daemon/plugin-invocation-logs',
@@ -274,6 +287,8 @@ describe('protocol canonical layout', () => {
             './plugins/agents',
             './plugins/manifest',
             './plugins/manifest/declaration',
+            './plugins/data/collectionLimitsV1',
+            './plugins/settings/accountSettingsLimits',
             './plugins/availability',
             './providers',
             './providers/claude/oauth-profile',
@@ -289,6 +304,7 @@ describe('protocol canonical layout', () => {
             './providers/model-selection',
             './providers/active-model-selection',
             './connect/connected-account-purposes',
+            './connect/claude-subscription-materialization',
             './connect/connected-account-request-auth',
             './connect/connected-service-bindings',
             './connect/connected-service-schemas',

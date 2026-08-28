@@ -2,9 +2,9 @@ import { z } from 'zod';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from './connectedServiceSchemas.js';
+import { ConnectedAccountServiceKeyIngressSchema } from './connectedServiceBindings.js';
 import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
@@ -158,7 +158,7 @@ const ConnectedServiceUxDiagnosticV1ObjectSchema = z.object({
   code: ConnectedServiceUxDiagnosticCodeV1Schema,
   failurePhase: ConnectedServiceUxDiagnosticFailurePhaseV1Schema,
   source: ConnectedServiceUxDiagnosticSourceV1Schema,
-  serviceId: ConnectedServiceIdSchema.optional(),
+  serviceId: ConnectedAccountServiceKeyIngressSchema.optional(),
   agentId: z.string().trim().min(1).optional(),
   profileId: ConnectedServiceProfileIdSchema.optional(),
   groupId: ConnectedServiceAuthGroupIdSchema.optional(),

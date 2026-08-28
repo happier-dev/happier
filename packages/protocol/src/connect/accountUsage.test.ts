@@ -307,6 +307,15 @@ describe('provider account usage protocol', () => {
             }),
             meters: snapshot.meters,
         }));
+
+        expect(projectSnapshot({
+            snapshot,
+            source: {
+                serviceId: 'com.acme.agent/novel-service',
+                profileId: 'external-work',
+                bindingKind: 'profile',
+            },
+        })).toBeNull();
     });
 
     it('does not export the connected-service quota back-projection helper', () => {

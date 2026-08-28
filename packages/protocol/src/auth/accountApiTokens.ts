@@ -3,7 +3,7 @@ import { z } from 'zod';
 const AccountApiTokenIdV1Schema = z.string().uuid();
 const AccountApiTokenInstantV1Schema = z.string().datetime({ offset: true }).max(64);
 const AccountApiTokenDisplayPrefixV1Schema = z.string().regex(/^hap_[0-9a-f]{8}$/u);
-const AccountApiTokenBearerV1Schema = z.string().regex(
+export const AccountApiTokenBearerV1Schema = z.string().regex(
   /^hap_v1_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/u,
 );
 
@@ -79,7 +79,7 @@ export const ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1 = '/v1/auth/api-tokens
 
 /** The PAT is a subject credential; the authenticated daemon Account is transport provenance. */
 export const AccountApiTokenIntrospectionRequestV1Schema = z.object({
-  token: z.string(),
+  token: AccountApiTokenBearerV1Schema,
 }).strict();
 export type AccountApiTokenIntrospectionRequestV1 = z.infer<typeof AccountApiTokenIntrospectionRequestV1Schema>;
 

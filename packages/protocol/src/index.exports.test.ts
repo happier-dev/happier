@@ -347,6 +347,34 @@ describe('protocol package root exports', () => {
                 .safeParse,
         ).toBe('function');
         expect(
+            typeof protocol.AccountEncryptionMigrateAutomationInventoryItemSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationStageItemSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationInventoryPageRequestSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationInventoryPageSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationStageBatchRequestSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationStageBatchResponseSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.AccountEncryptionMigrateAutomationDirectiveSchema
+                .safeParse,
+        ).toBe('function');
+        expect(
             typeof protocol.AccountEncryptionMigrateCollectionStageBatchRequestSchema
                 .safeParse,
         ).toBe('function');

@@ -34,6 +34,11 @@ const requestAuthHttpVectors = z.object({
     status: z.number().int(),
     body: z.unknown(),
   }).strict()),
+  invalidResponses: z.array(z.object({
+    name: z.string(),
+    status: z.number().int(),
+    body: z.unknown(),
+  }).strict()),
 }).strict().parse(JSON.parse(readFileSync(
   new URL('./connectedAccountRequestAuthHttpV1.vectors.json', import.meta.url),
   'utf8',
@@ -83,6 +88,20 @@ describe('private connected-account request-auth wire', () => {
       const error = ConnectedAccountRequestAuthErrorResponseV1Schema.parse(vector.body);
       expect(getConnectedAccountRequestAuthErrorHttpStatusV1(error.error.code))
         .toBe(vector.status);
+    }
+
+    for (const vector of requestAuthHttpVectors.invalidResponses) {
+      if (vector.status === 200) {
+        expect(ConnectedAccountRequestAuthFailureSuccessResponseV1Schema.safeParse(vector.body).success)
+          .toBe(false);
+        continue;
+      }
+      const error = ConnectedAccountRequestAuthErrorResponseV1Schema.safeParse(vector.body);
+      expect(
+        error.success
+        && getConnectedAccountRequestAuthErrorHttpStatusV1(error.data.error.code) === vector.status,
+        vector.name,
+      ).toBe(false);
     }
 
     expect(ConnectedAccountRequestAuthErrorResponseV1Schema.safeParse({

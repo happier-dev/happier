@@ -91,7 +91,7 @@ describe('session work-state RPC contracts', () => {
             idempotencyKey: ' consume:s1:credit-1 ',
             providerCreditId: ' credit-1 ',
         })).toEqual({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             profileId: 'work',
             idempotencyKey: 'consume:s1:credit-1',
             providerCreditId: 'credit-1',
@@ -212,7 +212,7 @@ describe('session work-state RPC contracts', () => {
                 providerAccountId: 'acct_1',
             },
         })).toEqual({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             reason: 'usage_limit',
             requireDirectLiveHotApply: true,
             expected: {
@@ -265,7 +265,7 @@ describe('session work-state RPC contracts', () => {
             requireExactProof: true,
             expected: { generation: 7 },
         })).toEqual({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             reason: 'same_provider_account_exhausted',
             requireExactProof: true,
             expected: { generation: 7 },
@@ -290,7 +290,7 @@ describe('session work-state RPC contracts', () => {
             },
         })).toEqual({
             ok: true,
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             identity: {
                 strategy: 'provider_account_id',
                 proofStrength: 'exact',
