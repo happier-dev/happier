@@ -443,6 +443,55 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         accent: 'sun',
     },
     {
+        /**
+         * Worktrees are not feature-gated. The picker that offers them is the
+         * ordinary new-session flow (buildWorktreeSelectionListSteps.tsx), and
+         * the create/remove/prune operations are plain SCM protocol calls
+         * (packages/protocol/src/scmWorktrees.ts) — no flag decides whether a
+         * reader sees this.
+         *
+         * "Or start in the folder you're already in" is the product's own first
+         * option, verbatim: `noWorktreeSubtitle` — "Start in the selected folder
+         * without creating or using a Git worktree." Naming the choice matters
+         * more than naming the feature; a worktree per session is a preference,
+         * not a workflow anyone should be forced into.
+         */
+        id: 'worktrees',
+        availability: 'shipped',
+        eyebrow: 'Parallel work',
+        title: 'Run several agents on one repo. No collisions.',
+        body: 'Start each session in its own Git worktree — a real checkout, its own branch, the same repository. Pick any local or remote branch and Happier creates the worktree, suggests a name, and offers to reuse an existing one rather than duplicating it. Or start in the folder you’re already in: it’s a choice per session, not a mode you switch on.',
+        visual: 'desktop',
+        accent: 'indigo',
+    },
+    {
+        /**
+         * NAMING THE TWO AGENTS IS NOT HEDGING — IT IS THE CLAIM.
+         * Handoff needs the agent to hand over its own session state, and most
+         * cannot. `vendorStateTransfer` is `supported` for exactly claude and
+         * opencode; codex is `experimental` (and `unsupported` on its MCP
+         * backend); gemini, cursor, copilot, qwen, kimi, kilo, kiro, grok,
+         * auggie, pi and custom ACP agents are all `unsupported`, and
+         * resolveSessionHandoffEligibility rejects them with
+         * `handoff_unsupported`. "Any session" would be false to any reader who
+         * has tried it on their own agent.
+         *
+         * Every claim about the workspace transfer is a default in
+         * SessionHandoffDefaultsV1: `workspaceTransferEnabled: false` (off until
+         * you turn it on), `transfer_snapshot` | `sync_changes` (a full copy or
+         * only the changes), `create_sibling_copy` (writes beside, does not
+         * overwrite), and `includeIgnoredMode: 'exclude'` (git-ignored files stay
+         * behind unless named by glob).
+         */
+        id: 'handoff',
+        availability: 'shipped',
+        eyebrow: 'Move machines',
+        title: 'Move a running session to another machine.',
+        body: 'Hand a Claude Code or OpenCode session to your desktop, a VPS, or a dev box and pick up where it stopped. Bring the working tree along if you want it — a full snapshot, or only the changes — and Happier writes a sibling copy instead of overwriting, leaves your git-ignored files behind unless you name them, and keeps the whole transfer off until you turn it on.',
+        visual: 'mobileAndDesktop',
+        accent: 'blue',
+    },
+    {
         id: 'mcp',
         availability: 'shipped',
         eyebrow: 'Configure once',
@@ -519,14 +568,12 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
  * Capabilities that don't need a full alternating section but deserve a
  * visible place on the page. Promoted features (subagents, queue, mcp, the
  * attention groups) now live in PRIMARY_FEATURES and are intentionally absent.
+ * 'handoff' joined them: a one-line grid entry and a full card are the same
+ * claim made twice, and the card is the one that can carry the qualifier the
+ * grid line lacked — handoff needs the agent to transfer its own session
+ * state, which most cannot.
  */
 export const GRID_FEATURES: ReadonlyArray<GridFeature> = [
-    {
-        id: 'handoff',
-        availability: 'shipped',
-        title: 'Hand off mid-session.',
-        body: 'Move a live session from one machine to another and keep the same thread — pick up exactly where you left off.',
-    },
     {
         id: 'sharing',
         availability: 'shipped',

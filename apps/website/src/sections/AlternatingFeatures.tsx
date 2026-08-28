@@ -79,6 +79,8 @@ const LAYOUT: Record<string, PanelSpec> = {
     voice:            { span: 12, tall: true, sz: '224%', sp: '78% 30%', so: 0.54 },
     machines:         { span: 5,              sz: '330%', sp: '72% 34%', so: 0.5  },
     surfaces:         { span: 7,              sz: '286%', sp: '64% 38%', so: 0.46 },
+    worktrees:        { span: 7,              sz: '306%', sp: '58% 44%', so: 0.48 },
+    handoff:          { span: 5,              sz: '338%', sp: '66% 30%', so: 0.5  },
     mcp:              { span: 7,  tall: true, sz: '300%', sp: '60% 42%', so: 0.48 },
     subscriptions:    { span: 5,  tall: true, sz: '336%', sp: '72% 22%', so: 0.5 },
     accounts:         { span: 7,  tall: true, sz: '288%', sp: '80% 36%', so: 0.52 },
