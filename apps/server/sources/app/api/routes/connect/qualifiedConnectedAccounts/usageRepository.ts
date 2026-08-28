@@ -16,6 +16,7 @@ import {
 } from "@happier-dev/protocol";
 import { isConnectedServiceUsageProviderCompatible } from "@happier-dev/agents";
 
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import {
@@ -38,6 +39,7 @@ import {
 import {
     resolveQualifiedConnectedAccountStoredMetadata,
 } from "./credentialStoredMetadataAdapter";
+import { deleteReleasedConnectedServiceQuotaSnapshotInStorage } from "./legacyQuotaSnapshotCompatibility";
 import {
     createQualifiedConnectedAccountGroupDigest,
     createQualifiedConnectedAccountIdentityDigest,
@@ -49,11 +51,13 @@ import {
 
 type QualifiedUsageStorage = Pick<
     Tx,
+    | "account"
     | "serviceAccountToken"
     | "connectedServiceAuthGroup"
     | "connectedServiceAuthGroupMember"
     | "connectedServiceUsageSource"
     | "providerAccountUsageRecord"
+    | "serviceAccountQuotaSnapshot"
 >;
 
 export class QualifiedConnectedAccountUsageBasisError extends Error {
@@ -1140,6 +1144,7 @@ export async function writeLegacyConnectedServiceQuotaCompatibilityRecord(
                     "unavailable",
                 );
             }
+            await deleteReleasedConnectedServiceQuotaSnapshotInStorage(tx, params);
             return;
         }
 
@@ -1181,6 +1186,7 @@ export async function writeLegacyConnectedServiceQuotaCompatibilityRecord(
                 "unavailable",
             );
         }
+        await deleteReleasedConnectedServiceQuotaSnapshotInStorage(tx, params);
     });
 }
 
@@ -1230,18 +1236,46 @@ export async function listQualifiedUsageSourcesForRecord(
 
 export async function readQualifiedProviderAccountUsageRecord(
     params: Readonly<{ accountId: string; recordId: string }>,
-): Promise<Readonly<{
-    record: StoredProviderAccountUsageRecord;
-    sources: QualifiedConnectedServiceUsageSourceV4[];
-}> | null> {
+): Promise<
+    | Readonly<{
+        status: "resolved";
+        record: StoredProviderAccountUsageRecord;
+        sources: QualifiedConnectedServiceUsageSourceV4[];
+    }>
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>
+> {
     return await inTx(async (tx) => {
+        const account = await tx.account.findUnique({
+            where: { id: params.accountId },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        });
+        const currentness = account
+            ? deriveAccountEncryptionCurrentnessFromRow(account)
+            : null;
+        if (currentness?.status !== "ready") {
+            return { status: "storage_mode_mismatch" };
+        }
         const sources = await listQualifiedUsageSourcesForRecordInStorage(
             tx,
             params,
         );
-        if (sources.length === 0) return null;
+        if (sources.length === 0) return { status: "not_found" };
         const record = await readProviderAccountUsageRecord(params, tx);
-        return record ? { record, sources } : null;
+        if (!record) return { status: "not_found" };
+        const expectedPayloadMode =
+            currentness.currentness.encryptionMode === "plain"
+                ? "plain_json_v1"
+                : "sealed_account_scoped_v1";
+        if (record.payloadMode !== expectedPayloadMode) {
+            return { status: "storage_mode_mismatch" };
+        }
+        return { status: "resolved", record, sources };
     });
 }
 
@@ -1363,32 +1397,23 @@ async function readFirstQualifiedSourceForRef(
                             qualifiedIdentityDigest: true,
                         },
                     },
-                },
-                orderBy: [
-                    { bindingKind: "asc" },
-                    { updatedAt: "desc" },
-                    { id: "asc" },
-                ],
-                take: 50,
-            });
-            for (const row of rows) {
-                const record =
-                    await tx.providerAccountUsageRecord.findUnique({
-                        where: {
-                            accountId_recordId: {
-                                accountId: params.accountId,
-                                recordId:
-                                    row.providerAccountUsageRecordId,
-                            },
-                        },
+                    providerAccountUsageRecord: {
                         select: {
                             accountSubjectId: true,
                             subjectKind: true,
                             fetchedAt: true,
                             staleAfterMs: true,
                         },
-                    });
-                if (!record) continue;
+                    },
+                },
+                orderBy: [
+                    { bindingKind: "asc" },
+                    { updatedAt: "desc" },
+                    { id: "asc" },
+                ],
+            });
+            for (const row of rows) {
+                const record = row.providerAccountUsageRecord;
                 try {
                     assertQualifiedUsageOwnership({
                         providerAccountId: binding.providerAccountId,

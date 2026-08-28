@@ -17,6 +17,11 @@ import {
     unlinkLegacyConnectedServiceQuotaCompatibilitySource,
     writeLegacyConnectedServiceQuotaCompatibilityRecord,
 } from "./qualifiedConnectedAccounts/usageRepository";
+import {
+    deleteReleasedConnectedServiceQuotaSnapshot,
+    readReleasedConnectedServiceQuotaSnapshot,
+    requestReleasedConnectedServiceQuotaRefresh,
+} from "./qualifiedConnectedAccounts/legacyQuotaSnapshotCompatibility";
 import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
 import { readProviderAccountUsageRecord } from "./providerAccountUsage";
 import {
@@ -144,7 +149,29 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
             source: { ref, bindingKind: "account" },
         });
         if (!exactSource) {
-            return reply.code(404).send({ error: "connect_quotas_not_found" });
+            const predecessor =
+                await readReleasedConnectedServiceQuotaSnapshot({
+                    accountId: userId,
+                    serviceId,
+                    profileId,
+                });
+            if (!predecessor) {
+                return reply.code(404).send({ error: "connect_quotas_not_found" });
+            }
+            return reply.send({
+                sealed: {
+                    format: "account_scoped_v1",
+                    ciphertext: predecessor.ciphertext,
+                },
+                metadata: {
+                    fetchedAt: predecessor.fetchedAt,
+                    staleAfterMs: predecessor.staleAfterMs,
+                    status: predecessor.status,
+                    ...(predecessor.refreshRequestedAt !== undefined
+                        ? { refreshRequestedAt: predecessor.refreshRequestedAt }
+                        : {}),
+                },
+            });
         }
         const record = await readProviderAccountUsageRecord({
             accountId: userId,
@@ -212,7 +239,15 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                 },
             });
         if (result === "not_found") {
-            return reply.code(404).send({ error: "connect_quotas_not_found" });
+            const predecessorResult =
+                await requestReleasedConnectedServiceQuotaRefresh({
+                    accountId: userId,
+                    serviceId,
+                    profileId,
+                });
+            if (predecessorResult === "not_found") {
+                return reply.code(404).send({ error: "connect_quotas_not_found" });
+            }
         }
         return reply.send({ success: true });
     });
@@ -249,7 +284,13 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                     accountId: profileId,
                 },
             });
-        if (result === "not_found") {
+        const predecessorResult =
+            await deleteReleasedConnectedServiceQuotaSnapshot({
+                accountId: userId,
+                serviceId,
+                profileId,
+            });
+        if (result === "not_found" && predecessorResult === "not_found") {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
         }
         return reply.send({ success: true });

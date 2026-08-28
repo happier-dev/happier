@@ -1242,6 +1242,7 @@ describe("qualified Connected Account credential repository", () => {
             mutation: {
                 group: groupRef,
                 connectedAccountId: activeRef.accountId,
+                expectedGeneration: 0,
                 priority: 1,
                 enabled: true,
             },
@@ -1254,6 +1255,7 @@ describe("qualified Connected Account credential repository", () => {
             mutation: {
                 group: groupRef,
                 connectedAccountId: fallbackRef.accountId,
+                expectedGeneration: 1,
                 priority: 2,
                 enabled: true,
             },
@@ -1330,6 +1332,7 @@ describe("qualified Connected Account credential repository", () => {
             mutation: {
                 group: groupRef,
                 connectedAccountId: activeRef.accountId,
+                expectedGeneration: 0,
                 priority: 1,
             },
         })).toMatchObject({ status: "written" });
@@ -1338,6 +1341,7 @@ describe("qualified Connected Account credential repository", () => {
             mutation: {
                 group: groupRef,
                 connectedAccountId: fallbackRef.accountId,
+                expectedGeneration: 1,
                 priority: 2,
             },
         })).toMatchObject({ status: "written" });
@@ -1619,6 +1623,7 @@ describe("qualified Connected Account credential repository", () => {
                 accountId: account.id,
                 service,
                 groupId,
+                expectedGeneration: created.group.generation,
                 expectedRuntimeStateRevision:
                     created.group.runtimeStateRevision,
             })).resolves.toEqual({
@@ -1695,6 +1700,7 @@ describe("qualified Connected Account credential repository", () => {
                         mutation: {
                             group: groupRef,
                             connectedAccountId: ref.accountId,
+                            expectedGeneration: group.generation,
                             priority: 10,
                             expectedRuntimeStateRevision:
                                 group.runtimeStateRevision,
@@ -1812,6 +1818,7 @@ describe("qualified Connected Account credential repository", () => {
                         mutation: {
                             group: groupRef,
                             connectedAccountId: ref.accountId,
+                            expectedGeneration: group.generation,
                             priority: 20,
                             expectedRuntimeStateRevision:
                                 group.runtimeStateRevision,
@@ -1823,6 +1830,7 @@ describe("qualified Connected Account credential repository", () => {
                             mutation: {
                                 group: groupRef,
                                 connectedAccountId: ref.accountId,
+                                expectedGeneration: group.generation,
                                 priority: 20,
                                 expectedRuntimeStateRevision:
                                     group.runtimeStateRevision,
@@ -1833,6 +1841,7 @@ describe("qualified Connected Account credential repository", () => {
                             mutation: {
                                 group: groupRef,
                                 connectedAccountId: ref.accountId,
+                                expectedGeneration: group.generation,
                                 expectedRuntimeStateRevision:
                                     group.runtimeStateRevision,
                             },

@@ -28,6 +28,7 @@ import {
 } from "./groupRepository";
 import {
     listQualifiedUsageSourcesForRecord,
+    readQualifiedConnectedAccountUsageRecord,
     unlinkQualifiedConnectedAccountQuota,
     writeQualifiedProviderAccountUsageRecord,
 } from "./usageRepository";
@@ -146,6 +147,7 @@ describe("qualified Connected Account usage stored identity", () => {
                 mutation: {
                     group: groupRef,
                     connectedAccountId: ref.accountId,
+                    expectedGeneration: createdGroup.group.generation,
                     expectedRuntimeStateRevision:
                         createdGroup.group.runtimeStateRevision,
                 },
@@ -269,6 +271,76 @@ describe("qualified Connected Account usage stored identity", () => {
             qualifiedIdentityDigest:
                 source.qualifiedIdentityDigest,
         });
+    });
+
+    it("finds a valid account source after more than fifty earlier unproven sources", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const { credential, ref } = await createCredential(account.id);
+        const validWrite = buildUsageWrite(account.id, {
+            credentialRevision: credential.credentialRevision,
+            source: { ref, bindingKind: "account" },
+            fetchedAt: Date.now(),
+            planLabel: "valid-after-unproven-sources",
+        });
+        await writeQualifiedProviderAccountUsageRecord(validWrite);
+
+        const storedCredential = await db.serviceAccountToken.findFirstOrThrow({
+            where: { accountId: account.id },
+            select: {
+                id: true,
+                servicePluginId: true,
+                serviceLocalId: true,
+                qualifiedServiceDigest: true,
+                connectedAccountId: true,
+                qualifiedIdentityDigest: true,
+            },
+        });
+        const laterUpdatedAt = new Date(Date.now() + 60_000);
+        for (let index = 0; index < 50; index += 1) {
+            const recordId = `unproven-record-${index}`;
+            await db.providerAccountUsageRecord.create({
+                data: {
+                    accountId: account.id,
+                    providerId: `unproven-provider-${index}`,
+                    recordId,
+                    accountSubjectId: `unproven-subject-${index}`,
+                    subjectKind: "workspace",
+                    quotaScope: "workspace",
+                    quotaScopeId: `unproven-scope-${index}`,
+                    quotaScopeIdKey: `unproven-scope-${index}`,
+                    recordKeyJson: {},
+                    payloadMode: "plain_json_v1",
+                    status: "ok",
+                    updatedAt: laterUpdatedAt,
+                },
+            });
+            await db.connectedServiceUsageSource.create({
+                data: {
+                    accountId: account.id,
+                    servicePluginId: storedCredential.servicePluginId,
+                    serviceLocalId: storedCredential.serviceLocalId,
+                    qualifiedServiceDigest:
+                        storedCredential.qualifiedServiceDigest,
+                    connectedAccountId:
+                        storedCredential.connectedAccountId,
+                    qualifiedIdentityDigest:
+                        storedCredential.qualifiedIdentityDigest,
+                    credentialId: storedCredential.id,
+                    sourceKey: `unproven-source-${index}`,
+                    providerAccountUsageRecordId: recordId,
+                    bindingKind: "account",
+                    updatedAt: laterUpdatedAt,
+                },
+            });
+        }
+
+        await expect(readQualifiedConnectedAccountUsageRecord({
+            accountId: account.id,
+            ref,
+        })).resolves.toMatchObject({ recordId: validWrite.recordId });
     });
 
     it("rolls back a usage write instead of repairing a corrupt source tuple through its digest lookup", async () => {

@@ -275,6 +275,7 @@ describe("qualified group member CAS database contract", () => {
                         mutation: {
                             group: groupRef,
                             connectedAccountId: ref.accountId,
+                            expectedGeneration: group.generation,
                             priority: 10,
                             expectedRuntimeStateRevision:
                                 group.runtimeStateRevision,
@@ -378,6 +379,7 @@ describe("qualified group member CAS database contract", () => {
                         mutation: {
                             group: groupRef,
                             connectedAccountId: ref.accountId,
+                            expectedGeneration: group.generation,
                             priority: 20,
                             expectedRuntimeStateRevision:
                                 group.runtimeStateRevision,
@@ -389,6 +391,7 @@ describe("qualified group member CAS database contract", () => {
                             mutation: {
                                 group: groupRef,
                                 connectedAccountId: ref.accountId,
+                                expectedGeneration: group.generation,
                                 priority: 20,
                                 expectedRuntimeStateRevision:
                                     group.runtimeStateRevision,
@@ -399,6 +402,7 @@ describe("qualified group member CAS database contract", () => {
                             mutation: {
                                 group: groupRef,
                                 connectedAccountId: ref.accountId,
+                                expectedGeneration: group.generation,
                                 expectedRuntimeStateRevision:
                                     group.runtimeStateRevision,
                             },

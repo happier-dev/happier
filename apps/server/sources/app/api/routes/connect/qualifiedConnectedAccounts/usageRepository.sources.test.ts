@@ -68,9 +68,9 @@ function storedSources(groupCount: number) {
 
 describe("qualified provider usage sources", () => {
     it("opens a record linked through every one of its sources", async () => {
-        // 500 groups is the most a current writer will admit, and each one adds a
-        // source alongside the account binding. Refusing to list them would make the
-        // record's own GET, DELETE and refresh routes fail on stored, valid data.
+        // A retained Account may already carry 500 group bindings, and each one adds
+        // a source alongside the account binding. Refusing to list them would make
+        // the record's own GET, DELETE and refresh routes fail on stored, valid data.
         const rows = storedSources(500);
         mocks.findMany.mockImplementation(
             async (args: Readonly<{ take?: number }>) => (

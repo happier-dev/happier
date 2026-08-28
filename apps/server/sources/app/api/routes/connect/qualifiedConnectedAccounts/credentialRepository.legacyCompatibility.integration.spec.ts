@@ -2556,6 +2556,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             mutation: {
                 group: historicalGroupRef,
                 connectedAccountId: v3Ref.accountId,
+                expectedGeneration: historicalGroup.group.generation,
             },
         })).resolves.toEqual({ status: "source_superseded" });
 
@@ -2621,6 +2622,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             mutation: {
                 group: historicalGroupRef,
                 connectedAccountId: v3Ref.accountId,
+                expectedGeneration: storedHistoricalGroup.generation,
             },
         })).resolves.toEqual({ status: "source_superseded" });
         await expect(db.connectedServiceAuthGroup.findUniqueOrThrow({

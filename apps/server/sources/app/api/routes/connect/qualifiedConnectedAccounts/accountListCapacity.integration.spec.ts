@@ -172,6 +172,7 @@ describe("qualified Connected Account inventory", () => {
             accountId: owner.id,
             service,
             groupId: target.ref.groupId,
+            expectedGeneration: target.generation,
             expectedIncarnation: target.incarnation,
         })).resolves.toMatchObject({ status: "deleted" });
         await expect(db.connectedServiceAuthGroup.count({
@@ -234,7 +235,14 @@ describe("qualified Connected Account inventory", () => {
             accountId: owner.id,
             recordId: snapshot.recordId,
         });
-        expect(opened?.sources).toHaveLength(inventorySize);
+        expect(opened).toMatchObject({
+            status: "resolved",
+            sources: expect.any(Array),
+        });
+        if (opened.status !== "resolved") {
+            throw new Error("Expected qualified usage record");
+        }
+        expect(opened.sources).toHaveLength(inventorySize);
 
         await expect(deleteQualifiedProviderAccountUsageRecord({
             accountId: owner.id,

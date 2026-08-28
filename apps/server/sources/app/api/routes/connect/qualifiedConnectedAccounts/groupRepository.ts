@@ -450,22 +450,22 @@ async function settleQualifiedGroupMemberCasConflict(
         accountId: string;
         service: QualifiedConnectedAccountServiceRef;
         groupId: string;
-        expectedGeneration?: number;
+        expectedGeneration: number;
         expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
     const admission = await readQualifiedGroupMutationAdmissionInTx(db, params);
     if (admission.status !== "current") return admission;
     const latest = admission.current;
-    if (params.expectedGeneration !== undefined) {
+    if (latest.generation === params.expectedGeneration) {
         return {
-            status: "generation_superseded",
-            generation: latest.generation,
+            status: "superseded",
+            runtimeStateRevision: latest.runtimeStateRevision,
         };
     }
     return {
-        status: "superseded",
-        runtimeStateRevision: latest.runtimeStateRevision,
+        status: "generation_superseded",
+        generation: latest.generation,
     };
 }
 
@@ -672,7 +672,6 @@ export async function patchQualifiedConnectedAccountGroup(
     params: Readonly<{
         accountId: string;
         patch: unknown;
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
         activeConnectedAccountId?: string | null;
     }>,
@@ -690,8 +689,7 @@ export async function patchQualifiedConnectedAccountGroup(
         if (admission.status !== "current") return admission;
         const current = admission.current;
         if (
-            params.expectedGeneration !== undefined
-            && params.expectedGeneration !== current.generation
+            patch.expectedGeneration !== current.generation
         ) {
             return {
                 status: "generation_superseded",
@@ -843,6 +841,7 @@ export async function deleteQualifiedConnectedAccountGroup(
         accountId: string;
         service: QualifiedConnectedAccountServiceRef;
         groupId: string;
+        expectedGeneration: number;
         expectedRuntimeStateRevision?: number;
         expectedIncarnation?: string | null;
     }>,
@@ -858,6 +857,12 @@ export async function deleteQualifiedConnectedAccountGroup(
         });
         if (admission.status !== "current") return admission;
         const current = admission.current;
+        if (params.expectedGeneration !== current.generation) {
+            return {
+                status: "generation_superseded",
+                generation: current.generation,
+            };
+        }
         if (
             params.expectedRuntimeStateRevision !== undefined
             && params.expectedRuntimeStateRevision
@@ -925,7 +930,6 @@ export async function patchQualifiedConnectedAccountGroupRuntimeState(
     params: Readonly<{
         accountId: string;
         patch: unknown;
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
@@ -943,8 +947,7 @@ export async function patchQualifiedConnectedAccountGroupRuntimeState(
         if (admission.status !== "current") return admission;
         const current = admission.current;
         if (
-            params.expectedGeneration !== undefined
-            && params.expectedGeneration !== current.generation
+            patch.expectedGeneration !== current.generation
         ) {
             return {
                 status: "generation_superseded",
@@ -1046,7 +1049,6 @@ async function mutateQualifiedGroupMember(
         accountId: string;
         mutation: unknown;
         operation: "create" | "update";
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
         activateWhenGroupHasNoLegacyActiveAccount?: boolean;
     }>,
@@ -1066,8 +1068,7 @@ async function mutateQualifiedGroupMember(
             if (admission.status !== "current") return admission;
             const current = admission.current;
             if (
-                params.expectedGeneration !== undefined
-                && params.expectedGeneration !== current.generation
+                mutation.expectedGeneration !== current.generation
             ) {
                 return {
                     status: "generation_superseded",
@@ -1244,7 +1245,7 @@ async function mutateQualifiedGroupMember(
                 accountId: params.accountId,
                 service: mutation.group.service,
                 groupId: mutation.group.groupId,
-                expectedGeneration: params.expectedGeneration,
+                expectedGeneration: mutation.expectedGeneration,
                 expectedIncarnation: params.expectedIncarnation,
             });
         }
@@ -1277,7 +1278,6 @@ export async function createQualifiedConnectedAccountGroupMember(
     params: Readonly<{
         accountId: string;
         mutation: unknown;
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
         activateWhenGroupHasNoLegacyActiveAccount?: boolean;
     }>,
@@ -1292,7 +1292,6 @@ export async function updateQualifiedConnectedAccountGroupMember(
     params: Readonly<{
         accountId: string;
         mutation: unknown;
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
@@ -1306,7 +1305,6 @@ export async function deleteQualifiedConnectedAccountGroupMember(
     params: Readonly<{
         accountId: string;
         mutation: unknown;
-        expectedGeneration?: number;
         expectedIncarnation?: string | null;
     }>,
 ): Promise<QualifiedConnectedAccountGroupMutationResult> {
@@ -1325,8 +1323,7 @@ export async function deleteQualifiedConnectedAccountGroupMember(
             if (admission.status !== "current") return admission;
             const current = admission.current;
             if (
-                params.expectedGeneration !== undefined
-                && params.expectedGeneration !== current.generation
+                mutation.expectedGeneration !== current.generation
             ) {
                 return {
                     status: "generation_superseded",
@@ -1404,7 +1401,7 @@ export async function deleteQualifiedConnectedAccountGroupMember(
             accountId: params.accountId,
             service: mutation.group.service,
             groupId: mutation.group.groupId,
-            expectedGeneration: params.expectedGeneration,
+            expectedGeneration: mutation.expectedGeneration,
             expectedIncarnation: params.expectedIncarnation,
         });
     }
@@ -1431,8 +1428,7 @@ export async function setQualifiedConnectedAccountGroupActiveAccount(
         if (admission.status !== "current") return admission;
         const current = admission.current;
         if (
-            mutation.expectedGeneration !== undefined
-            && mutation.expectedGeneration !== current.generation
+            mutation.expectedGeneration !== current.generation
         ) {
             return {
                 status: "generation_superseded",

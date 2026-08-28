@@ -31,6 +31,7 @@ import {
     QualifiedProviderAccountUsageWriteV4Schema,
     QualifiedProviderAccountUsageWriteSuccessV4Schema,
     QualifiedProviderAccountUsageRecordQueryV4Schema,
+    QualifiedProviderAccountUsageReadErrorV4Schema,
     QualifiedProviderAccountUsageRecordResponseV4Schema,
     QualifiedConnectedAccountServiceRefSchema,
     parseQualifiedConnectedAccountV4StructuredQueryValue,
@@ -116,6 +117,7 @@ const StructuredGroupQuerySchema = z.object({
 }).strict();
 const StructuredGroupDeleteQuerySchema = z.object({
     group: z.union([z.string(), z.array(z.string())]),
+    expectedGeneration: z.string(),
     expectedRuntimeStateRevision: z.string().optional(),
     expectedIncarnation: z.string().optional(),
 }).strict();
@@ -788,6 +790,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_group_incarnation_conflict",
             });
         }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
+            });
+        }
         if (result.status === "member_not_found"
             || result.status === "member_disabled") {
             return reply.code(409).send({
@@ -825,6 +833,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
     }, async (request, reply) => {
         let group;
         let expectedRuntimeStateRevision;
+        let expectedGeneration;
         let expectedIncarnation;
         try {
             group = parseQualifiedConnectedAccountV4StructuredQueryValue(
@@ -834,6 +843,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             expectedRuntimeStateRevision = parseOptionalCanonicalInteger(
                 request.query.expectedRuntimeStateRevision,
             );
+            expectedGeneration = parseOptionalCanonicalInteger(
+                request.query.expectedGeneration,
+            );
+            if (expectedGeneration === undefined) {
+                throw new Error("Expected group generation");
+            }
             expectedIncarnation = parseOptionalQualifiedGroupIncarnation(
                 request.query.expectedIncarnation,
             );
@@ -844,6 +859,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             accountId: request.userId,
             service: group.service,
             groupId: group.groupId,
+            expectedGeneration,
             ...(expectedRuntimeStateRevision !== undefined
                 ? { expectedRuntimeStateRevision }
                 : {}),
@@ -863,6 +879,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "incarnation_superseded") {
             return reply.code(409).send({
                 error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
             });
         }
         return reply.send({ success: true });
@@ -899,6 +921,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "incarnation_superseded") {
             return reply.code(409).send({
                 error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
             });
         }
         if (result.status !== "written") {
@@ -951,6 +979,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_group_incarnation_conflict",
             });
         }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
+            });
+        }
         if (result.status === "source_superseded") {
             return reply.code(409).send({
                 error: "connect_group_source_revision_conflict",
@@ -999,6 +1033,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "incarnation_superseded") {
             return reply.code(409).send({
                 error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
             });
         }
         if (result.status !== "written") {
@@ -1054,6 +1094,12 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         if (result.status === "incarnation_superseded") {
             return reply.code(409).send({
                 error: "connect_group_incarnation_conflict",
+            });
+        }
+        if (result.status === "generation_superseded") {
+            return reply.code(409).send({
+                error: "connect_group_generation_conflict",
+                generation: result.generation,
             });
         }
         if (result.status !== "written") {
@@ -1274,16 +1320,28 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     200:
                         QualifiedProviderAccountUsageRecordResponseV4Schema,
                     404: NotFoundResponseSchema,
+                    409: QualifiedProviderAccountUsageReadErrorV4Schema,
                 },
             },
         },
         async (request, reply) => {
             const qualifiedRecord =
                 await readQualifiedProviderAccountUsageRecord({
-                accountId: request.userId,
-                recordId: request.query.recordId,
-            });
-            const record = qualifiedRecord?.record;
+                    accountId: request.userId,
+                    recordId: request.query.recordId,
+                });
+            if (qualifiedRecord.status === "storage_mode_mismatch") {
+                return reply.code(409).send({
+                    error:
+                        "provider_account_usage_storage_mode_mismatch",
+                });
+            }
+            if (qualifiedRecord.status === "not_found") {
+                return reply.code(404).send({
+                    error: "provider_account_usage_not_found",
+                });
+            }
+            const record = qualifiedRecord.record;
             if (
                 !record
                 || (

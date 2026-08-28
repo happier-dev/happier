@@ -18,6 +18,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { prismaRuntime } from "@/storage/prisma";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -326,6 +327,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     payload: {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
+                        expectedGeneration: group.generation,
                         priority: 10,
                         expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
@@ -414,6 +416,8 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         runtimeStateRevision: 0,
                     },
                 });
+                const originalIncarnation =
+                    original.json().group.incarnation as string;
 
                 // Simulate the original lifetime being deleted before its
                 // delayed request reaches the API. A replacement starts with
@@ -453,7 +457,10 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     url:
                         "/v4/connect/qualified/group?group="
                         + encodeURIComponent(encodedGroup)
-                        + "&expectedRuntimeStateRevision=0",
+                        + "&expectedGeneration=0"
+                        + "&expectedRuntimeStateRevision=0"
+                        + "&expectedIncarnation="
+                        + encodeURIComponent(originalIncarnation),
                     headers,
                 });
 
@@ -700,6 +707,23 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     createdGroup.json()
                         .group as QualifiedConnectedAccountGroupV4;
 
+                const staleMemberCreate = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/group/members",
+                    headers,
+                    payload: {
+                        group: groupRef,
+                        connectedAccountId: ref.accountId,
+                        expectedGeneration: group.generation + 1,
+                        expectedIncarnation: group.incarnation,
+                    },
+                });
+                expect(staleMemberCreate.statusCode).toBe(409);
+                expect(staleMemberCreate.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
+
                 const listedGroups = await app.inject({
                     method: "GET",
                     url:
@@ -720,6 +744,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
                         priority: 10,
+                        expectedGeneration: group.generation,
                         expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
@@ -818,6 +843,24 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 expect(currentSourceActive.statusCode).toBe(200);
                 group = currentSourceActive.json().group;
 
+                const staleGroupPatch = await app.inject({
+                    method: "PATCH",
+                    url: "/v4/connect/qualified/group",
+                    headers,
+                    payload: {
+                        service,
+                        groupId: groupRef.groupId,
+                        expectedGeneration: group.generation - 1,
+                        expectedIncarnation: group.incarnation,
+                        displayName: "Stale rename",
+                    },
+                });
+                expect(staleGroupPatch.statusCode).toBe(409);
+                expect(staleGroupPatch.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
+
                 const patchedGroup = await app.inject({
                     method: "PATCH",
                     url: "/v4/connect/qualified/group",
@@ -825,6 +868,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     payload: {
                         service,
                         groupId: groupRef.groupId,
+                        expectedGeneration: group.generation,
                         displayName: "Renamed",
                         expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
@@ -834,6 +878,26 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 expect(patchedGroup.statusCode).toBe(200);
                 group = patchedGroup.json().group;
 
+                const staleRuntimeState = await app.inject({
+                    method: "PATCH",
+                    url: "/v4/connect/qualified/group/runtime-state",
+                    headers,
+                    payload: {
+                        service,
+                        groupId: groupRef.groupId,
+                        expectedGeneration: group.generation - 1,
+                        expectedIncarnation: group.incarnation,
+                        expectedRuntimeStateRevision:
+                            group.runtimeStateRevision,
+                        runtimeState: { memberStates: [] },
+                    },
+                });
+                expect(staleRuntimeState.statusCode).toBe(409);
+                expect(staleRuntimeState.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
+
                 const patchedRuntimeState = await app.inject({
                     method: "PATCH",
                     url:
@@ -842,6 +906,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     payload: {
                         service,
                         groupId: groupRef.groupId,
+                        expectedGeneration: group.generation,
                         expectedIncarnation: group.incarnation,
                         expectedRuntimeStateRevision:
                             group.runtimeStateRevision,
@@ -901,6 +966,24 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 expect(overriddenActive.statusCode).toBe(200);
                 group = overriddenActive.json().group;
 
+                const staleMemberUpdate = await app.inject({
+                    method: "PATCH",
+                    url: "/v4/connect/qualified/group/member",
+                    headers,
+                    payload: {
+                        group: groupRef,
+                        connectedAccountId: ref.accountId,
+                        expectedGeneration: group.generation - 1,
+                        expectedIncarnation: group.incarnation,
+                        priority: 19,
+                    },
+                });
+                expect(staleMemberUpdate.statusCode).toBe(409);
+                expect(staleMemberUpdate.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
+
                 const updatedMember = await app.inject({
                     method: "PATCH",
                     url: "/v4/connect/qualified/group/member",
@@ -908,6 +991,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     payload: {
                         group: groupRef,
                         connectedAccountId: ref.accountId,
+                        expectedGeneration: group.generation,
                         priority: 20,
                         enabled: true,
                         expectedIncarnation: group.incarnation,
@@ -917,6 +1001,30 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 });
                 expect(updatedMember.statusCode).toBe(200);
                 group = updatedMember.json().group;
+
+                const staleMemberDeleteMutation = {
+                    group: groupRef,
+                    connectedAccountId: ref.accountId,
+                    expectedGeneration: group.generation - 1,
+                    expectedIncarnation: group.incarnation,
+                };
+                const staleMemberDelete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v4/connect/qualified/group/member?mutation="
+                        + encodeURIComponent(
+                            encodeQualifiedConnectedAccountV4StructuredQueryValue(
+                                QualifiedConnectedAccountGroupMemberDeleteV4Schema,
+                                staleMemberDeleteMutation,
+                            ),
+                        ),
+                    headers,
+                });
+                expect(staleMemberDelete.statusCode).toBe(409);
+                expect(staleMemberDelete.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
 
                 const encodedGroup =
                     encodeQualifiedConnectedAccountV4StructuredQueryValue(
@@ -949,6 +1057,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 const memberDelete = {
                     group: groupRef,
                     connectedAccountId: ref.accountId,
+                    expectedGeneration: group.generation,
                     expectedIncarnation: group.incarnation,
                     expectedRuntimeStateRevision:
                         group.runtimeStateRevision,
@@ -968,11 +1077,30 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 expect(deletedMember.statusCode).toBe(200);
                 group = deletedMember.json().group;
 
+                const staleGroupDelete = await app.inject({
+                    method: "DELETE",
+                    url:
+                        "/v4/connect/qualified/group?group="
+                        + encodeURIComponent(encodedGroup)
+                        + "&expectedGeneration="
+                        + (group.generation - 1)
+                        + "&expectedIncarnation="
+                        + encodeURIComponent(group.incarnation),
+                    headers,
+                });
+                expect(staleGroupDelete.statusCode).toBe(409);
+                expect(staleGroupDelete.json()).toEqual({
+                    error: "connect_group_generation_conflict",
+                    generation: group.generation,
+                });
+
                 const deletedGroup = await app.inject({
                     method: "DELETE",
                     url:
                         "/v4/connect/qualified/group?group="
                         + encodeURIComponent(encodedGroup)
+                        + "&expectedGeneration="
+                        + group.generation
                         + "&expectedRuntimeStateRevision="
                         + group.runtimeStateRevision
                         + "&expectedIncarnation="
@@ -1050,6 +1178,69 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                         v: { recordId: snapshot.recordId },
                     },
                     sources: [source],
+                });
+
+                await db.providerAccountUsageRecord.update({
+                    where: {
+                        accountId_recordId: {
+                            accountId: account.id,
+                            recordId: snapshot.recordId,
+                        },
+                    },
+                    data: {
+                        payloadMode: "sealed_account_scoped_v1",
+                        snapshot: prismaRuntime.DbNull,
+                        sealedPayload: {
+                            format: "account_scoped_v1",
+                            ciphertext: "opaque-sealed-payload",
+                        },
+                    },
+                });
+                const payloadModeMismatchRead = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/provider-account-usage/record?recordId="
+                        + encodeURIComponent(snapshot.recordId),
+                    headers,
+                });
+                expect(payloadModeMismatchRead.statusCode).toBe(409);
+                expect(payloadModeMismatchRead.json()).toEqual({
+                    error:
+                        "provider_account_usage_storage_mode_mismatch",
+                });
+                await db.providerAccountUsageRecord.update({
+                    where: {
+                        accountId_recordId: {
+                            accountId: account.id,
+                            recordId: snapshot.recordId,
+                        },
+                    },
+                    data: {
+                        payloadMode: "plain_json_v1",
+                        snapshot,
+                        sealedPayload: prismaRuntime.DbNull,
+                    },
+                });
+
+                await db.account.update({
+                    where: { id: account.id },
+                    data: { encryptionMode: "e2ee" },
+                });
+                const modeMismatchRead = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/provider-account-usage/record?recordId="
+                        + encodeURIComponent(snapshot.recordId),
+                    headers,
+                });
+                expect(modeMismatchRead.statusCode).toBe(409);
+                expect(modeMismatchRead.json()).toEqual({
+                    error:
+                        "provider_account_usage_storage_mode_mismatch",
+                });
+                await db.account.update({
+                    where: { id: account.id },
+                    data: { encryptionMode: "plain" },
                 });
 
                 await db.connectedServiceUsageSource.updateMany({
