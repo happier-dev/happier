@@ -129,6 +129,7 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
       sessionId: 'sess_1',
       ctx: { transport: 'test' },
       mode: 'daemon',
+      timeoutMs: 60_000,
       method: `sess_1:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION}`,
       request: { serviceId: 'openai-codex', reason: 'same_provider_account_exhausted' },
     });

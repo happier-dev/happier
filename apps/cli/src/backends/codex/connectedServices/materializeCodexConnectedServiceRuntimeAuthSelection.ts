@@ -9,6 +9,8 @@ import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { readCodexAuthStoreProviderAccountId } from './readCodexAuthStoreProviderAccountId';
 import { writeCodexAuthStoreFile } from './writeCodexAuthStoreFile';
 
+const CODEX_CONNECTED_SERVICE_AUTH_APPLY_TIMEOUT_MS = 60_000;
+
 export const materializeCodexConnectedServiceRuntimeAuthSelection: ConnectedServiceRuntimeAuthSelectionMaterializer = async (params) => {
   if (params.input.serviceId !== 'openai-codex') return params.baseSelection;
 
@@ -40,6 +42,7 @@ export const materializeCodexConnectedServiceRuntimeAuthSelection: ConnectedServ
         sessionId: transport.sessionId,
         ctx: transport.ctx,
         mode: transport.mode,
+        timeoutMs: CODEX_CONNECTED_SERVICE_AUTH_APPLY_TIMEOUT_MS,
         method: `${transport.sessionId}:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION}`,
         request,
       });
