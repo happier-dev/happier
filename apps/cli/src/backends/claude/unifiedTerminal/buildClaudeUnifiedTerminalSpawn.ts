@@ -312,6 +312,10 @@ function buildClaudeEnv(envOverlay: Readonly<Record<string, string>> | undefined
       DISABLE_AUTOUPDATER: '1',
       // Do not force IS_DEMO: Claude then hides workspace trust while still suppressing plugin hooks.
       ...(envOverlay ?? {}),
+      // Claude's dim prompt suggestions are visually composer-like but are not real input. The
+      // unified draft guard must preserve genuine terminal drafts, so prevent this ambiguous
+      // placeholder at the process boundary instead of weakening draft detection.
+      CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'false',
     },
   }));
   return Object.fromEntries(
