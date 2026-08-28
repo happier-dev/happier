@@ -5,11 +5,18 @@ import { stopStackWithEnv } from '../utils/stack/stop.mjs';
 
 import { withStackEnv } from './stack_environment.mjs';
 
+export function resolveStackStopOptions(passthrough) {
+  const { flags } = parseArgs(passthrough);
+  return {
+    noDocker: flags.has('--no-docker'),
+    aggressive: flags.has('--aggressive'),
+    sweepOwned: flags.has('--sweep-owned'),
+    preserveDaemon: flags.has('--preserve-daemon'),
+  };
+}
+
 export async function runStackStopCommand({ rootDir, stackName, passthrough, json }) {
-  const { flags: stopFlags } = parseArgs(passthrough);
-  const noDocker = stopFlags.has('--no-docker');
-  const aggressive = stopFlags.has('--aggressive');
-  const sweepOwned = stopFlags.has('--sweep-owned');
+  const { noDocker, aggressive, sweepOwned, preserveDaemon } = resolveStackStopOptions(passthrough);
   const baseDir = resolveStackEnvPath(stackName).baseDir;
 
   const out = await withStackEnv({
@@ -24,6 +31,7 @@ export async function runStackStopCommand({ rootDir, stackName, passthrough, jso
         noDocker,
         aggressive,
         sweepOwned,
+        preserveDaemon,
       });
     },
   });
