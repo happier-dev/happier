@@ -338,7 +338,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
     });
   });
 
-  it('routes prompt-capable requests from canonical agent runtime descriptors to the parent store', () => {
+  it('routes prompt-capable requests from the host-owned backend identity without interpreting the runtime descriptor', () => {
     const respondToPermission = vi.fn(async () => ({ delivered: true as const }));
     const ctrl = createController({
       backend: {
@@ -379,7 +379,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
       payload: {
         v: 1,
         agentId: 'codex',
-        agent: { backendMode: 'native' },
+        agent: { backendMode: 'provider-private-mode' },
       },
     });
     handler({
@@ -397,7 +397,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
     expect(publishRequest).toHaveBeenCalledWith(expect.objectContaining({
       requestId: 'provider-request-parent',
       responseTarget: expect.objectContaining({
-        runtimeKind: 'native',
+        runtimeKind: run.backendId,
         providerRequestId: 'provider-request-parent',
       }),
     }));

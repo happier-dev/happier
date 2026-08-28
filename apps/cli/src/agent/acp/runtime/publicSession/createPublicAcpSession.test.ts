@@ -903,6 +903,12 @@ describe('createPublicAcpSession', () => {
       const events: AgentSessionRuntimeEvent[] = [];
       const subscription = session.watch((event) => { events.push(event); });
       try {
+        expect(session.runtimeCapabilities?.sessionCapabilities).toMatchObject({
+          sessionFork: {
+            conversation: 'supported',
+            protocol: 'acp',
+          },
+        });
         await expect(session.send({
           inputIds: ['input-request-transform'],
           input: { text: 'original prompt' },

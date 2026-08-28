@@ -3,7 +3,7 @@ import type {
     ResolvedAgentContribution,
     ResolvedAgentRuntimeContribution,
 } from '@/plugins/projection/registry/types';
-import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { readAgentExecutionRunCapabilities, readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import {
@@ -15,9 +15,22 @@ import type {
     BackendRuntimeOwnerResolution,
 } from '../engineRegistryTypes';
 import type { RuntimeRegistryBackendEngineEntry } from './runtimeOwnerResolution';
-import { createNativeAgentRuntimeSessionPlan } from './nativeAgentSession';
+import {
+    composeNativeAgentSessionRuntimeContext,
+    createNativeAgentRuntimeSessionPlan,
+    createNativeAgentSessionHostServices,
+    resolveNativeAgentSessionNativeHomeService,
+} from './nativeAgentSession';
 import { createNativeAgentSessionHostServiceOwners } from './nativeAgentSessionHostServiceOwners';
-import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { createNativeAgentSessionPublications } from './nativeAgentSessionPublications';
+import { createNativeAgentSessionWorkStateService } from './nativeAgentSessionWorkState';
+import { createNativeAgentCurrentSessionUiServices } from './nativeAgentSessionInteractions';
+import {
+    createNativeAgentExecutionRunHostRuntime,
+    createNativeAgentSessionExecutionRunHostRuntime,
+    createNativeAgentSessionInteractionHostRuntime,
+    type NativeAgentSessionContextLeaseFactory,
+} from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
 import { resolveAgentSessionRealtimeVoiceAuthority } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
 import type {
     PluginRuntimeAuthoritySnapshotV1,
@@ -36,6 +49,9 @@ import type {
     SessionModelTransitionProviderTargetAuthorizer,
 } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
 import { transformAgentRequestThroughPluginHooks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
+import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
+import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
+import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -232,7 +248,14 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 identity: nativeIdentity,
                                 backend: params.backend,
                                 agent: params.agent,
-                                hostRuntimeParams,
+                                hostSession: {
+                                    session: hostRuntimeParams.session,
+                                    machineId: hostRuntimeParams.machineId,
+                                    ...(hostRuntimeParams.accountSettings !== undefined
+                                        ? { accountSettings: hostRuntimeParams.accountSettings }
+                                        : {}),
+                                    permissionHandler: hostRuntimeParams.permissionHandler,
+                                },
                                 sessionId,
                                 directory,
                                 signal,
@@ -397,6 +420,182 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 isGenerationCurrent: engineEntry.isCurrent,
                             })
                             : undefined;
+                        const isVoiceInteraction = options.start?.intent === 'voice_agent';
+                        const sessionOpenCapabilities = readAgentSessionCapabilities(
+                            params.agent.richDefinition?.definition,
+                        )?.open;
+                        const host = options.sessionInteractionHost;
+                        // Voice and Session-derived finite Runs are non-durable projections over
+                        // the parent Session's custody. They share this complete context lease;
+                        // the interactive Session loop retains its richer terminal/media/resume
+                        // owners while reusing the same facet builders and exhaustive composer.
+                        const createSessionContext: NativeAgentSessionContextLeaseFactory | null = host
+                            ? async ({ services: invocationServices, signal }) => {
+                                    const sessionId = host.session.sessionId;
+                                    const contributionId = engineEntry.localAgentId;
+                                    const sessionOwners = createNativeAgentSessionHostServiceOwners({
+                                        runtimeRegistry,
+                                        identity: nativeIdentity,
+                                        backend: params.backend,
+                                        agent: params.agent,
+                                        hostSession: {
+                                            session: host.session,
+                                            machineId: host.machineId,
+                                            ...(options.accountSettings !== undefined
+                                                ? { accountSettings: options.accountSettings }
+                                                : {}),
+                                            permissionHandler: host.permissionHandler,
+                                        },
+                                        sessionId,
+                                        directory: options.cwd,
+                                        signal,
+                                        ...(params.nativeAgentRuntimeIdentity?.runtimeAuthority
+                                            ? { runtimeAuthority: params.nativeAgentRuntimeIdentity.runtimeAuthority }
+                                            : {}),
+                                        ...(params.happyHomeDir
+                                            ? { happyHomeDir: params.happyHomeDir }
+                                            : {}),
+                                    });
+                                    let publications: ReturnType<typeof createNativeAgentSessionPublications> | null = null;
+                                    try {
+                                        publications = createNativeAgentSessionPublications({
+                                            agentId: nativeIdentity.agentId,
+                                            session: host.session,
+                                            signal,
+                                            isCurrent: nativeIdentity.isCurrent,
+                                            supportsInFlightSteer: readAgentSessionCapabilities(
+                                                params.agent.richDefinition?.definition,
+                                            )?.delivery.includes('steer') === true,
+                                        });
+                                        const currentSession = createNativeAgentCurrentSessionUiServices({
+                                            permissionHandler: host.permissionHandler,
+                                            pluginId: nativeIdentity.pluginId,
+                                            contributionId,
+                                            runtimeId: `agent-session-projection:${options.runId ?? sessionId}`,
+                                            sessionId,
+                                            generationId: nativeIdentity.generation,
+                                            isCurrent: nativeIdentity.isCurrent,
+                                            signal,
+                                        });
+                                        const nativeHome = await resolveNativeAgentSessionNativeHomeService({
+                                            agent: params.agent,
+                                            sourceEnvironment: options.isolation?.env ?? {},
+                                        });
+                                        const sessionServices = createNativeAgentSessionHostServices({
+                                            owners: sessionOwners,
+                                            agentId: nativeIdentity.agentId,
+                                            sessionId,
+                                            directory: options.cwd,
+                                            signal,
+                                            isCurrent: nativeIdentity.isCurrent,
+                                            session: host.session,
+                                            publications: publications.services,
+                                            readToolExecutionCapability: () => (
+                                                nativeAgentRuntime.toolExecution?.capability ?? null
+                                            ),
+                                            accountSettings: options.accountSettings ?? {},
+                                            profileId: options.start?.profileId ?? null,
+                                            sessionMachineId: host.machineId,
+                                            ...(sessionOwners.terminalHost
+                                                ? { terminalHost: sessionOwners.terminalHost }
+                                                : {}),
+                                            ...(nativeHome ? { nativeHome } : {}),
+                                            toolsDelivery: resolveAgentToolsDelivery(nativeIdentity.agentId),
+                                        });
+                                        const ui = createPluginInvocationPresentation({
+                                            currentSession,
+                                            signal,
+                                            isGenerationCurrent: nativeIdentity.isCurrent,
+                                        });
+                                        const protocols = createPublicAcpRuntimeProtocols({
+                                            pluginId: nativeIdentity.pluginId,
+                                            agentId: nativeIdentity.agentId,
+                                            signal,
+                                            isCurrent: nativeIdentity.isCurrent,
+                                            services: invocationServices,
+                                            interactions: currentSession.interactions,
+                                            models: publications.services.models,
+                                            transformAgentRequest: async (payload, options) => (
+                                                params.daemonTurnContributionsBridge
+                                                    ? await params.daemonTurnContributionsBridge.transformAgentRequest({
+                                                        sessionId,
+                                                        payload,
+                                                        signal: options.signal,
+                                                    })
+                                                    : await transformAgentRequestThroughPluginHooks(
+                                                        payload,
+                                                        options.signal ? { signal: options.signal } : undefined,
+                                                    )
+                                            ),
+                                        });
+                                        const context = composeNativeAgentSessionRuntimeContext({
+                                            identity: nativeIdentity,
+                                            contributionId,
+                                            invokedAtMs: Date.now(),
+                                            sessionId,
+                                            signal,
+                                            services: invocationServices,
+                                            sessionServices,
+                                            ui,
+                                            protocols,
+                                            workState: createNativeAgentSessionWorkStateService({
+                                                session: host.session,
+                                                pluginId: nativeIdentity.pluginId,
+                                                contributionId,
+                                                agentId: params.agent.id,
+                                                generationId: nativeIdentity.generation,
+                                                declarations: readAgentSessionCapabilities(
+                                                    params.agent.richDefinition?.definition,
+                                                )?.workStateSources ?? [],
+                                                isCurrent: nativeIdentity.isCurrent,
+                                            }),
+                                        });
+                                        return Object.freeze({
+                                            context,
+                                            async dispose() {
+                                                publications?.dispose();
+                                                await sessionOwners.dispose();
+                                            },
+                                        });
+                                    } catch (error) {
+                                        publications?.dispose();
+                                        await sessionOwners.dispose();
+                                        throw error;
+                                    }
+                                }
+                            : null;
+                        if (isVoiceInteraction) {
+                            if (!createSessionContext) {
+                                throw new Error(
+                                    'Voice Agent Session interaction requires parent Session host custody',
+                                );
+                            }
+                            return createNativeAgentSessionInteractionHostRuntime({
+                                runtime: nativeAgentRuntime,
+                                lease: engineEntry,
+                                options,
+                                supportsResume: sessionOpenCapabilities?.includes('resume') === true,
+                                generationSignal: engineEntry.retirementSignal,
+                                ...(services ? { services } : {}),
+                                createSessionContext,
+                            });
+                        }
+                        if (nativeAgentRuntime.sessions) {
+                            if (!createSessionContext) {
+                                throw new Error(
+                                    'Session-derived execution run requires parent Session host custody',
+                                );
+                            }
+                            return createNativeAgentSessionExecutionRunHostRuntime({
+                                runtime: nativeAgentRuntime,
+                                lease: engineEntry,
+                                options,
+                                supportsResume: sessionOpenCapabilities?.includes('resume') === true,
+                                generationSignal: engineEntry.retirementSignal,
+                                ...(services ? { services } : {}),
+                                createSessionContext,
+                            });
+                        }
                         return createNativeAgentExecutionRunHostRuntime({
                             runtime: nativeAgentRuntime,
                             lease: engineEntry,

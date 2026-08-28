@@ -2,6 +2,7 @@ import type { ExecutionRunController } from '@/agent/executionRuns/controllers/t
 import type { ExecutionRunState } from './executionRunTypes';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
 
 export function enqueueExecutionRunMarkerWrite(args: Readonly<{
   markerWriteChains: Map<string, Promise<void>>;
@@ -43,6 +44,9 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
   if (ctrl && args.opts?.force !== true && args.nowMs - ctrl.lastMarkerWriteAtMs < throttleMs) return;
   if (ctrl) ctrl.lastMarkerWriteAtMs = args.nowMs;
 
+  const cleanupReceipt = buildExecutionRunConnectedServicesCleanupReceipt(
+    run.launch?.connectedServicesRegistration,
+  );
   const markerPayload = {
     pid: process.pid,
     happySessionId: run.sessionId,
@@ -60,6 +64,9 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     updatedAtMs: args.nowMs,
     lastActivityAtMs: args.nowMs,
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
+    ...(cleanupReceipt
+      ? { executionRunConnectedServicesCleanupReceiptV1: cleanupReceipt }
+      : {}),
   } as const;
   const write = args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload));
   await write.catch(() => {});

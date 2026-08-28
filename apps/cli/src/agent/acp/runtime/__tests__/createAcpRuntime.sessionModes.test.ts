@@ -106,16 +106,7 @@ describe('createAcpRuntime (session modes)', () => {
       ],
     });
     expect(typeof metadata.sessionModesV1?.updatedAt).toBe('number');
-    expect(metadata.acpSessionModesV1).toMatchObject({
-      v: 1,
-      agentId: 'codex',
-      currentModeId: 'code',
-      availableModes: [
-        { id: 'code', name: 'Code' },
-        { id: 'plan', name: 'Plan', description: 'Think first' },
-      ],
-    });
-    expect(typeof metadata.acpSessionModesV1?.updatedAt).toBe('number');
+    expect(metadata.acpSessionModesV1).toBeUndefined();
   });
 
   it('preserves available modes on current mode updates from canonical metadata', async () => {
@@ -164,13 +155,14 @@ describe('createAcpRuntime (session modes)', () => {
         { id: 'plan', name: 'Plan', description: 'Think first' },
       ],
     });
-    expect(metadata.acpSessionModesV1).toMatchObject({
+    expect(metadata.sessionModesV1).toMatchObject({
       currentModeId: 'plan',
       availableModes: [
         { id: 'code', name: 'Code' },
         { id: 'plan', name: 'Plan', description: 'Think first' },
       ],
     });
+    expect(metadata.acpSessionModesV1).toBeUndefined();
   });
 
   it('delegates setSessionMode to the backend when supported', async () => {

@@ -23,6 +23,7 @@ import {
   createExecutionRunTranscriptCustodyError,
   isExecutionRunTranscriptCustodyError,
 } from './executionRunTranscriptPublisher';
+import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
 
 type EnqueueMarkerWrite = (runId: string, write: () => Promise<void>) => Promise<void>;
 
@@ -174,6 +175,9 @@ export async function finishExecutionRun(args: Readonly<{
   const resultSizeBytes = readExecutionRunMarkerResultSizeBytes(args.toolResult.output);
 
   // Best-effort: update daemon-visible marker for machine-wide run visibility.
+  const cleanupReceipt = buildExecutionRunConnectedServicesCleanupReceipt(
+    updated.launch?.connectedServicesRegistration,
+  );
   const markerPayload = {
     pid: process.pid,
     happySessionId: existing.sessionId,
@@ -192,6 +196,9 @@ export async function finishExecutionRun(args: Readonly<{
     finishedAtMs: args.next.finishedAtMs,
     ...(updated.error?.code ? { errorCode: updated.error.code } : {}),
     ...(resultSizeBytes === undefined ? {} : { resultSizeBytes }),
+    ...(cleanupReceipt
+      ? { executionRunConnectedServicesCleanupReceiptV1: cleanupReceipt }
+      : {}),
   } as const;
 
   const markerWritePromise = args.enqueueMarkerWrite(args.runId, async (): Promise<void> => {

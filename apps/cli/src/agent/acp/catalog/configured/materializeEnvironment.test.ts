@@ -21,7 +21,6 @@ function backend(secretId: string): ResolvedConfiguredAcpBackend {
     env: {
       ACP_TOKEN: { t: 'savedSecret', secretId },
     },
-    transportProfile: 'generic',
     capabilities: {
       supportsLoadSession: false,
       supportsModes: 'unknown',

@@ -296,8 +296,10 @@ const ExternalSessionTranscriptReadAfterSchema = z.discriminatedUnion(
       items: z.array(ExternalSessionTranscriptRawMessageV1Schema).max(5_000),
       nextCursor: RunnerAgentDaemonExternalSessionCursorV1Schema,
       boundary: BoundedIdSchema,
+      hasMore: z.boolean(),
       diagnostics: z.array(z.object({
         code: BoundedIdSchema,
+        severity: z.enum(['benign', 'required']),
         count: z.number().int().nonnegative(),
         positions: z.array(z.number().int().nonnegative()).max(5_000),
       }).strict()).max(128).optional(),
@@ -330,6 +332,7 @@ export const RunnerAgentDaemonExternalSessionFollowProviderRequestV1Schema =
       cursor: RunnerAgentDaemonExternalSessionCursorV1Schema.optional(),
       maxBytes: z.number().int().min(1).max(524_288),
       maxItems: z.number().int().min(1).max(200),
+      deadlineAtMs: z.number().int().nonnegative().safe().optional(),
     }).strict(),
     z.object({
       kind: z.literal('readAfterTranscript'),
@@ -338,6 +341,7 @@ export const RunnerAgentDaemonExternalSessionFollowProviderRequestV1Schema =
       cursor: RunnerAgentDaemonExternalSessionCursorV1Schema,
       maxBytes: z.number().int().min(1).max(524_288),
       maxItems: z.number().int().min(1).max(200),
+      deadlineAtMs: z.number().int().nonnegative().safe().optional(),
     }).strict(),
   ]);
 
@@ -394,6 +398,9 @@ export const RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS = [
     target: FollowTargetSchema,
     cursor:
       RunnerAgentDaemonExternalSessionCursorV1Schema.optional(),
+    initialReplay: z.boolean().optional(),
+    admissionDeadlineAtMs:
+      z.number().int().nonnegative().safe().optional(),
     witness:
       AgentRuntimeDaemonServiceTurnWitnessV1Schema.optional(),
   }).strict(),

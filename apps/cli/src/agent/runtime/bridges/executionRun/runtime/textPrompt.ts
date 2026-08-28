@@ -117,6 +117,7 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
       : {}),
   }, {
     surface: 'cli',
+    authority: 'account_automation',
     defaultSessionId: params.sessionId,
     ...(params.signal ? { signal: params.signal } : {}),
   });

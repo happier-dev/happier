@@ -27,6 +27,7 @@ export function createAcpRuntimeDefinition(
     ...(init.permissionModeArgv ? { permissionModeArgv: init.permissionModeArgv } : {}),
     ...(init.sessionIdHeaderName ? { sessionIdHeaderName: init.sessionIdHeaderName } : {}),
     ...(init.toolNameInference ? { toolNameInference: Object.freeze({ ...init.toolNameInference }) } : {}),
+    ...(init.modelConfigOptionId ? { modelConfigOptionId: init.modelConfigOptionId } : {}),
     ...(init.stderrRules ? { stderrRules: Object.freeze({ ...init.stderrRules }) } : {}),
     ...(init.permissionOptionSelection ? { permissionOptionSelection: Object.freeze({ ...init.permissionOptionSelection }) } : {}),
     ...(init.messageMeta ? { messageMeta: init.messageMeta } : {}),

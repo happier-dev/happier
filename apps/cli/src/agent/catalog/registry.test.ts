@@ -62,7 +62,6 @@ describe('agent catalog registry read API', () => {
     expect(piEntry.getCliCommandHandler).toBeTypeOf('function');
     expect(piEntry.getCliAuthSpec).toBeTypeOf('function');
     expect(piEntry.getCliDetect).toBeTypeOf('function');
-    expect(piEntry.getCliCapabilityOverride).toBeUndefined();
     expect(piEntry).not.toHaveProperty('checklists');
     expect(piEntry.vendorResumeSupport).toBe('supported');
     await expect(piEntry.getCliDetect?.()).resolves.toMatchObject({
@@ -80,7 +79,7 @@ describe('agent catalog registry read API', () => {
     }
   });
 
-  it('keeps provider-specific entry hooks on the projected catalog entries', async () => {
+  it('keeps only projected catalog entry hooks on the static catalog entries', () => {
     const claudeEntry = requireCatalogEntry('claude');
     const opencodeEntry = requireCatalogEntry('opencode');
 
@@ -89,11 +88,7 @@ describe('agent catalog registry read API', () => {
     expect(requireCatalogEntry('codex').getTerminalPromptSubmitVerificationPolicy).toBeUndefined();
 
     expect(claudeEntry.getPreflightSessionControlsProbeAdapter).toBeUndefined();
-    await expect(opencodeEntry.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
-      failureCacheStrategy: 'cooldown',
-      cliModelsCommandArgs: ['models'],
-      verboseModelsCommandArgs: ['models', '--verbose'],
-    });
+    expect(opencodeEntry.getPreflightSessionControlsProbeAdapter).toBeUndefined();
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('ohMyPi').getCliCommandHandler).toBeTypeOf('function');
   });

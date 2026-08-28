@@ -18,7 +18,6 @@ import {
 } from './resolution';
 import { resolveAccountConfiguredAcpBackend } from './accountConfiguredAcp';
 import { activateAgentRuntimeContributionOnDemand } from '../activationDemand';
-import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 export { createPluginExecInstallablesRegistry };
 
@@ -148,27 +147,9 @@ export async function resolveCliEngineRegistry(
 
                 const hasMatchingRunnerSessionRuntimeSource =
                     matchingRunnerSessionRuntimeSource !== null;
-                const agent = backend
-                    ? matchingRunnerSessionRuntimeSource?.agentContribution
-                        ?? resolutionContributions.agentDefinitionsById.get(
-                            backend.agentId,
-                        )
-                    : null;
-                const hasDaemonExecutionRunRuntime =
-                    readAgentExecutionRunCapabilities(
-                        agent?.richDefinition?.definition,
-                    ) !== null;
                 const requiresExecutablePluginRuntimeRegistry = Boolean(
                     backend
                     && !hasMatchingRunnerSessionRuntimeSource
-                    && (
-                        backend.provenance === 'external'
-                        || hasDaemonExecutionRunRuntime
-                        || params?.requireRunnerAgentSessionRuntimeSource
-                        || backend.pluginId
-                        || backend.daemonEntryPath
-                        || backend.provenance === 'first_party'
-                    ),
                 );
                 if (
                     params?.requireRunnerAgentSessionRuntimeSource

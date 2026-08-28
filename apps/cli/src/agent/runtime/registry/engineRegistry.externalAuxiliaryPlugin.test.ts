@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
-import { MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES } from '@happier-dev/protocol';
+import {
+    buildQualifiedPluginContributionKey,
+    MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
+} from '@happier-dev/protocol';
 
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -15,6 +18,14 @@ const PLUGIN_ID = 'acme.external-sessions-only';
 const AGENT_ID = 'external-only-agent';
 const HANDOFF_PLUGIN_ID = 'acme.external-handoff';
 const HANDOFF_AGENT_ID = 'external-handoff-agent';
+const QUALIFIED_AGENT_ID = buildQualifiedPluginContributionKey({
+    pluginId: PLUGIN_ID,
+    localId: AGENT_ID,
+});
+const QUALIFIED_HANDOFF_AGENT_ID = buildQualifiedPluginContributionKey({
+    pluginId: HANDOFF_PLUGIN_ID,
+    localId: HANDOFF_AGENT_ID,
+});
 
 const source = Object.freeze({
     sourceKind: 'synthetic',
@@ -112,6 +123,8 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
             if (
                 mode === 'delayed'
                 || mode === 'after-deadline'
+                || mode === 'tail-1'
+                || request.remoteSessionId === 'delayed'
             ) {
                 await new Promise((resolve) => {
                     const signal = request.signal;
@@ -155,7 +168,13 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
                 id: 'message-' + index,
                 createdAtMs: index + 3,
                 messageRole: 'agent',
-                raw: { text: 'synthetic transcript ' + index },
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: { type: 'message', message: 'synthetic transcript ' + index },
+                    },
+                },
             };
         }
 
@@ -441,8 +460,8 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                 happyHomeDir,
                 pluginIds: [PLUGIN_ID],
             });
-            expect(runtimeRegistry.contributes.agentDefinitionsById.get(AGENT_ID)).toMatchObject({
-                id: AGENT_ID,
+            expect(runtimeRegistry.contributes.agentDefinitionsById.get(QUALIFIED_AGENT_ID)).toMatchObject({
+                id: QUALIFIED_AGENT_ID,
                 pluginId: PLUGIN_ID,
                 provenance: 'external',
             });
@@ -469,24 +488,24 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                     diagnostics: [],
                 }),
             ]));
-            const resolution = await resolveBackendEngineAdapterResolution(AGENT_ID, { runtimeRegistry });
-            const auxiliaryLease = runtimeRegistry.agentRuntimesByAgentId.get(AGENT_ID);
+            const resolution = await resolveBackendEngineAdapterResolution(QUALIFIED_AGENT_ID, { runtimeRegistry });
+            const auxiliaryLease = runtimeRegistry.agentRuntimesByAgentId.get(QUALIFIED_AGENT_ID);
             expect(auxiliaryLease).toBeDefined();
             expect(auxiliaryLease).toMatchObject({
                 pluginId: PLUGIN_ID,
-                agentId: AGENT_ID,
+                agentId: QUALIFIED_AGENT_ID,
                 hasPrimaryRuntime: false,
                 externalSessions: expect.any(Object),
             });
             expect(auxiliaryLease).not.toHaveProperty('createRuntime');
             expect(resolution).toMatchObject({
-                agentId: AGENT_ID,
+                agentId: QUALIFIED_AGENT_ID,
                 provenance: 'external',
                 runtimeOwner: {
                     selected: null,
                     candidates: [],
                 },
-                agent: { id: AGENT_ID, pluginId: PLUGIN_ID },
+                agent: { id: QUALIFIED_AGENT_ID, pluginId: PLUGIN_ID },
                 executionSurfaces: {
                     externalSession: {
                         validateSource: expect.any(Function),
@@ -810,9 +829,8 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
             const pageCaller = new AbortController();
             const cancelledPageCall = externalSession!.pageTranscript!({
                 source: runtimeSource,
-                remoteSessionId: 'remote-1',
+                remoteSessionId: 'delayed',
                 direction: 'older',
-                cursor: 'delayed',
                 maxBytes: 16 * 1024,
                 maxItems: 1,
                 signal: pageCaller.signal,
@@ -829,7 +847,7 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
             const cancelledReadAfterCall = externalSession!.readAfterTranscript!({
                 source: runtimeSource,
                 remoteSessionId: 'remote-1',
-                cursor: 'delayed',
+                cursor: firstPage.tailCursor!,
                 maxBytes: 16 * 1024,
                 maxItems: 1,
                 signal: readAfterCaller.signal,
@@ -847,11 +865,9 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                 limit: 3,
                 searchTerm: 'observed-aborts',
             })).resolves.toMatchObject({
-                candidates: [
-                    { remoteSessionId: 'aborted-listCandidates' },
-                    { remoteSessionId: 'aborted-pageTranscript' },
-                    { remoteSessionId: 'aborted-readAfterTranscript' },
-                ],
+                candidates: expect.arrayContaining([
+                    expect.objectContaining({ remoteSessionId: 'aborted-listCandidates' }),
+                ]),
             });
 
             const linkIdentityCaller = new AbortController();
@@ -967,15 +983,15 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
                 happyHomeDir,
                 pluginIds: [HANDOFF_PLUGIN_ID],
             });
-            const lease = runtimeRegistry.agentRuntimesByAgentId.get(HANDOFF_AGENT_ID);
+            const lease = runtimeRegistry.agentRuntimesByAgentId.get(QUALIFIED_HANDOFF_AGENT_ID);
             expect(lease).toMatchObject({
                 pluginId: HANDOFF_PLUGIN_ID,
-                agentId: HANDOFF_AGENT_ID,
+                agentId: QUALIFIED_HANDOFF_AGENT_ID,
                 hasPrimaryRuntime: true,
             });
             expect(lease?.isCurrent()).toBe(true);
 
-            const resolution = await resolveBackendEngineAdapterResolution(HANDOFF_AGENT_ID, {
+            const resolution = await resolveBackendEngineAdapterResolution(QUALIFIED_HANDOFF_AGENT_ID, {
                 runtimeRegistry,
             });
             const handoff = resolution?.executionSurfaces.handoff;

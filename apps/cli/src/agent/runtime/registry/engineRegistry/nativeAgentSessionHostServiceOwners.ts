@@ -13,7 +13,8 @@ import type {
     AgentToolExecutionBeforeResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolvePluginMcpServersForSession } from '@/mcp/servers/resolvePluginMcpServersForSession';
 import type {
@@ -104,7 +105,12 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     }>;
     backend: ResolvedAgentRuntimeContribution;
     agent: ResolvedAgentContribution;
-    hostRuntimeParams: HostSessionRuntimeFactoryParams;
+    hostSession: Readonly<{
+        session: Pick<ApiSessionClient, 'getMetadataSnapshot'>;
+        machineId: string;
+        accountSettings?: Readonly<Record<string, unknown>> | null;
+        permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
+    }>;
     sessionId: string;
     directory: string;
     signal: AbortSignal;
@@ -206,11 +212,11 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         return resolvePluginMcpServersForSession({
             input,
             accountSettings:
-                params.hostRuntimeParams.accountSettings
+                params.hostSession.accountSettings
                 ?? readActivePluginAccountSettings(),
-            machineId: params.hostRuntimeParams.machineId,
+            machineId: params.hostSession.machineId,
             directory: params.directory,
-            sessionMetadata: params.hostRuntimeParams.session.getMetadataSnapshot(),
+            sessionMetadata: params.hostSession.session.getMetadataSnapshot(),
         });
     };
     const target = params.runtimeRegistry?.contributes.activationTargets.find((candidate) => (
@@ -220,7 +226,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     const pluginMcp = pluginVersion && (target?.manifest.contributes.mcp.servers.length ?? 0) > 0
         ? (() => {
             const currentSession = createNativeAgentCurrentSessionUiServices({
-                permissionHandler: params.hostRuntimeParams.permissionHandler,
+                permissionHandler: params.hostSession.permissionHandler,
                 pluginId: params.identity.pluginId,
                 contributionId: params.agent.identity?.localId ?? params.identity.agentId,
                 runtimeId,
@@ -305,7 +311,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     });
     const accountUsage = createNativeAgentAccountUsageService({
         sessionId: params.sessionId,
-        session: params.hostRuntimeParams.session,
+        session: params.hostSession.session,
         signal: params.signal,
     });
     const dispose = (): Promise<void> => {

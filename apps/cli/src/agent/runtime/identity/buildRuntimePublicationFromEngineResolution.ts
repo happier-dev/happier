@@ -24,14 +24,12 @@ function buildRuntimeDescriptor(
 ): RuntimeDescriptorV1 | null {
   const agentId = normalizeNonEmptyString(resolution.agentId ?? resolution.agent?.id);
   const backendId = normalizeNonEmptyString(resolution.backendId ?? resolution.backend?.id);
-  const runtimeKind = normalizeNonEmptyString(resolution.backend?.runtimeKind);
-  if (!agentId || !backendId || !runtimeKind) return null;
+  if (!agentId || !backendId) return null;
 
   return {
     v: 1,
     agentId,
     agent: {
-      backendMode: runtimeKind,
       agentExtra: {
         owner: 'happier',
         schemaId: descriptorSchemaId,

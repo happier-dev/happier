@@ -387,11 +387,38 @@ export async function executeBoundedBackendRun(args: Readonly<{
     }
 
     await backendCtrl.streamWriter?.flushAll({ reason: 'turn-end' });
+    const completionOutput = completion.toolResultOutput
+      && typeof completion.toolResultOutput === 'object'
+      && !Array.isArray(completion.toolResultOutput)
+        ? completion.toolResultOutput as Record<string, unknown>
+        : null;
+    const completionOutputError = completionOutput?.error
+      && typeof completionOutput.error === 'object'
+      && !Array.isArray(completionOutput.error)
+        ? completionOutput.error as Record<string, unknown>
+        : null;
+    const completionErrorCode = typeof completionOutputError?.code === 'string' && completionOutputError.code.trim()
+      ? completionOutputError.code
+      : 'execution_run_failed';
+    const completionErrorMessage = typeof completionOutputError?.message === 'string' && completionOutputError.message.trim()
+      ? completionOutputError.message
+      : completion.summary;
 
     await args.finishRun(
       runId,
-      { status: completion.status, summary: completion.summary, finishedAtMs },
-      { output: completion.toolResultOutput, meta: completion.toolResultMeta },
+      {
+        status: completion.status,
+        summary: completion.summary,
+        finishedAtMs,
+        ...(completion.status === 'failed'
+          ? { error: { code: completionErrorCode, message: completionErrorMessage } }
+          : {}),
+      },
+      {
+        output: completion.toolResultOutput,
+        ...(completion.status === 'failed' ? { isError: true } : {}),
+        meta: completion.toolResultMeta,
+      },
       completion.structuredMeta,
     );
   } catch (e: any) {

@@ -122,8 +122,7 @@ function expectGenericPluginRuntimeDescriptor() {
   return expect.objectContaining({
     v: 1,
     agentId: 'acme.sample.provider',
-    agent: expect.objectContaining({
-      backendMode: 'native',
+    agent: {
       agentExtra: expect.objectContaining({
         owner: 'happier',
         schemaId: 'happier.pluginRuntimeDescriptorExtra',
@@ -135,7 +134,7 @@ function expectGenericPluginRuntimeDescriptor() {
           source: { kind: 'path' },
         }),
       }),
-    }),
+    },
   });
 }
 
@@ -143,8 +142,7 @@ function expectExecutionRunFallbackRuntimeDescriptor() {
   return expect.objectContaining({
     v: 1,
     agentId: 'acme.sample.provider',
-    agent: expect.objectContaining({
-      backendMode: 'native',
+    agent: {
       agentExtra: expect.objectContaining({
         owner: 'happier',
         schemaId: 'happier.executionRunRuntimeIdentity',
@@ -155,7 +153,7 @@ function expectExecutionRunFallbackRuntimeDescriptor() {
           provenance: 'external',
         }),
       }),
-    }),
+    },
   });
 }
 

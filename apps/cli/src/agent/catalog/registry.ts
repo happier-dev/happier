@@ -2,7 +2,7 @@ import type {
   AgentCatalogEntry,
   CatalogAgentLookupId,
 } from './types';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from './snapshot';
 
 /**
@@ -61,6 +61,7 @@ export const AGENTS: Record<string, AgentCatalogEntry> = new Proxy(AGENT_PROXY_T
 });
 
 const NO_DECLARED_CONNECTED_SERVICE_IDS: readonly ConnectedServiceId[] = Object.freeze([]);
+const NO_DECLARED_CONNECTED_ACCOUNT_SERVICE_KEYS: readonly ConnectedAccountServiceKey[] = Object.freeze([]);
 
 /**
  * Reads the current catalog entry without treating a missing external Agent as a
@@ -85,6 +86,13 @@ export function resolveCatalogAgentConnectedServiceIds(
   agentId: string,
 ): readonly ConnectedServiceId[] {
   return readDeclaredCatalogConnectedServiceIds(findCatalogEntry(agentId));
+}
+
+export function resolveCatalogAgentConnectedAccountServiceIds(
+  agentId: string,
+): readonly ConnectedAccountServiceKey[] {
+  return findCatalogEntry(agentId)?.connectedAccountServiceIds
+    ?? NO_DECLARED_CONNECTED_ACCOUNT_SERVICE_KEYS;
 }
 
 /**

@@ -1,7 +1,4 @@
 import {
-  AGENTS_CORE,
-} from '@happier-dev/agents';
-import {
   readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
@@ -18,22 +15,22 @@ function readAgentIdFromMetadataEntry(metadata: Record<string, unknown>, key: st
   return typeof agentId === 'string' ? agentId : null;
 }
 
-function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown>, agentId: string): boolean | null {
+function readCurrentRuntimeDescriptorAgentId(metadata: Record<string, unknown>): string | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  if (!descriptor || descriptor.agentId !== agentId) return null;
-  const agentRuntime = isRecord(descriptor.agent) ? descriptor.agent : null;
-  const backendMode = typeof agentRuntime?.backendMode === 'string' ? agentRuntime.backendMode.trim() : '';
-  if (!backendMode) return null;
-  return backendMode === 'acp';
+  return descriptor?.agentId ?? null;
 }
 
-function isCatalogDeclaredAcpOnlyAgent(agentId: string): boolean {
-  const agent = (AGENTS_CORE as Readonly<Record<string, { sessionStorage?: { direct?: boolean }; tools?: { delivery?: string } }>>)[agentId];
-  if (agent?.tools?.delivery === 'shell_bridge') return true;
-  if (agent?.tools?.delivery === 'native_mcp' || agent?.tools?.delivery === 'native_extension') {
-    return agent.sessionStorage?.direct === false;
-  }
-  return false;
+function hasPublishedAcpForkProtocol(metadata: Record<string, unknown>): boolean {
+  const capabilities = isRecord(metadata.agentRuntimeCapabilitiesV1)
+    ? metadata.agentRuntimeCapabilitiesV1
+    : null;
+  const sessionCapabilities = capabilities && isRecord(capabilities.sessionCapabilities)
+    ? capabilities.sessionCapabilities
+    : null;
+  const sessionFork = sessionCapabilities && isRecord(sessionCapabilities.sessionFork)
+    ? sessionCapabilities.sessionFork
+    : null;
+  return sessionFork?.protocol === 'acp';
 }
 
 type BackendModeEligibility = 'acp' | 'non_acp';
@@ -93,12 +90,19 @@ export function isAcpForkEligibleForAgent(params: Readonly<{ agentId: string; me
   if (!isRecord(params.metadata)) return false;
   const metadata = params.metadata;
 
-  // Catalog-declared shell-bridge agents are ACP-only in the current product model.
-  if (isCatalogDeclaredAcpOnlyAgent(agentId)) return true;
+  const descriptorAgentId = readCurrentRuntimeDescriptorAgentId(metadata);
+  if (descriptorAgentId && descriptorAgentId !== agentId) return false;
+  if (hasPublishedAcpForkProtocol(metadata)) return true;
 
-  const runtimeDescriptorEligibility = resolveAcpRuntimeDescriptorEligibility(metadata, agentId);
-  if (runtimeDescriptorEligibility !== null) return runtimeDescriptorEligibility;
+  // runtimeDescriptorV1.agent is intentionally provider-owned and opaque to
+  // generic host code. A current descriptor without the typed capability fact
+  // must fail closed instead of allowing stale legacy breadcrumbs to override
+  // the concrete runtime.
+  if (descriptorAgentId === agentId) return false;
 
+  // Released pre-runtime-capability Session rows remain readable at this one
+  // fork seam. New runtimes publish sessionFork.protocol above; these readers
+  // can be removed once those persisted rows no longer require fork support.
   const legacyRuntimeBackendModeEligibility = resolveLegacyRuntimeBackendModeEligibility(metadata, agentId);
   if (legacyRuntimeBackendModeEligibility !== null) return legacyRuntimeBackendModeEligibility;
 

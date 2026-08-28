@@ -60,7 +60,7 @@ describe('createAcpRuntime (session models)', () => {
 
     expect(metadataUpdates.length).toBeGreaterThan(0);
     const metadata: Metadata = getMetadata();
-    expect(metadata.acpSessionModelsV1).toMatchObject({
+    expect(metadata.sessionModelsV1).toMatchObject({
       v: 1,
       agentId: 'codex',
       currentModelId: 'model-a',
@@ -85,7 +85,8 @@ describe('createAcpRuntime (session models)', () => {
         { id: 'model-b', name: 'Model B', description: 'Accurate' },
       ],
     });
-    expect(typeof metadata.acpSessionModelsV1?.updatedAt).toBe('number');
+    expect(typeof metadata.sessionModelsV1?.updatedAt).toBe('number');
+    expect(metadata.acpSessionModelsV1).toBeUndefined();
   });
 
   it('publishes model options derived from ACP config options when models are absent', async () => {
@@ -129,7 +130,7 @@ describe('createAcpRuntime (session models)', () => {
 
     expect(metadataUpdates.length).toBeGreaterThan(0);
     const metadata: Metadata = getMetadata();
-    expect(metadata.acpSessionModelsV1).toMatchObject({
+    expect(metadata.sessionModelsV1).toMatchObject({
       v: 1,
       agentId: 'opencode',
       currentModelId: 'model-a',
@@ -138,6 +139,7 @@ describe('createAcpRuntime (session models)', () => {
         { id: 'model-b', name: 'Model B', description: 'Fast' },
       ],
     });
+    expect(metadata.acpSessionModelsV1).toBeUndefined();
   });
 
   it('delegates setSessionModel to the backend when supported', async () => {

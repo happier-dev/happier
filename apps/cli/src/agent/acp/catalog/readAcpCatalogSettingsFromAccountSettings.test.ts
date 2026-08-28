@@ -39,6 +39,6 @@ describe('readAcpCatalogSettingsFromAccountSettings', () => {
     });
 
     expect(out.backends[0]?.id).toBe('custom-kiro');
-    expect(out.backends[0]?.transportProfile).toBe('kiro');
+    expect(out.backends[0]).not.toHaveProperty('transportProfile');
   });
 });

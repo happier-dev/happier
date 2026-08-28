@@ -11,7 +11,6 @@ import type { ExecutionRunState } from '../executionRunTypes';
 import {
   AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
   readBackendTargetRefV2,
-  readRuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
 import {
@@ -40,16 +39,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return null;
   }
   return value as Readonly<Record<string, unknown>>;
-}
-
-function readRuntimeKindFromDescriptor(payload: unknown): string | null {
-  const descriptor = readRuntimeDescriptorV1(payload);
-  const runtimeKind = readNonEmptyString(readRecord(descriptor?.agent)?.backendMode);
-  if (runtimeKind) return runtimeKind;
-
-  // Compatibility for pre-envelope events. Versioned descriptor envelopes are
-  // normalized exclusively by protocol's canonical parser above.
-  return readNonEmptyString(readRecord(payload)?.runtimeKind);
 }
 
 function readPermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
@@ -143,7 +132,6 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
     sidechainId: args.sidechainId,
     makeId: () => randomUUID(),
   });
-  let runtimeKind: string | null = null;
   let permissionCapability: ExecutionRunPermissionCapability = args.ctrl.backend.permissionCapability ?? 'static';
 
   function createFailClosedPermissionRequestError(
@@ -239,9 +227,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
 
   return (msg) => {
     if (msg.type === 'event' && msg.name === 'runtime.descriptor') {
-      // runtimeKind is a capability label for permission surfacing; the backend identity is already
-      // present on the execution-run state and descriptor payload.
-      runtimeKind = readRuntimeKindFromDescriptor(msg.payload);
+      // The provider-owned descriptor stays opaque to the generic run bridge.
       forwarder.forward(msg);
       return;
     }
@@ -283,6 +269,9 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
         ?? readNonEmptyString(msg.reason)
         ?? 'unknown';
       const parentSessionId = run.sessionId;
+      // Parent-prompt routing needs a stable host identity, not a provider
+      // backend mode. `backendId` is already the canonical run-owned target.
+      const runtimeKind = readNonEmptyString(run.backendId);
       const mode = resolveExecutionRunPermissionInteractionMode({
         intent: run.intent,
         runClass: run.runClass,

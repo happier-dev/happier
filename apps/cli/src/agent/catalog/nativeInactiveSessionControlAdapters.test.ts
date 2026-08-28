@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import { buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptorV1 } from '@/testkit/runtimeDescriptorFixtures';
 import {
   type AgentRuntime,
   type AgentSessionRuntimeFactory,
@@ -152,6 +152,7 @@ describe('native inactive Agent session controls', () => {
   it('routes goals through the current native facet and returns its canonical work-state publication', async () => {
     const set = vi.fn(async (mutation, context) => {
       expect(mutation).toEqual({ objective: 'Ship G6', status: 'active' });
+      expect(context.invokedAtMs).toEqual(expect.any(Number));
       expect(context.session).toMatchObject({
         id: 'goal-session',
         cwd: '/repo',

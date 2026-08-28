@@ -7,6 +7,7 @@ import {
   type TestExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/testkit';
 import { executeBoundedBackendRun } from './bounded/loop';
+import { createLazyExecutionRunHostRuntime } from './hostRuntime/lazy';
 import { startExecutionRun } from './startExecutionRun';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
@@ -944,12 +945,11 @@ describe('startExecutionRun', () => {
     });
 
     try {
-      const hangingRuntime = createTestExecutionRunHostRuntime({
-        onSendPrompt: async () => {},
-        onWaitForTurnCompletion: async () => {},
-        onProvisionSession: async () => {
-          // Never settles: simulates a backend whose process spawn / vendor handshake hangs.
-          await new Promise(() => {});
+      const hangingRuntime = createLazyExecutionRunHostRuntime({
+        resolveRuntime: async () => {
+          // Never settles: simulates lazy runtime creation whose process spawn /
+          // vendor handshake cannot cooperate with cleanup after host timeout.
+          return await new Promise<never>(() => {});
         },
       });
       const createRuntime = vi.fn(() => hangingRuntime);

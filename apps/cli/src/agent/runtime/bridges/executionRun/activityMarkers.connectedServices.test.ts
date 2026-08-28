@@ -12,6 +12,7 @@ describe('writeExecutionRunActivityMarker marker privacy', () => {
   it('does not copy the in-memory connected-services registration into the marker', async () => {
     const registration = {
       v: 1 as const,
+      activationId: '11111111-1111-4111-8111-111111111111',
       runKey: 'run_1',
       agentId: 'codex',
       materializationKey: 'run_1',
@@ -62,6 +63,15 @@ describe('writeExecutionRunActivityMarker marker privacy', () => {
       ioMode: 'request_response',
     });
     expect(marker).not.toHaveProperty('executionRunConnectedServicesLaunchV1');
+    expect(marker).toHaveProperty(
+      'executionRunConnectedServicesCleanupReceiptV1',
+      {
+        v: 1,
+        activationId: registration.activationId,
+        runKey: registration.runKey,
+        agentId: registration.agentId,
+      },
+    );
     expect(marker).not.toHaveProperty('summary');
     expect(JSON.stringify(marker)).not.toContain('/tmp/project');
     expect(JSON.stringify(marker)).not.toContain('profile_1');
@@ -86,6 +96,7 @@ describe('writeExecutionRunActivityMarker marker privacy', () => {
       launch: {
         connectedServicesRegistration: {
           v: 1 as const,
+          activationId: '22222222-2222-4222-8222-222222222222',
           runKey: 'run_required',
           agentId: 'codex',
           materializationKey: 'run_required',

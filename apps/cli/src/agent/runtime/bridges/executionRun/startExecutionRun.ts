@@ -43,7 +43,6 @@ import { createExecutionRunControllerMessageHandler } from './messages/sessionSt
 import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
-  resolveExecutionRunBuiltInAgentId,
   resolveExecutionRunRuntimeBackendId,
 } from './backendTargets';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
@@ -453,14 +452,9 @@ export async function startExecutionRun(args: Readonly<{
         ? args.params.disabledActionIds.map((value) => String(value ?? '').trim()).filter(Boolean)
         : [];
 
-      const builtInAgentId = resolveExecutionRunBuiltInAgentId(args.params.backendTarget);
-      if (!builtInAgentId) {
-        throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', 'Voice agent runs require a built-in backend');
-      }
-
       const startedVoice = await args.voiceAgentManager.start({
         voiceAgentId: runId,
-        agentId: builtInAgentId as any,
+        backendTarget: args.params.backendTarget,
         ...(profileId ? { profileId } : {}),
         ...(args.params.connectedServices !== undefined ? { connectedServices: args.params.connectedServices } : {}),
         contextSessionId: args.params.sessionId,
@@ -482,7 +476,8 @@ export async function startExecutionRun(args: Readonly<{
         disabledActionIds,
       }, {
         createRuntime: ({
-          agentId,
+          backendTarget,
+          backendId: runtimeBackendId,
           modelId,
           modelSelection,
           sessionConfigOptionOverrides,
@@ -493,8 +488,8 @@ export async function startExecutionRun(args: Readonly<{
           try {
             return args.createRuntime({
               runId,
-              backendId: agentId,
-              backendTarget: { kind: 'builtInAgent', agentId },
+              backendId: runtimeBackendId,
+              backendTarget,
               modelId,
               ...(modelSelection ? { modelSelection } : {}),
               ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
@@ -597,10 +592,20 @@ export async function startExecutionRun(args: Readonly<{
     const terminalPromise = new Promise<void>((resolve) => {
       resolveTerminal = resolve;
     });
-    const backendSupportsResume = await backend.readResumeSupport({
-      captureReplay: args.params.runClass === 'long_lived',
-    });
-    const backendSupportsInitialResume = await backend.readResumeSupport();
+    // A lazy host runtime may have to spawn/connect to the native backend before it can
+    // answer its resume capabilities. Keep that readiness work inside the same bounded
+    // provisioning owner; otherwise a backend that never resolves can hang here before
+    // provisionSession's timeout is ever installed.
+    const [backendSupportsResume, backendSupportsInitialResume] = await awaitBackendProvisionBounded(
+      (async () => {
+        const supportsResume = await backend.readResumeSupport({
+          captureReplay: args.params.runClass === 'long_lived',
+        });
+        const supportsInitialResume = await backend.readResumeSupport();
+        return [supportsResume, supportsInitialResume] as const;
+      })(),
+      backendId,
+    );
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
       backend,

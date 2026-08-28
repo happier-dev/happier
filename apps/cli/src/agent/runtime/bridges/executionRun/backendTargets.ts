@@ -55,10 +55,3 @@ export function areExecutionRunBackendTargetsEqual(
   if (!left || !right) return false;
   return buildBackendTargetKeyV2(readBackendTargetRefV2(left)) === buildBackendTargetKeyV2(readBackendTargetRefV2(right));
 }
-
-export function resolveExecutionRunBuiltInAgentId(
-  backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
-): string | null {
-  const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
-  return canonicalBackendTarget.sourceKind === 'configured' ? null : canonicalBackendTarget.backendId;
-}

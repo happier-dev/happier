@@ -239,8 +239,10 @@ describe('createBaseSessionForAttach', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'codex',
-            backendMode: 'appServer',
-            providerSessionId: 'private-vendor-id',
+            agent: {
+              backendMode: 'appServer',
+              providerSessionId: 'private-vendor-id',
+            },
           },
         },
         runtime: {

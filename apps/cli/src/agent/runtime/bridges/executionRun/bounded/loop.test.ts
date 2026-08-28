@@ -53,6 +53,74 @@ function createRuntime(params: Partial<ExecutionRunHostRuntime>): ExecutionRunHo
 }
 
 describe('executeBoundedBackendRun', () => {
+    it('preserves a structured review preflight failure as the canonical failed run result', async () => {
+      const childSessionId = 'child_session_review_preflight' as SessionId;
+      let ctrl!: ExecutionRunBackendController;
+      const runtime = createRuntime({
+        async sendPrompt() {
+          ctrl.buffer = JSON.stringify({
+            status: 'failed',
+            error: { code: 'deepsec_confirmation_required' },
+            summary: 'DeepSec review requires confirmation.',
+            overviewMarkdown: 'DeepSec review requires confirmation before launch.',
+            findings: [],
+            warning: { status: 'requires_confirmation', costClass: 'expensive' },
+          });
+        },
+        async waitForTurnCompletion() {},
+      });
+      ctrl = createController(runtime, childSessionId);
+      const finishRun = vi.fn<FinishExecutionRun>();
+
+      await executeBoundedBackendRun({
+        runId: 'run_review_preflight_1',
+        callId: 'subagent_run_review_preflight_1',
+        sidechainId: 'subagent_run_review_preflight_1',
+        startedAtMs: 0,
+        params: {
+          sessionId: 'parent_session_review_preflight',
+          intent: 'review',
+          backendTarget: { kind: 'builtInAgent', agentId: 'deepsec' },
+          instructions: 'review it',
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        controllers: new Map([['run_review_preflight_1', ctrl]]),
+        sendAcp: async () => {},
+        parentProvider: 'deepsec',
+        getNowMs: () => 1,
+        boundedTimeoutMs: null,
+        finishRun,
+      });
+
+      expect(finishRun).toHaveBeenCalledWith(
+        'run_review_preflight_1',
+        expect.objectContaining({
+          status: 'failed',
+          summary: 'DeepSec review requires confirmation.',
+          error: {
+            code: 'deepsec_confirmation_required',
+            message: 'DeepSec review requires confirmation.',
+          },
+        }),
+        expect.objectContaining({
+          output: expect.objectContaining({
+            status: 'failed',
+            error: { code: 'deepsec_confirmation_required' },
+          }),
+          isError: true,
+        }),
+        expect.objectContaining({
+          kind: 'review_findings.v2',
+          payload: expect.objectContaining({
+            warning: { status: 'requires_confirmation', costClass: 'expensive' },
+          }),
+        }),
+      );
+    });
+
     it('keeps waiting past the bounded timeout when runtime liveness reports active work', async () => {
     const childSessionId = 'child_session_liveness_active' as SessionId;
     let ctrl!: ExecutionRunBackendController;

@@ -174,6 +174,7 @@ async function buildControlContext(params: Readonly<{
   metadata: () => Record<string, unknown>;
   workState: ReturnType<typeof createNativeAgentSessionWorkStateService>;
 }>> {
+  const invokedAtMs = Date.now();
   const cwd = params.adapterParams.cwd ?? process.cwd();
   const signal = params.signal;
   const services = await params.registry.createAgentInvocationServices({
@@ -217,6 +218,7 @@ async function buildControlContext(params: Readonly<{
       qualifiedId: `${params.lease.pluginId}/agents/${params.lease.localAgentId}`,
     }),
     surface: 'agent' as const,
+    invokedAtMs,
     signal,
     services,
     ui: createPluginInvocationPresentation({

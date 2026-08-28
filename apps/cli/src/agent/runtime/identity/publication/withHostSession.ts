@@ -10,56 +10,29 @@ import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/sessi
 import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
 
-function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function readRuntimeSessionId(runtime: RuntimeTurnOperations): string | null {
-  try {
-    return normalizeNonEmptyString(runtime.readSessionIdentity().sessionId);
-  } catch {
-    return null;
-  }
-}
-
-function withRuntimeProviderSessionId(
-  descriptor: RuntimeDescriptorV1 | null,
-  providerSessionId: string | null,
-): RuntimeDescriptorV1 | null {
-  if (!descriptor || !providerSessionId) return descriptor;
-  if (normalizeNonEmptyString(descriptor.agent.providerSessionId) === providerSessionId) {
-    return descriptor;
-  }
-  return {
-    ...descriptor,
-    agent: {
-      ...descriptor.agent,
-      providerSessionId,
-    },
-  };
-}
-
-function resolveRuntimeIdentityPublication(params: Readonly<{
-  runtime: RuntimeTurnOperations;
-  identity: NormalizedRuntimeEventPublication;
-}>): NormalizedRuntimeEventPublication {
-  return {
-    ...params.identity,
-    runtimeDescriptor: withRuntimeProviderSessionId(
-      params.identity.runtimeDescriptor,
-      readRuntimeSessionId(params.runtime),
-    ),
-  };
-}
-
 function resolveOpenedRuntimeDescriptorV1(params: Readonly<{
   agentId: string;
   descriptor: unknown;
 }>): RuntimeDescriptorV1 | null {
   const descriptor = readRuntimeDescriptorV1(params.descriptor);
   return descriptor?.agentId === params.agentId ? descriptor : null;
+}
+
+function mergeRuntimeCapabilities(hostCapabilities: unknown, agentCapabilities: unknown): unknown {
+  if (
+    hostCapabilities
+    && typeof hostCapabilities === 'object'
+    && !Array.isArray(hostCapabilities)
+    && agentCapabilities
+    && typeof agentCapabilities === 'object'
+    && !Array.isArray(agentCapabilities)
+  ) {
+    return {
+      ...hostCapabilities,
+      ...agentCapabilities,
+    };
+  }
+  return agentCapabilities;
 }
 
 function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
@@ -70,10 +43,10 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
     ? params.runtime.respondToPermission
     : undefined;
   const hub = createNormalizedRuntimeEventPublicationHub<RuntimeTurnMessage>({
-    identity: () => resolveRuntimeIdentityPublication({
-      runtime: params.runtime,
-      identity: params.identity,
-    }),
+    // `runtimeDescriptor.agent` is Agent-owned and opaque. Native Session
+    // identity has its own `identity.providerSessionId` publication path; a
+    // generic host wrapper must never synthesize fields inside the descriptor.
+    identity: params.identity,
     subscribeUpstream: (handler) => params.runtime.subscribeRuntimeEvents(handler),
   });
 
@@ -167,15 +140,27 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
           terminalRemoteModeLoop,
           configuration,
           runtimeDescriptorV1,
+          runtimeCapabilities,
           admittedProviderBindingHandoff,
         } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
         const openedRuntimeDescriptor = resolveOpenedRuntimeDescriptorV1({
           agentId: params.plan.agentId,
           descriptor: runtimeDescriptorV1,
         });
-        const identity = openedRuntimeDescriptor
-          ? { ...params.identity, runtimeDescriptor: openedRuntimeDescriptor }
-          : params.identity;
+        const identity = {
+          ...params.identity,
+          ...(openedRuntimeDescriptor
+            ? { runtimeDescriptor: openedRuntimeDescriptor }
+            : {}),
+          ...(runtimeCapabilities
+            ? {
+                runtimeCapabilities: mergeRuntimeCapabilities(
+                  params.identity.runtimeCapabilities,
+                  runtimeCapabilities,
+                ),
+              }
+            : {}),
+        };
         if (openedRuntimeDescriptor) {
           await runtimeParams.session.updateMetadata((metadata) => (
             applyRuntimeDescriptorSessionMetadata(

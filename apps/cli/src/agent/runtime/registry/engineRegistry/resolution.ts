@@ -61,19 +61,6 @@ function declaresAgentExternalSessionSurface(
             ?.externalSession !== undefined;
 }
 
-export function resolveFirstPartyCatalogEntryForBackend(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-    contributions: ResolvedContributionRegistry;
-    agent?: ResolvedAgentContribution;
-}>) {
-    if (params.backend.provenance !== 'first_party') {
-        return null;
-    }
-    return params.agent
-        ? params.agent.catalogEntry ?? null
-        : params.contributions.catalogEntriesById[params.backend.agentId] ?? null;
-}
-
 function resolveRegisteredAgentAuxiliarySurfaces(
     engineEntry: Readonly<{
         pluginId: string;
@@ -204,104 +191,12 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         }
         : {};
 
-    if (backend.provenance === 'first_party') {
-        const entry = resolveFirstPartyCatalogEntryForBackend({
-            backend,
-            contributions: params.contributions,
-            agent,
-        });
-        const runtimeRegistry = params.runtimeRegistry;
-        const engineEntry = runtimeRegistry
-            ? readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend)
-            : undefined;
-        const runtimeOwner = resolveBackendRuntimeOwner({
-            backend,
-            agent,
-            engineEntry,
-            manifestOnlyPluginRuntime: false,
-            runnerAgentSessionRuntimeSource:
-                runnerRuntimeSource !== null,
-        });
-        const leasedRuntime = shouldLeaseDaemonRuntime
-            && runtimeOwner.selected?.kind === 'plugin_engine'
-            && engineEntry
-            ? await resolveLeasedAgentRuntime({
-                lease: engineEntry,
-                ...(entry?.resolveHostAgentRuntimeSurfaces
-                    ? { resolveHostSurfaces: entry.resolveHostAgentRuntimeSurfaces }
-                    : {}),
-            })
-            : null;
-        const diagnostics: EngineResolutionDiagnostic[] = [];
-        const declaredAgentSurfaceFamilies = resolveDeclaredAgentSurfaceFamilies(agent);
-        const engineSurfaces = leasedRuntime
-            ? resolveBackendExecutionSurfacesFromNativeAgentRuntime({
-                backend,
-                runtime: leasedRuntime,
-                agentId: engineEntry!.agentId,
-                isCurrent: engineEntry!.isCurrent,
-                declaredAgentSurfaceFamilies,
-                diagnostics,
-                createAgentRuntimeSurfaceInvocationContext:
-                    engineEntry!.createAgentRuntimeSurfaceInvocationContext,
-            })
-            : createEmptyBackendExecutionSurfaces();
-        const registeredAgentSurfaces = resolveRegisteredAgentAuxiliarySurfaces(
-            engineEntry,
-            agent,
-            runnerRuntimeSource
-                ?.retainedExternalSessionProviderOps,
-        );
-        const executionSurfaces = {
-            ...engineSurfaces,
-            externalSession: registeredAgentSurfaces.externalSession,
-        };
-        const engineAdapter = await resolveBackendRuntimeCore({
-            backend,
-            agent,
-            executionSurfaces,
-            runtimeOwner,
-            engineEntry,
-            runtimeRegistry: params.runtimeRegistry,
-            ...(resolveCurrentPluginMaterializationRef
-                ? { resolveCurrentPluginMaterializationRef }
-                : {}),
-            ...(resolveCurrentMediatorContributionMaterializationRef
-                ? { resolveCurrentMediatorContributionMaterializationRef }
-                : {}),
-            ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
-            nativeAgentRuntime: leasedRuntime,
-            ...runnerRuntimeCoreParams,
-        });
-        return {
-            backendId: backend.id,
-            agentId: agent.id,
-            provenance: backend.provenance,
-            selectedSource: runtimeOwner.selected?.kind === 'plugin_engine'
-                ? 'plugin'
-                : toEngineSelectedSource(
-                    backend.provenance,
-                    agent.runtimeSpec?.sourcePreferenceDefault,
-                ),
-            runtimeOwner,
-            backend,
-            agent,
-            engineAdapter: engineAdapter ?? createMissingCliEngineAdapter({ backend }),
-            executionSurfaces,
-            diagnostics: Object.freeze(diagnostics),
-            ...(runtimeRegistry?.publishHostEvent
-                ? { publishHostEvent: runtimeRegistry.publishHostEvent }
-                : {}),
-        };
-    }
-
     const runtimeRegistry = params.runtimeRegistry;
     if (!runtimeRegistry && !runnerRuntimeSource) {
         return {
             backendId: backend.id,
             agentId: agent.id,
             provenance: backend.provenance,
-            selectedSource: 'plugin',
             runtimeOwner: createEmptyBackendRuntimeOwnerResolution(backend.id),
             backend,
             agent,
@@ -391,7 +286,12 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         backendId: backend.id,
         agentId: agent.id,
         provenance: backend.provenance,
-        selectedSource: 'plugin',
+        selectedSource: runtimeOwner.selected?.kind === 'plugin_engine'
+            ? 'plugin'
+            : toEngineSelectedSource(
+                backend.provenance,
+                agent.runtimeSpec?.sourcePreferenceDefault,
+            ),
         runtimeOwner,
         backend,
         agent,

@@ -69,6 +69,9 @@ export interface CreateAcpBackendOptions {
   /** Whether the ACP agent should advertise its parameterized model picker. */
   parameterizedModelPicker?: boolean;
 
+  /** Declarative ACP config-option id used instead of legacy session/set_model. */
+  modelConfigOptionId?: string;
+
   projectModel?: AcpBackendOptions['projectModel'];
 
   prepareSessionModels?: AcpBackendOptions['prepareSessionModels'];
@@ -129,6 +132,9 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     ...(options.authSelector ? { authSelector: options.authSelector } : {}),
     ...(typeof options.parameterizedModelPicker === 'boolean'
       ? { parameterizedModelPicker: options.parameterizedModelPicker }
+      : {}),
+    ...(options.modelConfigOptionId
+      ? { modelConfigOptionId: options.modelConfigOptionId }
       : {}),
     ...(options.projectModel ? { projectModel: options.projectModel } : {}),
     ...(options.prepareSessionModels

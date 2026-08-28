@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import { buildTestCodexRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@/testkit/runtimeDescriptorFixtures';
 
 import {
   canonicalizeLinkedExternalSessionSource,
@@ -108,8 +108,6 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
 
     expect(canonicalized.remoteSessionId).toBe('legacy-thread');
     expect(canonicalized.source).toEqual({ kind: 'codexHome', home: 'user' });
-    expect(canonicalized.runtimeIdentity.sourceTier).toBe('canonical_runtime_descriptor');
-    expect(canonicalized.runtimeIdentity.runtimeIdentityPublication.runtimeDescriptor?.providerSessionId).toBe('runtime-thread');
     expect(resolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
       remoteSessionId: 'legacy-thread',
       source: { kind: 'codexHome', home: 'user' },

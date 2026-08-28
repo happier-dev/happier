@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
 import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { createAcpBackendFromDefinition } from '../runtime/definition/backend';
+import { createAcpRuntimeDefinition } from '../runtime/definition/create';
 import type { AgentMessage } from '../../core/AgentMessage';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -116,6 +118,22 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
           continue;
         }
 
+        if (method === 'session/set_config_option') {
+          ok(id, {
+            configOptions: [{
+              id: params.configId,
+              name: 'Agent model choice',
+              type: 'select',
+              currentValue: params.value,
+              options: [
+                { value: 'model-a', name: 'Model A' },
+                { value: 'model-b', name: 'Model B' },
+              ],
+            }],
+          });
+          continue;
+        }
+
         ok(id, {});
       }
     });
@@ -196,6 +214,43 @@ describe('AcpBackend session models', () => {
         try {
           await backend?.dispose();
         } catch {}
+      }
+    });
+  });
+
+  it('uses the declarative model config option instead of the legacy model method', async () => {
+    await withTempDir('happier-acp-model-config-option-', async (dir) => {
+      const backend = await createAcpBackendFromDefinition({
+        cwd: dir,
+        definition: createAcpRuntimeDefinition({
+          backendId: 'test',
+          source: { kind: 'account_configured' },
+          ux: { title: 'Test ACP' },
+          transport: {
+            kind: 'stdio',
+            launch: {
+              kind: 'executable',
+              command: process.execPath,
+              args: [writeFakeAcpAgentScript({ dir })],
+            },
+          },
+          modelConfigOptionId: 'agent-model-choice',
+          mcp: { policy: 'drop' },
+        }),
+      });
+      try {
+        const started = await backend.startSession();
+        await backend.setSessionModel(started.sessionId, 'model-b');
+
+        expect(backend.getSessionConfigOptionsState()).toEqual([
+          expect.objectContaining({
+            id: 'agent-model-choice',
+            currentValue: 'model-b',
+          }),
+        ]);
+        expect(backend.getSessionModelState()?.currentModelId).toBe('model-a');
+      } finally {
+        await backend.dispose();
       }
     });
   });

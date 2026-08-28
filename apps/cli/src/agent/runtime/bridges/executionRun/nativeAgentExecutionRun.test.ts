@@ -5,6 +5,10 @@ import type {
     AgentExecutionRunOpenRequest,
     AgentExecutionRunRuntime,
     AgentRuntime,
+    AgentRuntimeContext,
+    AgentSessionRuntimeEvent,
+    AgentSessionRuntime,
+    AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     AgentSessionProviderBindingV1Schema,
@@ -15,7 +19,14 @@ import {
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 
-import { createNativeAgentExecutionRunHostRuntime } from './nativeAgentExecutionRun';
+import {
+    createNativeAgentExecutionRunHostRuntime,
+    createNativeAgentSessionInteractionHostRuntime,
+} from './nativeAgentExecutionRun';
+import {
+    composeNativeAgentSessionRuntimeContext,
+    createNativeAgentSessionHostServices,
+} from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 
 afterEach(() => {
     vi.unstubAllEnvs();
@@ -25,7 +36,242 @@ async function createUnexpectedAgentRuntimeSurfaceInvocationContext(): Promise<n
     throw new Error('Execution-run fixture should not create an Agent runtime surface invocation context');
 }
 
+type UnsequencedSessionEvent<T> = T extends AgentSessionRuntimeEvent
+    ? Omit<T, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never;
+
+function createVoiceSessionContextLease(params: Readonly<{
+    services: AgentSessionRuntimeContext['services'];
+    signal: AbortSignal;
+    dispose: () => Promise<void>;
+}>): Readonly<{
+    context: AgentSessionRuntimeContext;
+    dispose(): Promise<void>;
+}> {
+    const sessionServices = createNativeAgentSessionHostServices({
+        owners: {
+            features: { isEnabled: () => true },
+            sessionHooks: {},
+            transcripts: { fileFollow: {} },
+            accountUsage: {},
+            mcp: {},
+            toolExecution: {},
+        },
+        agentId: 'acme.voice/agents/default',
+        sessionId: 'session-parent',
+        directory: '/repo',
+        signal: params.signal,
+        isCurrent: () => true,
+        session: {
+            sessionId: 'session-parent',
+            updateMetadata: vi.fn(),
+            enqueueAgentMessageCommitted: vi.fn(),
+        },
+        publications: {
+            models: { bind: () => ({ dispose() {} }) },
+            activeInput: { bind: () => ({ dispose() {} }), publishStatus: vi.fn() },
+        },
+        readToolExecutionCapability: () => null,
+    } as never);
+    return {
+        context: composeNativeAgentSessionRuntimeContext({
+            identity: {
+                pluginId: 'acme.voice',
+                pluginVersion: '1.0.0',
+                agentId: 'acme.voice/agents/default',
+            },
+            contributionId: 'default',
+            invokedAtMs: 1,
+            sessionId: 'session-parent',
+            signal: params.signal,
+            services: params.services,
+            sessionServices,
+            ui: {} as AgentSessionRuntimeContext['ui'],
+            protocols: {} as AgentSessionRuntimeContext['protocols'],
+            workState: {
+                publisher() {
+                    return {
+                        async publish() {
+                            return {
+                                status: 'unavailable' as const,
+                                diagnostic: {
+                                    code: 'voice_test_unavailable',
+                                    severity: 'info' as const,
+                                },
+                            };
+                        },
+                    };
+                },
+            },
+        }),
+        dispose: params.dispose,
+    };
+}
+
 describe('createNativeAgentExecutionRunHostRuntime', () => {
+    it('keeps a native Session interaction alive across two complete Voice turns', async () => {
+        const nativeListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let sequence = 0;
+        let activeTurnId: string | null = null;
+        const publish = (event: UnsequencedSessionEvent<AgentSessionRuntimeEvent>) => {
+            for (const listener of nativeListeners) listener({
+                ...event,
+                sequence: ++sequence,
+                sessionId: 'session-parent',
+                emittedAtMs: sequence,
+            } as AgentSessionRuntimeEvent);
+        };
+        const send = vi.fn(async (request: Parameters<AgentSessionRuntime['send']>[0]) => {
+            const turnId = request.delivery.turnId;
+            activeTurnId = turnId;
+            publish({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+            publish({ kind: 'turn-start', turnId, startedBy: 'host' });
+            publish({ kind: 'message-delta', turnId, channel: 'assistant', text: `answer-${send.mock.calls.length}` });
+            if (request.input.text !== 'wait for cancellation') {
+                publish({ kind: 'turn-complete', turnId });
+                activeTurnId = null;
+            }
+            return { status: 'admitted' as const };
+        });
+        const cancel = vi.fn(async ({ turnId }: Parameters<NonNullable<AgentSessionRuntime['cancel']>>[0]) => {
+            expect(turnId).toBe(activeTurnId);
+            publish({ kind: 'turn-cancelled', turnId, cause: 'user' });
+            activeTurnId = null;
+            return { status: 'requested' as const, turnId };
+        });
+        const disposeSession = vi.fn(async () => undefined);
+        const disposeSessionContext = vi.fn(async () => undefined);
+        const runtime: AgentRuntime = Object.freeze({
+            sessions: Object.freeze({
+                async open(request, context) {
+                    expect(request.sessionId).toBe('session-parent');
+                    expect(context.session.id).toBe('session-parent');
+                    expect(context.session.services.features.isEnabled('execution.runs')).toBe(true);
+                    await expect(
+                        context.workState.publisher('voice').publish({} as never),
+                    ).resolves.toMatchObject({ status: 'unavailable' });
+                    return {
+                        send,
+                        cancel,
+                        watch(listener) {
+                            nativeListeners.add(listener);
+                            return { dispose: () => nativeListeners.delete(listener) };
+                        },
+                        dispose: disposeSession,
+                    };
+                },
+            }),
+        });
+        const host = createNativeAgentSessionInteractionHostRuntime({
+            runtime,
+            lease: Object.freeze({
+                pluginId: 'acme.voice',
+                pluginVersion: '1.0.0',
+                agentId: 'acme.voice/agents/default',
+                localAgentId: 'default',
+                generation: 'generation-1',
+                hasPrimaryRuntime: true,
+                isCurrent: () => true,
+                retirementSignal: new AbortController().signal,
+                createAgentRuntimeSurfaceInvocationContext: createUnexpectedAgentRuntimeSurfaceInvocationContext,
+                async createRuntime() { return runtime; },
+            }),
+            options: Object.freeze({
+                cwd: '/repo',
+                runId: 'run-voice',
+                backendId: 'acme.voice/agents/default',
+                permissionMode: 'read_only',
+                start: Object.freeze({ intent: 'voice_agent' as const }),
+            }),
+            supportsResume: true,
+            createSessionContext: ({ services, signal }) =>
+                createVoiceSessionContextLease({
+                    services,
+                    signal,
+                    dispose: disposeSessionContext,
+                }),
+        });
+        const messages: AgentMessage[] = [];
+        host.subscribeMessages((message) => messages.push(message));
+
+        await host.provisionSession();
+        await host.sendPrompt('run-voice', 'first');
+        await host.waitForTurnCompletion?.();
+        await host.sendPrompt('run-voice', 'second');
+        await host.waitForTurnCompletion?.();
+
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(messages.filter((message) => message.type === 'model-output')).toEqual([
+            { type: 'model-output', textDelta: 'answer-1' },
+            { type: 'model-output', textDelta: 'answer-2' },
+        ]);
+        await host.sendPrompt('run-voice', 'wait for cancellation');
+        await host.cancel('run-voice');
+        await host.waitForTurnCompletion?.();
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(messages).toContainEqual({ type: 'status', status: 'stopped' });
+        await host.dispose();
+        expect(disposeSession).toHaveBeenCalledOnce();
+        expect(disposeSessionContext).toHaveBeenCalledOnce();
+    });
+
+    it('releases Session context custody once when Voice open fails and preserves that admission failure', async () => {
+        const openFailure = new Error('voice Session open failed');
+        const open = vi.fn(async () => {
+            throw openFailure;
+        });
+        const runtime: AgentRuntime = Object.freeze({
+            sessions: Object.freeze({ open }),
+        });
+        const disposeSessionContext = vi.fn(async () => undefined);
+        const createSessionContext = vi.fn(({
+            services,
+            signal,
+        }: Readonly<{
+            services: AgentSessionRuntimeContext['services'];
+            signal: AbortSignal;
+        }>) =>
+            createVoiceSessionContextLease({
+                services,
+                signal,
+                dispose: disposeSessionContext,
+            }));
+        const host = createNativeAgentSessionInteractionHostRuntime({
+            runtime,
+            lease: Object.freeze({
+                pluginId: 'acme.voice',
+                pluginVersion: '1.0.0',
+                agentId: 'acme.voice/agents/default',
+                localAgentId: 'default',
+                generation: 'generation-1',
+                hasPrimaryRuntime: true,
+                isCurrent: () => true,
+                retirementSignal: new AbortController().signal,
+                createAgentRuntimeSurfaceInvocationContext:
+                    createUnexpectedAgentRuntimeSurfaceInvocationContext,
+                async createRuntime() { return runtime; },
+            }),
+            options: Object.freeze({
+                cwd: '/repo',
+                runId: 'run-voice-open-failure',
+                backendId: 'acme.voice/agents/default',
+                permissionMode: 'read_only',
+                start: Object.freeze({ intent: 'voice_agent' as const }),
+            }),
+            supportsResume: true,
+            createSessionContext,
+        });
+
+        await expect(host.provisionSession()).rejects.toBe(openFailure);
+        await expect(host.provisionSession()).rejects.toBe(openFailure);
+        expect(open).toHaveBeenCalledOnce();
+        expect(createSessionContext).toHaveBeenCalledOnce();
+        expect(disposeSessionContext).toHaveBeenCalledOnce();
+
+        await host.dispose();
+        expect(disposeSessionContext).toHaveBeenCalledOnce();
+    });
+
     it('preserves the owning plugin and local id of a qualified execution profile', async () => {
         const opened: AgentExecutionRunRuntime = Object.freeze({
             async send() {
@@ -39,7 +285,10 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             },
             async dispose() {},
         });
-        const open = vi.fn(async (_request: AgentExecutionRunOpenRequest) => opened);
+        const open = vi.fn(async (
+            _request: AgentExecutionRunOpenRequest,
+            _context: AgentRuntimeContext,
+        ) => opened);
         const runtime: AgentRuntime = Object.freeze({
             executionRuns: Object.freeze({ open }),
         });
@@ -72,6 +321,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             supportsResume: false,
         });
 
+        const beforeAdmission = Date.now();
         await host.provisionSession();
         await host.sendPrompt('run-1', 'Audit this repository');
 
@@ -80,6 +330,8 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             pluginId: 'happier.review.deepsec',
             localId: 'repository-security-audit',
         });
+        expect(open.mock.calls[0]?.[1].invokedAtMs).toBeGreaterThanOrEqual(beforeAdmission);
+        expect(open.mock.calls[0]?.[1].invokedAtMs).toBeLessThanOrEqual(Date.now());
         await host.dispose();
     });
 
@@ -189,6 +441,11 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             model: {
                 id: 'gpt-5.1-codex',
                 name: 'GPT-5.1 Codex',
+            },
+            upstream: {
+                protocol: 'openai-responses',
+                normalizedUrl: 'https://api.openai.example/v1',
+                credential: 'apiKey',
             },
             materialization: {
                 v: 1 as const,
@@ -391,6 +648,67 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             detail: 'event echoed [REDACTED]',
         });
         await activeHost.dispose();
+    });
+
+    it('isolates a throwing host listener so terminal settlement and later listeners still complete', async () => {
+        const watchState: { publish?: (event: AgentExecutionRunEvent) => void } = {};
+        const disposeRuntime = vi.fn(async () => undefined);
+        const opened: AgentExecutionRunRuntime = Object.freeze({
+            async send() { return { status: 'admitted' as const }; },
+            async stop() { return { status: 'requested' as const }; },
+            watch(listener) {
+                watchState.publish = listener;
+                return { dispose: vi.fn() };
+            },
+            dispose: disposeRuntime,
+        });
+        const runtime: AgentRuntime = Object.freeze({
+            executionRuns: Object.freeze({ async open() { return opened; } }),
+        });
+        const host = createNativeAgentExecutionRunHostRuntime({
+            runtime,
+            lease: Object.freeze({
+                pluginId: 'acme.finite',
+                pluginVersion: '1.0.0',
+                agentId: 'acme.finite/agents/default',
+                localAgentId: 'default',
+                generation: 'generation-1',
+                hasPrimaryRuntime: true,
+                isCurrent: () => true,
+                retirementSignal: new AbortController().signal,
+                createAgentRuntimeSurfaceInvocationContext:
+                    createUnexpectedAgentRuntimeSurfaceInvocationContext,
+                async createRuntime() { return runtime; },
+            }),
+            options: Object.freeze({
+                cwd: '/repo',
+                runId: 'run-listener-isolation',
+                backendId: 'acme.finite/agents/default',
+                permissionMode: 'read_only',
+                start: Object.freeze({ profileId: 'delegate' }),
+            }),
+            supportsResume: false,
+        });
+        const messages: AgentMessage[] = [];
+        host.subscribeMessages((message) => {
+            if (message.type === 'status' && message.status === 'stopped') {
+                throw new Error('projection failed');
+            }
+        });
+        host.subscribeMessages((message) => messages.push(message));
+
+        await host.provisionSession({ initialPrompt: 'start' });
+        watchState.publish?.({
+            sequence: 1,
+            runId: 'run-listener-isolation',
+            emittedAtMs: 1,
+            kind: 'run-complete',
+        });
+        await host.waitForTurnCompletion?.();
+
+        expect(messages).toContainEqual({ type: 'status', status: 'stopped' });
+        await host.dispose();
+        expect(disposeRuntime).toHaveBeenCalledOnce();
     });
 
     it('disposes a plugin runtime that finishes opening after host disposal starts', async () => {

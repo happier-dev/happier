@@ -1367,6 +1367,20 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
   };
   const session: PublicAcpSessionRuntime = Object.freeze({
     ...(conversationRollback ? { conversationRollback } : {}),
+    runtimeCapabilities: {
+      localControl: null,
+      sessionCapabilities: {
+        sessionListing: 'supported',
+        sessionFork: {
+          conversation: 'supported',
+          fromMessage: options.definition?.history?.fork ? 'supported' : 'unsupported',
+          protocol: 'acp',
+        },
+        sessionRollback: {
+          conversation: conversationRollback ? 'supported' : 'unsupported',
+        },
+      },
+    },
     getProviderSessionId(): string | null {
       return providerSessionId;
     },

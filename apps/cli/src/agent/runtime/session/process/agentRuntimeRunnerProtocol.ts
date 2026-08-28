@@ -16,6 +16,8 @@ import {
   ComposerAttachmentResolveRequestV1Schema,
   ComposerAttachmentResolveResultV1Schema,
   ComposerContentHandleV1Schema,
+  ComposerInstanceIdSchema,
+  ComposerRefV1Schema,
   ComposerReferenceCandidateV1Schema,
   ComposerReferenceResolutionV1Schema,
   ConnectedServicesProviderStateSharingPolicyV1Schema,
@@ -56,6 +58,10 @@ const ComposerStagedMediaReleaseIntentV1Schema = z.object({
   handle: ComposerContentHandleV1Schema,
   executionTarget: SessionExecutionTargetV1Schema,
   owner: HostPluginContributionIdentityV1Schema,
+  claimant: z.object({
+    composer: asHostProtocolZod(ComposerRefV1Schema),
+    attachmentInstanceId: ComposerInstanceIdSchema,
+  }).strict(),
 }).strict();
 
 /**

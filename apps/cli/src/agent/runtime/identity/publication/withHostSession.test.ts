@@ -209,6 +209,51 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     });
   });
 
+  it('publishes live capability facts supplied by an external Agent Session runtime', async () => {
+    const runtimeCapabilities = {
+      sessionCapabilities: {
+        sessionFork: {
+          conversation: 'supported' as const,
+          fromMessage: 'unsupported' as const,
+        },
+      },
+    };
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'acme.agent',
+      opts: {},
+      config: {
+        createSessionRuntime: vi.fn(async () => ({
+          operations: createRuntimeTurnOperations(),
+          runtimeCapabilities,
+        })),
+      },
+    } as unknown as HostSessionRuntimePlan;
+
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: null,
+        runtimeCapabilities: {
+          backend: { sessions: { supported: true } },
+        },
+        runtimeFacets: null,
+      },
+    });
+    const created = await wrapped.config.createSessionRuntime?.({} as never);
+    const messages: unknown[] = [];
+    created?.operations.subscribeRuntimeEvents((message) => messages.push(message));
+
+    expect(messages).toContainEqual({
+      type: 'event',
+      name: 'runtime.capabilities',
+      payload: {
+        backend: { sessions: { supported: true } },
+        ...runtimeCapabilities,
+      },
+    });
+  });
+
   it('does not publish an Agent descriptor when opening the runtime fails', async () => {
     const updateMetadata = vi.fn(async () => undefined);
     const plan = {
@@ -241,7 +286,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     expect(updateMetadata).not.toHaveBeenCalled();
   });
 
-  it('publishes fallback identity before the first prompt and refreshes its lazy provider session id', async () => {
+  it('keeps the Agent-owned fallback descriptor opaque when generic Session identity changes', async () => {
     let providerSessionId: string | null = null;
     const runtime = createRuntimeTurnOperations({
       sendTurnPrompt: vi.fn(async () => {
@@ -313,24 +358,21 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     await created?.operations.sendTurnPrompt('hello');
     unsubscribe?.();
 
-    expect(messages).toContainEqual({
+    expect(messages).not.toContainEqual({
       type: 'event',
       name: 'runtime.descriptor',
-      payload: {
-        v: 1,
-        agentId: 'codex',
+      payload: expect.objectContaining({
         agent: expect.objectContaining({
-          backendMode: 'appServer',
           providerSessionId: 'vendor-session-1',
         }),
-      },
+      }),
     });
     expect(messages.filter((message) => (
       Boolean(message)
       && typeof message === 'object'
       && (message as Readonly<Record<string, unknown>>).type === 'event'
       && (message as Readonly<Record<string, unknown>>).name === 'runtime.descriptor'
-    ))).toHaveLength(2);
+    ))).toHaveLength(1);
   });
 
   it('does not overwrite an upstream-authoritative descriptor with fallback refreshes', async () => {
@@ -612,9 +654,11 @@ describe('external Agent native resume identity — composed host publication', 
   it('carries the native id from the public event to the daemon resume-id reader', async () => {
     const metadata = await runExternalAgentSession();
 
-    expect(metadata.runtimeDescriptorV1).toMatchObject({
-      agentId: 'acme',
-      agent: { providerSessionId: 'acme-native-1' },
+    expect(metadata.runtimeDescriptorV1).toMatchObject({ agentId: 'acme' });
+    expect(metadata.runtimeDescriptorV1.agent).not.toHaveProperty('providerSessionId');
+    expect(metadata.nativeResumeIdentityV1).toEqual({
+      v: 1,
+      vendorResumeId: 'acme-native-1',
     });
     expect(resolveVendorResumeIdFromSessionMetadata('acme' as never, metadata))
       .toBe('acme-native-1');

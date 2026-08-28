@@ -144,6 +144,7 @@ export const RunnerDaemonExternalSessionsAttachResultV1Schema = z.object({
 }).strict();
 const RunnerDaemonExternalSessionsReadAfterDiagnosticV1Schema = z.object({
     code: BoundedIdSchema,
+    severity: z.enum(['benign', 'required']),
     count: z.number().int().positive().safe(),
     positions: z.array(SafeNonNegativeIntegerSchema).max(200),
 }).strict();
@@ -163,6 +164,7 @@ export const RunnerDaemonExternalSessionsTranscriptResultV1Schema = z.union([
         items: z.array(RunnerDaemonExternalSessionTranscriptItemV1Schema).max(1_000),
         nextCursor: CursorSchema,
         boundary: BoundedTextSchema,
+        hasMore: z.boolean(),
         diagnostics: z.array(RunnerDaemonExternalSessionsReadAfterDiagnosticV1Schema).max(32).optional(),
     }).strict(),
     z.object({

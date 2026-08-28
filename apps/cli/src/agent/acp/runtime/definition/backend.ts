@@ -61,6 +61,9 @@ export function createAcpBackendFromDefinition(params: Readonly<{
         permissionHandler: params.permissionHandler,
       }),
       transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
+      ...(params.definition.modelConfigOptionId
+        ? { modelConfigOptionId: params.definition.modelConfigOptionId }
+        : {}),
       ...(authMethodId ? { authMethodId } : {}),
     }));
   };

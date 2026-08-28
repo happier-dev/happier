@@ -8,6 +8,7 @@ import type {
   SessionStateCapabilitiesV1,
 } from '@happier-dev/protocol';
 import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol';
 
 import {
   resolveBackendEngineAdapterResolution,
@@ -98,16 +99,32 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   ): Promise<CurrentCatalogAgentExecutionSurfaces | null> {
     const initialSnapshot = readAgentCatalogSnapshot();
     const backendId = resolveEngineBackendIdForCatalogAgent(initialSnapshot, agentId);
-    if (!backendId) return null;
+    const agentTarget = AgentExecutionTargetV1Schema.safeParse({
+      kind: 'agent',
+      identity: initialSnapshot.agentDefinitionsById.get(agentId)?.identity,
+    });
+    if (!backendId || !agentTarget.success) return null;
 
     const executionSurfaces = await this.resolveExecutionSurfaces(backendId);
-    const currentBackendId = resolveEngineBackendIdForCatalogAgent(
-      readAgentCatalogSnapshot(),
-      agentId,
-    );
-    if (currentBackendId !== backendId) return null;
+    const currentSnapshot = readAgentCatalogSnapshot();
+    const currentBackendId = resolveEngineBackendIdForCatalogAgent(currentSnapshot, agentId);
+    const currentAgentTarget = AgentExecutionTargetV1Schema.safeParse({
+      kind: 'agent',
+      identity: currentSnapshot.agentDefinitionsById.get(agentId)?.identity,
+    });
+    if (
+      currentBackendId !== backendId
+      || !currentAgentTarget.success
+      || currentAgentTarget.data.identity.pluginId !== agentTarget.data.identity.pluginId
+      || currentAgentTarget.data.identity.localId !== agentTarget.data.identity.localId
+    ) return null;
 
-    return Object.freeze({ agentId, backendId, executionSurfaces });
+    return Object.freeze({
+      agentId,
+      backendId,
+      agentTarget: agentTarget.data,
+      executionSurfaces,
+    });
   }
 
   async resolveOutboundTranscriptDispatchFacet(backendId?: string | null): Promise<Readonly<{

@@ -377,7 +377,6 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
                     return {
                         ...metadata,
                         sessionModesV1: sessionModes,
-                        acpSessionModesV1: sessionModes,
                     };
                 },
                 `[${params.provider}]`,
@@ -409,7 +408,7 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
                 params.session,
                 (metadata) => ({
                     ...metadata,
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         agentId: params.provider,
                         updatedAt: Date.now(),
@@ -461,7 +460,7 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
                 const now = Date.now();
                 const next: any = {
                     ...metadata,
-                    acpConfigOptionsV1: {
+                    sessionConfigOptionsV1: {
                         v: 1,
                         agentId: params.provider,
                         updatedAt: now,
@@ -470,7 +469,7 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
                 };
 
                 if (derivedModels) {
-                    next.acpSessionModelsV1 = {
+                    next.sessionModelsV1 = {
                         v: 1,
                         agentId: params.provider,
                         updatedAt: now,
@@ -506,7 +505,6 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
                     return {
                         ...metadata,
                         sessionModesV1: sessionModes,
-                        acpSessionModesV1: sessionModes,
                     };
                 },
                 `[${params.provider}]`,
@@ -523,11 +521,12 @@ export async function handleAcpRuntimeEventMessage(params: Readonly<{
             updateMetadataBestEffort(
                 params.session,
                 (metadata) => {
-                    const prev = (metadata as any).acpSessionModelsV1 as any;
+                    const prev = (metadata as any).sessionModelsV1
+                        ?? (metadata as any).acpSessionModelsV1;
                     const availableModels = Array.isArray(prev?.availableModels) ? prev.availableModels : [];
                     return {
                         ...metadata,
-                        acpSessionModelsV1: {
+                        sessionModelsV1: {
                             v: 1,
                             agentId: params.provider,
                             updatedAt: Date.now(),

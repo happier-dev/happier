@@ -319,7 +319,9 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             status: 200,
             data: {
                 disposition: 'dispatch',
-                publicationCorrelationId: 'a'.repeat(43),
+                publicationPlanId: 'p'.repeat(43),
+                entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: 'a'.repeat(43) }],
+                verdict: { publicationCorrelationId: 'v'.repeat(43) },
             },
         });
         const resolveAccountEncryptionMode = vi.fn(async () => 'plain' as const);
@@ -336,20 +338,33 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                 collisionScope: 'github:repository-1',
                 entryId: '42',
             },
+            subtarget: null,
         };
 
-        await expect(executor('reviews.comments.claimPublicationDispatch', {
-            commentId: 'comment-1',
+        const publicationPlan = {
             target,
-        })).resolves.toEqual({
+            baseRevision: 'base-1',
+            headRevision: 'head-1',
+            entries: [{
+                happierCommentId: 'comment-1',
+                expectedServerRevision: 1,
+                anchor: { kind: 'file' as const, filePath: 'src/a.ts' },
+                snapshot: { kind: 'too_large' as const, filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+                body: 'body',
+            }],
+            verdict: { kind: 'comment' as const, body: 'Summary' },
+        };
+        await expect(executor('reviews.comments.claimPublicationDispatch', publicationPlan)).resolves.toEqual({
             disposition: 'dispatch',
-            publicationCorrelationId: 'a'.repeat(43),
+            publicationPlanId: 'p'.repeat(43),
+            entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: 'a'.repeat(43) }],
+            verdict: { publicationCorrelationId: 'v'.repeat(43) },
         });
 
         expect(resolveAccountEncryptionMode).not.toHaveBeenCalled();
         expect(axiosPostMock).toHaveBeenCalledWith(
-            expect.stringMatching(/\/v1\/reviews\/comments\/comment-1\/publication\/claim$/),
-            { target },
+            expect.stringMatching(/\/v1\/reviews\/comments\/publication\/claim$/),
+            publicationPlan,
             expect.any(Object),
         );
     });

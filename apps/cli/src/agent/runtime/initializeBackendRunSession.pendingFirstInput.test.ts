@@ -80,7 +80,7 @@ describe('initializeBackendRunSession pending first input', () => {
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
   });
 
-  it('waits for the required daemon ACK before first-input admission', async () => {
+  it('durably admits first input before the daemon can acknowledge spawn success', async () => {
     vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
       text: 'Admit only after canonical auth.',
       localId: 'spawn-first-turn:daemon',
@@ -131,7 +131,7 @@ describe('initializeBackendRunSession pending first input', () => {
       metadata,
       requireDaemonAck: true,
     });
-    expect(events).toEqual(['ui-ready', 'daemon-ack', 'pending-committed']);
+    expect(events).toEqual(['ui-ready', 'pending-committed', 'daemon-ack']);
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
   });
 
@@ -153,6 +153,7 @@ describe('initializeBackendRunSession pending first input', () => {
       }),
     } as unknown as ApiSessionClient;
 
+    const reportSessionToDaemonIfRunningFn = vi.fn(async () => {});
     const result = await initializeBackendRunSession(
       {
         api: {
@@ -174,18 +175,20 @@ describe('initializeBackendRunSession pending first input', () => {
       },
       {
         primeAgentStateForUiFn: () => {},
-        reportSessionToDaemonIfRunningFn: async () => {},
+        reportSessionToDaemonIfRunningFn,
         persistTerminalAttachmentInfoIfNeededFn: async () => {},
         sendTerminalFallbackMessageIfNeededFn: () => {},
       },
     );
 
     expect(session.enqueueSessionUserMessage).not.toHaveBeenCalled();
+    expect(reportSessionToDaemonIfRunningFn).not.toHaveBeenCalled();
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeDefined();
     const commit = result.commitPendingFirstInputAfterRuntimeReady;
     if (!commit) throw new Error('expected retained pending-first-input commit');
     await expect(commit()).rejects.toBe(bridgeFailure);
     expect(session.enqueueSessionUserMessage).toHaveBeenCalledOnce();
+    expect(reportSessionToDaemonIfRunningFn).not.toHaveBeenCalled();
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeDefined();
   });
 
@@ -200,6 +203,7 @@ describe('initializeBackendRunSession pending first input', () => {
       sessionId: 'canonical-session',
       enqueueSessionUserMessage: vi.fn(async () => undefined),
     } as unknown as ApiSessionClient;
+    const reportSessionToDaemonIfRunningFn = vi.fn(async () => undefined);
 
     const result = await initializeBackendRunSession(
       {
@@ -222,7 +226,7 @@ describe('initializeBackendRunSession pending first input', () => {
       },
       {
         primeAgentStateForUiFn: () => {},
-        reportSessionToDaemonIfRunningFn: async () => {},
+        reportSessionToDaemonIfRunningFn,
         persistTerminalAttachmentInfoIfNeededFn: async () => {},
         sendTerminalFallbackMessageIfNeededFn: () => {},
       },
@@ -247,10 +251,11 @@ describe('initializeBackendRunSession pending first input', () => {
         },
       },
     });
+    expect(reportSessionToDaemonIfRunningFn).toHaveBeenCalledOnce();
     expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
   });
 
-  it('retains first-input custody when the required daemon ACK fails', async () => {
+  it('keeps durable first-input admission when the later daemon ACK fails', async () => {
     vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
       text: 'Keep until canonical auth exists.',
       localId: 'spawn-first-turn:daemon-ack-failure',
@@ -293,8 +298,8 @@ describe('initializeBackendRunSession pending first input', () => {
     )).rejects.toThrow('daemon readiness failed');
 
     expect(primeAgentStateForUiFn).toHaveBeenCalledOnce();
-    expect(session.enqueueSessionUserMessage).not.toHaveBeenCalled();
-    expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeDefined();
+    expect(session.enqueueSessionUserMessage).toHaveBeenCalledOnce();
+    expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
   });
 
   it('does not report an empty handoff or clear custody when Pending enqueue fails', async () => {

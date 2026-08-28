@@ -49,7 +49,7 @@ describe('createAcpRuntime (configOptions)', () => {
 
     expect(metadataUpdates.length).toBeGreaterThan(0);
     const metadata: Metadata = getMetadata();
-    expect(metadata.acpConfigOptionsV1).toMatchObject({
+    expect(metadata.sessionConfigOptionsV1).toMatchObject({
       v: 1,
       agentId: 'opencode',
       configOptions: [
@@ -57,7 +57,8 @@ describe('createAcpRuntime (configOptions)', () => {
         expect.objectContaining({ id: 'mode', type: 'select', currentValue: 'ask' }),
       ],
     });
-    expect(typeof metadata.acpConfigOptionsV1?.updatedAt).toBe('number');
+    expect(typeof metadata.sessionConfigOptionsV1?.updatedAt).toBe('number');
+    expect(metadata.acpConfigOptionsV1).toBeUndefined();
   });
 
   it('clears ACP configOptions metadata when the provider reports an empty list', async () => {
@@ -89,7 +90,7 @@ describe('createAcpRuntime (configOptions)', () => {
       },
     });
 
-    expect(getMetadata().acpConfigOptionsV1?.configOptions).toHaveLength(1);
+    expect(getMetadata().sessionConfigOptionsV1?.configOptions).toHaveLength(1);
 
     backend.emit({
       type: 'event',
@@ -99,7 +100,7 @@ describe('createAcpRuntime (configOptions)', () => {
       },
     });
 
-    expect(getMetadata().acpConfigOptionsV1?.configOptions).toEqual([]);
+    expect(getMetadata().sessionConfigOptionsV1?.configOptions).toEqual([]);
   });
 
   it('normalizes boolean values before delegating setSessionConfigOption', async () => {
@@ -152,7 +153,7 @@ describe('createAcpRuntime (configOptions)', () => {
     expect(lastSet).toEqual({ sessionId: 'sess_main', configId: 'mode', value: 'ask' });
   });
 
-  it('refreshes acpSessionModelsV1 when config_options_state model changes', async () => {
+  it('refreshes canonical sessionModelsV1 when config_options_state model changes', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, getMetadata } = createSessionClientWithMetadata({
       initialMetadata: createTestMetadata(),
@@ -209,9 +210,10 @@ describe('createAcpRuntime (configOptions)', () => {
       },
     });
 
-    expect(getMetadata().acpSessionModelsV1).toMatchObject({
+    expect(getMetadata().sessionModelsV1).toMatchObject({
       agentId: 'opencode',
       currentModelId: 'claude-4',
     });
+    expect(getMetadata().acpSessionModelsV1).toBeUndefined();
   });
 });

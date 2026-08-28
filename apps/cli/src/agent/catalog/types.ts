@@ -1,9 +1,9 @@
-import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type {
   BackendTargetRefV1,
   ConnectedServiceBindingsV1,
+  ConnectedAccountServiceKey,
   ConnectedAccountRequestAuthUseV1,
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
@@ -19,7 +19,6 @@ import type {
   SessionUsageLimitRecoveryBackoffPolicy,
   SessionUsageLimitRecoveryControlAdapter,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
-import type { Metadata } from '@/api/types';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import type { RuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
 
@@ -31,10 +30,15 @@ export type {
 import type { CatalogAgentId, CatalogAgentLookupId, VendorResumeSupportLevel } from '@/agent/catalog/ids';
 import type {
   AgentCliSessionCommandBuildInputV1,
+  AgentConnectedAccountEnvironmentUseV1,
+  AgentConnectedAccountFileEnvironmentUseV1,
+  AgentConnectedAccountSwitchContinuityV1,
   AgentConnectedAccountStateSharingDescriptorEntryV1,
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDescriptorV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentConnectedAccountResumeReachabilityInputV1,
+  AgentConnectedAccountResumeReachabilityResultV1,
   AgentDeferredStartupEligibilityInputV1,
   AgentExperimentalVendorResumeSupportInputV1,
   AgentRuntimeSurfaces,
@@ -43,7 +47,6 @@ import type {
   PreflightSessionControlsProbeAdapter,
   PreflightSessionControlsProbeKind,
 } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
-import type { ConnectedServicesMaterializer } from '@/daemon/connectedServices/materialization/materializer';
 import type {
   ConnectedServiceMaterializedHomeFreshness,
   ConnectedServiceMaterializedHomeRootResolver,
@@ -51,10 +54,6 @@ import type {
 import type { ConnectedServiceRefreshCoordinator } from '@/daemon/connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
-import type {
-  VerifyResumeReachableInput,
-  VerifyResumeReachableResult,
-} from '@/daemon/connectedServices/verifyResumeReachableTypes';
 import type {
   ConnectedServiceDaemonAuthBridgeRefreshRequest,
   ConnectedServiceDaemonAuthBridgeRefreshResult,
@@ -77,7 +76,6 @@ export type {
   CliAuthStatus,
   CliAuthStatusDraft,
 };
-export type { ConnectedServicesMaterializer };
 export type { ConnectedServiceMaterializedHomeFreshness };
 export type { ConnectedServiceProviderRuntimeAuthAdapter };
 export type { SessionUsageLimitRecoveryControlAdapter };
@@ -96,14 +94,6 @@ export type SessionHandoffAgentBundleRecordExtractor = (
   agentBundle: Readonly<Record<string, unknown>>,
 ) => readonly unknown[];
 
-export type ProviderRuntimeLocalHandoffMetadataBuilder = (params: Readonly<{
-  machineId: string | null;
-  workingDirectory: string | null;
-  transcriptStorage: string | null;
-  environmentVariables: Readonly<Record<string, string | undefined>> | null;
-  vendorResumeId: string;
-}>) => Partial<Pick<Metadata, 'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'>>;
-
 export type ConnectedServiceStateSharingDescriptorEntry =
   AgentConnectedAccountStateSharingDescriptorEntryV1;
 
@@ -120,30 +110,6 @@ export type ConnectedServiceStateSharingDynamicEntryPattern =
 export type ConnectedServiceStateSharingDescriptor =
   Readonly<{ providerId: CatalogAgentId }>
   & AgentConnectedAccountStateSharingDescriptorV1;
-
-export type ConnectedServicePredictiveSoftSwitchLiveSessionRequirement =
-  | Readonly<{ kind: 'none' }>
-  | Readonly<{
-      kind: 'shared_group_auth_surface';
-      serviceIds: ReadonlyArray<ConnectedServiceId>;
-      authEnvKey: string;
-      authEnvSubpath?: ReadonlyArray<string>;
-    }>;
-
-export type ConnectedServiceRuntimeAuthApplyCapability = Readonly<{
-  directLiveHotAuth:
-    | 'unsupported'
-    | Readonly<{
-        supportsInTurnApply: boolean;
-        requiresExactRuntimeIdentity: boolean;
-        refreshSelectionResync: 'required' | 'not_applicable';
-        authMode:
-          | Readonly<{ kind: 'external_token_injection'; surface: string }>
-          | Readonly<{ kind: 'managed_provider_session' }>
-          | Readonly<{ kind: 'api_key' }>
-          | Readonly<{ kind: 'provider_owned'; name: string }>;
-      }>;
-}>;
 
 export type LegacyConnectedServiceRuntimeAuthFailureSourceInput = Readonly<{
   reportedCredentialRevision: string | null;
@@ -167,21 +133,6 @@ export type LegacyConnectedServiceRuntimeAuthFailureSourceInput = Readonly<{
 export type LegacyConnectedServiceRuntimeAuthFailureSourceRevisionResolver = (
   input: LegacyConnectedServiceRuntimeAuthFailureSourceInput,
 ) => string | null;
-
-export type ConnectedServiceRecoveryCapabilities = Readonly<{
-  predictiveSoftSwitch: Readonly<{
-    mode: 'supported' | 'unsupported';
-    liveSessionRequirement?: ConnectedServicePredictiveSoftSwitchLiveSessionRequirement;
-  }>;
-  sameAccountFanoutStrategy?: 'provider_account_id' | 'shared_group_auth_surface' | 'none';
-  generationApplicationScope?:
-    | 'per_session_runtime'
-    | 'shared_group_auth_surface'
-    | 'request_time_auth'
-    | 'unsupported';
-  sharedGenerationApplicationServiceIds?: ReadonlyArray<ConnectedServiceId>;
-  runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability;
-}>;
 
 export type ConnectedServiceSwitchContinuityMode =
   | 'hot_apply'
@@ -231,16 +182,6 @@ export type ConnectedServiceSwitchContinuityParams = Readonly<{
   runtimeAuthSelection?: unknown;
 }>;
 
-export type ConnectedServicePersistedSessionMetadata = Readonly<Partial<{
-  piSessionFile: string;
-  codexBackendMode: string;
-  codexSessionId: string;
-}>>;
-
-export type ConnectedServicePersistedSessionCandidateParams = Readonly<{
-  metadata: ConnectedServicePersistedSessionMetadata;
-}>;
-
 export type ConnectedServiceDaemonAuthBridgeRefresh = (input: Readonly<{
   serviceId: ConnectedServiceId;
   request: ConnectedServiceDaemonAuthBridgeRefreshRequest;
@@ -271,7 +212,12 @@ export type AgentCatalogEntry = Readonly<{
   /** Host-private binding from this Agent CLI to one same-plugin declared system tool. */
   agentCliSystemTool?: Readonly<{ toolId: string }>;
   connectedServiceIds?: readonly ConnectedServiceId[];
+  /** Service identity derived only from the Agent's public connectedAccounts declaration. */
+  connectedAccountServiceIds?: readonly ConnectedAccountServiceKey[];
   connectedAccountRequestAuthUses?: readonly ConnectedAccountRequestAuthUseV1[];
+  connectedAccountFileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
+  connectedAccountEnvironmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];
+  connectedAccountSwitchContinuity?: AgentConnectedAccountSwitchContinuityV1;
   cliSubcommand: CatalogAgentLookupId;
   /**
    * Optional CLI subcommand handler for this agent.
@@ -288,7 +234,6 @@ export type AgentCatalogEntry = Readonly<{
   rootHelpDescription?: string;
   rootHelpDetail?: string;
   allowTmux?: boolean;
-  getCliCapabilityOverride?: () => Promise<Capability>;
   getCliDetect?: () => Promise<CliDetectSpec>;
   getCliAuthSpec?: () => Promise<CliAuthSpec>;
   /**
@@ -310,12 +255,6 @@ export type AgentCatalogEntry = Readonly<{
    * These are evaluated by the daemon before spawning a child process.
    */
   getDaemonSpawnHooks?: () => Promise<DaemonSpawnHooks>;
-  /**
-   * Optional provider-owned connected-services materializer used before spawning the backend.
-   *
-   * This keeps provider-specific auth file/env shaping out of the daemon core.
-   */
-  getConnectedServicesMaterializer?: () => Promise<ConnectedServicesMaterializer | null>;
   /**
    * Optional provider-owned freshness check for already-materialized auth homes.
    *
@@ -370,16 +309,6 @@ export type AgentCatalogEntry = Readonly<{
    */
   getConnectedServiceStateSharingDescriptor?: () => Promise<ConnectedServiceStateSharingDescriptor | null>;
   /**
-   * Optional provider-owned recovery capability descriptor (P7/F13 minimum surface).
-   *
-   * Declares whether predictive (soft-threshold) account switches are safe for this provider.
-   * Restart-only providers must declare `predictiveSoftSwitch: { mode: 'unsupported' }` so daemon
-   * recovery policy suppresses predictive switches via a declared contract instead of inferring
-   * support from runtime-auth adapter shape. Providers without a descriptor keep the legacy
-   * adapter inference.
-   */
-  getConnectedServiceRecoveryCapabilities?: () => Promise<ConnectedServiceRecoveryCapabilities | null>;
-  /**
    * Optional provider-owned predecessor-wire compatibility verifier.
    *
    * The daemon owns current runtime tuple authorization. Provider leaves own any
@@ -388,34 +317,15 @@ export type AgentCatalogEntry = Readonly<{
   resolveLegacyConnectedServiceRuntimeAuthFailureSourceRevision?:
     LegacyConnectedServiceRuntimeAuthFailureSourceRevisionResolver;
   /**
-   * Optional provider-owned continuity resolver for existing-session auth switches.
-   */
-  resolveConnectedServiceSwitchContinuity?: (
-    params: ConnectedServiceSwitchContinuityParams,
-  ) => Promise<ConnectedServiceSwitchContinuityResult>;
-  /**
-   * Optional provider-owned resume-reachability probe (K4).
+   * Optional Agent-owned resume-file correlation.
    *
-   * Resolved through the catalog so the "is the vendor session for `vendorResumeId` reachable from a
-   * source the switch will import / the target the vendor reads" decision stays in
-   * the provider-owned leaf instead of a central `switch(agentId)`.
-   *
-   * The signature is normalized across providers (single `VerifyResumeReachableInput`). Providers
-   * whose underlying probe takes a different shape (e.g. Claude's `{ vendorResumeId, processEnv }`)
-   * adapt to this normalized input inside their backend folder without changing behavior.
+   * The host owns roots, traversal, file reads, and resolved paths. The Agent
+   * interprets only bounded filename/native-session-id evidence supplied by the
+   * host lookup operation.
    */
   verifyResumeReachable?: (
-    input: VerifyResumeReachableInput,
-  ) => Promise<VerifyResumeReachableResult>;
-  /**
-   * Optional provider-owned persisted session-file resolver for connected-service resume continuity.
-   *
-   * Shared daemon code asks this catalog hook for a provider-specific file hint instead of branching on
-   * metadata fields such as PI's `piSessionFile` or Codex app-server rollout paths.
-   */
-  resolveConnectedServiceCandidatePersistedSessionFile?: (
-    input: ConnectedServicePersistedSessionCandidateParams,
-  ) => string | null;
+    input: AgentConnectedAccountResumeReachabilityInputV1,
+  ) => Promise<AgentConnectedAccountResumeReachabilityResultV1>;
   /**
    * Optional host-bound surfaces layered onto a built-in Agent runtime lease.
    *
@@ -456,7 +366,7 @@ export type AgentCatalogEntry = Readonly<{
    * Generic terminal hosts own the submit orchestration; providers own TUI-specific screen
    * evidence such as collapsed composer markers.
    */
-  getTerminalPromptSubmitVerificationPolicy?: () => Promise<TerminalPromptSubmitVerificationPolicy>;
+  getTerminalPromptSubmitVerificationPolicy?: () => Promise<TerminalPromptSubmitVerificationPolicy | null>;
   /**
    * Optional provider-owned handoff provider-bundle record extractor.
    *
@@ -464,13 +374,6 @@ export type AgentCatalogEntry = Readonly<{
    * extracts provider-specific transcript/export records.
    */
   getSessionHandoffAgentBundleRecordExtractor?: () => Promise<SessionHandoffAgentBundleRecordExtractor | null>;
-  /**
-   * Optional provider-owned runtime-local metadata builder for session handoff.
-   *
-   * Shared daemon handoff code owns export/runtime-local splitting; providers own
-   * provider-specific resume ids and external-session source metadata.
-   */
-  buildRuntimeLocalHandoffMetadata?: ProviderRuntimeLocalHandoffMetadataBuilder;
   /**
    * Optional Agent-owned derivation of this Agent's own session log for a vendor
    * resume id.
@@ -519,16 +422,6 @@ export type AgentCatalogEntry = Readonly<{
     probeKind: PreflightSessionControlsProbeKind;
     accountSettings?: Readonly<Record<string, unknown>> | null;
   }>) => string | null;
-  /**
-   * Optional provider-owned backend options for catalog ACP model probes.
-   *
-   * Use this when starting the probe backend itself depends on account settings or environment
-   * policy. Keep provider-specific option shaping in the provider catalog entry.
-   */
-  resolveModelsProbeBackendOptions?: (params: Readonly<{
-    backendTarget?: BackendTargetRefV1;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
-  }>) => Readonly<Record<string, unknown>> | null;
   /**
    * Optional provider-owned adapter for probing dynamic session controls (models/modes/config options)
    * without starting a full ACP session.

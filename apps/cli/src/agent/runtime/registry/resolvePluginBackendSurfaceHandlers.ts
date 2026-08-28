@@ -28,7 +28,7 @@ function appendPluginDiagnostics(
 }
 
 /**
- * Projects registry diagnostics for an external Agent runtime.
+ * Projects registry diagnostics for an Agent runtime.
  *
  * Executable surfaces are owned by the activated Agent runtime and materialized
  * through backendEngineSurfaceBindings. The retired manifest/static-handler

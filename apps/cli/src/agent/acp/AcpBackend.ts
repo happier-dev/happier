@@ -324,6 +324,9 @@ export interface AcpBackendOptions {
   /** Whether the ACP agent should advertise its parameterized model picker. */
   parameterizedModelPicker?: boolean;
 
+  /** Declarative ACP config-option id used instead of legacy session/set_model. */
+  modelConfigOptionId?: string;
+
   /** Provider-owned pure augmentation of normalized ACP model metadata. */
   projectModel?: SessionModelProjector;
 
@@ -2354,6 +2357,15 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
     const normalizedModelId = readNonBlankOpaqueIdentifier(modelId) ?? '';
     if (!normalizedModelId) {
       throw new Error('Model ID is required');
+    }
+
+    if (this.options.modelConfigOptionId) {
+      await this.setSessionConfigOption(
+        normalizedSessionId,
+        this.options.modelConfigOptionId,
+        normalizedModelId,
+      );
+      return;
     }
 
     const response = await this.connection.peer.setSessionModelLegacy({

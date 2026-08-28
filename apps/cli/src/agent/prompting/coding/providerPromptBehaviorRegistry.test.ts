@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -111,17 +111,15 @@ describe('resolveCodingProviderBehaviorBlocks', () => {
   });
 
   it('does not carry prompt behavior or resume-checklist policy through the private runtime overlay', () => {
-    const runtimeContributionSource = readFileSync(
-      fileURLToPath(new URL('../../../plugins/projection/registry/agentRuntimeContribution.ts', import.meta.url)),
-      'utf8',
+    const runtimeContributionPath = fileURLToPath(
+      new URL('../../../plugins/projection/registry/agentRuntimeContribution.ts', import.meta.url),
     );
     const catalogHooksSource = readFileSync(
       fileURLToPath(new URL('../../../plugins/projection/registry/agentCatalogEntryHooks.ts', import.meta.url)),
       'utf8',
     );
 
-    expect(runtimeContributionSource).not.toMatch(/\bcodingPromptBehavior\?:/u);
-    expect(runtimeContributionSource).not.toMatch(/\bchecklists\?:/u);
+    expect(existsSync(runtimeContributionPath)).toBe(false);
     expect(catalogHooksSource).not.toContain('params.contribution.codingPromptBehavior');
     expect(catalogHooksSource).not.toContain('params.contribution.checklists');
   });

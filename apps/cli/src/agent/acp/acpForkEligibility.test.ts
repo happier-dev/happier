@@ -1,57 +1,57 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('@happier-dev/agents', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
-  const shellBridgeAcpAgent = {
-    ...actual.AGENTS_CORE.kiro,
-    id: 'shellBridgeAcp',
-    cliSubcommand: 'shellBridgeAcp',
-    tools: {
-      ...actual.AGENTS_CORE.kiro.tools,
-      delivery: 'shell_bridge',
-    },
-  } as const;
-  const nativeMcpGeminiAgent = {
-    ...actual.AGENTS_CORE.gemini,
-    tools: {
-      ...actual.AGENTS_CORE.gemini.tools,
-      delivery: 'native_mcp',
-      support: 'supported',
-    },
-  } as const;
-
-  return {
-    ...actual,
-    AGENTS_CORE: {
-      ...actual.AGENTS_CORE,
-      gemini: nativeMcpGeminiAgent,
-      shellBridgeAcp: shellBridgeAcpAgent,
-    } as unknown as typeof actual.AGENTS_CORE,
-  };
-});
+import { describe, expect, it } from 'vitest';
 
 import { isAcpForkEligibleForAgent } from './acpForkEligibility';
 
 describe('isAcpForkEligibleForAgent', () => {
-  it('treats catalog-declared shell-bridge providers as ACP eligible without a hardcoded provider list', () => {
+  it('uses the same published ACP fork strategy for an external Agent', () => {
     expect(
       isAcpForkEligibleForAgent({
-        agentId: 'shellBridgeAcp',
-        metadata: {},
+        agentId: 'externalAcp',
+        metadata: {
+          agentRuntimeCapabilitiesV1: {
+            sessionCapabilities: {
+              sessionFork: { protocol: 'acp' },
+            },
+          },
+        },
       }),
     ).toBe(true);
   });
 
-  it('keeps Gemini ACP fork eligible when its tool delivery is native MCP', () => {
+  it('uses the same published ACP fork strategy for a bundled Agent', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'gemini',
-        metadata: {},
+        metadata: {
+          agentRuntimeCapabilitiesV1: {
+            sessionCapabilities: {
+              sessionFork: { protocol: 'acp' },
+            },
+          },
+        },
       }),
     ).toBe(true);
   });
 
-  it('keeps Pi ACP fork eligible when its tool delivery is a native extension', () => {
+  it('rejects a published strategy when the current descriptor belongs to another Agent', () => {
+    expect(isAcpForkEligibleForAgent({
+      agentId: 'externalAcp',
+      metadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'different-agent',
+          agent: {},
+        },
+        agentRuntimeCapabilitiesV1: {
+          sessionCapabilities: {
+            sessionFork: { protocol: 'acp' },
+          },
+        },
+      },
+    })).toBe(false);
+  });
+
+  it('does not infer ACP fork from a bundled Agent id or tool-delivery convention', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'pi',
@@ -60,7 +60,7 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(true);
   });
 
-  it('treats canonical codex runtime metadata as ACP eligibility for codex', () => {
+  it('keeps the provider-owned current runtime descriptor opaque', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'codex',
@@ -73,7 +73,7 @@ describe('isAcpForkEligibleForAgent', () => {
           codexSessionId: 'codex_parent',
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('preserves legacy codexRuntimeDescriptorV1 ACP compatibility for codex', () => {
@@ -124,7 +124,7 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(true);
   });
 
-  it('prefers canonical runtimeDescriptorV1 over stale legacy ACP breadcrumbs when evaluating codex eligibility', () => {
+  it('fails closed when a current runtimeDescriptorV1 is accompanied by stale legacy ACP breadcrumbs', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'codex',
@@ -133,7 +133,7 @@ describe('isAcpForkEligibleForAgent', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'codex',
-            provider: { backendMode: 'appServer', providerSessionId: 'codex_parent' },
+            agent: { backendMode: 'acp', providerSessionId: 'codex_parent' },
           },
           agentRuntimeDescriptorV1: {
             v: 1,
@@ -158,21 +158,21 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(true);
   });
 
-  it('falls back to legacy ACP breadcrumbs when runtime metadata omits backendMode', () => {
+  it('does not let legacy breadcrumbs override a current opaque runtime descriptor', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'opencode',
         metadata: {
           acpTransportV1: { v: 1, provider: 'opencode' },
-          agentRuntimeDescriptorV1: {
+          runtimeDescriptorV1: {
             v: 1,
             agentId: 'opencode',
-            provider: { providerSessionId: 'opencode_parent' },
+            agent: { providerSessionId: 'opencode_parent' },
           },
           opencodeBackendMode: 'server',
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('does not treat acpTransportV1 from a different provider as eligible', () => {

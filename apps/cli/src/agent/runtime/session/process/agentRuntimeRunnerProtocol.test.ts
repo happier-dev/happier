@@ -333,6 +333,10 @@ describe('Runner Agent protocol', () => {
         handle,
         executionTarget: handle.executionTarget,
         owner: handle.owner,
+        claimant: {
+          composer: { kind: 'session', sessionId: 'session-1' },
+          attachmentInstanceId: 'attachment-1',
+        },
       }],
       createdWorkspaceRelativePaths: [
         '.happier/uploads/messages/session-1/local-1/review.png',

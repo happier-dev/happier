@@ -17,7 +17,10 @@ import {
 import type {
     ExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { ResolvedCliEngineRegistry } from '@/agent/runtime/registry/engineRegistryTypes';
+import type {
+    NativeAgentSessionInteractionHostBinding,
+    ResolvedCliEngineRegistry,
+} from '@/agent/runtime/registry/engineRegistryTypes';
 import {
     buildExecutionRunRuntimeIdentityPublication,
     withExecutionRunRuntimeIdentityPublication,
@@ -138,6 +141,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     happyHomeDir?: string | null;
     engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+    sessionInteractionHost?: NativeAgentSessionInteractionHostBinding;
     onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
@@ -315,6 +319,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 accountSettings: opts.accountSettings ?? null,
                 start: opts.start ?? null,
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
+                ...(opts.sessionInteractionHost ? { sessionInteractionHost: opts.sessionInteractionHost } : {}),
                 ...(Object.keys(isolationEnv).length > 0
                     || (providerLaunch?.unsetEnvKeys.length ?? 0) > 0
                     ? {
@@ -402,6 +407,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     happyHomeDir?: string | null;
     engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+    sessionInteractionHost?: NativeAgentSessionInteractionHostBinding;
     onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
@@ -461,6 +467,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
             happyHomeDir: opts.happyHomeDir ?? null,
             ...(opts.engineRegistry ? { engineRegistry: opts.engineRegistry } : {}),
             parentSessionStateTarget: opts.parentSessionStateTarget ?? null,
+            ...(opts.sessionInteractionHost ? { sessionInteractionHost: opts.sessionInteractionHost } : {}),
             ...(opts.onConnectedServicesRegistration
                 ? { onConnectedServicesRegistration: opts.onConnectedServicesRegistration }
                 : {}),

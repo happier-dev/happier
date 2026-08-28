@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import { createLazyExecutionRunHostRuntime } from './lazy';
 
 describe('createLazyExecutionRunHostRuntime', () => {
@@ -106,6 +107,34 @@ describe('createLazyExecutionRunHostRuntime', () => {
 
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles disposal without awaiting unresolved provisioning and disposes a late runtime', async () => {
+    let resolveRuntime!: (runtime: ExecutionRunHostRuntime) => void;
+    const runtimePromise = new Promise<ExecutionRunHostRuntime>((resolve) => {
+      resolveRuntime = resolve;
+    });
+    const lateDispose = vi.fn(async () => {});
+    const runtime = createLazyExecutionRunHostRuntime({
+      resolveRuntime: async () => await runtimePromise,
+    });
+
+    const provisioning = runtime.provisionSession();
+    const disposed = runtime.dispose();
+
+    await expect(disposed).resolves.toBeUndefined();
+
+    resolveRuntime({
+      readResumeSupport: async () => false,
+      provisionSession: async () => ({ sessionId: 'late-session' }),
+      sendPrompt: async () => {},
+      cancel: async () => {},
+      subscribeMessages: vi.fn(() => () => {}),
+      dispose: lateDispose,
+    });
+
+    await expect(provisioning).rejects.toThrow('disposed');
+    await vi.waitFor(() => expect(lateDispose).toHaveBeenCalledTimes(1));
   });
 
   it('does not resolve the lazy runtime for a permission response before session start', async () => {

@@ -1,4 +1,8 @@
-import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
+import {
+  execFileWithDeadline,
+  isPidPresent,
+  probeProcessGroupLiveness,
+} from '@happier-dev/cli-common/process';
 import psList from 'ps-list';
 
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
@@ -7,7 +11,11 @@ const DESCENDANT_DISCOVERY_TIMEOUT_MS = 150;
 const DESCENDANT_DISCOVERY_INTERVAL_MS = 25;
 const DIRECT_CHILD_COMMAND_TIMEOUT_MS = 500;
 
-type ProcessTreeRoot = Readonly<{ pid?: number }>;
+type ProcessTreeRoot = Readonly<{
+  pid?: number;
+  exitCode?: number | null;
+  signalCode?: NodeJS.Signals | null;
+}>;
 
 async function readDescendantPids(rootPid: number, timeoutMs: number): Promise<number[] | null> {
   const timedOut = Symbol('descendant-discovery-timeout');
@@ -104,17 +112,6 @@ async function bestEffortReadDirectChildPids(parentPid: number): Promise<number[
   return Array.from(new Set(childPids));
 }
 
-function hasProcessGroupForPid(pid: number): boolean {
-  if (process.platform === 'win32') return false;
-
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function bestEffortKillProcessGroup(groupLeaderPid: number, signal: NodeJS.Signals): void {
   if (process.platform === 'win32') return;
 
@@ -133,6 +130,22 @@ async function waitForAllGone(pids: number[], timeoutMs: number): Promise<void> 
   }
 }
 
+async function waitForProcessGroupGone(groupLeaderPid: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (probeProcessGroupLiveness(groupLeaderPid) === 'absent') return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return probeProcessGroupLiveness(groupLeaderPid) === 'absent';
+}
+
+function terminationIncomplete(): Error {
+  return Object.assign(
+    new Error('Process-tree termination could not be verified'),
+    { code: 'plugin_exec_termination_incomplete' },
+  );
+}
+
 export async function killProcessTree(
   proc: ProcessTreeRoot,
   opts?: {
@@ -144,7 +157,18 @@ export async function killProcessTree(
   if (!pid) return;
 
   const graceMs = Math.max(1, opts?.graceMs ?? 1000);
-  const shouldSignalProcessGroup = hasProcessGroupForPid(pid);
+
+  if (
+    (proc.exitCode !== null && proc.exitCode !== undefined)
+    || (proc.signalCode !== null && proc.signalCode !== undefined)
+  ) {
+    // The original root is known terminal. A live process at the same PID is
+    // therefore a replacement, and its same-number process group must never
+    // inherit cleanup custody from the retired root.
+    if (isPidPresent(pid)) throw terminationIncomplete();
+  }
+  const shouldSignalProcessGroup = process.platform !== 'win32'
+    && probeProcessGroupLiveness(pid) !== 'absent';
 
   // A detached POSIX child is its own process-group leader. Signal that group first so
   // late-forked descendants in the same group cannot escape the initial psList snapshot.
@@ -195,6 +219,9 @@ export async function killProcessTree(
     bestEffortKillProcessGroup(pid, 'SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, Math.min(100, graceMs)));
     bestEffortKillProcessGroup(pid, 'SIGKILL');
+    if (!await waitForProcessGroupGone(pid, Math.min(250, graceMs))) {
+      throw terminationIncomplete();
+    }
   }
 
   if (remaining.length === 0) return;
@@ -202,4 +229,7 @@ export async function killProcessTree(
   for (const targetPid of remaining) await bestEffortSignalDirectChildren(targetPid, 'SIGKILL');
   for (const targetPid of remaining) bestEffortKillPid(targetPid, 'SIGKILL');
   await waitForAllGone(remaining, Math.min(250, graceMs));
+  if (remaining.some((targetPid) => isPidPresent(targetPid))) {
+    throw terminationIncomplete();
+  }
 }

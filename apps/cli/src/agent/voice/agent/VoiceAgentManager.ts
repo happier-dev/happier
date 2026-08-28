@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   extractVoiceActionsFromAssistantText,
   buildBackendTargetKeyV2,
   readBackendTargetRefV2,
+  type BackendTargetRefV1,
   type ProviderBoundModelRef,
   type ExecutionRunResumeHandle,
   type VoiceAssistantAction,
@@ -59,10 +61,10 @@ function areVoiceModelSelectionsEqual(
 
 function assertVoiceModelSelectionMatches(
   selection: ProviderBoundModelRef | undefined,
-  input: Readonly<{ agentId: string; modelId: string; role: 'chat' | 'commit' }>,
+  input: Readonly<{ backendTarget: BackendTargetRefV1; modelId: string; role: 'chat' | 'commit' }>,
 ): void {
   if (!selection) return;
-  const targetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: input.agentId });
+  const targetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
   if (selection.agentTargetKey !== targetKey || selection.modelId !== input.modelId) {
     throw new VoiceAgentError(
       'VOICE_AGENT_START_FAILED',
@@ -164,7 +166,8 @@ export class VoiceAgentManager {
     let replacementUnsubscribe: (() => void) | null = null;
     try {
       replacementBackend = voiceAgent.createRuntime({
-        agentId: voiceAgent.agentId,
+        backendTarget: voiceAgent.backendTarget,
+        backendId: voiceAgent.backendId,
         modelId: voiceAgent.chatModelId,
         ...(voiceAgent.chatModelSelection ? { modelSelection: voiceAgent.chatModelSelection } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
@@ -253,14 +256,14 @@ export class VoiceAgentManager {
     if (voiceAgent.commitBackend && voiceAgent.commitSessionId) {
       return {
         kind: 'voice_agent_sessions.v1',
-        backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: voiceAgent.agentId }),
+        backendTarget: readBackendTargetRefV2(voiceAgent.backendTarget),
         chatProviderSessionId: voiceAgent.chatSessionId,
         commitProviderSessionId: voiceAgent.commitSessionId,
       };
     }
     return {
       kind: 'provider_session.v1',
-      backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: voiceAgent.agentId }),
+      backendTarget: readBackendTargetRefV2(voiceAgent.backendTarget),
       providerSessionId: voiceAgent.chatSessionId,
     };
   }
@@ -273,7 +276,8 @@ export class VoiceAgentManager {
     let commitBackend: ExecutionRunHostRuntime | null = null;
     try {
       commitBackend = voiceAgent.createRuntime({
-        agentId: voiceAgent.agentId,
+        backendTarget: voiceAgent.backendTarget,
+        backendId: voiceAgent.backendId,
         modelId: voiceAgent.commitModelId,
         ...(voiceAgent.commitModelSelection ? { modelSelection: voiceAgent.commitModelSelection } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
@@ -316,12 +320,12 @@ export class VoiceAgentManager {
       throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Manager is disposed');
     }
     assertVoiceModelSelectionMatches(params.chatModelSelection, {
-      agentId: params.agentId,
+      backendTarget: params.backendTarget,
       modelId: params.chatModelId,
       role: 'chat',
     });
     assertVoiceModelSelectionMatches(params.commitModelSelection, {
-      agentId: params.agentId,
+      backendTarget: params.backendTarget,
       modelId: params.commitModelId,
       role: 'commit',
     });
@@ -346,6 +350,7 @@ export class VoiceAgentManager {
       sessionId: params.contextSessionId ?? null,
     });
     const createRuntime = options?.createRuntime ?? this.createRuntime;
+    const backendId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
 
     let chatBackendForCleanup: ExecutionRunHostRuntime | undefined;
     try {
@@ -362,7 +367,8 @@ export class VoiceAgentManager {
       })();
 
       const chatBackend = (chatBackendForCleanup = createRuntime({
-        agentId: params.agentId,
+        backendTarget: params.backendTarget,
+        backendId,
         modelId: params.chatModelId,
         ...(params.chatModelSelection ? { modelSelection: params.chatModelSelection } : {}),
         ...(params.sessionConfigOptionOverrides
@@ -392,7 +398,8 @@ export class VoiceAgentManager {
 
       const instance: VoiceAgentInstance = {
         id: voiceAgentId,
-        agentId: params.agentId,
+        backendTarget: params.backendTarget,
+        backendId,
         createRuntime,
         chatBackend,
         chatSessionId,

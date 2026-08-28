@@ -2096,6 +2096,54 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     });
   });
 
+  it('keeps an external configured Agent target across voice runtime creation and resume', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const externalTarget = { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' } as const;
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: (opts: TestRuntimeFactoryInput) => {
+        seen.push(opts as Record<string, unknown>);
+        return createPromptEchoResumeRuntime();
+      },
+      sendAcp: async () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: externalTarget,
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+    });
+
+    expect(seen[0]).toMatchObject({
+      backendId: 'external-voice-agent',
+      backendTarget: externalTarget,
+      start: { intent: 'voice_agent' },
+    });
+    expect(manager.get(started.runId)?.resumeHandle?.backendTarget).toMatchObject({
+      kind: 'backend',
+      backendId: 'external-voice-agent',
+      configuredBackendId: 'external-voice-agent',
+      sourceKind: 'configured',
+    });
+
+    await manager.stop(started.runId);
+    await expect(manager.ensure(started.runId, { resume: true })).resolves.toEqual({ ok: true });
+    expect(seen.at(-1)).toMatchObject({
+      backendId: 'external-voice-agent',
+      backendTarget: externalTarget,
+      start: { intent: 'voice_agent' },
+    });
+    await manager.dispose();
+  });
+
   it('does not force literal default model ids for voice_agent runs when start params omit them', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const manager = createExecutionRunManager({

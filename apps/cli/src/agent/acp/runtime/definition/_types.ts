@@ -2,8 +2,6 @@ import type {
   SessionPermissionFollowUpPromptIntentV1,
   SessionPermissionPersistAllowRuleV1,
 } from '@happier-dev/agents';
-import type { AcpBackendAuthConfigV1 } from '@happier-dev/protocol';
-
 export type HostAcpMcpInputPolicy = Readonly<{
   policy: 'pass_through' | 'drop';
 }>;
@@ -83,7 +81,6 @@ export type HostAcpCapabilityFlags = Readonly<{
 }>;
 
 export type HostAcpAuthSpec = Readonly<{
-  config?: AcpBackendAuthConfigV1;
   methodId?: string;
 }>;
 
@@ -244,6 +241,7 @@ export type AcpRuntimeDefinition = Readonly<{
   permissionModeArgv?: HostAcpPermissionModeArgvSpec;
   sessionIdHeaderName?: string;
   toolNameInference?: HostAcpToolNameInference;
+  modelConfigOptionId?: string;
   stderrRules?: HostAcpStderrRules;
   permissionOptionSelection?: HostAcpPermissionOptionSelection;
   messageMeta?: HostAcpMessageMetaHooks;
@@ -275,6 +273,7 @@ export type AcpRuntimeDefinitionInit = Readonly<{
   permissionModeArgv?: HostAcpPermissionModeArgvSpec;
   sessionIdHeaderName?: string;
   toolNameInference?: HostAcpToolNameInference;
+  modelConfigOptionId?: string;
   stderrRules?: HostAcpStderrRules;
   permissionOptionSelection?: HostAcpPermissionOptionSelection;
   messageMeta?: HostAcpMessageMetaHooks;

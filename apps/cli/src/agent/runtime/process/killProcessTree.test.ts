@@ -50,19 +50,21 @@ describe('killProcessTree', () => {
     const child = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
       stdio: 'ignore',
     });
-    const terminateWindowsTree = vi.fn(async () => {});
+    const terminateWindowsTree = vi.fn(async ({ pid }: { pid: number }) => {
+      process.kill(-pid, 'SIGKILL');
+    });
 
     try {
       Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
-      await killProcessTree(child, { graceMs: 25, terminateWindowsTree });
+      await killProcessTree(child, {
+        graceMs: 25,
+        terminateWindowsTree,
+      });
       expect(terminateWindowsTree).toHaveBeenNthCalledWith(1, {
         pid: child.pid,
         force: false,
       });
-      expect(terminateWindowsTree).toHaveBeenNthCalledWith(2, {
-        pid: child.pid,
-        force: true,
-      });
+      expect(terminateWindowsTree).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(process, 'platform', platformDescriptor);
       if (child.pid) {
@@ -79,6 +81,18 @@ describe('killProcessTree', () => {
       }
     }
   }, 20_000);
+
+  it('never signals a replacement PID/group after the original POSIX root exited', async () => {
+    if (process.platform === 'win32') return;
+
+    await expect(killProcessTree({
+      pid: process.pid,
+      exitCode: 0,
+      signalCode: null,
+    }, { graceMs: 25 })).rejects.toMatchObject({
+      code: 'plugin_exec_termination_incomplete',
+    });
+  });
 
   it('kills the root process in the Vitest process sandbox (posix)', async () => {
     if (process.platform === 'win32') return;
@@ -271,4 +285,5 @@ describe('killProcessTree', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   }, 20_000);
+
 });

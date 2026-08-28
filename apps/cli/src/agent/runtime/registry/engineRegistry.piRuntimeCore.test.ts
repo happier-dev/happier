@@ -194,12 +194,6 @@ describe('engineRegistry (pi runtimeCore)', () => {
           }),
         } satisfies HostSessionRuntimeFactoryParams;
         const created = await plan.config.createSessionRuntime!(runtimeParams);
-        const nativeControls = created.nativeRuntime as typeof created.nativeRuntime & Readonly<{
-          checkUsageLimitRecoveryNow(request: Readonly<{
-            sessionId: string;
-            resumePromptMode?: 'standard' | 'off' | 'custom';
-          }>): Promise<unknown>;
-        }>;
         const runtimeEvents: unknown[] = [];
         const unsubscribe = created.operations.subscribeRuntimeEvents((event) => runtimeEvents.push(event));
 
@@ -207,13 +201,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
           await expect(readFileEventually(capturePath, { timeoutMs: 5_000 })).resolves.toContain(
             '"commands":["set_model"]',
           );
-          await expect(nativeControls.checkUsageLimitRecoveryNow({
-            sessionId: 'untrusted-session-id',
-            resumePromptMode: 'custom',
-          })).resolves.toEqual({
-            status: 'waiting',
-            retryAfterMs: 600_000,
-          });
+          expect(created.nativeRuntime).not.toHaveProperty('checkUsageLimitRecoveryNow');
           await expect(created.operations.sendTurnPrompt('hello', {
             localId: 'pi-input-1',
             userMessageSeq: 1,

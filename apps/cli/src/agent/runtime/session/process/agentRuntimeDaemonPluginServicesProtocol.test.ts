@@ -456,15 +456,13 @@ describe('runner daemon PluginServices v1 protocol', () => {
         // not by this transport schema. These literals restate that owner's
         // current decision for the two families the runner forwards, so a
         // silent widening or narrowing of the Plugin surface fails here.
-        for (const actionId of ['voice_agent.start']) {
-            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
-                kind: 'plugin_actions.execute_v1',
-                requestId: `request-action-${actionId}`,
-                invocationId: 'invocation-1',
-                actionId,
-                input: { t: 'object', value: {} },
-            }).success, actionId).toBe(true);
-        }
+        expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+            kind: 'plugin_actions.execute_v1',
+            requestId: 'request-action-voice_agent.start',
+            invocationId: 'invocation-1',
+            actionId: 'voice_agent.start',
+            input: { t: 'object', value: {} },
+        }).success).toBe(true);
         for (const actionId of [
             'sessions.subagents.list',
             'sessions.subagents.get',
@@ -748,7 +746,26 @@ describe('runner daemon PluginServices v1 protocol', () => {
                         value: {
                             runId: { t: 'string', value: 'run-1' },
                             automationId: { t: 'string', value: 'automation-1' },
-                            originKind: { t: 'string', value: 'scheduled' },
+                            runCause: {
+                                t: 'object',
+                                value: {
+                                    kind: { t: 'string', value: 'trigger' },
+                                    triggerId: { t: 'string', value: 'trigger-schedule-1' },
+                                    triggerRevision: { t: 'number', value: 1 },
+                                    triggerKind: { t: 'string', value: 'schedule' },
+                                    occurrenceKey: {
+                                        t: 'string',
+                                        value: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                                    },
+                                    occurredAt: { t: 'number', value: 1 },
+                                    evidence: {
+                                        t: 'object',
+                                        value: {
+                                            scheduledFor: { t: 'number', value: 1 },
+                                        },
+                                    },
+                                },
+                            },
                             previousState: { t: 'null' },
                             currentState: { t: 'string', value: 'queued' },
                             transitionedAt: { t: 'number', value: 1 },

@@ -1,7 +1,7 @@
-import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type {
   AcpConfigOptionOverridesV1,
+  BackendTargetRefV1,
   ProviderBoundModelRef,
   VoiceAgentOutputEventV1,
   VoiceAssistantAction,
@@ -18,7 +18,7 @@ export type VoiceAgentStartParams = Readonly<{
    * random id is generated.
    */
   voiceAgentId?: string;
-  agentId: AgentId;
+  backendTarget: BackendTargetRefV1;
   profileId?: string | null;
   contextSessionId?: string | null;
   chatModelId: string;
@@ -97,7 +97,8 @@ export class VoiceAgentError extends Error {
 }
 
 export type BackendFactory = (opts: {
-  agentId: AgentId;
+  backendTarget: BackendTargetRefV1;
+  backendId: string;
   modelId: string;
   modelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -132,7 +133,8 @@ export type VoiceAgentTurnStreamState = {
 
 export type VoiceAgentInstance = {
   id: string;
-  agentId: AgentId;
+  backendTarget: BackendTargetRefV1;
+  backendId: string;
   createRuntime: BackendFactory;
   chatBackend: ExecutionRunHostRuntime;
   chatSessionId: string;

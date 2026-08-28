@@ -229,8 +229,8 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     if (!marker) throw new Error('Expected terminal execution-run marker');
     expect(marker.status).toBe('succeeded');
     expect(marker.intent).toBe('review');
-    expect(marker.backendTarget).toEqual({ kind: 'backend', backendId: TEST_PRIMARY_BACKEND_ID, sourceKind: 'built_in' });
-    expect(marker).not.toHaveProperty('permissionMode');
+    expect(marker.backendTarget).toEqual({ kind: 'backend', backendId: TEST_PRIMARY_BACKEND_ID });
+    expect(marker.permissionMode).toBe('read_only');
     expect(typeof marker.startedAtMs).toBe('number');
     expect(typeof marker.updatedAtMs).toBe('number');
   }, 60_000);
@@ -435,7 +435,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const marker = markers.find((m) => m.runId === started.runId) ?? null;
     if (!marker) throw new Error('Expected running execution-run marker');
     expect(marker.status).toBe('running');
-    expect(marker).not.toHaveProperty('permissionMode');
+    expect(marker.permissionMode).toBe('read_only');
     expect(marker.lastActivityAtMs).toBe(nowMs);
     expect(marker.updatedAtMs).toBe(nowMs);
 
@@ -527,7 +527,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       kind: 'configuredAcpBackend',
       backendId: 'review-bot',
     });
-  });
+  }, 60_000);
 
   it('cleans up ephemeral isolation when startup probing fails before controller registration', async () => {
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';

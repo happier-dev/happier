@@ -2,9 +2,11 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import {
     SAMPLE_PLUGIN_BACKEND_ID,
     SAMPLE_PLUGIN_ID,
@@ -19,11 +21,11 @@ describe('current Agent engine resolution (integration)', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-engine-resolution-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-engine-resolution-plugin-'));
         await materializeSamplePluginFixture(pluginRoot);
-        await createPluginStateStore({ happyHomeDir }).write({
-            t: 'happier_plugin_state_v1',
-            schemaVersion: 1,
-            plugins: {
-                [SAMPLE_PLUGIN_ID]: {
+        await writeCommittedLocalPathPluginFixture({
+            happyHomeDir,
+            pluginId: SAMPLE_PLUGIN_ID,
+            sourceRootPath: pluginRoot,
+            plugin: {
                     source: {
                         kind: 'path',
                         locator: pluginRoot,
@@ -39,19 +41,32 @@ describe('current Agent engine resolution (integration)', () => {
                         installedPath: null,
                     },
                     state: { enabled: true },
-                },
             },
         });
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            generation: 1,
+        });
+        const qualifiedBackendId = buildQualifiedPluginContributionKey({
+            pluginId: SAMPLE_PLUGIN_ID,
+            localId: SAMPLE_PLUGIN_BACKEND_ID,
+        });
+        const qualifiedAgentId = buildQualifiedPluginContributionKey({
+            pluginId: SAMPLE_PLUGIN_ID,
+            localId: SAMPLE_PLUGIN_PROVIDER_ID,
+        });
 
-        const resolution = await resolveBackendEngineAdapterResolution(SAMPLE_PLUGIN_BACKEND_ID, { happyHomeDir });
+        const resolution = await resolveBackendEngineAdapterResolution(qualifiedBackendId, {
+            runtimeRegistry,
+        });
 
         expect(resolution).toMatchObject({
-            backendId: SAMPLE_PLUGIN_BACKEND_ID,
-            agentId: SAMPLE_PLUGIN_PROVIDER_ID,
+            backendId: qualifiedBackendId,
+            agentId: qualifiedAgentId,
             provenance: 'external',
             selectedSource: 'plugin',
-            backend: { id: SAMPLE_PLUGIN_BACKEND_ID, pluginId: SAMPLE_PLUGIN_ID },
-            agent: { id: SAMPLE_PLUGIN_PROVIDER_ID, pluginId: SAMPLE_PLUGIN_ID },
+            backend: { id: qualifiedBackendId, pluginId: SAMPLE_PLUGIN_ID },
+            agent: { id: qualifiedAgentId, pluginId: SAMPLE_PLUGIN_ID },
             diagnostics: [],
             executionSurfaces: {
                 terminalRuntime: null,
@@ -66,10 +81,16 @@ describe('current Agent engine resolution (integration)', () => {
             },
         });
         expect(resolution).not.toHaveProperty('source');
+        await runtimeRegistry.dispose();
     });
 
     it('does not misdiagnose a built-in registered Agent as missing a runtime surface owner', async () => {
-        const resolution = await resolveBackendEngineAdapterResolution('codex');
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-engine-resolution-built-in-home-'));
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            generation: 1,
+        });
+        const resolution = await resolveBackendEngineAdapterResolution('codex', { runtimeRegistry });
 
         expect(resolution).toMatchObject({
             backendId: 'codex',
@@ -78,10 +99,16 @@ describe('current Agent engine resolution (integration)', () => {
             backend: { id: 'codex' },
             agent: { id: 'codex' },
             executionSurfaces: { terminalRuntime: expect.anything() },
+            engineAdapter: {
+                runtimeCore: {
+                    createSessionRuntime: expect.any(Function),
+                },
+            },
         });
         expect(resolution?.diagnostics).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'engine_plugin_backend_surface_missing' }),
         ]));
         expect(['system', 'managed', 'plugin']).toContain(resolution?.selectedSource);
+        await runtimeRegistry.dispose();
     });
 });

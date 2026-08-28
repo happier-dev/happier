@@ -7,7 +7,7 @@ import {
 } from '@/daemon/controlClient';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
-import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { logger } from '@/ui/logger';
 import type { ExecutionRunConnectedServicesRegistrationV1 } from '@/daemon/connectedServices/runs/materializeContract';
 
@@ -82,9 +82,7 @@ function resolveExecutionRunDeclaredConnectedServiceIds(params: Readonly<{
     backendId: string;
     backendSourceKind: 'built_in' | 'configured' | (string & {});
 }>): readonly string[] {
-    return params.backendSourceKind === 'configured'
-        ? Object.freeze([])
-        : resolveCatalogAgentConnectedServiceIds(params.backendId);
+    return resolveCatalogAgentConnectedAccountServiceIds(params.backendId);
 }
 
 function hasUndeclaredConnectedExecutionRunBinding(

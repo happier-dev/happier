@@ -11,8 +11,3 @@ export {
   pickSessionRuntimeLocalMetadata,
   type SessionRuntimeLocalMetadata,
 } from './metadata/local';
-export {
-  resolveSessionRuntimeIdentityFallback,
-  type SessionRuntimeIdentityFallbackResult,
-  type SessionRuntimeIdentitySourceTier,
-} from './fallback';

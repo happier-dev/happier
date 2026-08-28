@@ -184,17 +184,19 @@ export async function initializeBackendRunSession(
     await pendingFirstInputCommitter.commit(session)
     throwIfAborted()
   }
-  const deferOrCommitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
+  const deferOrCommitPendingFirstInput = async (
+    session: ApiSessionClient,
+  ): Promise<(() => Promise<void>) | null> => {
     if (
       !opts.deferPendingFirstInputCommitUntilRuntimeReady
       || !pendingFirstInputCommitter.hasPendingInput
     ) {
       await commitPendingFirstInput(session)
-      return
+      return null
     }
 
     let commitPromise: Promise<void> | null = null
-    commitPendingFirstInputAfterRuntimeReady = () => {
+    return () => {
       commitPromise ??= commitPendingFirstInput(session)
       return commitPromise
     }
@@ -373,17 +375,33 @@ export async function initializeBackendRunSession(
 
       throwIfAborted()
       primeAgentStateForUiFn(session, opts.uiLogPrefix)
-      await deferOrCommitPendingFirstInput(session)
+      commitPendingFirstInputAfterRuntimeReady =
+        await deferOrCommitPendingFirstInput(session)
       throwIfAborted()
       const requireDaemonAckOnAttach =
         opts.requireDaemonAckOnAttach === true
-      await runStartupSideEffects(
-        session,
-        existingSessionId,
-        daemonReportMetadata,
-        requireDaemonAckOnAttach ? 'await' : 'background',
-        requireDaemonAckOnAttach,
-      )
+      if (commitPendingFirstInputAfterRuntimeReady) {
+        const commit = commitPendingFirstInputAfterRuntimeReady
+        commitPendingFirstInputAfterRuntimeReady = async () => {
+          await commit()
+          throwIfAborted()
+          await runStartupSideEffects(
+            session,
+            existingSessionId,
+            daemonReportMetadata,
+            requireDaemonAckOnAttach ? 'await' : 'background',
+            requireDaemonAckOnAttach,
+          )
+        }
+      } else {
+        await runStartupSideEffects(
+          session,
+          existingSessionId,
+          daemonReportMetadata,
+          requireDaemonAckOnAttach ? 'await' : 'background',
+          requireDaemonAckOnAttach,
+        )
+      }
 
       attachCompleted = true
       return {
@@ -489,14 +507,26 @@ export async function initializeBackendRunSession(
     throwIfAborted()
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
     if (reportedSessionId) {
-      if (opts.metadata.startedBy === 'daemon') {
-        await runStartupSideEffectsOnce(session, reportedSessionId, true)
-        throwIfAborted()
+      commitPendingFirstInputAfterRuntimeReady =
         await deferOrCommitPendingFirstInput(session)
+      throwIfAborted()
+      if (commitPendingFirstInputAfterRuntimeReady) {
+        const commit = commitPendingFirstInputAfterRuntimeReady
+        commitPendingFirstInputAfterRuntimeReady = async () => {
+          await commit()
+          throwIfAborted()
+          await runStartupSideEffectsOnce(
+            session,
+            reportedSessionId,
+            opts.metadata.startedBy === 'daemon',
+          )
+        }
       } else {
-        await deferOrCommitPendingFirstInput(session)
-        throwIfAborted()
-        await runStartupSideEffectsOnce(session, reportedSessionId)
+        await runStartupSideEffectsOnce(
+          session,
+          reportedSessionId,
+          opts.metadata.startedBy === 'daemon',
+        )
       }
     }
 

@@ -85,6 +85,7 @@ import type {
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
 import { createExecutionRunCodedError, readExecutionRunErrorCode } from './errors';
 import type { ResolvedCliEngineRegistry } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { NativeAgentSessionInteractionHostBinding } from '@/agent/runtime/registry/engineRegistryTypes';
 
 type ExecutionRunProfileCatalogResolution = Readonly<{
   profileCatalog: ExecutionRunProfileContributionCatalog;
@@ -206,6 +207,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
     | ExecutionRunProfileCatalogResolution;
   happyHomeDir?: string;
   parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+  sessionInteractionHost?: NativeAgentSessionInteractionHostBinding;
   materializeReviewHostAction?: (
     readCurrentCandidate: () => ReviewCommentHostActionCandidate | null,
   ) => Promise<ReviewCommentHostActionMaterializationResult>;
@@ -250,6 +252,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly budgetRegistry: ExecutionBudgetRegistry | null;
   private readonly happyHomeDir: string | null;
   private readonly parentSessionStateTarget: ExecutionRunSessionStateTarget | null;
+  private readonly sessionInteractionHost: NativeAgentSessionInteractionHostBinding | null;
   private readonly materializeReviewHostAction: ExecutionRunHostBridgeOptions['materializeReviewHostAction'];
   private readonly checkConnectedServicesGenerationCurrent: ExecutionRunHostBridgeOptions['checkConnectedServicesGenerationCurrent'];
   private readonly machineId: string | null;
@@ -430,6 +433,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? opts.happyHomeDir.trim()
       : configuration.happyHomeDir;
     this.parentSessionStateTarget = opts.parentSessionStateTarget ?? null;
+    this.sessionInteractionHost = opts.sessionInteractionHost ?? null;
     this.materializeReviewHostAction = opts.materializeReviewHostAction;
     this.checkConnectedServicesGenerationCurrent = opts.checkConnectedServicesGenerationCurrent;
     this.machineId = typeof opts.machineId === 'string' && opts.machineId.trim().length > 0
@@ -455,11 +459,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }>) => await resolveCliVoicePromptStackBlocks({ settings, profileId }));
 
     this.voiceAgentManager = new VoiceAgentManager({
-      createRuntime: ({ agentId, modelId, permissionIntent, start, connectedServices }) => {
+      createRuntime: ({ backendTarget, backendId, modelId, permissionIntent, start, connectedServices }) => {
         try {
           return this.createExecutionRunRuntime({
-            backendId: agentId,
-            backendTarget: { kind: 'builtInAgent', agentId },
+            backendId,
+            backendTarget,
             modelId,
             permissionMode: permissionIntent,
             ...(start ? { start } : {}),
@@ -555,6 +559,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       happyHomeDir: this.happyHomeDir,
       ...(opts.engineRegistry ? { engineRegistry: opts.engineRegistry } : {}),
       ...(parentSessionStateTarget ? { parentSessionStateTarget } : {}),
+      ...(this.sessionInteractionHost
+        ? { sessionInteractionHost: this.sessionInteractionHost }
+        : {}),
       ...(opts.onConnectedServicesRegistration
         ? { onConnectedServicesRegistration: opts.onConnectedServicesRegistration }
         : opts.runId

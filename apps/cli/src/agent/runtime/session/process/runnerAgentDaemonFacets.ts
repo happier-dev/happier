@@ -20,6 +20,13 @@ import type {
   ExternalSessionHostOperationPort,
 } from '@/session/external/hostOperationOwner';
 import {
+  EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+  settleFollowListenerBounded,
+} from '@/session/external/followListenerSettlement';
+import {
+  EXTERNAL_SESSIONS_INVOCATION_POLICY,
+} from '@/session/external/agentExternalSessionsInvocation';
+import {
   dispatchCurrentAgentRuntimeDaemonServiceRequest,
   isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
 } from './agentRuntimeDaemonServiceAuthorityClient';
@@ -465,6 +472,13 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
           };
           const reopenAfterDaemonReplacement =
             async (): Promise<boolean> => {
+              const replacementNeedsInitialReplay =
+                !currentCursor && currentOperation.initialReplay === true;
+              const replacementAdmissionDeadlineAtMs =
+                replacementNeedsInitialReplay
+                  ? Date.now()
+                    + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs
+                  : undefined;
               while (
                 active
                 && !retired
@@ -481,6 +495,15 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                   ...(currentCursor
                     ? { cursor: currentCursor }
                     : {}),
+                  ...(replacementNeedsInitialReplay
+                    ? { initialReplay: true }
+                    : {}),
+                  ...(replacementAdmissionDeadlineAtMs === undefined
+                    ? {}
+                    : {
+                        admissionDeadlineAtMs:
+                          replacementAdmissionDeadlineAtMs,
+                      }),
                   ...(witness ? { witness } : {}),
                 };
                 const provisionalCandidate = createProvisionalFollow(
@@ -739,27 +762,33 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                     'Daemon returned an invalid External Session follow event',
                   );
                 }
+                const followEventResult = next.result;
                 try {
-                  await listener(next.result.event);
+                  await settleFollowListenerBounded(
+                    Promise.resolve().then(async () =>
+                      await listener(followEventResult.event)),
+                    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                    openSignal,
+                  );
                 } catch (error) {
                   listenerRejected = true;
                   reportFailure(error);
                   throw error;
                 }
                 lastDeliveredEventId =
-                  next.result.eventId;
-                if (next.result.event.kind === 'data') {
+                  followEventResult.eventId;
+                if (followEventResult.event.kind === 'data') {
                   currentCursor =
-                    next.result.event.nextCursor;
+                    followEventResult.event.nextCursor;
                 } else if (
-                  next.result.event.kind
+                  followEventResult.event.kind
                     === 'resyncRequired'
                 ) {
                   currentCursor =
-                    next.result.event.cursor;
+                    followEventResult.event.cursor;
                 }
                 if (
-                  next.result.event.kind === 'terminated'
+                  followEventResult.event.kind === 'terminated'
                 ) {
                   await follow.close(
                     lastDeliveredEventId,
@@ -776,16 +805,21 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
               ) {
                 const normalized = followFailureError(error);
                 if (!listenerRejected) {
-                  await Promise.resolve(listener(Object.freeze({
-                    kind: 'terminated',
-                    reason: 'providerFailure',
-                    cursor: currentCursor,
-                    code:
-                      'code' in normalized
-                      && typeof normalized.code === 'string'
-                        ? normalized.code
-                      : 'plugin_external_follow_failed',
-                  }))).catch(() => undefined);
+                  await settleFollowListenerBounded(
+                    Promise.resolve().then(async () =>
+                      await listener(Object.freeze({
+                        kind: 'terminated',
+                        reason: 'providerFailure',
+                        cursor: currentCursor,
+                        code:
+                          'code' in normalized
+                          && typeof normalized.code === 'string'
+                            ? normalized.code
+                            : 'plugin_external_follow_failed',
+                      }))),
+                    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                    openSignal,
+                  ).catch(() => undefined);
                 }
                 reportFailure(normalized);
               }
@@ -829,6 +863,12 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 ...(request.options.cursor
                   ? { cursor: request.options.cursor }
                   : {}),
+                ...(request.options.initialReplay
+                  ? { initialReplay: true }
+                  : {}),
+                ...(request.options.admissionDeadlineAtMs === undefined
+                  ? {}
+                  : { admissionDeadlineAtMs: request.options.admissionDeadlineAtMs }),
                 ...(witness ? { witness } : {}),
               }, request.options, request.listener);
             },
@@ -847,6 +887,12 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 ...(request.options.cursor
                   ? { cursor: request.options.cursor }
                   : {}),
+                ...(request.options.initialReplay
+                  ? { initialReplay: true }
+                  : {}),
+                ...(request.options.admissionDeadlineAtMs === undefined
+                  ? {}
+                  : { admissionDeadlineAtMs: request.options.admissionDeadlineAtMs }),
                 ...(witness ? { witness } : {}),
               }, request.options, request.listener);
             },

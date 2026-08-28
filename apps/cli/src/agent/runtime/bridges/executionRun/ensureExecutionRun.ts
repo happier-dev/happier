@@ -13,13 +13,8 @@ import { resumeBackendControllerForResumableRun } from './resumeBackendControlle
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
-import {
-  areExecutionRunBackendTargetsEqual,
-  resolveExecutionRunBuiltInAgentId,
-} from './backendTargets';
-import {
-  type ExecutionRunHostRuntime,
-} from './executionRunHostRuntime';
+import { areExecutionRunBackendTargetsEqual } from './backendTargets';
+import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 import type { ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 
@@ -87,14 +82,9 @@ export async function ensureExecutionRun(args: Readonly<{
         resolveTerminal = resolve;
       });
 
-      const builtInAgentId = resolveExecutionRunBuiltInAgentId(run.backendTarget);
-      if (!builtInAgentId) {
-        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not supported' };
-      }
-
       const startedVoice = await args.voiceAgentManager.start({
         voiceAgentId: args.runId,
-        agentId: builtInAgentId as any,
+        backendTarget: run.backendTarget,
         ...(typeof config.profileId === 'string' && config.profileId.trim().length > 0
           ? { profileId: config.profileId.trim() }
           : {}),
@@ -117,7 +107,8 @@ export async function ensureExecutionRun(args: Readonly<{
         resumeHandle,
       }, {
         createRuntime: ({
-          agentId,
+          backendTarget,
+          backendId,
           modelId,
           modelSelection,
           sessionConfigOptionOverrides,
@@ -127,8 +118,8 @@ export async function ensureExecutionRun(args: Readonly<{
         }) =>
           args.createRuntime({
             runId: args.runId,
-            backendId: agentId,
-            backendTarget: { kind: 'builtInAgent', agentId },
+            backendId,
+            backendTarget,
             modelId,
             ...(modelSelection ? { modelSelection } : {}),
             ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),

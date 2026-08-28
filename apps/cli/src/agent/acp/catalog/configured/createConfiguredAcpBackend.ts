@@ -6,8 +6,6 @@ import {
   createAcpBackendFromDefinition,
   normalizeConfiguredAcpDefinition,
 } from '@/agent/acp/runtime/definition';
-import { createPluginExecService } from '@/plugins/runtime/exec/hostService';
-import { projectPluginSystemToolContributions } from '@/plugins/runtime/exec/system/tools/definitions';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveBackend';
 
@@ -19,20 +17,6 @@ export type ConfiguredAcpBackendOptions = AgentFactoryOptions & Readonly<{
   permissionMode?: string;
 }>;
 
-function readDefinedProcessEnv(
-  ...sources: ReadonlyArray<Readonly<Record<string, string | undefined>> | undefined>
-): Readonly<Record<string, string>> {
-  const env: Record<string, string> = {};
-  for (const source of sources) {
-    for (const [key, value] of Object.entries(source ?? {})) {
-      if (typeof value === 'string') {
-        env[key] = value;
-      }
-    }
-  }
-  return Object.freeze(env);
-}
-
 export async function createConfiguredAcpBackend(
   options: ConfiguredAcpBackendOptions,
 ): Promise<AcpBackend> {
@@ -40,16 +24,6 @@ export async function createConfiguredAcpBackend(
     backend: options.backend,
     launchEnv: options.launchEnv,
   });
-
-  const pluginSource = options.backend.source.kind === 'plugin_contributed'
-    ? options.backend.source
-    : null;
-  const exec = pluginSource
-      ? createPluginExecService({
-        systemTools: projectPluginSystemToolContributions(pluginSource.systemTools),
-        baseEnv: readDefinedProcessEnv(process.env, options.env, options.launchEnv),
-      })
-    : undefined;
 
   return await createAcpBackendFromDefinition({
     definition,
@@ -61,6 +35,5 @@ export async function createConfiguredAcpBackend(
     permissionMode: options.permissionMode,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
-    ...(exec ? { exec } : {}),
   });
 }

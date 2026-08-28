@@ -1500,6 +1500,10 @@ describe('runHostSessionRuntime', () => {
         },
         executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
         owner: { pluginId: 'com.example.media', localId: 'composer' },
+        claimant: {
+          composer: { kind: 'session' as const, sessionId: 'session-1' },
+          attachmentInstanceId: 'attachment-1',
+        },
       }],
       createdWorkspaceRelativePaths: [
         '.happier/uploads/messages/session-1/local-1/review.png',
@@ -2839,7 +2843,15 @@ describe('runHostSessionRuntime', () => {
       outcome: 'accepted',
       settlement: {
         v: 1,
-        releaseIntents: [{ handle, executionTarget: handle.executionTarget, owner: handle.owner }],
+        releaseIntents: [{
+          handle,
+          executionTarget: handle.executionTarget,
+          owner: handle.owner,
+          claimant: {
+            composer: { kind: 'session', sessionId: 'session-1' },
+            attachmentInstanceId: 'issue-42',
+          },
+        }],
         createdWorkspaceRelativePaths: [],
         workingDirectory: 'accepted-pending-message',
       },

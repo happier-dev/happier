@@ -16,9 +16,11 @@ import {
     type ReviewCommentPrincipalHeaderV1,
     type ReviewCommentActionIdV1,
     type ReviewCommentMutationActionIdV1,
+    type ReviewCommentPublicationPlanV1,
     type ReviewCommentPrincipalProofV1,
     type AccountScopedCryptoMaterial,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
+    validateReviewCommentPublicationClaimAgainstPlanV1,
 } from '@happier-dev/protocol';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
@@ -173,11 +175,10 @@ function createReviewCommentHttpRequest(
         };
     }
     if (actionId === 'reviews.comments.claimPublicationDispatch') {
-        const commentId = readRequiredString(input, 'commentId');
         return {
             method: 'post',
-            path: `/v1/reviews/comments/${encodePathSegment(commentId)}/publication/claim`,
-            body: omitKeys(input, ['commentId']),
+            path: '/v1/reviews/comments/publication/claim',
+            body: input,
         };
     }
     return {
@@ -408,7 +409,13 @@ export function createCliReviewCommentActionExecutorFromCredentials(
             ...(principalHeader ? { principalHeader } : {}),
             ...(options?.signal ? { signal: options.signal } : {}),
         });
-        return ReviewCommentActionOutputSchemasV1[parsedActionId].parse(output);
+        const parsedOutput = ReviewCommentActionOutputSchemasV1[parsedActionId].parse(output);
+        return parsedActionId === 'reviews.comments.claimPublicationDispatch'
+            ? validateReviewCommentPublicationClaimAgainstPlanV1(
+                parsedInput as ReviewCommentPublicationPlanV1,
+                parsedOutput,
+            )
+            : parsedOutput;
     };
 }
 

@@ -3,6 +3,7 @@ import type {
   ExternalSessionsAgentId,
   ExternalSessionsSource,
   BackendTargetRefV2Input,
+  AgentExecutionTargetV1,
   HookScopeV1,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
@@ -26,6 +27,7 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
 export type CurrentCatalogAgentExecutionSurfaces = Readonly<{
   agentId: string;
   backendId: string;
+  agentTarget: AgentExecutionTargetV1;
   executionSurfaces: BackendExecutionSurfaces;
 }>;
 

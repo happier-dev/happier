@@ -476,6 +476,46 @@ describe('BasePermissionHandler allowlist', () => {
     });
   });
 
+  it('does not certify exact absence when a live source-bound question exceeds the remote projection', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'off',
+    } as const;
+    const pending = handler.request('remote-overbound-question', 'AskUserQuestion', {
+      questions: Array.from({ length: 5 }, (_, index) => ({
+        question: `Question ${index + 1}?`,
+        options: [{ label: 'Yes' }, { label: 'No' }],
+      })),
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-overbound-question',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'default',
+          sourceAuthority,
+        },
+      },
+    });
+
+    try {
+      expect(handler.listMediatedPendingRequests({
+        mediatorPluginId: 'happier.channels',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      })).toEqual({ requests: [], truncated: true, nextCursor: null });
+      expect(await settledState(pending)).toBe('pending');
+    } finally {
+      await handler.reset();
+      await expect(pending).rejects.toThrow('Session reset');
+    }
+  });
+
   it('validates every live remote AskUserQuestion answer before completing it', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

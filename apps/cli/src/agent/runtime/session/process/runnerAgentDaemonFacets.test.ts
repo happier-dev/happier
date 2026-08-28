@@ -732,10 +732,16 @@ describe('runner Agent daemon facet adapters', () => {
     await facets.dispose();
   });
 
-  it('reopens a daemon-owned follow from the last acknowledged cursor after daemon A retires', async () => {
+  it('reopens a daemon-owned follow from the last acknowledged cursor without reusing its expired admission deadline', async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const admissionDeadlineAtMs = 16_000;
+    const replacementProviderDeadlineAtMs = 47_000;
     const opens: Array<{
       followId: string;
       cursor?: string;
+      initialReplay?: boolean;
+      admissionDeadlineAtMs?: number;
     }> = [];
     let nextCount = 0;
     const pageTranscript = vi.fn(async () => ({
@@ -766,6 +772,12 @@ describe('runner Agent daemon facet adapters', () => {
           ...(request.operation.cursor
             ? { cursor: request.operation.cursor }
             : {}),
+          ...(request.operation.initialReplay
+            ? { initialReplay: true }
+            : {}),
+          ...(request.operation.admissionDeadlineAtMs === undefined
+            ? {}
+            : { admissionDeadlineAtMs: request.operation.admissionDeadlineAtMs }),
         });
         if (opens.length === 2) {
           return {
@@ -781,6 +793,7 @@ describe('runner Agent daemon facet adapters', () => {
                 direction: 'older',
                 maxBytes: 524_288,
                 maxItems: 1,
+                deadlineAtMs: replacementProviderDeadlineAtMs,
               },
             },
           };
@@ -842,6 +855,7 @@ describe('runner Agent daemon facet adapters', () => {
           };
         }
         if (nextCount === 2) {
+          nowMs = 32_000;
           throw Object.assign(
             new Error(
               'daemon A replaced by daemon B',
@@ -900,7 +914,11 @@ describe('runner Agent daemon facet adapters', () => {
     const follow = await port.executeProviderSessionFollow({
       agentId: runnerFixture.binding.localAgentId,
       providerSessionId: 'remote-session-1',
-      options: { cursor: 'cursor-1' },
+      options: {
+        cursor: 'cursor-1',
+        initialReplay: true,
+        admissionDeadlineAtMs,
+      },
       listener: async (event) => {
         events.push(event.kind);
       },
@@ -909,18 +927,24 @@ describe('runner Agent daemon facet adapters', () => {
       expect(events).toEqual(['data', 'terminated']);
     });
     expect(opens).toHaveLength(2);
-    expect(opens[1]).toMatchObject({
+    expect(opens[1]).toEqual({
       cursor: 'cursor-2',
+      followId: expect.any(String),
     });
     expect(opens[1]?.followId).not.toBe(opens[0]?.followId);
     expect(pageTranscript).toHaveBeenCalledOnce();
+    expect(pageTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      deadlineAtMs: replacementProviderDeadlineAtMs,
+    }));
     if (follow.status === 'following') {
       await follow.subscription.dispose();
     }
     await facets.dispose();
+    now.mockRestore();
   });
 
   it('executes only the retained runner companion when the daemon follow owner requests transcript work', async () => {
+    const admissionDeadlineAtMs = Date.now() + 30_000;
     let providerSignal: AbortSignal | undefined;
     const pageTranscript = vi.fn<
       RunnerAgentExternalSessionProviderOps['pageTranscript']
@@ -966,6 +990,10 @@ describe('runner Agent daemon facet adapters', () => {
         };
       }
       if (request.operation.kind === 'external_session.follow.open') {
+        expect(request.operation).toMatchObject({
+          initialReplay: true,
+          admissionDeadlineAtMs,
+        });
         return {
           ok: true,
           result: {
@@ -979,6 +1007,7 @@ describe('runner Agent daemon facet adapters', () => {
               direction: 'older',
               maxBytes: 524_288,
               maxItems: 1,
+              deadlineAtMs: admissionDeadlineAtMs,
             },
           },
         };
@@ -1054,7 +1083,11 @@ describe('runner Agent daemon facet adapters', () => {
         remoteSessionId: 'remote-session-1',
       },
       source: { kind: 'syntheticSource', value: 'g' },
-      options: { signal: caller.signal },
+      options: {
+        initialReplay: true,
+        admissionDeadlineAtMs,
+        signal: caller.signal,
+      },
       listener: async (event) => {
         events.push(event.kind);
       },
@@ -1062,6 +1095,9 @@ describe('runner Agent daemon facet adapters', () => {
     expect(follow.status).toBe('following');
     await vi.waitFor(() => expect(events).toEqual(['terminated']));
     expect(pageTranscript).toHaveBeenCalledOnce();
+    expect(pageTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      deadlineAtMs: admissionDeadlineAtMs,
+    }));
     expect(readAfterTranscript).not.toHaveBeenCalled();
     expect(providerSignal?.aborted).toBe(false);
     caller.abort(new Error('caller retired follow'));

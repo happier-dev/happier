@@ -35,4 +35,64 @@ describe('normalizeStrictJsonReviewOutput', () => {
       retentionPolicy: 'resumable',
     });
   });
+
+  it('preserves a validated structured review failure instead of rebuilding it as success', () => {
+    const backendTarget: BackendTargetRefV1 = { kind: 'builtInAgent', agentId: 'deepsec' };
+    const res = normalizeStrictJsonReviewOutput({
+      runId: 'run_deepsec',
+      callId: 'subagent_run_deepsec',
+      sidechainId: 'subagent_run_deepsec',
+      backendId: 'deepsec',
+      backendTarget,
+      startedAtMs: 1,
+      finishedAtMs: 2,
+      rawText: JSON.stringify({
+        status: 'failed',
+        error: { code: 'deepsec_readiness_failed' },
+        runRef: {
+          runId: 'provider-run-id',
+          callId: 'provider-call-id',
+          backendId: 'deepsec',
+        },
+        summary: 'DeepSec review readiness failed.',
+        overviewMarkdown: 'DeepSec cannot start until Node 22 is available.',
+        findings: [],
+        questions: [],
+        assumptions: [],
+        readiness: {
+          status: 'missing',
+          missing: ['node>=22'],
+        },
+        diagnostics: [{ code: 'deepsec_readiness_failed', severity: 'error' }],
+        limits: { findingsTruncated: true, patchesTruncated: false },
+        generatedAtMs: 999,
+      }),
+    });
+
+    expect(res.status).toBe('failed');
+    expect(res.toolResultOutput).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_readiness_failed' },
+    });
+    expect(res.structuredMeta).toMatchObject({
+      kind: 'review_findings.v2',
+      payload: {
+        status: 'failed',
+        error: { code: 'deepsec_readiness_failed' },
+        runRef: {
+          runId: 'run_deepsec',
+          callId: 'subagent_run_deepsec',
+          backendId: 'deepsec',
+          backendTarget,
+        },
+        readiness: {
+          status: 'missing',
+          missing: ['node>=22'],
+        },
+        diagnostics: [{ code: 'deepsec_readiness_failed', severity: 'error' }],
+        limits: { findingsTruncated: true, patchesTruncated: false },
+        generatedAtMs: 2,
+      },
+    });
+  });
 });

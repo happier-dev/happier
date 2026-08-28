@@ -44,6 +44,10 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
       waitTimeoutSeconds: 2,
     });
     expect(request).not.toHaveProperty('sessionId');
-    expect(context).toEqual({ surface: 'cli', defaultSessionId: 'sess-123' });
+    expect(context).toEqual({
+      surface: 'cli',
+      authority: 'account_automation',
+      defaultSessionId: 'sess-123',
+    });
   });
 });

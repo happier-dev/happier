@@ -313,11 +313,14 @@ describe('resolveCliEngineRegistry', () => {
             runtimeOwner: { selected: { kind: 'plugin_engine', pluginId: 'acme.runtime' } },
             engineAdapter: { runtimeCore: expect.any(Object) },
         });
-        expect(() => resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+        const derivedRun = resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
             cwd: pluginRoot,
             backendId: 'acme-acp',
             permissionMode: 'read_only',
-        })).toThrow(/Agent runtime 'acme-acp' does not support execution runs/i);
+            runId: 'manifest-only-acp-derived-run',
+            start: { intent: 'review', profileId: 'review' },
+        });
+        await expect(derivedRun.dispose()).resolves.toBeUndefined();
     });
 
 });

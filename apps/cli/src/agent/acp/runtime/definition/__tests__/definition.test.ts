@@ -10,9 +10,7 @@ import {
   createAcpRuntimeDefinition,
   createAcpTransportHandlerFromDefinition,
   createAcpRuntimeCoreFromDefinition,
-  normalizeBuiltInAcpDefinition,
   normalizeConfiguredAcpDefinition,
-  normalizePluginBackendContributionAcpDefinition,
   normalizePluginDeclarativeAcpRuntime,
 } from '../index';
 import type { AcpRuntimeDefinitionInit } from '../index';
@@ -97,21 +95,6 @@ describe('ACP runtime definitions', () => {
     }).options.unsetEnv).toEqual(['OPENAI_API_KEY']);
   });
 
-  it('normalizes built-in ACP capability hints into the runtime definition contract', () => {
-    const definition = normalizeBuiltInAcpDefinition('ohMyPi');
-
-    expect(definition.capabilities).toMatchObject({
-      supportsResume: true,
-      supportsModes: true,
-      supportsModels: true,
-      supportsConfigOptions: false,
-      supportsPromptImages: true,
-      promptImageSupport: 'yes',
-      supportsToolUse: true,
-      supportsPermissionRequests: true,
-    });
-  });
-
   it('normalizes configured ACP backends into a host-internal definition shape', () => {
     const backend = {
       backendId: 'custom-acp',
@@ -126,7 +109,6 @@ describe('ACP runtime definitions', () => {
       auth: {
         support: 'unsupported',
       },
-      transportProfile: 'kiro',
       capabilities: {
         supportsLoadSession: true,
         supportsModes: 'yes',
@@ -135,27 +117,6 @@ describe('ACP runtime definitions', () => {
         promptImageSupport: 'yes',
       },
     } satisfies ResolvedConfiguredAcpBackend;
-    Object.assign(backend as unknown as Record<string, unknown>, {
-      fsEnabled: false,
-      timeouts: {
-        initMs: 25,
-        initDelayMs: 5,
-      },
-      permissionModeArgv: {
-        flag: '--permission-mode',
-        map: {
-          default: null,
-          read_only: 'read-only',
-        },
-      },
-      mcp: {
-        policy: 'drop',
-      },
-      messageMeta: {
-        enrichOutgoing: (message: unknown) => ({ message }),
-      },
-    });
-
     const definition = normalizeConfiguredAcpDefinition({
       backend,
       launchEnv: {
@@ -189,28 +150,18 @@ describe('ACP runtime definitions', () => {
       launchEnv: {
         TOKEN: 'secret-token',
       },
-      fsEnabled: false,
-      timeouts: {
-        initMs: 25,
-        initDelayMs: 5,
-      },
-      permissionModeArgv: {
-        flag: '--permission-mode',
-        map: {
-          default: null,
-          read_only: 'read-only',
-        },
-      },
       mcp: {
-        policy: 'drop',
+        policy: 'pass_through',
       },
     });
     expect(definition.capabilities.supportsResume).toBe(true);
-    expect(definition.messageMeta?.enrichOutgoing?.({ id: 'msg-1' }, undefined)).toEqual({
-      message: { id: 'msg-1' },
-    });
+    expect(definition.messageMeta).toBeUndefined();
+    expect(definition.timeouts).toBeUndefined();
+    expect(definition.permissionModeArgv).toBeUndefined();
     expect('providerId' in definition.identity).toBe(false);
     expect('runtimeKind' in definition).toBe(false);
+    expect('transportProfile' in definition).toBe(false);
+    expect('auth' in definition).toBe(false);
   });
 
   it('adapts ACP message meta hooks to the provider message meta contract', () => {
@@ -371,7 +322,7 @@ describe('ACP runtime definitions', () => {
     expect('runtimeKind' in definition).toBe(false);
   });
 
-  it('normalizes strict declarative ACP runtime data for the composer and configured-plugin consumer', () => {
+  it('normalizes strict declarative ACP runtime data for the canonical public composer', () => {
     const runtime = normalizePluginDeclarativeAcpRuntime({
       kind: 'acp',
       transport: {
@@ -380,7 +331,7 @@ describe('ACP runtime definitions', () => {
         port: 4242,
       },
       definition: {
-        modelConfigOptionId: 'model',
+        modelConfigOptionId: 'agent-model-choice',
         stderrRules: {
           suppress: [{
             includes: ['known harmless ACP notification'],
@@ -399,7 +350,7 @@ describe('ACP runtime definitions', () => {
         port: 4242,
       },
       definition: {
-        modelConfigOptionId: 'model',
+        modelConfigOptionId: 'agent-model-choice',
         stderrRules: {
           suppress: [{
             includes: ['known harmless ACP notification'],
@@ -418,127 +369,15 @@ describe('ACP runtime definitions', () => {
         port: 4242,
       },
       definition: {
-        modelConfigOptionId: 'model',
+        modelConfigOptionId: 'agent-model-choice',
       },
     }).definition).toEqual({
-      modelConfigOptionId: 'model',
+      modelConfigOptionId: 'agent-model-choice',
       mcp: {
         policy: 'drop',
       },
     });
 
-    const definition = normalizePluginBackendContributionAcpDefinition({
-      pluginId: 'acme.plugin',
-      backend: {
-        id: 'acme-full',
-        title: 'Acme Full Agent',
-        description: 'A strict declarative ACP Agent.',
-        runtime: {
-          kind: 'acp',
-          transport: {
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'acme-agent' },
-            args: ['acp'],
-            env: {
-              TRANSPORT_TOKEN: 'transport-token',
-            },
-            timeouts: {
-              initializeMs: 5000,
-            },
-          },
-          definition: {
-            stderrRules: {
-              suppress: [{
-                includes: ['noise'],
-              }],
-            },
-            mcp: {
-              policy: 'drop',
-            },
-          },
-        },
-        primary: 'sessions',
-        capabilities: {
-          sessions: {
-            open: ['create', 'resume'],
-            delivery: ['newTurn'],
-            cancel: true,
-          },
-        },
-      },
-    });
-
-    expect(definition).toMatchObject({
-      backendId: 'acme-full',
-      source: {
-        kind: 'plugin_contributed',
-        pluginId: 'acme.plugin',
-      },
-      ux: {
-        title: 'Acme Full Agent',
-        description: 'A strict declarative ACP Agent.',
-      },
-      launchEnv: {},
-      mcp: {
-        policy: 'drop',
-      },
-      stderrRules: {
-        suppress: [{
-          includes: ['noise'],
-        }],
-      },
-      transport: {
-        kind: 'stdio',
-        launch: {
-          kind: 'system-tool',
-          toolId: 'acme-agent',
-          purpose: 'Launch ACP backend acme-full',
-          args: ['acp'],
-          env: { TRANSPORT_TOKEN: 'transport-token' },
-        },
-        timeouts: {
-          initMs: 5000,
-        },
-      },
-    });
-    expect(definition.capabilities.supportsResume).toBe(true);
-    expect(definition.callbacks).toEqual({});
-  });
-
-  it('resolves same-plugin system-tool references and rejects cross-plugin ACP executable references', () => {
-    const backend = {
-      id: 'acme-agent',
-      title: 'Acme Agent',
-      runtime: {
-        kind: 'acp',
-        transport: {
-          kind: 'stdio',
-          executable: {
-            kind: 'systemTool',
-            id: { pluginId: 'acme.plugin', localId: 'acme-cli' },
-          },
-        },
-      },
-      primary: 'sessions',
-      capabilities: {
-        sessions: {
-          open: ['create'],
-          delivery: ['newTurn'],
-          cancel: true,
-        },
-      },
-    };
-    expect(normalizePluginBackendContributionAcpDefinition({
-      pluginId: 'acme.plugin',
-      backend,
-    }).transport).toMatchObject({
-      kind: 'stdio',
-      launch: { kind: 'system-tool', toolId: 'acme-cli' },
-    });
-    expect(() => normalizePluginBackendContributionAcpDefinition({
-      pluginId: 'other.plugin',
-      backend,
-    })).toThrow(/cross-plugin system-tool reference/);
   });
 
   it('resolves plugin-owned ACP system-tool launches through the bound plugin exec service', async () => {
@@ -1616,17 +1455,4 @@ describe('ACP runtime definitions', () => {
     });
   });
 
-  it('rejects legacy plugin ACP wire instead of preserving a loose .acp compatibility path', () => {
-    expect(() => normalizePluginBackendContributionAcpDefinition({
-        pluginId: 'acme.plugin',
-        backend: {
-          id: 'acme.plugin.acp',
-          agentId: 'acme.plugin',
-          runtimeKind: 'acp',
-          acp: {
-            command: 'acme-agent',
-          },
-        },
-    })).toThrow(/agents\[\]\.runtime\.kind/);
-  });
 });

@@ -43,6 +43,7 @@ export async function claimDaemonForegroundAgentRuntimeEnvironment(
     attemptId: string;
     foregroundPid: number;
     foregroundSatisfiedProfileSecretRequirementNames: readonly string[];
+    nativeHomeSourceEnvironmentValue?: string | null;
     signal?: AbortSignal;
   }>,
 ) {
@@ -69,6 +70,12 @@ export async function claimDaemonForegroundAgentRuntimeEnvironment(
       capability: handoff.capability,
       foregroundSatisfiedProfileSecretRequirementNames:
         [...params.foregroundSatisfiedProfileSecretRequirementNames],
+      ...(params.nativeHomeSourceEnvironmentValue === undefined
+        ? {}
+        : {
+            nativeHomeSourceEnvironmentValue:
+              params.nativeHomeSourceEnvironmentValue,
+          }),
     }, {
       ...(params.signal ? { signal: params.signal } : {}),
     }),

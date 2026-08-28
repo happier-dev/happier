@@ -20,6 +20,21 @@ import type { EngineAdapter, RuntimeCore } from '@happier-dev/agents';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+
+export type NativeAgentSessionInteractionHostBinding = Readonly<{
+    /** Parent Session custody used by the hidden retained Voice interaction. */
+    session: Pick<ApiSessionClient,
+        | 'sessionId'
+        | 'getMetadataSnapshot'
+        | 'updateMetadata'
+        | 'updateAgentState'
+        | 'enqueueAgentMessageCommitted'
+    >;
+    machineId: string;
+    permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
+}>;
 
 export type BackendExecutionSurfaces = Readonly<{
     terminalRuntime: AnyTerminalRuntimeOps | null;
@@ -51,6 +66,8 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     start?: ExecutionRunBackendStartContext | null;
     isolation?: ExecutionRunBackendIsolation;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+    /** Host-only Session service custody for retained multi-turn Voice. */
+    sessionInteractionHost?: NativeAgentSessionInteractionHostBinding;
 }>;
 
 export type CliSessionRuntime = HostSessionRuntimePlan;

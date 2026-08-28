@@ -270,7 +270,7 @@ describe('voiceAgentTurnStreams', () => {
     });
     const manager = new VoiceAgentManager({ createRuntime: () => runtime });
     const startedAgent = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -434,7 +434,7 @@ describe('voiceAgentTurnStreams', () => {
     });
     const manager = new VoiceAgentManager({ createRuntime: () => runtime });
     const startedAgent = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -562,7 +562,7 @@ describe('voiceAgentTurnStreams', () => {
     });
     const manager = new VoiceAgentManager({ createRuntime: () => runtime });
     const startedAgent = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -675,7 +675,7 @@ describe('voiceAgentTurnStreams', () => {
     const createRuntime = vi.fn(() => runtime);
     const manager = new VoiceAgentManager({ createRuntime });
     const startedAgent = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -796,7 +796,7 @@ describe('voiceAgentTurnStreams', () => {
     });
     const manager = new VoiceAgentManager({ createRuntime: () => runtime });
     const startedAgent = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',

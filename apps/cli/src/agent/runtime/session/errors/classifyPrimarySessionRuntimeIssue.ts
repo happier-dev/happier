@@ -5,7 +5,7 @@ import type {
   SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 import {
-  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   readConnectedServiceLimitCategoryV1,
   SessionRuntimeIssueSourceV1Schema,
 } from '@happier-dev/protocol';
@@ -280,8 +280,8 @@ function buildUsageLimitDetailsFromRuntimeAuthClassification(
     'validation',
     'account_disabled',
   ].includes(kind ?? '')) return null;
-  const serviceId = ConnectedServiceIdSchema.safeParse(classification.serviceId);
-  if (!serviceId.success) return null;
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(classification.serviceId);
+  if (!serviceId) return null;
   const groupId = normalizeNonEmptyString(classification.groupId);
   const profileId = normalizeNonEmptyString(classification.profileId);
   const hasConnectedServiceRecovery = hasConnectedServiceRuntimeAuthRecoveryContext(classification);
@@ -306,7 +306,7 @@ function buildUsageLimitDetailsFromRuntimeAuthClassification(
     ...(actionKind === 'open_url' && actionUrl ? { action: { kind: 'open_url', url: actionUrl } } : {}),
     ...(hasConnectedServiceRecovery ? {
       connectedService: {
-        serviceId: serviceId.data,
+        serviceId,
         profileId,
         groupId,
       },

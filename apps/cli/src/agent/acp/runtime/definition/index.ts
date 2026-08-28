@@ -4,9 +4,6 @@ export type {
   AcpRuntimeDefinition,
 } from './_types';
 export {
-  normalizeBuiltInAcpDefinition,
-} from './builtIn';
-export {
   normalizeConfiguredAcpDefinition,
 } from './configured';
 export {
@@ -15,7 +12,6 @@ export {
 } from './env';
 export {
   normalizePluginDeclarativeAcpRuntime,
-  normalizePluginBackendContributionAcpDefinition,
 } from './plugin';
 export type {
   NormalizedPluginDeclarativeAcpRuntime,

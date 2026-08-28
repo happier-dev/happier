@@ -36,6 +36,7 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   let resolvedRuntime: ExecutionRunHostRuntime | null = null;
   let sessionProvisionPromise: Promise<string> | null = null;
   let disposePromise: Promise<void> | null = null;
+  let disposed = false;
   let activeSessionId: string | null = null;
   let emittedRuntimeDescriptor = false;
   let emittedRuntimeCapabilities = false;
@@ -69,12 +70,17 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   };
 
   const resolveRuntime = async (): Promise<ExecutionRunHostRuntime> => {
+    if (disposed) throw new Error('Lazy execution-run runtime is disposed');
     if (resolvedRuntimePromise) {
       return await resolvedRuntimePromise;
     }
 
     resolvedRuntimePromise = (async () => {
       const runtime = await params.resolveRuntime();
+      if (disposed) {
+        await runtime.dispose();
+        throw new Error('Lazy execution-run runtime is disposed');
+      }
       resolvedRuntime = runtime;
       permissionCapability = runtime.permissionCapability ?? permissionCapability;
       attachQueuedHandlers(runtime);
@@ -197,15 +203,24 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
       if (disposePromise) {
         return await disposePromise;
       }
-      if (!resolvedRuntimePromise) return;
+      disposed = true;
+      activeSessionId = null;
+      handlers.clear();
       disposePromise = (async () => {
-        const runtime = await resolvedRuntimePromise?.catch(() => null);
-        if (!runtime) return;
         for (const unsubscribe of unsubscribeByHandler.values()) {
           unsubscribe();
         }
         unsubscribeByHandler.clear();
-        await runtime.dispose();
+        if (resolvedRuntime) {
+          await resolvedRuntime.dispose();
+          return;
+        }
+        if (resolvedRuntimePromise) {
+          void resolvedRuntimePromise.then(
+            async (runtime) => await runtime.dispose(),
+            () => undefined,
+          ).catch(() => undefined);
+        }
       })();
       return await disposePromise;
     },

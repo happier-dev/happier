@@ -11,6 +11,10 @@ import {
     type AgentExecutionRunEvent,
     type AgentRuntime,
     type AgentSessionHostServices,
+    type AgentSessionOpenRequest,
+    type AgentSessionRuntimeContext,
+    type AgentSessionRuntimeEvent,
+    type AgentSessionSendRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     accountSettingsParse,
@@ -41,6 +45,7 @@ import {
     resolveBackendEngineAdapterResolution,
     resolveCliEngineRegistry,
 } from './engineRegistry';
+import { resolveEngineAdapterResolutionFromRegistry } from './engineRegistry/resolution';
 import type {
     ResolveEngineRegistryParams,
     RunnerAgentSessionRuntimeSource,
@@ -80,7 +85,8 @@ const {
     notifyDaemonProviderAccountUsageSnapshotMock: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
-vi.mock('../../../plugins/projection/registry/createResolvedContributionRegistry', () => ({
+vi.mock('../../../plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => ({
+    ...await importOriginal<typeof import('../../../plugins/projection/registry/createResolvedContributionRegistry')>(),
     resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
 }));
 
@@ -158,6 +164,11 @@ function normalizeAgentRuntimeRegistryFixture(value: unknown): ReadonlyMap<strin
         if (typeof candidate.createRuntime === 'function') {
             return [agentId, {
                 ...candidate,
+                localAgentId: typeof candidate.localAgentId === 'string'
+                    ? candidate.localAgentId
+                    : typeof candidate.agentId === 'string'
+                        ? candidate.agentId
+                        : agentId,
                 hasPrimaryRuntime: true as const,
                 retirementSignal: candidate.retirementSignal instanceof AbortSignal
                     ? candidate.retirementSignal
@@ -205,6 +216,9 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolveMergedContributionRegistryMock.mockReset();
         resolveExecutablePluginRuntimeRegistryMock.mockReset();
         resolvePluginBackendSurfaceHandlersMock.mockReset();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            diagnostics: [],
+        });
         pluginReloadControllerStateMock.mockReset();
         pluginReloadControllerTryAcquireRuntimeRegistryMock.mockReset();
         readCredentialsMock.mockReset();
@@ -712,6 +726,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         sessions: boolean;
         executionRuns: boolean;
         externalSessions?: boolean;
+        sessionOpen?: ReadonlyArray<'create' | 'resume'>;
+        executionRunOpen?: ReadonlyArray<'create' | 'resume'>;
     }>) {
         const agentId = 'primary-agent';
         const backendId = agentId;
@@ -742,12 +758,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'sessions',
                 capabilities: {
                     sessions: {
-                        open: ['create'],
+                        open: params.sessionOpen ?? ['create'],
                         delivery: ['newTurn'],
                         cancel: true,
                     },
                     executionRuns: {
-                        open: ['create'],
+                        open: params.executionRunOpen ?? ['create'],
                         checkpoint: true,
                         stop: true,
                     },
@@ -762,7 +778,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'sessions',
                 capabilities: {
                     sessions: {
-                        open: ['create'],
+                        open: params.sessionOpen ?? ['create'],
                         delivery: ['newTurn'],
                         cancel: true,
                     },
@@ -777,7 +793,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'executionRuns',
                 capabilities: {
                     executionRuns: {
-                        open: ['create'],
+                        open: params.executionRunOpen ?? ['create'],
                         checkpoint: true,
                         stop: true,
                     },
@@ -1133,6 +1149,10 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             runId: 'run-1',
             cwd: '/repo',
             profile: { pluginId: 'acme.sample', localId: 'review' },
+            stateSharing: {
+                configMode: 'linked',
+                stateMode: 'shared',
+            },
             input: {
                 text: 'Review these changes',
                 structuredInput: { scope: 'changed-files' },
@@ -1159,6 +1179,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             signal: expect.any(AbortSignal),
             isGenerationCurrent: expect.any(Function),
         });
+        const finiteOnlyContext = open.mock.calls[0]?.[1];
+        expect(finiteOnlyContext).toMatchObject({
+            session: { id: 'run-1' },
+            services: operationServices,
+            protocols: { acp: { open: expect.any(Function) } },
+        });
+        expect(finiteOnlyContext?.session).not.toHaveProperty('services');
+        expect(finiteOnlyContext).not.toHaveProperty('workState');
 
         publish({ sequence: 1, runId: 'run-1', emittedAtMs: 10, kind: 'run-start' });
         publish({
@@ -1724,6 +1752,163 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(hostRuntimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
     });
 
+    it('reports a missing executable registry for bundled and external Agents through the same fail-closed boundary', async () => {
+        const firstPartyBackendId = 'acme.firstparty.backend';
+        const firstPartyContributions = seedFirstPartyOwnerRegistry({
+            backendId: firstPartyBackendId,
+        });
+        const {
+            backendId: externalBackendId,
+            contributes: externalContributions,
+        } = seedExternalPrimaryAgentRegistry({
+            sessions: true,
+            executionRuns: false,
+        });
+
+        const [firstPartyResolution, externalResolution] = await Promise.all([
+            resolveEngineAdapterResolutionFromRegistry({
+                backendId: firstPartyBackendId,
+                contributions: firstPartyContributions,
+                runtimeRegistry: null,
+            }),
+            resolveEngineAdapterResolutionFromRegistry({
+                backendId: externalBackendId,
+                contributions: externalContributions,
+                runtimeRegistry: null,
+            }),
+        ]);
+
+        for (const resolution of [firstPartyResolution, externalResolution]) {
+            expect(resolution?.runtimeOwner.selected).toBeNull();
+            expect(resolution).not.toHaveProperty('selectedSource');
+            expect(resolution?.diagnostics).toEqual([
+                expect.objectContaining({
+                    code: 'engine_backend_missing',
+                    backendId: resolution?.backendId,
+                    agentId: resolution?.agentId,
+                }),
+            ]);
+        }
+    });
+
+    it('projects executable-registry diagnostics for a bundled Agent exactly like an external Agent', async () => {
+        const backendId = 'acme.firstparty.backend';
+        const pluginId = 'happier.agent.acme';
+        const contributes = seedFirstPartyOwnerRegistry({
+            backendId,
+            pluginId,
+        });
+        const runtimeRegistry = createRuntimeRegistry({
+            contributes,
+            backendId,
+            pluginId,
+        });
+        const diagnostic = {
+            code: 'engine_plugin_registry_diagnostic' as const,
+            message: 'Bundled Agent activation failed',
+            detailCode: 'plugin_activation_failed',
+            backendId,
+            agentId: 'claude',
+            pluginId,
+        };
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            diagnostics: [diagnostic],
+        });
+
+        const resolution = await resolveEngineAdapterResolutionFromRegistry({
+            backendId,
+            contributions: contributes,
+            runtimeRegistry: runtimeRegistry as never,
+        });
+
+        expect(resolvePluginBackendSurfaceHandlersMock).toHaveBeenCalledWith({
+            backend: expect.objectContaining({ id: backendId }),
+            agent: expect.objectContaining({ id: 'claude' }),
+            runtimeRegistry,
+            hasRegisteredAgentRuntime: false,
+        });
+        expect(resolution?.diagnostics).toEqual([diagnostic]);
+    });
+
+    it('normalizes a bundled declarative ACP Agent as a manifest-owned plugin runtime', async () => {
+        const backendId = 'acme.firstparty.acp';
+        const pluginId = 'happier.agent.acme-acp';
+        const seeded = seedFirstPartyOwnerRegistry({
+            backendId,
+            pluginId,
+        });
+        const seededAgent = seeded.agentDefinitionsById.get('claude')!;
+        const agent = {
+            ...seededAgent,
+            richDefinition: {
+                provenance: 'first_party' as const,
+                definition: {
+                    id: seededAgent.id,
+                    title: {
+                        key: 'plugins.acme.acp.title',
+                        fallback: 'Acme ACP',
+                    },
+                    description: {
+                        key: 'plugins.acme.acp.description',
+                        fallback: 'Acme ACP',
+                    },
+                    runtime: {
+                        kind: 'acp' as const,
+                        transport: {
+                            kind: 'stdio' as const,
+                            executable: {
+                                kind: 'systemTool' as const,
+                                id: 'acme-acp',
+                            },
+                            args: [],
+                        },
+                    },
+                    primary: 'sessions' as const,
+                    capabilities: {
+                        sessions: {
+                            open: ['create'] as const,
+                            delivery: ['newTurn'] as const,
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+        } satisfies ResolvedAgentContribution;
+        const contributes = {
+            ...seeded,
+            agents: [agent],
+            agentDefinitionsById: new Map([[agent.id, agent]]),
+        } satisfies ResolvedContributionRegistry;
+        const runtimeRegistry = createRuntimeRegistry({
+            contributes,
+            backendId,
+            pluginId,
+        });
+
+        const resolution = await resolveEngineAdapterResolutionFromRegistry({
+            backendId,
+            contributions: contributes,
+            runtimeRegistry: runtimeRegistry as never,
+        });
+
+        expect(resolution?.runtimeOwner).toEqual({
+            backendId,
+            selected: {
+                kind: 'plugin_engine',
+                ownerId: pluginId,
+                provenance: 'first_party',
+                pluginId,
+            },
+            candidates: [{
+                kind: 'plugin_engine',
+                ownerId: pluginId,
+                provenance: 'first_party',
+                pluginId,
+            }],
+        });
+        expect(resolution?.selectedSource).toBe('plugin');
+    });
+
     it('selects a bundled plugin engine for a first-party backend after the legacy host owner is removed', async () => {
         const backendId = 'acme.firstparty.backend';
         const pluginId = 'happier.agent.acme';
@@ -1733,7 +1918,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
         const createPluginRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
             sessions: { open: async () => { throw new Error('not invoked'); } },
-            executionRuns: { open: async () => { throw new Error('not invoked'); } },
         }));
         resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue(createRuntimeRegistry({
             contributes,
@@ -1773,16 +1957,13 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     policyAgentId: 'claude',
                 },
             });
-        expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
+        expect(() => resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
             cwd: '/repo',
             runId: 'run-plugin-owner',
             backendId,
             permissionMode: 'read_only',
             start: { intent: 'review' },
-        })).toEqual(expect.objectContaining({
-            provisionSession: expect.any(Function),
-            sendPrompt: expect.any(Function),
-        }));
+        })).toThrow('Session-derived execution run requires parent Session host custody');
         expect(createPluginRuntime).toHaveBeenCalledTimes(1);
     });
 
@@ -2530,6 +2711,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         } = seedExternalPrimaryAgentRegistry({
             sessions: false,
             executionRuns: true,
+            executionRunOpen: ['create', 'resume'],
         });
         const openExecutionRun = vi.fn(async () => ({
             send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -2581,9 +2763,19 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             });
 
         expect(daemonCreateRuntime).toHaveBeenCalledOnce();
-        await expect(executionRuntime?.provisionSession()).resolves.toEqual({
+        await expect(executionRuntime?.readResumeSupport()).resolves.toBe(true);
+        await expect(executionRuntime?.provisionSession({
+            resumeSessionId: 'finite-provider-session-1',
+        })).resolves.toEqual({
             sessionId: 'execution-only-run',
         });
+        expect(openExecutionRun).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'resume',
+                checkpointId: 'finite-provider-session-1',
+            }),
+            expect.any(Object),
+        );
         await expect(
             executionRuntime?.sendPrompt(
                 'execution-only-run',
@@ -2594,7 +2786,24 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         await executionRuntime?.dispose();
     });
 
-    it('keeps combined external Session and execution-run runtime instances in their distinct runner and daemon realms', async () => {
+    it.each([
+        {
+            label: 'resume-capable Session',
+            sessionOpen: ['create', 'resume'] as const,
+            supportsResume: true,
+            resumeSessionId: 'provider-session-42',
+        },
+        {
+            label: 'create-only Session',
+            sessionOpen: ['create'] as const,
+            supportsResume: false,
+            resumeSessionId: null,
+        },
+    ])('derives a finite Run from an external $label Agent with complete parent Session custody', async ({
+        sessionOpen,
+        supportsResume,
+        resumeSessionId,
+    }) => {
         const {
             agentId,
             backendId,
@@ -2602,29 +2811,68 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             contributes,
         } = seedExternalPrimaryAgentRegistry({
             sessions: true,
-            executionRuns: true,
+            executionRuns: false,
+            sessionOpen,
         });
-        const daemonSessionOpen = vi.fn(async () => {
-            throw new Error('daemon must not open the primary Session runtime');
+        let publishSessionEvent: ((event: AgentSessionRuntimeEvent) => void) | null = null;
+        let openedSessionContext: Parameters<NonNullable<AgentRuntime['sessions']>['open']>[1] | null = null;
+        const modelSourceDispose = vi.fn();
+        const sessionRuntimeDispose = vi.fn(async () => undefined);
+        const daemonSessionOpen = vi.fn(async (
+            _request: AgentSessionOpenRequest,
+            context: AgentSessionRuntimeContext,
+        ) => {
+            openedSessionContext = context;
+            context.session.services.models.bind({
+                read: () => ({ models: null }),
+                subscribe: () => ({ dispose: modelSourceDispose }),
+            });
+            return {
+                async send(request: AgentSessionSendRequest) {
+                    publishSessionEvent?.({
+                        sequence: 1,
+                        sessionId: context.session.id,
+                        emittedAtMs: 10,
+                        turnId: request.delivery.turnId,
+                        kind: 'message-delta',
+                        channel: 'assistant',
+                        text: 'Session-derived result',
+                    });
+                    publishSessionEvent?.({
+                        sequence: 2,
+                        sessionId: context.session.id,
+                        emittedAtMs: 11,
+                        turnId: request.delivery.turnId,
+                        kind: 'turn-complete',
+                    });
+                    return { status: 'admitted' as const };
+                },
+                cancel: vi.fn(async () => ({ status: 'notRunning' as const })),
+                watch(listener: (event: AgentSessionRuntimeEvent) => void) {
+                    publishSessionEvent = listener;
+                    return {
+                        dispose() {
+                            if (publishSessionEvent === listener) publishSessionEvent = null;
+                        },
+                    };
+                },
+                dispose: sessionRuntimeDispose,
+            };
         });
-        const daemonExecutionOpen = vi.fn(async () => ({
-            send: vi.fn(async () => ({ status: 'admitted' as const })),
-            stop: vi.fn(async () => ({ status: 'requested' as const })),
-            watch: () => ({ dispose: () => {} }),
-            dispose: vi.fn(async () => undefined),
-        }));
         const daemonCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
             sessions: { open: daemonSessionOpen },
-            executionRuns: { open: daemonExecutionOpen },
         }));
         const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
-            createRuntimeRegistry({
-                contributes,
-                backendId,
-                agentId,
-                pluginId,
-                createRuntime: daemonCreateRuntime,
-            }),
+            {
+                ...createRuntimeRegistry({
+                    contributes,
+                    backendId,
+                    agentId,
+                    pluginId,
+                    createRuntime: daemonCreateRuntime,
+                }),
+                createAgentInvocationServices: vi.fn(async () => createUnavailablePluginServices()),
+            },
             contributes,
         );
         pluginReloadControllerStateMock.mockReturnValue({
@@ -2646,6 +2894,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const runnerSessionDispose = vi.fn(async () => undefined);
         const runnerSessionOpen = vi.fn(async () => ({
             send: vi.fn(async () => ({ status: 'admitted' as const })),
+            cancel: vi.fn(async () => ({ status: 'notRunning' as const })),
             watch: () => ({ dispose: () => {} }),
             dispose: runnerSessionDispose,
         }));
@@ -2718,24 +2967,95 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const daemonResolution = await daemonRegistry.resolveForBackendId(
             backendId,
         );
+        const parentSession = {
+            ...createRuntimePlacementSessionClient('parent-session'),
+            enqueueAgentMessageCommitted: vi.fn(async () => undefined),
+        };
+        const handleToolCall = vi.fn(async () => ({
+            decision: 'denied' as const,
+        }));
         const executionRuntime = daemonResolution?.engineAdapter.runtimeCore
             .createExecutionRunBackend({
                 cwd: '/repo',
-                runId: 'combined-execution-run',
+                runId: 'session-derived-run',
                 backendId,
                 permissionMode: 'read_only',
                 start: { intent: 'review' },
+                sessionInteractionHost: {
+                    session: parentSession,
+                    machineId: 'machine-1',
+                    permissionHandler: { handleToolCall },
+                },
             });
-        await executionRuntime?.provisionSession();
+        const messages: unknown[] = [];
+        executionRuntime?.subscribeMessages((message) => messages.push(message));
+
+        await expect(executionRuntime?.readResumeSupport()).resolves.toBe(supportsResume);
+        await expect(executionRuntime?.provisionSession(
+            resumeSessionId ? { resumeSessionId } : undefined,
+        )).resolves.toEqual({
+            sessionId: 'session-derived-run',
+        });
         await executionRuntime?.sendPrompt(
-            'combined-execution-run',
+            'session-derived-run',
             'Review these changes',
         );
-        expect(daemonExecutionOpen).toHaveBeenCalledOnce();
-        expect(daemonSessionOpen).not.toHaveBeenCalled();
+        await executionRuntime?.waitForTurnCompletion?.();
+
+        expect(daemonSessionOpen).toHaveBeenCalledOnce();
+        expect(daemonSessionOpen.mock.calls[0]?.[0]).toMatchObject({
+            kind: resumeSessionId ? 'resume' : 'create',
+            sessionId: 'parent-session',
+            cwd: '/repo',
+            ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
+        });
+        expect(openedSessionContext).toMatchObject({
+            plugin: { id: pluginId, version: '0.0.0' },
+            contribution: {
+                id: agentId,
+                qualifiedId: `${pluginId}/agents/${agentId}`,
+            },
+            surface: 'agent',
+            agent: { id: agentId },
+            session: {
+                id: 'parent-session',
+                services: {
+                    features: { isEnabled: expect.any(Function) },
+                    models: { bind: expect.any(Function) },
+                    activeInput: {
+                        bind: expect.any(Function),
+                        publishStatus: expect.any(Function),
+                    },
+                    sessionHooks: { startServer: expect.any(Function) },
+                    transcripts: {
+                        publishSessionEvent: expect.any(Function),
+                        markSourceFactConsumed: expect.any(Function),
+                        fileFollow: { follow: expect.any(Function) },
+                    },
+                    accountUsage: {
+                        resolveSourceContext: expect.any(Function),
+                        recordSnapshot: expect.any(Function),
+                        adoptProvisionalRecord: expect.any(Function),
+                    },
+                    mcp: { resolveServers: expect.any(Function) },
+                    workflowActivity: expect.any(Object),
+                    toolExecution: { before: expect.any(Function) },
+                },
+            },
+            workState: { publisher: expect.any(Function) },
+            protocols: { acp: { open: expect.any(Function) } },
+        });
+        expect(messages).toEqual([
+            { type: 'status', status: 'running' },
+            { type: 'model-output', textDelta: 'Session-derived result' },
+            { type: 'status', status: 'stopped' },
+        ]);
 
         await executionRuntime?.dispose();
+        await executionRuntime?.dispose();
         await createdSessionRuntime.operations.resetOrDisposeRuntime();
+        expect(sessionRuntimeDispose).toHaveBeenCalledOnce();
+        expect(modelSourceDispose).toHaveBeenCalledOnce();
         expect(runnerSessionDispose).toHaveBeenCalledOnce();
     });
 

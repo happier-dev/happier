@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PermissionIntent } from '@happier-dev/agents';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
-import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
@@ -365,7 +363,7 @@ describe('VoiceAgentManager', () => {
 
     await expect(
       manager.start({
-        agentId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -395,7 +393,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -427,7 +425,7 @@ describe('VoiceAgentManager', () => {
     };
 
     await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -449,7 +447,7 @@ describe('VoiceAgentManager', () => {
 
     await expect(
       manager.start({
-        agentId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -476,7 +474,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend: () => backend });
 
     await expect(manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -490,18 +488,20 @@ describe('VoiceAgentManager', () => {
     expect(manager.getResumeHandle('voice-agent-bootstrap-fail')).toBeNull();
   });
 
-  it('passes agentId, model ids, permission policy, and voice_agent start intent to the backend factory', async () => {
+  it('passes the canonical backend target, model ids, permission policy, and voice_agent start intent to the backend factory', async () => {
 
     const seen: Array<{
-      agentId: AgentId;
+      backendTarget: Parameters<BackendFactory>[0]['backendTarget'];
+      backendId: string;
       modelId: string;
-      permissionIntent: PermissionIntent;
+      permissionIntent: Parameters<BackendFactory>[0]['permissionIntent'];
       start?: { intent: 'voice_agent' };
     }> = [];
     const backend = createDeterministicBackend('chat');
     const createBackend: BackendFactory = (opts) => {
       seen.push({
-        agentId: opts.agentId,
+        backendTarget: opts.backendTarget,
+        backendId: opts.backendId,
         modelId: opts.modelId,
         permissionIntent: opts.permissionIntent,
         start: opts.start,
@@ -511,7 +511,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -520,18 +520,34 @@ describe('VoiceAgentManager', () => {
     });
 
     expect(seen).toEqual([{
-      agentId: 'claude',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' },
+      backendId: 'external-voice-agent',
       modelId: 'chat-model',
       permissionIntent: 'read-only',
       start: { intent: 'voice_agent' },
     }]);
+    expect(manager.getResumeHandle(started.voiceAgentId)?.backendTarget).toMatchObject({
+      kind: 'backend',
+      backendId: 'external-voice-agent',
+      configuredBackendId: 'external-voice-agent',
+      sourceKind: 'configured',
+    });
 
     await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
 
     expect(seen).toEqual([
-      { agentId: 'claude', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
-      { agentId: 'claude', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
     ]);
+    expect(manager.getResumeHandle(started.voiceAgentId)).toMatchObject({
+      kind: 'voice_agent_sessions.v1',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'external-voice-agent',
+        configuredBackendId: 'external-voice-agent',
+        sourceKind: 'configured',
+      },
+    });
   });
 
   it('routes independent Provider selections and the same non-default temperature to chat and commit', async () => {
@@ -560,7 +576,7 @@ describe('VoiceAgentManager', () => {
     } as const;
 
     const started = await manager.start({
-      agentId: 'opencode',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       chatModelSelection,
@@ -590,7 +606,7 @@ describe('VoiceAgentManager', () => {
     const createBackend = vi.fn<BackendFactory>(() => createDeterministicBackend('provider'));
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'opencode',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
       chatModelId: 'shared-model',
       commitModelId: 'shared-model',
       chatModelSelection: ProviderBoundModelRefSchema.parse({
@@ -629,7 +645,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -659,7 +675,7 @@ describe('VoiceAgentManager', () => {
     });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -705,7 +721,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -731,7 +747,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -764,7 +780,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -798,7 +814,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -841,7 +857,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -877,7 +893,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -907,7 +923,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -955,7 +971,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1006,7 +1022,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementRuntime);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1041,7 +1057,7 @@ describe('VoiceAgentManager', () => {
     const onTerminalFailure = vi.fn(async () => {});
     const manager = new VoiceAgentManager({ createBackend, onTerminalFailure });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1082,7 +1098,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1139,7 +1155,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       commitIsolation: true,
@@ -1182,7 +1198,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1233,7 +1249,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1281,7 +1297,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1318,7 +1334,7 @@ describe('VoiceAgentManager', () => {
       .mockReturnValueOnce(replacementBackend);
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1343,7 +1359,7 @@ describe('VoiceAgentManager', () => {
     const backend = createDeltaOnlyBackend('chat');
     const manager = new VoiceAgentManager({ createBackend: () => backend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       commitIsolation: false,
@@ -1395,7 +1411,7 @@ describe('VoiceAgentManager', () => {
     });
     const manager = new VoiceAgentManager({ createRuntime: () => runtime });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1431,7 +1447,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1474,7 +1490,7 @@ describe('VoiceAgentManager', () => {
         },
       });
       const started = await manager.start({
-        agentId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -1517,7 +1533,7 @@ describe('VoiceAgentManager', () => {
       });
 
       const started = await manager.start({
-        agentId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -1559,7 +1575,7 @@ describe('VoiceAgentManager', () => {
       });
 
       const started = await manager.start({
-        agentId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -1598,7 +1614,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1630,7 +1646,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1661,7 +1677,7 @@ describe('VoiceAgentManager', () => {
     const chatBackend = createDeltaOnlyBackend('cursor-ahead');
     const manager = new VoiceAgentManager({ createBackend: () => chatBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1704,7 +1720,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1747,7 +1763,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1788,7 +1804,7 @@ describe('VoiceAgentManager', () => {
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1829,7 +1845,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1857,7 +1873,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend: () => backend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1883,7 +1899,7 @@ describe('VoiceAgentManager', () => {
 
     await expect(
       manager.start({
-        agentId: 'codex',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
         permissionIntent: 'read-only',
@@ -1908,7 +1924,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1933,7 +1949,7 @@ describe('VoiceAgentManager', () => {
     }]);
     const manager = new VoiceAgentManager({ createBackend: () => backend });
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -1956,7 +1972,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
       permissionIntent: 'read-only',
@@ -1981,7 +1997,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({ createBackend });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -2012,7 +2028,7 @@ describe('VoiceAgentManager', () => {
     } as any);
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       profileId: 'work',
       contextSessionId: 'session-1',
       chatModelId: 'chat-model',
@@ -2036,7 +2052,7 @@ describe('VoiceAgentManager', () => {
     } as any);
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',
@@ -2058,7 +2074,7 @@ describe('VoiceAgentManager', () => {
     });
 
     const started = await manager.start({
-      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
       permissionIntent: 'read-only',

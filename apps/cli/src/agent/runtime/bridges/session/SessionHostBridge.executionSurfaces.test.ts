@@ -165,12 +165,15 @@ describe('SessionHostBridge execution surfaces', () => {
         agentId: 'acme.handoff',
         agent: { providerSessionId: 'acme-session-1' },
       },
-    };
+    } as const;
     const agentMetadata = {
-      providerSessionId: 'acme-session-1',
-    };
+      runtimeDescriptorV1: metadata.runtimeDescriptorV1,
+    } as const;
     const snapshot = {
-      agentDefinitionsById: new Map(),
+      agentDefinitionsById: new Map([[
+        'acme.handoff',
+        { identity: { pluginId: 'acme.plugin', localId: 'handoff' } },
+      ]]),
       catalogEntriesById: {},
     };
     const handoff = {
@@ -214,11 +217,17 @@ describe('SessionHostBridge execution surfaces', () => {
 
   it('does not hand out a catalog Agent surface after its current backend target changes', async () => {
     const initialSnapshot = {
-      agentDefinitionsById: new Map(),
+      agentDefinitionsById: new Map([[
+        'acme.handoff',
+        { identity: { pluginId: 'acme.plugin', localId: 'handoff' } },
+      ]]),
       catalogEntriesById: {},
     };
     const currentSnapshot = {
-      agentDefinitionsById: new Map(),
+      agentDefinitionsById: new Map([[
+        'acme.handoff',
+        { identity: { pluginId: 'acme.plugin', localId: 'handoff' } },
+      ]]),
       catalogEntriesById: {},
     };
     readAgentCatalogSnapshotMock

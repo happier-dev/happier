@@ -1599,7 +1599,7 @@ export abstract class BasePermissionHandler {
         // so omit it from the projection, but do not falsely certify an exact
         // negative list to a mediator that must retain its custody. This is a
         // whole-projection fact, so it is reported on every page.
-        let hasUnprojectedDurableRequest = false;
+        let hasUnprojectedSourceRequest = false;
         const requests: MediatedPendingRequest[] = [];
         for (const context of this.requestCoordinator.listResponseContexts()) {
             const kind = resolveAgentRequestKind(context.toolName);
@@ -1631,7 +1631,7 @@ export abstract class BasePermissionHandler {
                     requestId,
                 });
                 if (!this.inertRemoteMediationRequestIdentities.has(identity)) {
-                    hasUnprojectedDurableRequest = true;
+                    hasUnprojectedSourceRequest = true;
                 }
                 continue;
             }
@@ -1641,9 +1641,15 @@ export abstract class BasePermissionHandler {
                 toolName: context.toolName,
                 toolInput: context.toolInput,
             });
-            if (!agentRequestSummary) continue;
+            if (!agentRequestSummary) {
+                hasUnprojectedSourceRequest = true;
+                continue;
+            }
             if (kind === 'user_action') {
-                if (agentRequestSummary.kind !== 'user_action') continue;
+                if (agentRequestSummary.kind !== 'user_action') {
+                    hasUnprojectedSourceRequest = true;
+                    continue;
+                }
                 requests.push({
                     kind,
                     requestId,
@@ -1654,7 +1660,10 @@ export abstract class BasePermissionHandler {
                 continue;
             }
 
-            if (agentRequestSummary.kind !== 'permission') continue;
+            if (agentRequestSummary.kind !== 'permission') {
+                hasUnprojectedSourceRequest = true;
+                continue;
+            }
             const allowedScopes: MediatedPendingPermissionScopes =
                 sourceAuthority.remoteApprovalMaxScope === 'session'
                     ? ['request', 'session']
@@ -1681,7 +1690,7 @@ export abstract class BasePermissionHandler {
             // answer for. A caller can therefore never use an empty result to
             // suppress custody during restart hydration. Further pages are a
             // different fact and are reported by `nextCursor`.
-            truncated: hasUnprojectedDurableRequest,
+            truncated: hasUnprojectedSourceRequest,
             nextCursor: last !== undefined && remaining.length > page.length
                 ? encodeMediatedPendingPermissionCursor(last)
                 : null,

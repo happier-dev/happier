@@ -120,7 +120,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                 definition: { kindVersion: 1, id: 'acme', ownedBackendIds: ['acme'] },
                 pluginId: 'happier.agent.acme',
             },
-            hostRuntimeParams: { session: { getMetadataSnapshot: () => ({}) } },
+            hostSession: { session: { getMetadataSnapshot: () => ({}) } },
             sessionId: 'session-tool-hooks',
             directory: happyHomeDir,
             signal: new AbortController().signal,
@@ -188,7 +188,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                 },
                 pluginId: 'happier.agent.acme',
             },
-            hostRuntimeParams: {
+            hostSession: {
                 session: {
                     getMetadataSnapshot: () => ({}),
                 },
@@ -247,7 +247,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                 },
                 pluginId: 'happier.agent.acme',
             },
-            hostRuntimeParams: {
+            hostSession: {
                 session: {
                     getMetadataSnapshot: () => ({}),
                 },
@@ -457,7 +457,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                 definition: { kindVersion: 1, id: 'acme', ownedBackendIds: ['acme'] },
                 pluginId: 'happier.agent.acme',
             },
-            hostRuntimeParams: { session: { getMetadataSnapshot: () => ({}) } },
+            hostSession: { session: { getMetadataSnapshot: () => ({}) } },
             sessionId: 'session-feature-decision-server',
             directory: happyHomeDir,
             signal: new AbortController().signal,
@@ -525,7 +525,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                 },
                 pluginId: 'happier.agent.acme',
             },
-            hostRuntimeParams: {
+            hostSession: {
                 session: {
                     getMetadataSnapshot: () => ({}),
                 },

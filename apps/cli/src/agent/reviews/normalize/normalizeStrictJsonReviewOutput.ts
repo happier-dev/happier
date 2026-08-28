@@ -5,6 +5,7 @@ import {
   ReviewFindingSchema,
   ReviewQuestionSchema,
   ReviewCommentProposalsV1Schema,
+  ReviewFindingsV2Schema,
   type ReviewFinding,
 } from '@happier-dev/protocol';
 
@@ -13,7 +14,6 @@ import type {
   ExecutionRunStructuredMeta,
 } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
-import { buildReviewFindingsV2Payload } from './buildReviewFindingsV2Payload';
 import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
 
 export function normalizeStrictJsonReviewOutput(params: Readonly<{
@@ -121,7 +121,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     };
   }
 
-  if (typeof summaryRaw !== 'string' || summaryRaw.trim().length === 0 || !Array.isArray(findingsRaw)) {
+  if (!parsedRecord || typeof summaryRaw !== 'string' || summaryRaw.trim().length === 0 || !Array.isArray(findingsRaw)) {
     const summary = 'Invalid review output (expected strict JSON).';
     return {
       status: 'failed',
@@ -195,12 +195,15 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     };
   }
 
-  const findingsPayload = buildReviewFindingsV2Payload({
-    runId: params.runId,
-    callId: params.callId,
-    backendId: params.backendId,
-    backendTarget: params.backendTarget,
-    retentionPolicy: params.retentionPolicy,
+  const findingsPayload = ReviewFindingsV2Schema.parse({
+    ...parsedRecord,
+    runRef: {
+      runId: params.runId,
+      callId: params.callId,
+      backendId: params.backendId,
+      backendTarget: params.backendTarget,
+      ...(params.retentionPolicy ? { retentionPolicy: params.retentionPolicy } : {}),
+    },
     summary: summaryRaw,
     overviewMarkdown: typeof overviewMarkdownRaw === 'string' ? overviewMarkdownRaw : summaryRaw,
     findings,
@@ -223,8 +226,17 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   }));
 
   const structuredMeta: ExecutionRunStructuredMeta = { kind: 'review_findings.v2', payload: findingsPayload };
+  const failed = parsedRecord.status === 'failed';
+  const errorRecord = parsedRecord.error
+    && typeof parsedRecord.error === 'object'
+    && !Array.isArray(parsedRecord.error)
+      ? parsedRecord.error as Record<string, unknown>
+      : null;
+  const failureCode = typeof errorRecord?.code === 'string' && errorRecord.code.trim()
+    ? errorRecord.code
+    : 'review_failed';
   const output = {
-    status: 'succeeded',
+    status: failed ? 'failed' : 'succeeded',
     summary,
     runId: params.runId,
     callId: params.callId,
@@ -234,10 +246,11 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     startedAtMs: params.startedAtMs,
     finishedAtMs: params.finishedAtMs,
     findingsDigest: { total: payloadFindings.length, items: digestItems },
+    ...(failed ? { error: { code: failureCode } } : {}),
   };
 
   return {
-    status: 'succeeded',
+    status: failed ? 'failed' : 'succeeded',
     summary,
     toolResultOutput: output,
     toolResultMeta: { happier: structuredMeta } as any,

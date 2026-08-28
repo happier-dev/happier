@@ -388,6 +388,7 @@ describe('resolveBackendRuntimeCore retirement signal ownership', () => {
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const session: AgentSessionRuntime = {
       send: vi.fn(async () => ({ status: 'admitted' as const })),
+      cancel: vi.fn(async () => ({ status: 'notRunning' as const })),
       watch: () => ({ dispose: () => {} }),
       dispose: vi.fn(async () => {}),
     };

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
 import {
@@ -58,7 +59,6 @@ import type {
     AgentSessionHostServices,
     AgentSessionProviderTranscriptPublishRequest,
     AgentSessionRuntimeContext,
-    AgentAcpRuntimeOptions,
     AgentSessionConfigurationSnapshot,
     AgentSessionConfigurationUpdate,
     AgentSessionOpenRequest,
@@ -79,6 +79,8 @@ import { configuration as happierConfiguration } from '@/configuration';
 import {
     createProviderBindingLaunchMaterializationCleanup,
 } from '@/providers/spawn/compose';
+import { createAgentNativeHomeReadService } from '@/agent/runtime/nativeHomeFileService';
+import { resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import {
     createHostSessionPresentationOwner,
     type HostCurrentSessionUiServices,
@@ -156,20 +158,13 @@ import {
 } from '@/agent/acp/commands/publishSlashCommands';
 import { logger } from '@/ui/logger';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
-import {
-    createPublicAcpSession,
-    type PublicAcpSystemTools,
-} from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
+import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import type { UsageObservation } from '@/usage/usageObservation';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
 import { createNativeAgentSessionWorkStateService } from './nativeAgentSessionWorkState';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
 import { createPluginSessionMediaHostAdapter } from './nativeAgentSessionMedia';
 import type { McpServerConfig } from '@/agent/core/AgentTypes';
-import {
-    resolvePluginExecManagedDependencyForHost,
-    resolvePluginExecSystemToolForHost,
-} from '@/plugins/runtime/invocation/services/exec';
 import {
     buildSessionRollbackRangesV1,
     readSessionRollbackRangesV1FromMetadata,
@@ -183,6 +178,10 @@ import { registerCurrentSessionUiBinding } from '@/session/presentation/currentS
 import { readStoredCredentials } from '@/persistence';
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import {
+    resolveAgentToolsDelivery,
+    type AgentToolsDelivery,
+} from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import {
     createNativeAgentSessionPublications,
     type NativeAgentSessionPublications,
@@ -859,40 +858,6 @@ function combineSessionOperationSignal(
     return signal;
 }
 
-function createPublicAcpSystemToolsAdapter(
-    exec: PluginServices['exec'],
-    pluginId: string,
-): PublicAcpSystemTools {
-    return Object.freeze({
-        async resolve(request) {
-            const resolved = await resolvePluginExecSystemToolForHost(exec, request);
-            const executable = resolved.executable;
-            const localId = executable.kind === 'systemTool'
-                ? typeof executable.id === 'string'
-                    ? executable.id
-                    : executable.id.pluginId === pluginId
-                        ? executable.id.localId
-                        : null
-                : null;
-            if (executable.kind !== 'systemTool' || localId !== request.toolId) {
-                throw new PluginError({
-                    code: 'plugin_exec_system_tool_resolution_invalid',
-                    message: `ACP system tool '${request.toolId}' did not resolve to its exact declared executable`,
-                });
-            }
-            return Object.freeze({
-                toolId: request.toolId,
-                launch: Object.freeze({
-                    kind: 'binary',
-                    executablePath: resolved.command,
-                    ...(resolved.args ? { args: resolved.args } : {}),
-                    ...(resolved.env ? { env: resolved.env } : {}),
-                }),
-            });
-        },
-    });
-}
-
 export function createNativeAgentSessionHostServices(params: Readonly<{
     owners: NativeAgentSessionHostServiceOwners;
     agentId: string;
@@ -901,6 +866,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     signal: AbortSignal;
     isCurrent: () => boolean;
     terminalHost?: NonNullable<AgentSessionHostServices['terminalHost']>;
+    nativeHome?: NonNullable<AgentSessionHostServices['nativeHome']>;
     session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Readonly<{
         sessionId: string;
     }>;
@@ -910,6 +876,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     profileId?: string | null;
     sessionMachineId?: string | null;
     memoryRecallGuidanceEnabled?: boolean;
+    toolsDelivery?: AgentToolsDelivery;
 }>): AgentSessionHostServices {
     const isSessionScopeCurrent = (): boolean => {
         let current = false;
@@ -1187,6 +1154,16 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     const terminalHost = params.terminalHost
         ? createPublicNativeAgentSessionTerminalHostService(params.terminalHost)
         : undefined;
+    const nativeHome = params.nativeHome
+        ? Object.freeze({
+            async readFiles(fileIds: readonly string[]) {
+                assertSessionScopeAvailable('native-home');
+                const files = await params.nativeHome!.readFiles(fileIds);
+                assertSessionScopeAvailable('native-home');
+                return files;
+            },
+        })
+        : undefined;
     return Object.freeze({
         features,
         ...(terminalHost ? { terminalHost } : {}),
@@ -1202,7 +1179,13 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
         mcp,
         workflowActivity,
         toolExecution,
-        happierTools,
+        ...(nativeHome ? { nativeHome } : {}),
+        ...(
+            params.toolsDelivery === 'native_extension'
+            || params.toolsDelivery === 'shell_bridge'
+                ? { happierTools }
+                : {}
+        ),
     });
 }
 
@@ -1438,6 +1421,8 @@ type NativeAgentSessionDirectFacets = Readonly<{
     connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
     capabilities: AgentSessionCapabilities;
     cancellation: NativeAgentSessionCancellation;
+    configuration: NativeAgentSessionConfiguration;
+    manualCompaction: NativeAgentSessionManualCompaction;
 }>;
 
 type NativeAgentSessionCancellation =
@@ -1463,6 +1448,58 @@ function resolveNativeAgentSessionCancellation(
     return {
         declared: true,
         cancel: (request, options) => cancel.call(session, request, options),
+    };
+}
+
+type NativeAgentSessionConfiguration =
+    | Readonly<{ declared: false }>
+    | Readonly<{
+        declared: true;
+        updateConfiguration: NonNullable<AgentSessionRuntime['updateConfiguration']>;
+    }>;
+
+function resolveNativeAgentSessionConfiguration(
+    agentId: string,
+    capabilities: AgentSessionCapabilities,
+    session: AgentSessionRuntime,
+): NativeAgentSessionConfiguration {
+    if (capabilities.configuration !== true) return { declared: false };
+    const updateConfiguration = session.updateConfiguration;
+    if (typeof updateConfiguration !== 'function') {
+        throw new PluginError({
+            code: 'agent_session_configuration_contract_mismatch',
+            message: `Native Agent '${agentId}' declares sessions.configuration but its session runtime does not implement updateConfiguration`,
+        });
+    }
+    return {
+        declared: true,
+        updateConfiguration: (request) => updateConfiguration.call(session, request),
+    };
+}
+
+type NativeAgentSessionManualCompaction =
+    | Readonly<{ declared: false }>
+    | Readonly<{
+        declared: true;
+        compact: NonNullable<AgentSessionRuntime['compact']>;
+    }>;
+
+function resolveNativeAgentSessionManualCompaction(
+    agentId: string,
+    capabilities: AgentSessionCapabilities,
+    session: AgentSessionRuntime,
+): NativeAgentSessionManualCompaction {
+    if (capabilities.compaction?.manual !== true) return { declared: false };
+    const compact = session.compact;
+    if (typeof compact !== 'function') {
+        throw new PluginError({
+            code: 'agent_session_manual_compaction_contract_mismatch',
+            message: `Native Agent '${agentId}' declares sessions.compaction.manual but its session runtime does not implement compact`,
+        });
+    }
+    return {
+        declared: true,
+        compact: (request) => compact.call(session, request),
     };
 }
 
@@ -1528,6 +1565,7 @@ function createNativeAgentSessionControlContext(params: Readonly<{
         plugin: params.context.plugin,
         contribution: params.context.contribution,
         surface: params.context.surface,
+        invokedAtMs: params.context.invokedAtMs,
         signal: params.context.signal,
         services: params.context.services,
         ui: params.context.ui,
@@ -1644,6 +1682,15 @@ function projectPublicNativeAgentRuntimeEvent(
         default:
             return event;
     }
+}
+
+function shouldPublishNativeAgentRuntimeHostEvent(
+    event: AgentSessionRuntimeEvent,
+): boolean {
+    return event.kind !== 'context-compaction'
+        || event.phase === 'failed'
+        || event.phase === 'cancelled'
+        || event.phase === 'outcomeUnknown';
 }
 
 function createNativeAgentRuntimeEndedError(issue: SessionRuntimeIssueV1 | null): Error {
@@ -1873,6 +1920,121 @@ type NativeAgentToolExecutionLifecycleObserver = Readonly<{
         timestampMs: number;
     }>): void | Promise<void>;
 }>;
+
+/**
+ * Reuses the canonical native Session turn/custody/event controller for a
+ * host-owned retained interaction such as Voice.
+ */
+export async function resolveNativeAgentSessionNativeHomeService(params: Readonly<{
+    agent: ResolvedAgentContribution;
+    sourceEnvironment: Readonly<Record<string, string>>;
+}>): Promise<ReturnType<typeof createAgentNativeHomeReadService> | null> {
+    const descriptor = await params.agent.catalogEntry
+        ?.getConnectedServiceStateSharingDescriptor?.()
+        .catch(() => null);
+    if (descriptor?.providerSupportStatus !== 'supported' || !descriptor.nativeHome) {
+        return null;
+    }
+    return createAgentNativeHomeReadService({
+        root: resolveConnectedServiceNativeHomeRoot({
+            nativeHome: descriptor.nativeHome,
+            sourceEnvironment: params.sourceEnvironment,
+            homeDir: homedir(),
+        }),
+        declaredFileIds: descriptor.authIsolation.secretEntries,
+    });
+}
+
+export function composeNativeAgentSessionRuntimeContext(params: Readonly<{
+    identity: Readonly<{
+        pluginId: string;
+        pluginVersion: string;
+        agentId: string;
+    }>;
+    contributionId: string;
+    invokedAtMs: number;
+    sessionId: string;
+    signal: AbortSignal;
+    services: PluginServices;
+    sessionServices: AgentSessionHostServices;
+    ui: AgentSessionRuntimeContext['ui'];
+    protocols: AgentSessionRuntimeContext['protocols'];
+    workState: AgentSessionRuntimeContext['workState'];
+}>): AgentSessionRuntimeContext {
+    return Object.freeze({
+        plugin: Object.freeze({
+            id: params.identity.pluginId,
+            version: params.identity.pluginVersion,
+        }),
+        contribution: Object.freeze({
+            id: params.contributionId,
+            qualifiedId: `${params.identity.pluginId}/agents/${params.contributionId}`,
+        }),
+        surface: 'agent' as const,
+        invokedAtMs: params.invokedAtMs,
+        session: Object.freeze({
+            id: params.sessionId,
+            services: params.sessionServices,
+        }),
+        signal: params.signal,
+        services: params.services,
+        ui: params.ui,
+        agent: Object.freeze({ id: params.identity.agentId }),
+        protocols: params.protocols,
+        workState: params.workState,
+    });
+}
+
+export function createNativeAgentSessionInteractionOperations(params: Readonly<{
+    session: AgentSessionRuntime;
+    sessionId: string;
+    cwd: string;
+    context: AgentSessionRuntimeContext;
+    connectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
+    initialConfiguration?: AgentSessionConfigurationSnapshot;
+}>): PluginRuntimeHookOperations {
+    const capabilities: AgentSessionCapabilities = {
+        open: ['create', 'resume'],
+        delivery: ['newTurn'],
+        cancel: typeof params.session.cancel === 'function',
+        ...(typeof params.session.updateConfiguration === 'function'
+            ? { configuration: true }
+            : {}),
+        ...(typeof params.session.compact === 'function'
+            ? { compaction: { events: true, manual: true } }
+            : {}),
+    };
+    return createNativeAgentSessionOperations(
+        params.session,
+        params.sessionId,
+        undefined,
+        undefined,
+        undefined,
+        params.initialConfiguration,
+        undefined,
+        {
+            context: params.context,
+            cwd: params.cwd,
+            connectedAccounts: params.connectedAccounts ?? [],
+            capabilities,
+            cancellation: resolveNativeAgentSessionCancellation(
+                params.context.agent.id,
+                capabilities,
+                params.session,
+            ),
+            configuration: resolveNativeAgentSessionConfiguration(
+                params.context.agent.id,
+                capabilities,
+                params.session,
+            ),
+            manualCompaction: resolveNativeAgentSessionManualCompaction(
+                params.context.agent.id,
+                capabilities,
+                params.session,
+            ),
+        },
+    );
+}
 
 export function createNativeAgentSessionOperations(
     session: AgentSessionRuntime,
@@ -2349,14 +2511,20 @@ export function createNativeAgentSessionOperations(
         }
         const publishCanonicalEvent = () => {
             const publicEvent = projectPublicNativeAgentRuntimeEvent(event);
-            try {
-                publishHostEvent?.(publicEvent);
-            } catch {
-                logger.debug('[NativeAgentSession] failed to publish Host Event (non-fatal)');
+            if (shouldPublishNativeAgentRuntimeHostEvent(event)) {
+                try {
+                    publishHostEvent?.(publicEvent);
+                } catch {
+                    logger.debug('[NativeAgentSession] failed to publish Host Event (non-fatal)');
+                }
             }
             observeTurnCompletion(event);
             for (const listener of listeners) {
-                listener(publicEvent);
+                try {
+                    listener(publicEvent);
+                } catch {
+                    logger.debug('[NativeAgentSession] failed to publish runtime event to subscriber (non-fatal)');
+                }
             }
         };
         if (terminalLifecycleSettlement) {
@@ -2909,6 +3077,7 @@ export function createNativeAgentSessionOperations(
                 : {}),
         })
         : Object.freeze({});
+    const manualCompaction = directFacets.manualCompaction;
     return Object.freeze({
         ...directHostControls,
         isProviderNativeCommand(prompt: string) {
@@ -3373,7 +3542,7 @@ export function createNativeAgentSessionOperations(
                     reason: 'Native Agent runtime is ended, disposing, or disposed',
                 };
             }
-            if (!session.updateConfiguration || !configuration) {
+            if (directFacets.configuration.declared === false || !configuration) {
                 return {
                     status: 'unsupported',
                     timing: 'not_applicable',
@@ -3381,7 +3550,9 @@ export function createNativeAgentSessionOperations(
                 };
             }
             const nextConfiguration = applyNativeAgentConfigurationUpdate(configuration, update);
-            const result = await session.updateConfiguration(nextConfiguration.request);
+            const result = await directFacets.configuration.updateConfiguration(
+                nextConfiguration.request,
+            );
             if (result.status === 'applied' || result.status === 'deferred') {
                 configuration = nextConfiguration.snapshot;
             }
@@ -3419,7 +3590,7 @@ export function createNativeAgentSessionOperations(
                     : `Native Agent runtime cancel is ${result.status}`,
             );
         },
-        ...(session.compact
+        ...(manualCompaction.declared === true
             ? {
                 async compactContext(command: string) {
                     if (disposeStarted || invariant.read().runtimeEnded) {
@@ -3428,13 +3599,13 @@ export function createNativeAgentSessionOperations(
                     ensureSubscription();
                     const normalized = command.trim();
                     const instructions = normalized.replace(/^\/compact(?:\s+|$)/u, '').trim();
-                    const result = await session.compact?.({
+                    const result = await manualCompaction.compact({
                         compactionId: `host-compact-${randomUUID()}`,
                         trigger: 'manual',
                         ...(instructions ? { instructions } : {}),
                     });
-                    if (!result || result.status !== 'admitted') {
-                        throw new Error(result && 'diagnostic' in result
+                    if (result.status !== 'admitted') {
+                        throw new Error('diagnostic' in result
                             ? diagnosticMessage(result.diagnostic)
                             : 'Native Agent compaction is unavailable');
                     }
@@ -3716,6 +3887,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
             : {}),
         createSessionRuntime: async (openIntent, hostRuntimeParams) => {
+            const invokedAtMs = Date.now();
             const sessionId = hostRuntimeParams.session.sessionId;
             const cwd = hostRuntimeParams.directory;
             if (!sessionId || !cwd) {
@@ -3986,6 +4158,16 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 params.externalSessionHostOperations?.bindSession(sessionId) ?? null;
             let disposeExternalSessions: (() => Promise<void>) | null = null;
             const providerOps = readConfiguredExternalSessionProviderOps(params.executionSurfaces?.externalSession);
+            const providerSessionFollowOps =
+                providerOps?.resolveLinkIdentity
+                && providerOps.readAfterTranscript
+                ? Object.freeze({
+                    validateSource: providerOps.validateSource,
+                    resolveLinkIdentity: providerOps.resolveLinkIdentity,
+                    pageTranscript: providerOps.pageTranscript,
+                    readAfterTranscript: providerOps.readAfterTranscript,
+                })
+                : null;
             const boundExternalSessionSource = readBoundExternalSessionSource(
                 params.agent,
                 hostRuntimeParams.metadata,
@@ -4141,6 +4323,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     .executeProviderSessionFollow({
                         agentId: request.agentId,
                         providerSessionId: request.providerSessionId,
+                        ...(providerSessionFollowOps
+                            ? { providerOps: providerSessionFollowOps }
+                            : {}),
                         options: {
                             ...(request.initialReplay
                                 ? { initialReplay: true }
@@ -4466,19 +4651,16 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 return cleanupRuntimeScopePromise;
             };
             let runtime: AgentRuntime | undefined = params.runtime;
-            const context: AgentSessionRuntimeContext = Object.freeze({
-                plugin: Object.freeze({
-                    id: identity.pluginId,
-                    version: identity.pluginVersion,
-                }),
-                contribution: Object.freeze({
-                    id: contributionId,
-                    qualifiedId: `${identity.pluginId}/agents/${contributionId}`,
-                }),
-                surface: 'agent',
-                session: Object.freeze({
-                    id: sessionId,
-                    services: createNativeAgentSessionHostServices({
+            const nativeHome = await resolveNativeAgentSessionNativeHomeService({
+                agent: params.agent,
+                sourceEnvironment: openInputs.launchEnvironment.values,
+            });
+            const context = composeNativeAgentSessionRuntimeContext({
+                identity,
+                contributionId,
+                invokedAtMs,
+                sessionId,
+                sessionServices: createNativeAgentSessionHostServices({
                         owners: sessionHostServices,
                         agentId: identity.agentId,
                         sessionId,
@@ -4493,9 +4675,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         sessionMachineId: hostRuntimeParams.machineId,
                         memoryRecallGuidanceEnabled: hostRuntimeParams.memoryRecallGuidanceEnabled,
                         ...(terminalHostScope ? { terminalHost: terminalHostScope.service } : {}),
+                        ...(nativeHome ? { nativeHome } : {}),
                         publications: publications.services,
                         readToolExecutionCapability: () => runtime?.toolExecution?.capability ?? null,
-                    }),
+                        toolsDelivery: resolveAgentToolsDelivery(identity.agentId),
                 }),
                 signal,
                 services,
@@ -4514,61 +4697,34 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         }
                         : {}),
                 }),
-                agent: Object.freeze({ id: identity.agentId }),
-                protocols: Object.freeze({
-                    acp: Object.freeze({
-                        async open(request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) {
-                            return await createPublicAcpSession(request, options, {
-                                pluginId: identity.pluginId,
-                                agentId: identity.agentId,
-                                signal,
-                                isCurrent: identity.isCurrent,
-                                systemTools: createPublicAcpSystemToolsAdapter(
-                                    services.exec,
-                                    identity.pluginId,
-                                ),
-                                managedDependencies: Object.freeze({
-                                    async resolve(request) {
-                                        if (request.pluginId !== identity.pluginId) {
-                                            throw new PluginError({
-                                                code: 'plugin_exec_managed_dependency_denied',
-                                                message: 'ACP managed-dependency resolution cannot cross plugin identity',
-                                            });
-                                        }
-                                        return await resolvePluginExecManagedDependencyForHost(
-                                            services.exec,
-                                            request.dependencyId,
-                                            { signal: request.signal },
-                                        );
-                                    },
+                protocols: createPublicAcpRuntimeProtocols({
+                    pluginId: identity.pluginId,
+                    agentId: identity.agentId,
+                    signal,
+                    isCurrent: identity.isCurrent,
+                    services,
+                    interactions: currentSessionUi.interactions,
+                    media: currentSessionHandle.media,
+                    models: publications.services.models,
+                    ...(transformAgentChildLaunchEnvironment
+                        ? { transformAgentChildLaunchEnvironment }
+                        : {}),
+                    ...(params.transformAgentRequest
+                        ? {
+                            transformAgentRequest: async (payload, options) =>
+                                await params.transformAgentRequest!({
+                                    sessionId,
+                                    payload,
+                                    signal: options.signal,
                                 }),
-                                ...(transformAgentChildLaunchEnvironment
-                                    ? {
-                                        transformAgentChildLaunchEnvironment,
-                                    }
-                                    : {}),
-                                ...(params.transformAgentRequest
-                                    ? {
-                                        transformAgentRequest: async (payload, options) =>
-                                            await params.transformAgentRequest!({
-                                                sessionId,
-                                                payload,
-                                                signal: options.signal,
-                                            }),
-                                    }
-                                    : {}),
-                                interactions: currentSessionUi.interactions,
-                                media: currentSessionHandle.media,
-                                models: publications.services.models,
-                                ...(openIntent.kind === 'resume' && openIntent.importHistory
-                                    ? { resumeHistorySession: hostRuntimeParams.session }
-                                    : {}),
-                                ...(hostRuntimeParams.mcpServers
-                                    ? { mcpServers: hostRuntimeParams.mcpServers }
-                                    : {}),
-                            });
-                        },
-                    }),
+                        }
+                        : {}),
+                    ...(openIntent.kind === 'resume' && openIntent.importHistory
+                        ? { resumeHistorySession: hostRuntimeParams.session }
+                        : {}),
+                    ...(hostRuntimeParams.mcpServers
+                        ? { mcpServers: hostRuntimeParams.mcpServers }
+                        : {}),
                 }),
                 workState: createNativeAgentSessionWorkStateService({
                     session: hostRuntimeParams.session,
@@ -4834,9 +4990,21 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 throw boundaryError;
             }
             let cancellation: NativeAgentSessionCancellation;
+            let configuration: NativeAgentSessionConfiguration;
+            let manualCompaction: NativeAgentSessionManualCompaction;
             try {
                 assertGenerationCurrent();
                 cancellation = resolveNativeAgentSessionCancellation(
+                    identity.agentId,
+                    sessionCapabilities,
+                    session,
+                );
+                configuration = resolveNativeAgentSessionConfiguration(
+                    identity.agentId,
+                    sessionCapabilities,
+                    session,
+                );
+                manualCompaction = resolveNativeAgentSessionManualCompaction(
                     identity.agentId,
                     sessionCapabilities,
                     session,
@@ -4899,9 +5067,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     context,
                     cwd,
                     connectedAccounts: openRequest.connectedAccounts ?? [],
-                    capabilities: sessionCapabilities,
-                    cancellation,
-                },
+                        capabilities: sessionCapabilities,
+                        cancellation,
+                        configuration,
+                        manualCompaction,
+                    },
                 publications,
                 persistedRollbackTurns,
                 {
@@ -5040,6 +5210,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 configuration: openInputs.configuration,
                 ...(session.runtimeDescriptorV1
                     ? { runtimeDescriptorV1: session.runtimeDescriptorV1 }
+                    : {}),
+                ...(session.runtimeCapabilities
+                    ? { runtimeCapabilities: session.runtimeCapabilities }
                     : {}),
                 ...(resolvedLateProviderBindingHandoff
                     ? {

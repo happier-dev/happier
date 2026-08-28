@@ -271,11 +271,26 @@ function createPendingMessageComposerAdmissionAcceptedControl(
       signal: new AbortController().signal,
     });
 
-    const releaseIntents = request.stagedMediaHandles.map((handle) => ({
-      handle,
-      executionTarget: handle.executionTarget,
-      owner: handle.owner,
-    }));
+    const stagedAttachments = (request.structuredInput.composerAttachments ?? []).filter(
+      (attachment) => attachment.content?.kind === 'sessionMedia',
+    );
+    const releaseIntents = request.stagedMediaHandles.flatMap((handle, index) => {
+      const attachment = stagedAttachments[index];
+      return attachment
+        ? [{
+            handle,
+            executionTarget: handle.executionTarget,
+            owner: handle.owner,
+            claimant: {
+              composer: { kind: 'session' as const, sessionId },
+              attachmentInstanceId: attachment.instanceId,
+            },
+          }]
+        : [];
+    });
+    if (releaseIntents.length !== request.stagedMediaHandles.length) {
+      throw new Error('Accepted pending Composer media settlement is missing its attachment custody');
+    }
     if (releaseIntents.length > 0) {
       if (!bridge.settleComposerStagedMedia) {
         throw new Error('Daemon staged-media settlement authority is unavailable');
