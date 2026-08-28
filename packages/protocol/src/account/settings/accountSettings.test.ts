@@ -540,7 +540,7 @@ describe('accountSettings', () => {
         codex: {
           v: 1,
           bindingsByServiceId: {
-            'openai-codex': {
+            'happier.agent.codex/openai-codex': {
               source: 'connected',
               selection: 'group',
               groupId: 'codex-main',
@@ -550,7 +550,7 @@ describe('accountSettings', () => {
         claude: {
           v: 1,
           bindingsByServiceId: {
-            anthropic: {
+            'happier.agent.claude/anthropic': {
               source: 'connected',
               selection: 'profile',
               profileId: 'work',
@@ -559,6 +559,38 @@ describe('accountSettings', () => {
         },
       },
     });
+  });
+
+  it('preserves a novel external qualified Connected Account default', () => {
+    const parsed = accountSettingsParse({
+      connectedServicesDefaultAuthByAgentIdV1: {
+        v: 1,
+        bindingsByAgentId: {
+          'com.acme.agent/example': {
+            v: 1,
+            bindingsByServiceId: {
+              'com.acme.agent/novel-service': {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'work',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId['com.acme.agent/example'])
+      .toEqual({
+        v: 1,
+        bindingsByServiceId: {
+          'com.acme.agent/novel-service': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      });
   });
 
   it('falls back to native defaults when connected-service default auth settings are malformed', () => {

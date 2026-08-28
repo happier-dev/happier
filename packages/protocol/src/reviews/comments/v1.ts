@@ -237,11 +237,47 @@ export const ReviewCommentTransitionV1Schema = z.object({
 }).strict();
 export type ReviewCommentTransitionV1 = z.infer<typeof ReviewCommentTransitionV1Schema>;
 
-export const ReviewCommentLinkedRefV1Schema = z.object({
-  kind: z.enum(['executionRun', 'session', 'pullRequest', 'commit', 'checkpoint', 'external']),
-  id: z.string().min(1).optional(),
-  url: z.string().url().optional(),
+export const ReviewCommentLinkedIssueIdentityV1Schema = z.object({
+  source: z.object({
+    pluginId: z.string().min(1),
+    localId: z.string().min(1),
+  }).strict(),
+  kindId: z.string().min(1),
+  collisionScope: z.string().min(1),
+  entryId: z.string().min(1),
 }).strict();
+export type ReviewCommentLinkedIssueIdentityV1 = z.infer<
+  typeof ReviewCommentLinkedIssueIdentityV1Schema
+>;
+
+/** Stable opaque id for one exact source-qualified issue workflow subject. */
+export function createReviewCommentLinkedIssueIdV1(
+  input: ReviewCommentLinkedIssueIdentityV1,
+): string {
+  const value = ReviewCommentLinkedIssueIdentityV1Schema.parse(input);
+  return JSON.stringify([
+    value.source.pluginId,
+    value.source.localId,
+    value.kindId,
+    value.collisionScope,
+    value.entryId,
+  ]);
+}
+
+export const ReviewCommentLinkedRefV1Schema = z.union([
+  z.object({
+    kind: z.enum(['executionRun', 'session', 'pullRequest', 'commit', 'checkpoint', 'external']),
+    id: z.string().min(1).optional(),
+    url: z.string().url().optional(),
+  }).strict(),
+  // Issues are a first-class workflow subject. Their opaque source-neutral id
+  // is required; a mutable/presentational provider URL is never the identity.
+  z.object({
+    kind: z.literal('issue'),
+    id: z.string().min(1),
+    url: z.string().url().optional(),
+  }).strict(),
+]);
 export type ReviewCommentLinkedRefV1 = z.infer<typeof ReviewCommentLinkedRefV1Schema>;
 
 export const ReviewCommentSuggestedFixV1Schema = z.object({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createReviewCommentLinkedIssueIdV1,
   ReviewCommentActorRefV1Schema,
   ReviewCommentCreateRequestV1Schema,
   ReviewCommentEventV1Schema,
@@ -94,6 +95,49 @@ describe('ReviewCommentV1Schema', () => {
       updatedAt: 1,
       serverRevision: 1,
     })).toThrow();
+  });
+
+  it('authors issue-linked proposals as a first-class exact entry ref', () => {
+    const issueId = createReviewCommentLinkedIssueIdV1({
+      source: { pluginId: 'happier.scm.github', localId: 'github' },
+      kindId: 'issue',
+      collisionScope: 'github:example/repository',
+      entryId: '42',
+    });
+    const parsed = ReviewCommentCreateRequestV1Schema.parse({
+      projectId: 'project-1',
+      anchor: { kind: 'file', filePath: 'src/example.ts' },
+      snapshot: {
+        kind: 'too_large',
+        filePath: 'src/example.ts',
+        sizeBytes: 10,
+        capBytes: 1,
+        capturedAt: 1,
+      },
+      body: 'Publish this proposal on the linked issue.',
+      authorIntent: 'propose',
+      linkedRefs: [{
+        kind: 'issue',
+        id: issueId,
+        url: 'https://github.com/example/repository/issues/42',
+      }],
+      clientMutationId: 'mutation-issue-1',
+    });
+    expect(parsed.linkedRefs).toEqual([{
+      kind: 'issue',
+      id: issueId,
+      url: 'https://github.com/example/repository/issues/42',
+    }]);
+    expect(ReviewCommentCreateRequestV1Schema.safeParse({
+      ...parsed,
+      linkedRefs: [{ kind: 'issue', url: 'https://github.com/example/repository/issues/42' }],
+    }).success).toBe(false);
+    expect(createReviewCommentLinkedIssueIdV1({
+      source: { pluginId: 'happier.scm.github', localId: 'github' },
+      kindId: 'issue',
+      collisionScope: 'github:other/repository',
+      entryId: '42',
+    })).not.toBe(issueId);
   });
 
   it('allows durable redacted rows to remove body text while authoring requests still require text', () => {

@@ -11,11 +11,12 @@ import {
 } from './memorySettings.js';
 
 describe('memorySettings', () => {
-  it('uses generated protocol-local memory defaults', () => {
+  it('owns the global memory default in the Protocol host', () => {
     const source = readFileSync(join(process.cwd(), 'src/memory/memorySettings.ts'), 'utf8');
 
-    expect(source).toContain('../agents/generated/memory/defaults.js');
-    expect(source).not.toContain('../providers/claude/memoryDefaults.js');
+    expect(source).toContain("DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID = 'claude'");
+    expect(source).not.toContain('../agents/generated/memory/defaults.js');
+    expect(source).not.toContain('@happier-dev/plugins-');
   });
 
   it('normalizes invalid payloads to defaults', () => {

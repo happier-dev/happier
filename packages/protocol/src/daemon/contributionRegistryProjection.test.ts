@@ -10,6 +10,7 @@ import {
   DaemonPluginReactNativeCrashReportRequestV1Schema,
   DaemonPluginReactNativeCrashReportResponseV1Schema,
   DaemonPluginReactNativeCrashBindingTokenV1Schema,
+  deriveDaemonPluginReactNativeCrashMountKeyV1,
   isSameDaemonPluginReactNativeCrashBindingV1,
   isSameDaemonPluginReactNativeCrashBindingTokenV1,
   DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
@@ -1223,6 +1224,22 @@ describe('daemon contribution registry projection (wire)', () => {
       ok: true,
       result: () => undefined,
     }).success).toBe(false);
+    expect(DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+      ok: false,
+      code: 'channels_connection_required',
+      retryable: false,
+      remediation: { kind: 'openSettings', path: '/settings/channels' },
+    })).toEqual({
+      ok: false,
+      code: 'channels_connection_required',
+      retryable: false,
+      remediation: { kind: 'openSettings', path: '/settings/channels' },
+    });
+    expect(DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse({
+      ok: false,
+      code: 'channels_connection_required',
+      data: { privateProviderFact: true },
+    }).success).toBe(false);
   });
 
   it('parses a minimal v1 describe request/response payload', () => {
@@ -1781,7 +1798,7 @@ describe('daemon contribution registry projection (wire)', () => {
       .toEqual(['openai-codex']);
   });
 
-  it('normalizes only the active predecessor daemon projection fields at the describe-response ingress', () => {
+  it('rejects superseded daemon projection fields with no released or active predecessor producer', () => {
     const predecessorResponse = {
       protocolVersion: 1 as const,
       projection: {
@@ -1874,108 +1891,12 @@ describe('daemon contribution registry projection (wire)', () => {
       },
     };
 
-    // The generic projection remains closed; this predecessor shape is only
-    // admitted at the daemon response ingress and immediately normalized.
+    // Neither the supported immutable releases nor the active prospective
+    // predecessor emits this abandoned tuple. The daemon response stays on
+    // the same closed canonical projection schema instead of guessing it.
     expect(PluginProjectionV2Schema.safeParse(predecessorResponse.projection).success).toBe(false);
-
-    const parsed = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(predecessorResponse);
-    expect(parsed.projection.v).toBe(2);
-    if (parsed.projection.v !== 2) throw new Error('Expected V2 projection');
-
-    expect(parsed.projection.agentsById['acme-agent']?.externalSessions?.sources[0]?.schema)
-      .not.toHaveProperty('passthrough');
-    expect(parsed.projection.actionsById['acme.external-sessions.open']).toMatchObject({
-      placementBindings: ['primary'],
-    });
-    expect(parsed.projection.actionsById['acme.external-sessions.open'])
-      .not.toHaveProperty('placement');
-    expect(parsed.projection.familiesById.pluginUi?.entriesById['surfacePlacement:acme.ui:activity']?.binding)
-      .not.toHaveProperty('collisionDomain');
-    expect(parsed.projection.familiesById.pluginUi?.entriesById['surfacePlacement:acme.ui:activity']?.binding)
-      .not.toHaveProperty('collisionKey');
-    expect(parsed.projection.familiesById.pluginUi?.entriesById['surfacePlacement:acme.ui:activity']?.binding)
-      .not.toHaveProperty('methodCeiling');
-
-    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({
-      ...predecessorResponse,
-      projection: {
-        ...predecessorResponse.projection,
-        agentsById: {
-          'acme-agent': {
-            ...predecessorResponse.projection.agentsById['acme-agent'],
-            externalSessions: {
-              ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions,
-              sources: [{
-                ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions.sources[0],
-                schema: {
-                  ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions.sources[0].schema,
-                  passthrough: false,
-                },
-              }],
-            },
-          },
-        },
-      },
-    }).success).toBe(false);
-
-    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({
-      ...predecessorResponse,
-      projection: {
-        ...predecessorResponse.projection,
-        actionsById: {
-          ...predecessorResponse.projection.actionsById,
-          'acme.external-sessions.open': {
-            ...predecessorResponse.projection.actionsById['acme.external-sessions.open'],
-            placement: 'not-a-current-placement',
-          },
-        },
-      },
-    }).success).toBe(false);
-
-    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({
-      ...predecessorResponse,
-      projection: {
-        ...predecessorResponse.projection,
-        familiesById: {
-          ...predecessorResponse.projection.familiesById,
-          pluginUi: {
-            ...predecessorResponse.projection.familiesById.pluginUi,
-            entriesById: {
-              ...predecessorResponse.projection.familiesById.pluginUi.entriesById,
-              'surfacePlacement:acme.ui:activity': {
-                ...predecessorResponse.projection.familiesById.pluginUi.entriesById['surfacePlacement:acme.ui:activity'],
-                binding: {
-                  ...predecessorResponse.projection.familiesById.pluginUi.entriesById['surfacePlacement:acme.ui:activity'].binding,
-                  collisionKey: 'appPage\u0000app\u0000acme.ui/tampered',
-                },
-              },
-            },
-          },
-        },
-      },
-    }).success).toBe(false);
-
-    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({
-      ...predecessorResponse,
-      projection: {
-        ...predecessorResponse.projection,
-        agentsById: {
-          'acme-agent': {
-            ...predecessorResponse.projection.agentsById['acme-agent'],
-            externalSessions: {
-              ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions,
-              sources: [{
-                ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions.sources[0],
-                schema: {
-                  ...predecessorResponse.projection.agentsById['acme-agent'].externalSessions.sources[0].schema,
-                  unexpectedSchemaAuthority: true,
-                },
-              }],
-            },
-          },
-        },
-      },
-    }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(predecessorResponse).success)
+      .toBe(false);
   });
 
   it('rejects raw manifest digests in installed-package projections', () => {
@@ -2558,6 +2479,22 @@ describe('daemon contribution registry projection (wire)', () => {
     // producer and no persisted record; the closed enum must reject it.
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('startup_ack_timeout').success).toBe(false);
 
+    const automationMount = {
+      kind: 'automationEventSetupSurface',
+      contribution: { pluginId: 'acme.preview', localId: 'repository-updated' },
+      immutableGenerationId: 'event-generation-a',
+    } as const;
+    expect(DaemonPluginReactNativeCrashBindingTokenV1Schema.parse({
+      ...token,
+      mount: automationMount,
+    }).mount).toEqual(automationMount);
+    expect(deriveDaemonPluginReactNativeCrashMountKeyV1(automationMount)).not.toBe(
+      deriveDaemonPluginReactNativeCrashMountKeyV1({
+        ...automationMount,
+        immutableGenerationId: 'event-generation-b',
+      }),
+    );
+
     expect(DaemonPluginReactNativeCrashReportRequestV1Schema.safeParse({
       protocolVersion: 1,
       machineId: 'machine_1',
@@ -2696,6 +2633,7 @@ describe('daemon contribution registry projection (wire)', () => {
       destination: { pluginId: 'acme.ui', localId: 'activity' },
     };
     const binding = {
+      kind: 'destination' as const,
       destination: { pluginId: 'acme.ui', localId: 'activity' },
       rendererChain: [{ pluginId: 'acme.ui', localId: 'activity-renderer' }],
       renderer: { pluginId: 'acme.ui', localId: 'activity-renderer' },

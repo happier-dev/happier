@@ -615,6 +615,7 @@ describe('account/encryptionMigrate', () => {
     const template = {
       automationId: 'automation-1',
       expectedTemplateVersion: 7,
+      triggerDefinitionEnvelopes: [],
       templateCiphertext: JSON.stringify({
         kind: 'happier_automation_template_plain_v1',
         payload: {},
@@ -700,6 +701,10 @@ describe('account/encryptionMigrate', () => {
         t: 'encrypted',
         c: 'reply-receipt-ciphertext',
       }),
+      failureDetailEnvelope: JSON.stringify({
+        t: 'encrypted',
+        c: 'failure-detail-ciphertext',
+      }),
     } as const;
     const scheduledRun = {
       ...eventRun,
@@ -784,6 +789,7 @@ describe('account/encryptionMigrate', () => {
       templates: [{
         automationId: 'automation-definition-1',
         expectedTemplateVersion: 3,
+        triggerDefinitionEnvelopes: [],
         templateCiphertext: JSON.stringify({
           kind: 'happier_automation_template_encrypted_v1',
           payloadCiphertext: 'replacement-template-ciphertext',
@@ -803,16 +809,46 @@ describe('account/encryptionMigrate', () => {
         ...base,
         templates: [{
           ...base.templates[0],
-          triggerDefinitionEnvelope,
+          triggerDefinitionEnvelopes: [{
+            triggerId: 'trigger-definition-1',
+            triggerRevision: 4,
+            envelope: triggerDefinitionEnvelope,
+          }],
         }],
       }),
     ).toEqual({
       ...base,
       templates: [{
         ...base.templates[0],
-        triggerDefinitionEnvelope,
+        triggerDefinitionEnvelopes: [{
+          triggerId: 'trigger-definition-1',
+          triggerRevision: 4,
+          envelope: triggerDefinitionEnvelope,
+        }],
       }],
     });
+    expect(
+      migrationContract.AccountEncryptionMigrateAutomationsDirectiveSchema.safeParse({
+        ...base,
+        templates: [{
+          ...base.templates[0],
+          triggerDefinitionEnvelopes: [],
+          triggerDefinitionEnvelope,
+        }],
+      }).success,
+    ).toBe(false);
+    expect(
+      migrationContract.AccountEncryptionMigrateAutomationsDirectiveSchema.safeParse({
+        ...base,
+        templates: [{
+          ...base.templates[0],
+          triggerDefinitionEnvelopes: [
+            { triggerId: 'duplicate-trigger', triggerRevision: 1, envelope: triggerDefinitionEnvelope },
+            { triggerId: 'duplicate-trigger', triggerRevision: 2, envelope: triggerDefinitionEnvelope },
+          ],
+        }],
+      }).success,
+    ).toBe(false);
   });
 
   it('admits the exact fae505 e2ee wire and preserves its strict error reader', () => {
@@ -1594,17 +1630,21 @@ describe('account/encryptionMigrate', () => {
           kind: 'happier_automation_template_plain_v1',
           payload: {},
         }),
-        triggerDefinitionEnvelope: null,
+        triggerDefinitionEnvelopes: [],
       },
       target: {
         templateCiphertext: JSON.stringify({
           kind: 'happier_automation_template_encrypted_v1',
           payloadCiphertext: 'replacement-template-ciphertext',
         }),
-        triggerDefinitionEnvelope: JSON.stringify({
-          t: 'encrypted',
-          c: 'replacement-trigger-definition-ciphertext',
-        }),
+        triggerDefinitionEnvelopes: [{
+          triggerId: 'trigger-transition-1',
+          triggerRevision: 0,
+          envelope: JSON.stringify({
+            t: 'encrypted',
+            c: 'replacement-trigger-definition-ciphertext',
+          }),
+        }],
       },
     };
     expect(AccountEncryptionMigrateAutomationInventoryPageRequestSchema.parse({

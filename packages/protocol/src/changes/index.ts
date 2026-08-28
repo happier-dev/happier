@@ -59,6 +59,40 @@ export const ChangeEntrySchema = z.object({
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
 
+/**
+ * Durable Account-change fact emitted only after the Server has committed the
+ * physical Session deletion. Ordinary Account-relative unavailability (for
+ * example share revocation) deliberately carries no such hint.
+ */
+export const SessionDeletedChangeHintV1Schema = z.object({
+  v: z.literal(1),
+  lifecycle: z.literal('deleted'),
+}).strict();
+
+export type SessionDeletedChangeHintV1 = z.infer<
+  typeof SessionDeletedChangeHintV1Schema
+>;
+
+const ChangeSessionIdSchema = asProtocolZod(SessionIdSchema);
+
+export function readAuthoritativeSessionDeletionChangeV1(
+  value: unknown,
+): Readonly<{ sessionId: string; cursor: number }> | null {
+  const entry = ChangeEntrySchema.safeParse(value);
+  if (!entry.success || entry.data.kind !== 'session') return null;
+  const sessionId = ChangeSessionIdSchema.safeParse(entry.data.entityId);
+  if (
+    !sessionId.success
+    || !SessionDeletedChangeHintV1Schema.safeParse(entry.data.hint).success
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    sessionId: sessionId.data,
+    cursor: entry.data.cursor,
+  });
+}
+
 export const SessionAccessWitnessStatusV1Schema = z.enum([
   'available',
   'unavailable',
@@ -116,7 +150,7 @@ export type SessionAccessWitnessV1 = z.infer<typeof SessionAccessWitnessV1Schema
  */
 export const SessionAccessProbeV1Schema = z.object({
   v: z.literal(1),
-  sessionId: asProtocolZod(SessionIdSchema),
+  sessionId: ChangeSessionIdSchema,
   throughCursor: z.number().int().min(0),
   status: SessionAccessWitnessStatusV1Schema,
 }).strict();

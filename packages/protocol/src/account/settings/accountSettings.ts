@@ -40,7 +40,7 @@ import { PromptInvocationsV1Schema } from '../../prompts/library/promptInvocatio
 import { PromptRegistrySourcesV1Schema } from '../../prompts/library/promptRegistriesV1.js';
 import { PromptStacksV1Schema } from '../../prompts/library/promptStacksV1.js';
 import {
-  ConnectedServicesDefaultAuthByAgentIdV1Schema,
+  BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
   DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1,
   DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
@@ -1698,7 +1698,7 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineAccountSettingDefinitions({
     { semanticDomain: 'agent spawn policy', classification: 'policy', maximumSerializedValueBytes: 8 * 1024 },
   ),
   connectedServicesDefaultAuthByAgentIdV1: accountCatalogDefinition(
-    ConnectedServicesDefaultAuthByAgentIdV1Schema.default(DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1),
+    BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.default(DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1),
     DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
     { semanticDomain: 'connected service defaults', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 },
   ),

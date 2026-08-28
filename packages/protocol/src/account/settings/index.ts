@@ -60,6 +60,7 @@ export {
 
 export {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
+  BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
   ConnectedServicesProviderConfigSharingModeV1Schema,
   ConnectedServicesProviderStateSharingModeV1Schema,
   ConnectedServicesProviderStateSharingPolicyV1Schema,

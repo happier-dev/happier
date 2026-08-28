@@ -103,6 +103,39 @@ describe('installables catalog', () => {
     expect(GH_GITHUB_REPO).toBe('cli/cli');
   });
 
+  it('projects contribution-owned installable presentation metadata for neutral hosts', () => {
+    const projected = installables.projectInstallableContribution({
+      owner: {
+        provenance: 'external_plugin',
+        ownerId: 'acme.installables',
+        pluginId: 'acme.installables',
+      },
+      descriptor: GH_INSTALLABLE_DESCRIPTOR,
+    });
+
+    expect(projected).toEqual(expect.objectContaining({
+      pluginId: 'acme.installables',
+      description: GH_INSTALLABLE_DESCRIPTOR.description,
+      ui: GH_INSTALLABLE_DESCRIPTOR.ui,
+    }));
+  });
+
+  it('keeps GitHub CLI release selection and archive layout with the GH contribution', () => {
+    const asset = installables.GH_RUNTIME_INSTALLABLE_POLICY.selectReleaseAsset({
+      tag_name: 'v2.74.2',
+      assets: [{
+        name: 'gh_2.74.2_macOS_arm64.zip',
+        browser_download_url: 'https://example.invalid/gh.zip',
+      }],
+    }, { platform: 'darwin', arch: 'arm64' });
+
+    expect(installables.GH_RUNTIME_INSTALLABLE_POLICY.archiveLayout).toBe('bin_directory');
+    expect(asset).toEqual(expect.objectContaining({
+      name: 'gh_2.74.2_macOS_arm64.zip',
+      version: '2.74.2',
+    }));
+  });
+
   it('registers az as an optional system-first Azure DevOps dependency without managed install', () => {
     const azCatalogEntry = INSTALLABLES_CATALOG.find((entry) => entry.key === 'az');
     const azDescriptor = Reflect.get(installables, 'AZ_INSTALLABLE_DESCRIPTOR');

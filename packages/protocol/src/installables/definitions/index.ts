@@ -12,6 +12,10 @@ export {
   GH_GITHUB_REPO,
   GH_INSTALLABLE_DESCRIPTOR,
   GH_INSTALLABLE_KEY,
+  GH_RUNTIME_INSTALLABLE_POLICY,
+  resolveGitHubCliReleaseAsset,
+  type GitHubCliReleaseAsset,
+  type GitHubCliReleaseRuntime,
 } from './gh.js';
 export {
   PLUGIN_UI_BUNDLER_REPACK_DEP_ID,

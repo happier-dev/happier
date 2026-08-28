@@ -10,6 +10,11 @@ export type InstallableProjectionEntry = Readonly<{
     name: string;
     subtitle?: string;
   }>;
+  description?: string;
+  ui?: Readonly<{
+    setupUrl?: string;
+    iconName?: string;
+  }>;
   defaultPolicy: Readonly<{
     autoInstallWhenNeeded: boolean;
     autoUpdateMode: string;
@@ -28,6 +33,8 @@ export function projectInstallableContribution(
     capabilityId: descriptor.capabilityId,
     sourceKind: descriptor.source.kind,
     display: descriptor.display,
+    description: descriptor.description,
+    ...(descriptor.ui ? { ui: descriptor.ui } : {}),
     defaultPolicy: descriptor.defaultPolicy,
     experimental: descriptor.stability.experimental,
   });

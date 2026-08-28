@@ -3,11 +3,49 @@ import { describe, expect, it } from 'vitest';
 import {
   DaemonExecutionRunListResponseSchema,
   DaemonExecutionRunMarkerPersistenceReadSchema,
+  DaemonExecutionRunMarkerOwnerWriteSchema,
   DaemonExecutionRunMarkerSchema,
   normalizePersistedExecutionRunConnectedServicesLaunchV1,
 } from './executionRuns.js';
 
 describe('DaemonExecutionRunMarkerSchema', () => {
+  it('retains only an exact privacy-bounded cleanup receipt at the owner write boundary', () => {
+    const marker = {
+      pid: 123,
+      happySessionId: 'session_1',
+      runId: 'run_cleanup',
+      callId: 'call_cleanup',
+      sidechainId: 'side_cleanup',
+      intent: 'review',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'succeeded',
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+      executionRunConnectedServicesCleanupReceiptV1: {
+        v: 1,
+        activationId: '66666666-6666-4666-8666-666666666666',
+        runKey: 'run_cleanup',
+        agentId: 'codex',
+      },
+    };
+
+    expect(DaemonExecutionRunMarkerOwnerWriteSchema.parse(marker))
+      .toHaveProperty('executionRunConnectedServicesCleanupReceiptV1');
+    expect(DaemonExecutionRunMarkerSchema.parse(marker))
+      .not.toHaveProperty('executionRunConnectedServicesCleanupReceiptV1');
+    expect(DaemonExecutionRunMarkerOwnerWriteSchema.safeParse({
+      ...marker,
+      executionRunConnectedServicesCleanupReceiptV1: {
+        ...marker.executionRunConnectedServicesCleanupReceiptV1,
+        runKey: 'another-run',
+      },
+    }).success).toBe(false);
+  });
+
   it('accepts an explicit detached execution-run marker without inventing a Session id', () => {
     const parsed = DaemonExecutionRunMarkerSchema.safeParse({
       happyHomeDir: '/tmp/happy',

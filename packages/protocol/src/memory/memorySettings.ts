@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
-import { GENERATED_MEMORY_SUMMARIZER_BACKEND_ID } from '../agents/generated/memory/defaults.js';
+
+// Global product fallback. This is Protocol host policy rather than an Agent
+// contribution, so activation order cannot redefine the Memory default.
+const DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID = 'claude';
 
 const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
@@ -52,7 +55,7 @@ export const MemoryHintsSettingsV1Schema = z.preprocess((value) => {
   return value;
 }, z
   .object({
-    summarizerBackendId: z.string().trim().min(1).default(GENERATED_MEMORY_SUMMARIZER_BACKEND_ID),
+    summarizerBackendId: z.string().trim().min(1).default(DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID),
     summarizerModelId: z.string().trim().min(1).default('default'),
     summarizerPermissionMode: z.enum(['no_tools', 'read_only']).default('no_tools'),
     windowSizeMessages: z.number().int().min(5).max(500).default(40),

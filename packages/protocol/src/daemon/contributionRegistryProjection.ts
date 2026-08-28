@@ -24,12 +24,12 @@ import { ActionOperationDeclarationV1Schema } from '../actions/operations/v1.js'
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountRefSchema as CanonicalQualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
+import { ConnectedAccountPurposeDeclarationV1Schema } from '../connect/connectedAccountPurposes.js';
 import {
   PluginActionConfirmationV2Schema,
   PluginActionDangerLevelV2Schema,
   PluginActionExecutionV2Schema,
   PluginActionIconV2Schema,
-  PluginActionPlacementV2Schema,
   PluginActionPlacementBindingsV2Schema,
   PluginActionScopeV2Schema,
   PluginActionSlashV2Schema,
@@ -38,6 +38,7 @@ import {
   pluginActionRequiresPlacement,
 } from '../plugins/actions/v2.js';
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
+import { PluginDiagnosticRemediationV1Schema } from './pluginContributionIntrospection.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { PluginUiHostMethodV1Schema } from '../plugins/ui/hostApiDefinition.js';
 import { PluginUiResourceSubscriptionEventV1Schema } from '../plugins/ui/subscriptions.js';
@@ -94,7 +95,6 @@ import {
 import {
   PluginContributionIdentityV1Schema as CanonicalPluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema as CanonicalPluginContributionLocalIdSchema,
-  buildQualifiedPluginContributionKey,
 } from '../plugins/contributionIdentity.js';
 import {
   ComposerReferenceCandidatePageV1Schema,
@@ -410,6 +410,9 @@ export const DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema
     automation: PluginEventAutomationDeclarationV1Schema,
   }).strict(),
   setupAction: DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema,
+  setupSurface: z.lazy(
+    () => DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema,
+  ).optional(),
   historyGapResetAction: DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema.optional(),
 }).strict();
 export type DaemonContributionRegistryProjectionAutomationEligibleEventV1 = z.infer<
@@ -423,166 +426,7 @@ export type DaemonContributionRegistryProjectionAutomationEligibleEventsV1 = z.i
   typeof DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema
 >;
 
-const ACTIVE_PREDECESSOR_UI_HOST_METHOD_CEILING_V1 = [
-  'context',
-  'watchContext',
-  'executeAction',
-  'readResource',
-  'statOpenableContent',
-  'readOpenableContent',
-  'watchResource',
-  'openSurface',
-  'notify',
-  'confirm',
-  'diagnostic',
-  'readClipboard',
-  'writeClipboard',
-  'openExternalLink',
-] as const;
-
-function isProjectionRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasExactOwnKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actualKeys = Object.keys(value);
-  return actualKeys.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-}
-
-function hasActivePredecessorUiHostMethodCeiling(value: unknown): boolean {
-  return Array.isArray(value)
-    && value.length === ACTIVE_PREDECESSOR_UI_HOST_METHOD_CEILING_V1.length
-    && value.every((method, index) => method === ACTIVE_PREDECESSOR_UI_HOST_METHOD_CEILING_V1[index]);
-}
-
-function normalizeActivePredecessorExternalSessionSource(source: unknown): unknown {
-  if (!isProjectionRecord(source) || !isProjectionRecord(source.schema)) return source;
-  if (!Object.hasOwn(source.schema, 'passthrough') || source.schema.passthrough !== true) return source;
-  const { passthrough: _predecessorPassthrough, ...schema } = source.schema;
-  return { ...source, schema };
-}
-
-function normalizeActivePredecessorProjectedAction(action: unknown): unknown {
-  if (!isProjectionRecord(action)) return action;
-  if (!Object.hasOwn(action, 'placement') || Object.hasOwn(action, 'placementBindings')) return action;
-  const placement = PluginActionPlacementV2Schema.safeParse(action.placement);
-  if (!placement.success) return action;
-  const { placement: _predecessorPlacement, ...canonicalAction } = action;
-  return { ...canonicalAction, placementBindings: [placement.data] };
-}
-
-function normalizeActivePredecessorUiDestinationBinding(binding: unknown): unknown {
-  if (!isProjectionRecord(binding)) return binding;
-  if (
-    !Object.hasOwn(binding, 'collisionDomain')
-    || !Object.hasOwn(binding, 'collisionKey')
-    || !Object.hasOwn(binding, 'methodCeiling')
-  ) {
-    return binding;
-  }
-  if (!isProjectionRecord(binding.collisionDomain)
-    || !hasExactOwnKeys(binding.collisionDomain, ['container', 'targetKind'])
-    || typeof binding.container !== 'string'
-    || typeof binding.targetKind !== 'string'
-    || binding.collisionDomain.container !== binding.container
-    || binding.collisionDomain.targetKind !== binding.targetKind
-    || !hasActivePredecessorUiHostMethodCeiling(binding.methodCeiling)) {
-    return binding;
-  }
-  const destination = PluginContributionIdentityV1Schema.safeParse(binding.destination);
-  if (!destination.success) return binding;
-  const expectedCollisionKey = `${binding.container}\u0000${binding.targetKind}\u0000${buildQualifiedPluginContributionKey(destination.data)}`;
-  if (binding.collisionKey !== expectedCollisionKey) return binding;
-  const {
-    collisionDomain: _predecessorCollisionDomain,
-    collisionKey: _predecessorCollisionKey,
-    methodCeiling: _predecessorMethodCeiling,
-    ...canonicalBinding
-  } = binding;
-  return canonicalBinding;
-}
-
-/**
- * Current mounted daemons can still run the active predecessor snapshot. Its
- * V2 describe response has three redundant projection facts that current
- * readers intentionally removed: source-schema `passthrough: true`, scalar
- * Action `placement`, and the complete former UI binding collision ceiling.
- * Normalize only that observed predecessor tuple at this RPC ingress, then
- * validate the result through the single closed current projection schema.
- * Remove this adapter when supported predecessor daemon snapshots no longer
- * emit these exact fields.
- */
-function normalizeActivePredecessorDaemonContributionRegistryProjectionResponse(value: unknown): unknown {
-  if (!isProjectionRecord(value) || value.protocolVersion !== 1 || !isProjectionRecord(value.projection)) {
-    return value;
-  }
-  if (value.projection.v !== 2) return value;
-
-  let projection = value.projection;
-  if (isProjectionRecord(projection.agentsById)) {
-    let normalizedAgentsById: Record<string, unknown> | undefined;
-    for (const [agentId, agent] of Object.entries(projection.agentsById)) {
-      if (!isProjectionRecord(agent)) continue;
-      const externalSessions = agent.externalSessions;
-      if (!isProjectionRecord(externalSessions)) continue;
-      const originalSources = externalSessions.sources;
-      if (!Array.isArray(originalSources)) {
-        continue;
-      }
-      const sources = originalSources.map(normalizeActivePredecessorExternalSessionSource);
-      if (sources.every((source, index) => source === originalSources[index])) continue;
-      normalizedAgentsById ??= { ...projection.agentsById };
-      normalizedAgentsById[agentId] = {
-        ...agent,
-        externalSessions: { ...externalSessions, sources },
-      };
-    }
-    if (normalizedAgentsById) projection = { ...projection, agentsById: normalizedAgentsById };
-  }
-
-  if (isProjectionRecord(projection.actionsById)) {
-    let normalizedActionsById: Record<string, unknown> | undefined;
-    for (const [actionId, action] of Object.entries(projection.actionsById)) {
-      const normalizedAction = normalizeActivePredecessorProjectedAction(action);
-      if (normalizedAction === action) continue;
-      normalizedActionsById ??= { ...projection.actionsById };
-      normalizedActionsById[actionId] = normalizedAction;
-    }
-    if (normalizedActionsById) projection = { ...projection, actionsById: normalizedActionsById };
-  }
-
-  const familiesById = isProjectionRecord(projection.familiesById)
-    ? projection.familiesById
-    : null;
-  const pluginUi = familiesById && isProjectionRecord(familiesById.pluginUi)
-    ? familiesById.pluginUi
-    : null;
-  if (familiesById && pluginUi && isProjectionRecord(pluginUi.entriesById)) {
-    let normalizedEntriesById: Record<string, unknown> | undefined;
-    for (const [entryId, entry] of Object.entries(pluginUi.entriesById)) {
-      if (!isProjectionRecord(entry)) continue;
-      const binding = normalizeActivePredecessorUiDestinationBinding(entry.binding);
-      if (binding === entry.binding) continue;
-      normalizedEntriesById ??= { ...pluginUi.entriesById };
-      normalizedEntriesById[entryId] = { ...entry, binding };
-    }
-    if (normalizedEntriesById) {
-      projection = {
-        ...projection,
-        familiesById: {
-          ...familiesById,
-          pluginUi: { ...pluginUi, entriesById: normalizedEntriesById },
-        },
-      };
-    }
-  }
-
-  return projection === value.projection ? value : { ...value, projection };
-}
-
-export const DaemonContributionRegistryProjectionDescribeResponseSchema = z.preprocess(
-  normalizeActivePredecessorDaemonContributionRegistryProjectionResponse,
-  z.object({
+export const DaemonContributionRegistryProjectionDescribeResponseSchema = z.object({
   protocolVersion: z.literal(1),
   projection: z.union([
     DaemonContributionRegistryProjectionV1Schema,
@@ -602,8 +446,7 @@ export const DaemonContributionRegistryProjectionDescribeResponseSchema = z.prep
   composerSurfaceCatalog: z.lazy(() => z.array(DaemonPluginUiComposerSurfaceCatalogEntryV1Schema)).optional(),
   /** Current cold Event-automation composer facts, independent of mounted targets. */
   automationEligibleEvents: DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema.optional(),
-  }).passthrough(),
-);
+}).passthrough();
 export type DaemonContributionRegistryProjectionDescribeResponse = z.infer<
   typeof DaemonContributionRegistryProjectionDescribeResponseSchema
 >;
@@ -782,6 +625,8 @@ export const DaemonPluginStructuredMessageActionExecuteResponseSchema = z.union(
   z.object({
     ok: z.literal(false),
     code: z.string().trim().min(1),
+    retryable: z.boolean().optional(),
+    remediation: PluginDiagnosticRemediationV1Schema.optional(),
   }).strict(),
 ]);
 export type DaemonPluginStructuredMessageActionExecuteResponse = z.infer<
@@ -1012,6 +857,11 @@ export const DaemonPluginReactNativeCrashMountV1Schema = z.discriminatedUnion('k
     immutableGenerationId: PluginUiImmutableGenerationIdV1Schema,
     role: ComposerSurfaceRoleV1Schema,
   }).strict(),
+  z.object({
+    kind: z.literal('automationEventSetupSurface'),
+    contribution: PluginContributionIdentityV1Schema,
+    immutableGenerationId: PluginUiImmutableGenerationIdV1Schema,
+  }).strict(),
 ]);
 export type DaemonPluginReactNativeCrashMountV1 = z.infer<
   typeof DaemonPluginReactNativeCrashMountV1Schema
@@ -1071,6 +921,13 @@ export function deriveDaemonPluginReactNativeCrashMountKeyV1(
         mount.contribution.localId,
         mount.immutableGenerationId,
         mount.role,
+      ].join('\u0000');
+    case 'automationEventSetupSurface':
+      return [
+        'automationEventSetupSurface',
+        mount.contribution.pluginId,
+        mount.contribution.localId,
+        mount.immutableGenerationId,
       ].join('\u0000');
   }
 }
@@ -1653,6 +1510,24 @@ const PluginProjectedAgentConnectedServiceIdsV2Schema = z.array(
   }
 });
 
+/**
+ * One Agent-owned Connected Account purpose with its package-relative service
+ * reference resolved to an exact contribution identity. The host and clients
+ * can therefore present external and bundled Agents through the same account
+ * chooser without consulting a bundled Agent catalog.
+ */
+export const PluginProjectedAgentConnectedAccountPurposeV2Schema =
+  ConnectedAccountPurposeDeclarationV1Schema.extend({
+    service: PluginContributionIdentityV1Schema,
+  }).strict();
+export type PluginProjectedAgentConnectedAccountPurposeV2 = z.infer<
+  typeof PluginProjectedAgentConnectedAccountPurposeV2Schema
+>;
+
+const PluginProjectedAgentConnectedAccountsV2Schema = z.array(
+  PluginProjectedAgentConnectedAccountPurposeV2Schema,
+).max(32);
+
 export const PluginProjectedAgentV2Schema = z.object({
   id: z.string().trim().min(1),
   identity: PluginContributionIdentityV1Schema.optional(),
@@ -1664,6 +1539,7 @@ export const PluginProjectedAgentV2Schema = z.object({
   catalogAgentId: PluginOptionalStringSchema,
   iconAgentId: PluginOptionalStringSchema,
   connectedServiceIds: PluginProjectedAgentConnectedServiceIdsV2Schema.optional(),
+  connectedAccounts: PluginProjectedAgentConnectedAccountsV2Schema.optional(),
   providerOwnedEnvironmentKeys: PluginProjectedProviderOwnedEnvironmentKeysV2Schema.default([]),
   capabilities: PluginAgentCapabilitiesV2Schema.optional(),
   cli: PluginAgentCliMetadataSchema.optional(),
@@ -2598,6 +2474,25 @@ export const DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema = z.object({
 }).strict();
 export type DaemonPluginUiTargetedSurfaceSelectedRendererV1 = z.infer<
   typeof DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema
+>;
+
+/**
+ * One exact current physical renderer selection for optional Event source
+ * setup. It is carried beside the setup Action and is neither a destination
+ * nor targeted-contribution membership.
+ */
+export const DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema = z.object({
+  contribution: PluginContributionIdentityV1Schema,
+  immutableGenerationId: PluginUiImmutableGenerationIdV1Schema,
+  projectionGeneration: z.number().int().nonnegative(),
+  rendererChain: z.array(PluginContributionIdentityV1Schema).min(1).max(8),
+  selectedRenderer: DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema,
+  executionOrigin: PluginMachineExecutionOriginV1Schema,
+  resourceCapability: PluginUiResourceBindingCapabilityV1Schema,
+  contributorTargetedContributions: PluginUiTargetedContributionsV1Schema,
+}).strict();
+export type DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 = z.infer<
+  typeof DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema
 >;
 
 /**

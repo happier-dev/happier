@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
-import type { ReviewCommentEventV1, ReviewCommentV1 } from './v1.js';
+import {
+  createReviewCommentLinkedIssueIdV1,
+  type ReviewCommentEventV1,
+  type ReviewCommentV1,
+} from './v1.js';
 import {
   bindReviewCommentEventSensitiveEnvelopeV1,
   buildReviewCommentEventRequestBindingV1,
@@ -79,6 +83,16 @@ function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
       normalizedMessageHash: 'dedupe-hash',
       ruleId: 'private-rule',
     },
+    linkedRefs: [{
+      kind: 'issue',
+      id: createReviewCommentLinkedIssueIdV1({
+        source: { pluginId: 'happier.scm.github', localId: 'github' },
+        kindId: 'issue',
+        collisionScope: 'github:example/repository',
+        entryId: '42',
+      }),
+      url: 'https://github.com/example/repository/issues/42',
+    }],
     suggestedFix: {
       kind: 'replacement',
       replacementText: 'const secret = false;',
@@ -242,6 +256,7 @@ describe('Review Comment structural/sensitive content', () => {
     expect(JSON.stringify(split.structural)).not.toContain('private-rule');
     expect(JSON.stringify(split.structural)).not.toContain('security.secret');
     expect(JSON.stringify(split.structural)).not.toContain('Repository-private');
+    expect(JSON.stringify(split.structural)).not.toContain('github:example/repository');
   });
 
   it('round-trips plain and E2EE sensitive content through the canonical owner', () => {

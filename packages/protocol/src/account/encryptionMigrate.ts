@@ -300,6 +300,9 @@ export const ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS = {
   replyHandoffReceiptEnvelope: z.string()
     .min(1)
     .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+  failureDetailEnvelope: z.string()
+    .min(1)
+    .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
   summaryCiphertext: z.string().min(1).max(220_000),
 } as const;
 
@@ -307,6 +310,27 @@ const AutomationsMigrationItemShape = {
   automationId: z.string().min(1).max(256),
   templateCiphertext: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
 } as const;
+
+const AutomationTriggerDefinitionEnvelopeMigrationItemSchema = z.object({
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
+  envelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope,
+}).strict();
+const AutomationTriggerDefinitionEnvelopesMigrationSchema = z.array(
+  AutomationTriggerDefinitionEnvelopeMigrationItemSchema,
+).superRefine((items, context) => {
+  const seen = new Set<string>();
+  items.forEach((item, index) => {
+    if (seen.has(item.triggerId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [index, 'triggerId'],
+        message: 'Automation migration cannot replace one trigger definition twice',
+      });
+    }
+    seen.add(item.triggerId);
+  });
+});
 
 const AccountEncryptionMigratePredecessorAutomationsMigrationItemSchema = z
   .object(AutomationsMigrationItemShape)
@@ -316,13 +340,11 @@ const AutomationsMigrationItemSchema = z
   .object({
     ...AutomationsMigrationItemShape,
     expectedTemplateVersion: NonNegativeSafeIntegerSchema,
-    // Additive current-wire member. Schedule definitions have no retained
-    // trigger content and may omit it; the Automation owner rejects omission
-    // for Event/Conversation rows before the Account transition can write.
-    triggerDefinitionEnvelope:
-      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope
-        .nullable()
-        .optional(),
+    // Requests signed before multi-trigger Automation migration did not carry
+    // this member. Preserve the exact parsed bytes; the Automation owner treats
+    // omission as no submitted trigger-definition replacements and still
+    // refuses a target that does not cover its current plugin-Event triggers.
+    triggerDefinitionEnvelopes: AutomationTriggerDefinitionEnvelopesMigrationSchema.optional(),
   })
   .strict();
 
@@ -348,6 +370,8 @@ const AutomationRunMigrationItemSchema = z
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
     replyHandoffReceiptEnvelope:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
+    failureDetailEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.failureDetailEnvelope.nullable(),
   })
   .strict();
 
@@ -1171,54 +1195,47 @@ const AccountEncryptionMigrateAutomationDefinitionContentSchema = z
   .object({
     templateCiphertext:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
-    triggerDefinitionEnvelopes: z.array(z.object({
-      triggerId: AutomationTriggerIdSchema,
-      triggerRevision: AutomationTriggerRevisionSchema,
-      envelope: z.string().min(1).max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
-    }).strict()).max(50),
+    triggerDefinitionEnvelopes: AutomationTriggerDefinitionEnvelopesMigrationSchema,
   })
   .strict();
 
 const AccountEncryptionMigrateAutomationRunSourceContentSchema = z
   .object({
-    triggerEvidenceEnvelope: z.string().min(1).max(220_000).nullable(),
+    triggerEvidenceEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
     occurrenceEvidenceEqualityTag:
-      AutomationOccurrenceEvidenceEqualityTagV1Schema.nullable(),
-    executionInputEnvelope: z.string().min(1).max(220_512).nullable(),
-    resultEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyContextEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyHandoffReceiptEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    summaryCiphertext: z.string().min(1).max(220_000).nullable(),
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.occurrenceEvidenceEqualityTag.nullable(),
+    executionInputEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.executionInputEnvelope.nullable(),
+    resultEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
+    replyContextEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
+    replyHandoffReceiptEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
+    failureDetailEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.failureDetailEnvelope.nullable(),
+    summaryCiphertext:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.summaryCiphertext.nullable(),
   })
   .strict();
 
 const AccountEncryptionMigrateAutomationRunTargetContentSchema = z
   .object({
-    triggerEvidenceEnvelope: z.string().min(1).max(220_000).nullable(),
+    triggerEvidenceEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
     occurrenceEvidenceEqualityTag:
-      AutomationOccurrenceEvidenceEqualityTagV1Schema.nullable(),
-    executionInputEnvelope: z.string().min(1).max(220_512).nullable(),
-    resultEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyContextEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
-    replyHandoffReceiptEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.occurrenceEvidenceEqualityTag.nullable(),
+    executionInputEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.executionInputEnvelope.nullable(),
+    resultEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
+    replyContextEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyContextEnvelope.nullable(),
+    replyHandoffReceiptEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.replyHandoffReceiptEnvelope.nullable(),
+    failureDetailEnvelope:
+      ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.failureDetailEnvelope.nullable(),
   })
   .strict();
 

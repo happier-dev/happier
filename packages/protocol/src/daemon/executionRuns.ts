@@ -77,6 +77,21 @@ export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
 }).strict();
 export type ExecutionRunConnectedServicesLaunchV1 = z.infer<typeof ExecutionRunConnectedServicesLaunchV1Schema>;
 
+/**
+ * Privacy-bounded terminal cleanup custody. It grants no purpose, request-auth,
+ * run-target, or replay authority; the daemon can only derive the exact
+ * materialized root already owned by this run key and Agent.
+ */
+export const ExecutionRunConnectedServicesCleanupReceiptV1Schema = z.object({
+  v: z.literal(1),
+  activationId: z.string().uuid(),
+  runKey: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
+}).strict();
+export type ExecutionRunConnectedServicesCleanupReceiptV1 = z.infer<
+  typeof ExecutionRunConnectedServicesCleanupReceiptV1Schema
+>;
+
 const PersistedConnectedServiceChildSelectionV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
@@ -346,6 +361,33 @@ const DaemonExecutionRunMarkerSchemaCore = DaemonExecutionRunMarkerFieldsSchema.
   }
 });
 
+export const DaemonExecutionRunMarkerOwnerWriteSchema =
+  DaemonExecutionRunMarkerFieldsSchema.extend({
+    executionRunConnectedServicesCleanupReceiptV1:
+      ExecutionRunConnectedServicesCleanupReceiptV1Schema.optional(),
+  }).strip().superRefine((value, ctx) => {
+    if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'backendTarget must identify a concrete backend',
+        path: ['backendTarget'],
+      });
+    }
+    if (
+      value.executionRunConnectedServicesCleanupReceiptV1
+      && value.executionRunConnectedServicesCleanupReceiptV1.runKey !== value.runId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Execution-run cleanup receipt must match its marker run id',
+        path: ['executionRunConnectedServicesCleanupReceiptV1', 'runKey'],
+      });
+    }
+  });
+export type DaemonExecutionRunMarkerOwnerWrite = z.infer<
+  typeof DaemonExecutionRunMarkerOwnerWriteSchema
+>;
+
 /**
  * Read-only compatibility seam for predecessor marker bytes. New marker writes
  * always use DaemonExecutionRunMarkerSchema above, which strips this launch
@@ -353,6 +395,8 @@ const DaemonExecutionRunMarkerSchemaCore = DaemonExecutionRunMarkerFieldsSchema.
  */
 const DaemonExecutionRunMarkerPersistenceReadSchemaCore = DaemonExecutionRunMarkerPersistenceReadFieldsSchema.extend({
   executionRunConnectedServicesLaunchV1: PersistedExecutionRunConnectedServicesLaunchV1Schema.optional(),
+  executionRunConnectedServicesCleanupReceiptV1:
+    ExecutionRunConnectedServicesCleanupReceiptV1Schema.optional(),
 }).strip().superRefine((value, ctx) => {
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
@@ -378,6 +422,16 @@ const DaemonExecutionRunMarkerPersistenceReadSchemaCore = DaemonExecutionRunMark
         path: ['executionRunConnectedServicesLaunchV1'],
       });
     }
+  }
+  if (
+    value.executionRunConnectedServicesCleanupReceiptV1
+    && value.executionRunConnectedServicesCleanupReceiptV1.runKey !== value.runId
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Execution-run cleanup receipt must match its marker run id',
+      path: ['executionRunConnectedServicesCleanupReceiptV1', 'runKey'],
+    });
   }
 });
 export const DaemonExecutionRunMarkerSchema = z.preprocess(

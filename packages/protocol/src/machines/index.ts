@@ -46,6 +46,7 @@ export {
 } from './machineStoredContent.js';
 
 export {
+    arePluginMachineMaterializationRefsEqual,
     arePluginMachineExecutionOriginsEqual,
     PluginMachineExecutionOriginV1Schema,
     PluginMachineExecutionOriginV1JsonSchema,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { compilePluginJsonSchema } from '../../plugins/actions/jsonSchemaValidation.js';
 import {
+  arePluginMachineMaterializationRefsEqual,
   arePluginMachineExecutionOriginsEqual,
   PluginMachineExecutionOriginV1JsonSchema,
   PluginMachineExecutionOriginV1Schema,
@@ -76,6 +77,15 @@ describe('PluginMachineExecutionOriginV1', () => {
     expect(arePluginMachineExecutionOriginsEqual(origin, {
       ...origin,
       materializationRef: { ...origin.materializationRef, materializationId: 'mat-b' },
+    })).toBe(false);
+
+    expect(arePluginMachineMaterializationRefsEqual(
+      origin.materializationRef,
+      origin.materializationRef,
+    )).toBe(true);
+    expect(arePluginMachineMaterializationRefsEqual(origin.materializationRef, {
+      ...origin.materializationRef,
+      materializationId: 'mat-b',
     })).toBe(false);
   });
 

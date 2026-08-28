@@ -786,12 +786,26 @@ describe('MachineRpcRoutePolicyV1', () => {
       });
     }
     expect(protocol.resolveMachineRpcRoutePolicy(
-      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME,
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3,
     )).toMatchObject({
       routeClass: 'server_required',
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'session.handoff.prepare_target.resume',
     });
+    for (const [method, actionSpecId] of [
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, 'session.handoff'],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3, 'session.handoff.prepare_target'],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3, 'session.handoff.prepare_target_result.get'],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3, 'session.handoff.commit'],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3, 'session.handoff.abort'],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3, 'session.handoff.status.get'],
+    ] as const) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        rpcClassification: 'action_spec_bound',
+        actionSpecId,
+      });
+    }
   });
 
   it('keeps predecessor V2 session handoff routes on their canonical server-scoped policies', async () => {
@@ -803,7 +817,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET],
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET],
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET],
-      [RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_RESUME_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME],
+      [RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_RESUME_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3],
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_CONFIRM_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT],
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT],
       [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V2, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT],

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { ConnectedServiceBindingsV1Schema, type ConnectedServiceBindingsV1 } from '../../connect/connectedServiceBindings.js';
+import {
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+  ConnectedServiceBindingsV1Schema,
+  type ConnectedServiceBindingsV1,
+} from '../../connect/connectedServiceBindings.js';
 import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   type QualifiedConnectedAccountPurposeBindingsV1,
@@ -13,11 +17,20 @@ export const ConnectedServicesDefaultAuthByAgentIdV1Schema = z
     v: z.literal(1).default(1),
     bindingsByAgentId: z.record(AgentIdSettingsKeySchema, ConnectedServiceBindingsV1Schema).default({}),
   })
+  .strict();
+
+/** Released bundled account settings used scalar service ids before qualified service identity. */
+export const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema = z
+  .object({
+    v: z.literal(1).default(1),
+    bindingsByAgentId: z.record(
+      AgentIdSettingsKeySchema,
+      BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+    ).default({}),
+  })
   .strict()
-  .catch({
-    v: 1,
-    bindingsByAgentId: {},
-  });
+  .transform((value) => ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value))
+  .catch({ v: 1 as const, bindingsByAgentId: {} });
 
 export type ConnectedServicesDefaultAuthByAgentIdV1 = z.infer<
   typeof ConnectedServicesDefaultAuthByAgentIdV1Schema

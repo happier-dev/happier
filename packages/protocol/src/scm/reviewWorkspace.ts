@@ -59,6 +59,14 @@ export const ScmReviewWorkspaceMaterializePreparedRequestSchema = z.object({
   cwd: z.string().min(1),
   displayName: z.string().min(1),
   sourceTip: ScmReviewWorkspaceSourceTipSchema,
+  /**
+   * Read-only final verification of an earlier materialization. The selected
+   * source plugin supplies the path it previously received; the SCM backend
+   * reports that checkout's current local HEAD without fetching or moving it.
+   */
+  verification: z.object({
+    targetPath: z.string().min(1),
+  }).strict().optional(),
 }).strict();
 export type ScmReviewWorkspaceMaterializePreparedRequest = z.infer<
   typeof ScmReviewWorkspaceMaterializePreparedRequestSchema
@@ -71,6 +79,13 @@ export const ScmReviewWorkspaceMaterializePreparedResponseSchema = z.union([
     branchName: z.string().min(1),
     created: z.boolean(),
     currentness: ScmReviewWorkspaceCurrentnessSchema,
+  }).strict(),
+  z.object({
+    success: z.literal(true),
+    verification: z.object({
+      targetPath: z.string().min(1),
+      sourceHeadSha: z.string().regex(/^[0-9a-fA-F]{7,64}$/),
+    }).strict(),
   }).strict(),
   z.object({
     success: z.literal(false),

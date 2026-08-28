@@ -4,6 +4,7 @@ import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/
 import {
   PluginMachineMaterializationRefV1JsonSchema,
   PluginMachineMaterializationRefV1Schema,
+  type PluginMachineMaterializationRefV1,
 } from '../../plugins/availability/materializationRefV1.js';
 import type { PluginJsonSchemaV2 } from '../../plugins/contributions/publicTypes.js';
 
@@ -19,6 +20,16 @@ export const PluginMachineExecutionOriginV1Schema = z.object({
 
 export type PluginMachineExecutionOriginV1 = z.infer<typeof PluginMachineExecutionOriginV1Schema>;
 
+/** Exact identity comparison for one host-stamped plugin materialization. */
+export function arePluginMachineMaterializationRefsEqual(
+  left: PluginMachineMaterializationRefV1,
+  right: PluginMachineMaterializationRefV1,
+): boolean {
+  return left.pluginId === right.pluginId
+    && left.machineId === right.machineId
+    && left.materializationId === right.materializationId;
+}
+
 /**
  * Exact identity comparison for a host-stamped plugin execution origin.
  * Callers use this only as an equality precondition/currentness check; it
@@ -29,9 +40,7 @@ export function arePluginMachineExecutionOriginsEqual(
   right: PluginMachineExecutionOriginV1,
 ): boolean {
   return left.serverIdentityId === right.serverIdentityId
-    && left.materializationRef.pluginId === right.materializationRef.pluginId
-    && left.materializationRef.machineId === right.materializationRef.machineId
-    && left.materializationRef.materializationId === right.materializationRef.materializationId;
+    && arePluginMachineMaterializationRefsEqual(left.materializationRef, right.materializationRef);
 }
 
 /**
