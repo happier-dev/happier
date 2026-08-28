@@ -32,16 +32,18 @@ yarn test:plugin-workspaces
 
 This discovers plugin workspaces from the root workspace metadata and runs each package's declared `test` script with at most two Plugin workspaces active at once. It fails if no plugin workspaces are selected or if a plugin workspace lacks an executable `test` or `typecheck` script. Run the same derived package set through typechecking with `yarn typecheck:plugin-workspaces`. CI runs the test and typecheck lanes separately from the ordinary unit lane; it still executes plugin typechecks after a test failure so both results are visible.
 
-### 1c) Plugin Platform contract tests
+### 1c) Plugin Platform current-source tests
 
 **Root command:**
 ```bash
-yarn test:plugin-platform:contracts
+yarn test:plugin-platform:source
 ```
 
-This runs every `packages/tests/src/plugin-platform/*.test.ts` contract test. The file set is derived
-from the directory, so a new contract test beside the existing ones is executed without editing a
-script list. CI runs this lane alongside the shared package unit tests.
+This runs every `packages/tests/src/plugin-platform/*.test.ts` contract test plus the public-only
+external-author and runtime fixtures against the current development source. The contract file set
+is derived from the directory, so a new test beside the existing ones is executed without editing a
+script list. It does not pack or install a separate candidate archive. CI runs this lane alongside
+the shared package unit tests.
 
 ### 2) Integration
 

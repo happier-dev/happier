@@ -88,15 +88,15 @@ That split is intentional:
 - built-in generic ACP agents such as Kiro are declared in `@happier-dev/agents` and consumed by the generic ACP layer
 - `apps/cli/src/backends/**` is retired host-backend residue and must not be recreated
 
-#### One catalog-entry hook owner for bundled and contributed Agents
+#### One catalog projection for bundled and contributed Agents
 
-`apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.ts#createAgentRuntimeCatalogEntryHooks`
-is the single builder of an Agent's catalog-entry hooks. It has two production callers:
-
-- `sources/generatedBundledPlugins.ts` binds each bundled plugin's
-  `AGENT_RUNTIME_CONTRIBUTION` module, which may carry host callbacks.
-- `projectManifestAgentContribution.ts` builds the same contribution shape from the
-  Agent's manifest for every projected Agent, bundled or installed.
+`apps/cli/src/plugins/projection/registry/projectManifestAgentContribution.ts`
+projects each manifest Agent into the canonical catalog entry. Focused executable
+fields from the matching `definePlugin({ agents: { <localId>: ... } })` entry are
+bound by generated activation and supplied to the catalog's existing hook owners;
+there is no broad Agent-runtime contribution object or parallel catalog path.
+Bundled and installed Agents therefore enter through the same manifest and
+registration contracts.
 
 A bundled Agent carries facts such as its vendor-resume level in the host's own
 `@happier-dev/agents` tables. An installed Agent has no host table, so it declares
@@ -129,40 +129,36 @@ events — an Agent that claims the slot and never emits one leaves `runtime.act
 pinned at `unknown` for the whole Session instead of settling at `idle`. Claude is
 currently the only bundled Agent that emits them.
 
-Externally authored plugins bind executable Agent behavior through one
+Plugin authors bind executable Agent behavior through one
 `definePlugin({ agents: { <localId>: ... } })` entry. Current public fields on
-a custom Agent entry include `providerCliAttach`, `cliSessionCommand`,
-`preflightSessionControls`, `terminalPromptSubmitVerification`,
-`sessionStartup`, and `vendorResumeSupport`; generated activation registers the
-selected fields together with the factory. `cliSessionCommand` is the public
+a custom Agent entry include `providerBinding`, `sessionRunnerFactory`,
+`daemonSpawnHooks`, `providerCliAttach`, `cliSessionCommand`, `cliAuth`,
+`connectedAccountLaunch`, `preflightSessionControls`,
+`terminalPromptSubmitVerification`, `sessionStartup`, and
+`vendorResumeSupport`. Generated activation registers only the selected
+focused fields together with the factory. `cliSessionCommand` is the public
 owner for Agent-native `happy <agent>` argument projection: its optional
 builder receives parsed Agent arguments plus host-resolved settings,
 environment, and start origin, and returns bounded JSON Session options.
-
-The remaining `*_AGENT_RUNTIME_CONTRIBUTION` modules and
-`runtimeContributions` locators in the bundled-Agent generator are still active
-private first-party machinery. Do not present them as a public plugin authoring
-alternative, and do not remove their documentation or generated contracts
-until that aggregate has actually been retired from source.
 
 Do not add a second builder for a contributed Agent's catalog entry. Manifest-only
 facts (id, CLI subcommand, CLI detect/auth spec, Connected Service ids) stay in
 `agentCliMetadata.ts#createManifestAgentCatalogEntry`; every hook-shaped fact belongs to
 the hook family.
 
-The CLI detect spec and the CLI auth spec are manifest-only facts for **every** Agent,
-bundled or installed: `createManifestAgentCatalogEntry` projects both from the declared
-`cli.executable` and `cli.auth.probe` block, and `createNativeAgentCliAuthSpec` owns every
-declared probe parser. The retired host-owned fallback (`agent/acp/catalog/builtIn/auth.ts`,
-`builtIn/detect.ts`, `capabilities/cliAuth/createUnknownCliAuthSpec.ts`) re-derived the same
-two specs from the `@happier-dev/agents` tables, which the generator emits from those same
-manifest bytes, and it silently dropped `cli.executable.alternativeBinaryNames` and the
-declared `envVars` of an `unknown` probe. It is deleted; the private `builtInAcpCatalog`
-contribution flag that selected it is gone with it.
+The CLI detect spec and static auth facts are manifest-owned for **every** Agent,
+bundled or installed. `createManifestAgentCatalogEntry` projects executable
+resolution from `cli.executable`; `cli.auth` declares login support, bounded login
+arguments, credential environment keys or JSON credential paths, and whether a
+status command is noninteractive. These fields never select an Agent parser or
+transfer process, environment, filesystem, or credential custody to plugin code.
 
-A plugin still overrides the projected auth spec by contributing `cliAuth.detectAuthStatus`
-when its probe genuinely cannot be expressed as a declared parser (Claude, Codex, Kiro and
-OpenCode do). That override no longer depends on any host-table flag.
+When static credential presence is insufficient, the same Agent entry may provide
+the focused `cliAuth.detectAuthStatus` callback. The host gives it only
+`runDeclaredSystemToolCommand`, restricted to the plugin's manifest-declared system
+tools, and continues to own command resolution, process lifetime, cancellation,
+environment, and bounds. Claude, Codex, Kiro, and OpenCode are current positive
+consumers; no host table or private aggregate selects this behavior.
 
 ### 4) App agents catalog: `apps/ui/sources/agents/catalog/catalog.ts`
 
@@ -372,7 +368,7 @@ Three optional same-Agent siblings add narrower capabilities without creating an
 
 - `externalSessionObservation` supplies resource-scoped status evidence and content-free transcript-change signals. `watch_file_changes` and `observe_resource` can support live follow through the host owner; `reconcile_only` cannot.
 - `externalSessionHooks` supplies installation variants plus bounded installation resolution and event mapping. The host owns consent, configuration mutation, durable cleanup custody, target resolution, and linking policy.
-- `externalSessionTakeover` supplies only bounded launch data after current linked-identity resolution. Its optional `runtimeDescriptorV1` is the strict Agent-owned runtime identity transported to the target Session opener; it is not a private resume carrier or generic metadata bag. The host retains target selection, authority transfer, admission, environment authorization, and spawn.
+- `externalSessionTakeover` supplies only bounded launch data after current linked-identity resolution. Its optional `backendModeHint` and `runtimeDescriptorV1` travel together through the single host launch-plan mapper: the former selects the Agent-owned backend mode and the latter carries the strict Agent-owned runtime identity to the target Session opener. The closed launch-plan/result DTOs accept only own enumerable data properties on plain or null-prototype objects. Neither field is a private resume carrier or generic metadata bag. The host retains target selection, authority transfer, admission, environment authorization, and spawn.
 
 `services.sessions.external` is the opposite direction: an authorized plugin-to-host mapping to the canonical product operations. It is not an Agent capability declaration or a second source registry.
 
@@ -448,36 +444,57 @@ Tool normalization (if the Agent emits tools):
 - Ensure the CLI normalizes Agent tool calls/results into canonical V2 tool shapes (so the app can render them).
 - See: `docs/tool-normalization.md` (V2 schemas + normalization entrypoints + trace/fixtures workflow).
 
-### Step 3 — export plugin contributions and let the CLI catalog project them
+### Step 3 — author the plugin once with `definePlugin`
 
-For Agent-specific runtimes, export a contribution from the plugin package, typically from:
-- `packages/plugins/myagent/src/agent/definition.ts`
-- `packages/plugins/myagent/src/agent/contributions/runtime.ts` when runtime hooks are needed
+Keep serializable shared Agent facts in
+`packages/plugins/myagent/src/agent/definition.ts` when the bundled package needs
+them, then compose the actual plugin through its public `definePlugin` entry. Put
+each executable behavior on the matching focused Agent field instead of exporting
+a runtime aggregate.
 
-Pattern:
+Pattern for a custom Session Agent:
 
 ```ts
-export const AGENT_DEFINITION = Object.freeze({
-  id: 'myagent',
-  core: {
-    id: 'myagent',
-    cliSubcommand: 'myagent',
-    detectKey: 'myagent',
-    resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
-    // other shared Agent facts...
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'MYAGENT_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/runtime',
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createMyAgentRuntime } from './agent/runtime.js';
+
+export const MYAGENT_PLUGIN = definePlugin({
+  id: 'happier.agent.myagent',
+  version: '0.0.0',
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  agents: {
+    myagent: {
+      declaration: {
+        title: 'My Agent',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn'],
+            cancel: true,
+          },
+        },
+      },
+      factory: createMyAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/runtime.js',
+        export: 'createMyAgentRuntime',
+        runtimeApiVersion: 1,
+      },
+      // Add focused cliAuth, preflightSessionControls, or other public seams
+      // only when this Agent owns that behavior.
     },
   },
 });
+
+export const PLUGIN_MANIFEST = MYAGENT_PLUGIN.manifest;
+export const activate = MYAGENT_PLUGIN.activate;
 ```
 
-The CLI catalog reads generated/resolved plugin contributions through
-`apps/cli/src/agent/catalog/registry.ts`; do not add filesystem-scanned or side-effect
-registration paths.
+The CLI catalog reads resolved plugin declarations and their generated focused
+registrations through `apps/cli/src/agent/catalog/registry.ts`; do not add
+filesystem-scanned, side-effect, private-overlay, or raw registration paths.
 
 ### Step 4 — add plugin-owned UI descriptors
 

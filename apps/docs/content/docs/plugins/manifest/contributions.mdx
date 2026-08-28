@@ -29,7 +29,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `managedDependencies` | Host-managed tool/runtime dependencies | declarative descriptor only; the host owns resolution, installation, validation, update, and removal |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations | `voiceProviders.<id>.runtime` when the declared realm needs one |
-| `sessionHeaderActions` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative Session-header actions | manifest action reference |
+| `sessionHeaderActions` | Declarative Session-header actions | manifest action reference |
 
 The generated `capability-matrix.json` in a proven published SDK artifact is the
 availability authority for that exact artifact. This catalog describes shapes
@@ -39,15 +39,10 @@ consult its unblock condition.
 Runtime demand is derived from the contribution declarations; Manifest V2 has
 no separate `uses[]` owner.
 
-**Deferred:** `composer.references`, `composer.attachments`,
-`composer.controls`, and `composer.regions` remain visible only as documented
-schema shape, not as product availability claims. `tools` and `commands` have
-source declarations and host wiring, but both remain deferred until a
-maintained external development-source plugin proves their lifecycle and real
-invocation in the current loaded development stack, including replacement,
-disable, and uninstall currentness.
-`sessionHeaderActions`, `openableContentViewers`, and `mcp.servers` likewise
-remain deferred until their named matrix unblock conditions are proven.
+Do not infer availability from this shape catalog. Consult the generated matrix
+for each family's source availability, maintained proving consumer or unblock
+condition, loaded-platform evidence, and release availability. This keeps
+mutable support status in one generated owner rather than duplicating it here.
 
 ## Cross-plugin contribution points
 

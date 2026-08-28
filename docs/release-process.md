@@ -34,8 +34,11 @@ When you want to publish/deploy a new preview build:
    risk-selected validation plan from that same diff. Run the affected
    source/contract evidence before committing release inputs.
 3. Human-review the proposed notes, versions, compatibility assessment, and
-   validation selection. Required heavy checks are justified by an affected
-   seam; optional or borderline deep certification is offered separately.
+   validation selection. For a changed public SDK surface, this is also the one
+   editorial/version approval point that consumes the generated comparison;
+   release dispatch carries that reviewed decision for the exact source it
+   materializes. Required heavy checks are justified by an affected seam;
+   optional or borderline deep certification is offered separately.
 4. Commit and push only the approved release notes and component versions.
    Final release dispatch does not choose or create a patch/minor/major bump.
    The post-commit check confirms that the analyzed source remains applicable
@@ -142,6 +145,12 @@ CI with a bounded reason; the workflow records that evidence as `WAIVED`, not
 `PASS`. Candidate identity, artifact integrity, signatures, authorization, and
 irreversible-data admission remain hard target contracts rather than release
 checkboxes.
+
+The public API comparator supplies mechanical facts; it does not choose SemVer
+or create a second approval workflow. The maintainer reviews those facts during
+the existing editorial/version pass. Later publication code rechecks the exact
+packed bytes and consumes that decision only for the source/candidate bound by
+the release operation.
 
 The final materialized commit normally has a successful canonical `CI — Tests`
 run on its source branch. Release admission verifies that exact run and does

@@ -14,8 +14,15 @@ Canonical lanes:
 - `yarn test:e2e:ui` — Playwright UI/browser e2e exercising real UI + server + CLI/daemon flows.
 - `yarn test:agents` — executable Agent runtime contracts; opt-in/flag-driven. The historical script name is retained for runner compatibility and does not refer to first-class model Providers.
 - `yarn test:db-contract:docker` — server DB contract via Docker.
+- `yarn test:plugin-platform:source` — current-source Plugin Platform owner contracts and public-only external-author/runtime fixtures. It never packs or installs an SDK, UI, CLI, or plugin archive.
 
 Use the smallest relevant subset during RED/GREEN loops. Before handoff, run the touched package typecheck/build-enforcing lane and at least one broader relevant lane when shared contracts are touched.
+
+Moving-source feature QA ends at source, integration, and the loaded development
+runtime. A package tarball, candidate archive, or immutable release identity is
+not an extra feature-completion gate. Exact-package consumer, integrity, and
+publication checks run only inside an explicitly authorized release operation
+against the bytes that operation may publish.
 
 ## TypeScript toolchain
 

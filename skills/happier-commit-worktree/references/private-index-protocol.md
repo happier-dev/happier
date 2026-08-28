@@ -111,24 +111,42 @@ After committing a partial file, synchronize its full committed HEAD blob into t
 
 ## 4. Shared-index synchronization
 
-After `update-ref` succeeds, synchronize only the committed paths. Another authorized writer may already have advanced HEAD again, so first prove the created commit remains in current history and capture the latest tree. Feed entries from that latest HEAD to `update-index`:
+After `update-ref` succeeds, synchronize only the committed paths. Another authorized writer may already have advanced HEAD again, so first prove the created commit remains in current history and capture the latest tree.
+
+For a multi-path packet, do not invoke `git update-index` once per path. That repeatedly acquires the shared index lock and exposes a long-lived partially synchronized index; an 800-path packet can temporarily appear as hundreds of staged modifications and false deletions. Build one deletion-aware NUL-delimited index-info stream outside the repository, verify its record count matches the exact packet manifest, then apply it through one `update-index` transaction:
 
 ```bash
 sync_head=$(git rev-parse HEAD)
 git merge-base --is-ancestor "$commit" "$sync_head"
 
+index_info=$(mktemp -t happier-index-info.XXXXXX)
+cleanup_index_info() {
+  if test -e "$index_info"; then
+    unlink "$index_info"
+  fi
+}
+trap cleanup_index_info EXIT
+
 for file_path in "${files[@]}"; do
   if git cat-file -e "$sync_head:$file_path" 2>/dev/null; then
-    git ls-tree -z "$sync_head" -- "$file_path" | git update-index -z --index-info
+    git ls-tree -z "$sync_head" -- "$file_path" >> "$index_info"
   else
-    git update-index --remove -- "$file_path"
+    printf '0 0000000000000000000000000000000000000000\t%s\0' "$file_path" >> "$index_info"
   fi
 done
+
+record_count=$(tr -cd '\0' < "$index_info" | wc -c | tr -d ' ')
+test "$record_count" -eq "${#files[@]}"
+git update-index -z --index-info < "$index_info"
+unlink "$index_info"
+trap - EXIT
 ```
 
 Do not use `path` as a loop or scalar variable in `zsh`: it is the shell's special array tied to `$PATH`, so assigning it can make commands such as `git` unavailable.
 
-The deletion branch is mandatory. `git ls-tree` emits nothing for a deleted path; piping that empty result alone leaves the old shared-index entry staged as a deletion.
+The zero-mode deletion record is mandatory. `git ls-tree` emits nothing for a deleted path; omitting an explicit deletion record leaves the old shared-index entry staged as a deletion. Use the per-path synchronization form only for a deliberately diagnosed repair of a small known subset, not as the ordinary large-packet transaction.
+
+The batch must be prepared completely before `git update-index` starts. This reduces lock hold time and makes the shared-index transition atomic from observers' perspective. If acquiring the lock fails, HEAD is already advanced but the shared index remains in its previous complete state; follow the interrupted-synchronization recovery procedure rather than rebuilding or duplicating the commit.
 
 This synchronization changes only index entries for selected paths. It does not write worktree files. A later worktree edit remains dirty against the committed/index blob. If a later commit changed the same path, synchronizing from `$sync_head` prevents the shared index from staging an accidental rollback to the older commit; treat that overlap as a collision and inspect both intents.
 

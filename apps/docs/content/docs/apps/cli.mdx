@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Install, authenticate, control sessions, and run the external MCP server from the CLI.
+description: Install, authenticate, control sessions and machines, invoke Actions, and run the external MCP server from the CLI.
 ---
 
 The Happier CLI is the power-user client for:
@@ -9,6 +9,8 @@ The Happier CLI is the power-user client for:
 - authenticating to one or more servers
 - selecting a default server profile or targeting one command
 - creating, listing, resuming, attaching to, and managing sessions
+- listing machines and targeting an exact machine
+- discovering and invoking built-in and plugin-contributed Actions
 - running the external Happier MCP server
 - inspecting Happier tools and action-driven workflows
 
@@ -111,7 +113,7 @@ User guide: [Features → Device linking & restore](/accounts/device-linking-and
 
 API Token authentication for automation is available in the current Developer
 Preview source; it is not a released CLI feature yet. Create a token from
-**Settings → Account → API tokens**. Supply it for one invocation without
+**Settings → Account → API Tokens**. Supply it for one invocation without
 changing your saved CLI credential:
 
 ```bash
@@ -130,13 +132,135 @@ account automation but not present-user approvals, API/security-policy changes,
 or other security and trust controls.
 
 API-eligible Actions are allowed and unprompted by default. A present user can
-change an Action's **API** setting to **Ask first** or **Off** before sharing a
-token with automation. The same credential-aware Action transport supports
-delegated work, planning, and voice-agent runs; these retain the API Token's
-account-automation ceiling.
+change an Action's **External API & SDK** setting to **Ask first** or **Off**
+before sharing a token with automation. The same credential-aware Action
+transport supports delegated work, planning, and voice-agent runs; these retain
+the API Token's account-automation ceiling.
 
 See [API Tokens](/security/api-tokens) for creation, revocation, the one-minute
 daemon-local validation-cache limit, and Action settings.
+
+## Discover machines and Actions (Developer Preview)
+
+The root `machines` and `actions` commands are available in the current
+Developer Preview source. They use the same Action catalog, schemas, settings,
+approval rules, and execution paths as the app, SDK, HTTP API, plugins, and MCP.
+
+### List Account machines
+
+List the machines registered to the current Account before targeting work:
+
+```bash
+happier machines list
+happier machines list --json
+```
+
+Human output shows each machine's ID, label, and current state: active,
+inactive, revoked, or replaced. JSON output uses the standard CLI envelope and
+places the array at `data.machines`.
+
+The plural `happier machines` command lists Account machines. The singular
+`happier machine` command manages remote-machine setup over SSH; it is a
+different workflow.
+
+### Search and inspect Actions
+
+Search the catalog by words from an Action's ID, title, or description:
+
+```bash
+happier actions search session --limit 10
+happier actions search review comments --machine-id <machine-id>
+```
+
+An empty query lists the catalog. `--limit` accepts a value from 1 through 100.
+The results include both Happier's built-in Actions and Actions contributed by
+currently installed plugins.
+
+Inspect one Action before invoking it:
+
+```bash
+happier actions get session.status.get
+happier actions get acme.notes/actions/save-note --machine-id <machine-id>
+```
+
+The human view shows the Action's title, description, safety classification,
+and input schema. Use `--json` when another program needs the complete
+machine-readable specification.
+
+### Invoke an Action
+
+Pass the Action input as JSON. Omitting `--input-json` sends an empty object.
+
+```bash
+happier actions invoke session.status.get \
+  --machine-id <machine-id> \
+  --input-json '{"sessionId":"<session-id>"}'
+```
+
+Plugin-contributed Actions use the qualified ID shown by `actions search`:
+
+```bash
+happier actions invoke acme.notes/actions/save-note \
+  --machine-id <machine-id> \
+  --input-json '{"note":"Remember this"}'
+```
+
+Bundled and externally installed plugins use the same discovery, invocation,
+settings, approval, and currentness rules. Happier stamps the plugin identity
+and invocation authority; callers do not provide either in Action input.
+
+For mutation workflows, `--request-id <id>` supplies the Action request
+identifier. Reusing an identifier is safe only where that Action's own contract
+documents idempotent handling; the CLI does not automatically replay a failed
+mutation.
+
+### Authentication and exact machine targeting
+
+These commands can use either authentication mode:
+
+```bash
+# Saved interactive sign-in
+happier auth login
+happier actions search session
+
+# API Token for this process
+HAPPIER_TOKEN='hap_v1_…' happier actions search session
+
+# API Token for one invocation
+happier --api-token 'hap_v1_…' actions search session
+```
+
+A saved interactive sign-in carries present-user authority. An API Token
+carries account-automation authority: it cannot approve its own request or
+change the security controls that govern it. Both modes invoke Actions through
+the configurable **External API & SDK** surface.
+
+`--machine-id` is an exact target, never a best-effort hint. When the selected
+endpoint cannot reach that machine, the command returns a typed target error
+instead of silently using another machine. If an Account-server connection has
+multiple eligible machines and an Action cannot determine its machine from its
+input, use `happier machines list` and pass the intended ID.
+
+When a command talks directly to a daemon, omitting `--machine-id` means that
+daemon's current machine. Through the Account server, Happier can relay the
+same Action to a NAT-hidden connected machine after exact target selection.
+
+### JSON output and failures
+
+Add `--json` to receive the standard versioned CLI envelope:
+
+- `machines list` returns `kind: "machines_list"` with `data.machines`.
+- `actions search` returns `kind: "actions_search"` with `data.actionSpecs`.
+- `actions get` returns `kind: "actions_get"` with `data.actionSpec`.
+- `actions invoke` returns `kind: "actions_invoke"` with the Action result in
+  `data`.
+
+Without `--json`, search and machine results are compact lists, Action details
+are formatted for inspection, and Action results are pretty-printed JSON.
+Expected input, authentication, settings, approval, placement, transport, and
+Action-domain failures exit with status 1. Unexpected internal or dependency
+faults exit with status 2. In JSON mode, failures use `ok: false` and include a
+stable error code in `error.code`.
 
 ## Bootstrap & setup (one-command)
 
@@ -546,7 +670,21 @@ happier session actions execute <session-id-or-prefix-or-tag> approval.request.d
 
 ### Action catalog from the CLI
 
-You can inspect and execute Happier actions directly:
+Use the Account-aware root commands to discover and invoke built-in and
+plugin-contributed Actions:
+
+```bash
+happier actions search [query...] [--limit <n>] [--machine-id <id>]
+happier actions get <action-id> [--machine-id <id>]
+happier actions invoke <action-id> --input-json '<json>' [--machine-id <id>]
+```
+
+See [Discover machines and Actions](#discover-machines-and-actions-developer-preview)
+for authentication, exact targeting, contributed Action IDs, JSON envelopes,
+and error behavior.
+
+The established session-scoped forms remain available when a workflow already
+starts from a session selector:
 
 ```bash
 happier session actions list

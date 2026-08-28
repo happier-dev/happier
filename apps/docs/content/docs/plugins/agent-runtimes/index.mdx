@@ -87,11 +87,8 @@ hand-authoring the JSON:
         },
         "auth": {
           "support": "login_terminal",
-          "probe": {
-            "parser": "unknown",
-            "backgroundChecks": "manual_only",
-            "statusArgs": null
-          },
+          "nonInteractiveStatusProbe": true,
+          "missingCredentialState": "unknown",
           "loginLaunches": [{
             "kind": "primary",
             "args": ["login"]
@@ -115,9 +112,16 @@ raw installer, shell, credential store, or login-command registry:
 - `executable` describes canonical binary names and source preference;
 - `install` selects supported managed metadata or bounded per-platform manual
   recipes and documentation;
-- `auth.probe` selects one host-owned parser and whether background checks are
-  safe;
+- `auth.environmentVariables` and `auth.credentialPaths` declare host-checked
+  credential-presence facts; `auth.nonInteractiveStatusProbe` says only that a
+  focused status command is safe to schedule in the background;
 - `auth.loginLaunches` supplies arguments for the already resolved executable.
+
+When credential presence cannot determine status, the code-defined Agent entry
+may add `cliAuth.detectAuthStatus`. That callback receives only the host's
+`runDeclaredSystemToolCommand` service for manifest-declared system tools; the
+host retains executable resolution, environment, process, cancellation, and
+credential custody. No auth parser enum crosses the public contract.
 
 For a declarative ACP Agent, use
 `runtime: { "kind": "acp", "transport": ... }` and declare a strict

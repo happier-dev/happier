@@ -6,63 +6,209 @@ description: Use Happier Actions from a typed SDK or its HTTP API with an API To
 Use the SDK or HTTP API to drive Happier Actions from a trusted developer tool.
 
 <Callout>
-  **Developer Preview:** `@happier-dev/sdk` is a private `0.0.0` workspace
-  package, not a package-registry install. It remains private until its
-  first-publication gates pass and release work is explicitly authorized. The
-  Action API is also development source only. Neither is released or publicly
-  available; validate and use the current workspace source with a development
-  stack.
+  **Developer Preview:** the SDK and Action API are implemented in current
+  development builds but have not shipped in a public Happier release. Use the
+  current workspace source with a development stack.
 </Callout>
+
+The SDK, direct HTTP calls, CLI, MCP, and trusted plugins all reach the same
+Action contracts. The adapter changes how a caller connects; it does not create
+a second operation or permission model. Happier validates the Action at the
+daemon that owns execution, applies the Account's Action settings, and returns
+the same Action result to every external client.
 
 ## What you need first
 
-- A development checkout that supplies the SDK package and a signed-in daemon
-  connected to its configured Account server. There is no separate Action API
-  feature toggle and not yet a supported `npm install @happier-dev/sdk`
-  workflow.
+- A development checkout with the SDK source and a signed-in daemon connected
+  to its configured Account server. There is no separate Action API feature
+  toggle.
 - An API Token created by a present user. Public Action API routes accept API
   Tokens only; signed-session bearers and daemon control tokens are rejected.
 
 ## Supported environment
 
-The current supported consumer is a server-side Node.js program. The Action API does not
-enable CORS, and no same-origin browser delivery is proven in this preview. Do
-not put an API Token in browser code or expect an arbitrary browser origin to
-call either Action endpoint.
+The current supported SDK consumer is a server-side Node.js program. Direct
+HTTP clients may use any language that can send JSON over HTTPS. The Action API
+does not enable CORS, and no same-origin browser delivery is proven in this
+preview. Do not put an API Token in browser code or expect an arbitrary browser
+origin to call either Action endpoint.
 
-## Run the workspace example
+## Choose how to connect
 
-From the repository root, launch the SDK's TypeScript example directly against
-the development stack:
+Every mode below uses the same Action registry, input schemas, settings and
+approval system, and result contracts. Happier still applies the setting for
+the surface that made the call. Choose the interface that fits the caller
+rather than building a new integration protocol around Happier.
+
+| Interface | Best fit | Authentication and targeting | Live output |
+| --- | --- | --- | --- |
+| Human CLI | Interactive terminal work | Saved sign-in or an API Token; current machine or `--machine-id` | `happier history <session> --follow` |
+| CLI JSON | Shell scripts and agent tooling | API Token through `HAPPIER_TOKEN` or `--api-token`; `--machine-id` when needed | `--follow --jsonl` |
+| Fluent SDK | Node.js Session workflows | Explicit `connect({ endpoint, token })`; root client for a local daemon, machine-bound client for the server | Demand-driven async iterators with `AbortSignal` and cleanup |
+| Raw SDK | Dynamic Action discovery and invocation from Node.js | Same client and target rules as the fluent SDK | Compose the finite follow/read/cancel Actions |
+| HTTP | Other languages and infrastructure tools | Bearer API Token; omit the target at a local daemon, select an exact machine at the server | Finite Action calls in v1; there is no SSE endpoint |
+
+Use the CLI for terminal and shell workflows, the fluent SDK when a Node.js
+program works primarily with Sessions, the raw SDK when it selects Action ids
+dynamically, and HTTP when Node.js is not the right client runtime. MCP and
+trusted plugins are additional capabilities over the same Action owner.
+
+## First five minutes
+
+Use the checked-in basic example for one deterministic daemon-local run. It
+connects with an explicit token and endpoint, creates a Session on the daemon's
+current machine, sends one message, reads the assistant response, stops the
+Session, and closes the client.
+
+1. In **Settings → Account → API Tokens**, create a token and copy it when
+   it is shown. The SDK does not load this token from a CLI profile or any other
+   credential store.
+2. Start a signed-in daemon, then read its current HTTP port. The port is not
+   fixed.
+3. Choose an Agent installed and enabled on this machine. The example uses
+   `codex` unless you set `HAPPIER_AGENT_ID` to another exact Agent id.
+4. From the repository root, run:
 
 ```bash
-HAPPIER_API_ENDPOINT='https://configured-server.example' \
-HAPPIER_TOKEN='hap_v1_…' \
-HAPPIER_ENDPOINT_MODE=server \
-yarn tsx packages/sdk/examples/basic/index.ts
-```
-
-Set `HAPPIER_ENDPOINT_MODE=server` for a configured server endpoint. The
-example uses the authenticated machine-list bootstrap and auto-selects only
-when exactly one active, non-revoked, non-replaced machine is eligible. With
-several eligible machines, set `HAPPIER_MACHINE_ID` to the intended candidate;
-the example never silently selects the first row.
-
-For a daemon-local endpoint, read the daemon's current HTTP port, then run the
-same example in `daemon` mode. The daemon uses its current machine, so do not
-set `HAPPIER_MACHINE_ID` or expect the example to discover one.
-
-```bash
+happier daemon start
 DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
 HAPPIER_API_ENDPOINT="http://127.0.0.1:$DAEMON_PORT" \
 HAPPIER_TOKEN='hap_v1_…' \
-HAPPIER_ENDPOINT_MODE=daemon \
+HAPPIER_AGENT_ID='codex' \
 yarn tsx packages/sdk/examples/basic/index.ts
 ```
 
-The example performs spawn, wait, bounded transcript follow with iterator
-cleanup, send, snapshot transcript read, and stop. This is a development-source
-workflow, not a published installation method.
+The example prints the most recent assistant text, or its explicit placeholder
+when no assistant text is available. Its `finally` blocks stop the
+demonstration Session and await `happier.close()` even when a later step fails.
+The example's environment lookup is caller code: `connect()` itself requires
+`endpoint` and `token` and never reads environment variables implicitly.
+
+These failures are expected typed outcomes rather than reasons to retry the
+whole recipe blindly:
+
+| What happened | SDK result | What to do |
+| --- | --- | --- |
+| The selected Agent is missing, disabled, or lacks a Session identity | `HappierAgentUnavailableError` with `reason` set to `not_installed`, `disabled`, or `identity_unavailable` | Install or enable that Agent on the target machine, or use its exact available id. |
+| Action policy is **Off** or **Ask first** | `HappierActionError` with `code` `action_disabled` or `approval_required` | Change **External API & SDK** or complete the approval from a signed-in app. The token cannot approve its own request. |
+| A server-origin call has no exact machine or resolvable Session target | `HappierActionError` with `code` `target_required` | Select a machine as shown below and use a machine-bound client. |
+| The Session committed but its requested initial message did not settle as admitted | `HappierSessionInitialInputError` with the committed `session` and `result.initialInput` | Inspect that Session instead of spawning another one blindly. |
+| Authentication, HTTP admission, networking, JSON, or response validation fails | `HappierTransportError`; HTTP failures retain `status` and a typed `code` when supplied | Correct the token or endpoint. Inspect current state before retrying an interrupted mutation. |
+
+### Use the configured server and an exact machine
+
+The checked-in comprehensive example covers the server origin. List eligible
+machines first and select the intended id explicitly; neither the SDK nor the
+server silently chooses among several candidates.
+
+```bash
+export HAPPIER_API_ENDPOINT='https://configured-server.example'
+export HAPPIER_TOKEN='hap_v1_…'
+
+curl --fail-with-body \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  "$HAPPIER_API_ENDPOINT/v1/machines" \
+  | jq -er '.[] | select(.active and .revokedAt == null and .replacedByMachineId == null) | .id'
+```
+
+After choosing one printed id, make the machine, installed Agent, and a
+directory that exists on that machine explicit:
+
+```bash
+HAPPIER_ENDPOINT_MODE=server \
+HAPPIER_MACHINE_ID='machine-id' \
+HAPPIER_AGENT_ID='codex' \
+HAPPIER_WORKSPACE_PATH='/path/on/selected-machine' \
+yarn tsx packages/sdk/examples/comprehensive/index.ts
+```
+
+The comprehensive example also refuses to guess: if `HAPPIER_MACHINE_ID` is
+omitted, it auto-selects only when exactly one active, non-revoked,
+non-replaced machine exists.
+
+## Keep request identities for mutations
+
+For a generic CLI Action mutation, provide a request id you can keep with your
+automation log:
+
+```bash
+happier actions invoke session.title.set \
+  --request-id onboarding-title-1 \
+  --input-json "{\"sessionId\":\"$SESSION_ID\",\"title\":\"SDK onboarding\"}"
+```
+
+The SDK puts the same correlation id in execution options, outside the Action
+input:
+
+```ts
+await happier.actions.execute(
+  'session.title.set',
+  { sessionId, title: 'SDK onboarding' },
+  { requestId: 'onboarding-title-1' },
+);
+```
+
+For a fluent Session message, retain both the Action request id and the
+message's retry-safe `localId`:
+
+```ts
+await happier.sessions.get(sessionId).sendAndWait(
+  'Summarize the current work.',
+  { localId: 'onboarding-message-1', timeoutSeconds: 300 },
+  { requestId: 'onboarding-send-1' },
+);
+```
+
+Direct HTTP uses the same request id in the outer envelope. A Session target
+works at both origins: the local daemon verifies that it owns the Session, and
+the configured server resolves the Session's exact connected machine.
+
+```bash
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data "{
+    \"v\": 1,
+    \"requestId\": \"onboarding-title-1\",
+    \"target\": { \"kind\": \"session\", \"sessionId\": \"$SESSION_ID\" },
+    \"input\": { \"sessionId\": \"$SESSION_ID\", \"title\": \"SDK onboarding\" }
+  }" \
+  "$HAPPIER_API_ENDPOINT/v1/actions/session.title.set"
+```
+
+A request id is correlation unless that Action documents stronger idempotency.
+Happier does not automatically replay an uncertain mutation.
+
+## Follow output and stop cleanly
+
+Human output stays compact; JSONL emits one record per line. Press Ctrl-C to
+cancel either command and release the follow lease:
+
+```bash
+happier history "$SESSION_ID" --follow
+happier history "$SESSION_ID" --follow --jsonl
+```
+
+The fluent SDK exposes the same lifecycle as a demand-driven iterator:
+
+```ts
+const controller = new AbortController();
+try {
+  for await (const item of happier.sessions.get(sessionId).followTranscript({
+    cursor: 'tail',
+    signal: controller.signal,
+  })) {
+    console.log(item);
+    break; // An early return releases the lease.
+  }
+} finally {
+  controller.abort();
+}
+```
+
+Raw SDK and HTTP clients call the finite `transcript.follow` and
+`transcript.unfollow` Actions with one retained lease id. V1 deliberately does
+not add a second SSE lifecycle.
 
 ## Connect with an explicit endpoint and token
 
@@ -156,6 +302,41 @@ await existingSession.stop();
 retry an uncertain send and `input.timeoutSeconds` to bound only the
 observation; it does not make a second idle-wait call.
 
+### Follow transcript and execution-run streams
+
+Streaming helpers compose the existing finite Actions rather than opening a
+second streaming protocol. Transcript iteration fetches only while the consumer
+asks for another item. Leaving the loop, aborting, or closing the client releases
+the follow lease.
+
+```ts
+const session = happier.sessions.get('session-id');
+
+for await (const item of session.followTranscript({
+  cursor: 'tail',
+  maxItems: 20,
+})) {
+  console.log(item);
+  if (shouldStop(item)) break;
+}
+```
+
+Execution runs use the same pattern. A machine-bound client keeps start, read,
+and cancel on that machine. Normal completion and early loop exit both cancel
+the canonical stream handle.
+
+```ts
+const stream = await happier.machine('machine-id').runs.startStream({
+  sessionId: 'session-id',
+  runId: 'run-id',
+  message: 'Continue the review.',
+});
+
+for await (const event of stream) {
+  console.log(event);
+}
+```
+
 ### Recover when the initial message is not admitted
 
 Fluent `sessions.spawn()` has a deliberate partial-success case. Happier can
@@ -230,25 +411,25 @@ branches. A contributed Action can require fields inside one of those branches
 even when the schema has no top-level `required` array.
 
 Contributed Actions use their qualified plugin-and-Action identity in Action
-settings. Their **API** enablement and approval choice is enforced just like the
-corresponding setting for a built-in Action; installing an Action does not
-bypass an **Off** or **Ask first** decision.
+settings. Their **External API & SDK** enablement and approval choice is
+enforced just like the corresponding setting for a built-in Action; installing
+an Action does not bypass an **Off** or **Ask first** decision.
 
-The **API** setting starts **Allowed** for API-eligible built-in and contributed
-Actions, so Action Settings add no approval prompt unless the user changes that
-control under **Settings → Actions → Integrations**. A non-safe contributed
-Action still requires the host's live current-intent confirmation; **Allowed**
-does not suppress the Action's independent safety contract. The corresponding
-**Trusted plugins** setting is also **Allowed** by default for Actions it
-supports. Those settings cannot elevate a PAT or trusted plugin above
-`account_automation`: present-user-only controls such as approval decisions,
-plugin uninstall, Agent session-hook changes, and security-policy changes return
-`present_user_required`.
+The **External API & SDK** setting starts **Allowed** for API-eligible built-in
+and contributed Actions, so Action Settings add no approval prompt unless the
+user changes that control under **Settings → Actions → Integrations**. A
+non-safe contributed Action still requires the host's live current-intent
+confirmation; **Allowed** does not suppress the Action's independent safety
+contract. The corresponding **Trusted plugins** setting is also **Allowed** by
+default for Actions it supports. Those settings cannot elevate a PAT or trusted
+plugin above `account_automation`: present-user-only controls such as approval
+decisions, plugin uninstall, Agent session-hook changes, and security-policy
+changes return `present_user_required`.
 
 Use the types exported by `@happier-dev/sdk` as the canonical static contract
 for SDK methods, inputs, and results. The generated
-[SDK API inventory](https://github.com/happier-dev/happier/blob/dev/packages/sdk/API.md)
-and [exported declarations](https://github.com/happier-dev/happier/blob/dev/packages/sdk/api-declarations.md)
+[SDK API inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/sdk/API.md)
+and [exported declarations](https://github.com/happier-dev/happier/blob/v0.3/packages/sdk/api-declarations.md)
 show that public surface. At runtime, use `actions.search(...)` and
 `actions.get(...)` to inspect the Actions available from the selected machine,
 then call the raw `actions.execute(...)` primitive when the Action id is
@@ -289,7 +470,9 @@ Use a direct daemon origin when the caller can reach that daemon. Use the
 configured server origin when the target daemon is connected to that server:
 the server authenticates and relays over the daemon's existing connection, so
 the daemon does not need an inbound public address. This remains a Developer
-Preview contract, not a published integration surface.
+Preview contract. A Happier server may expose it before the npm SDK package is
+published; HTTP deployment and npm publication have separate readiness and
+release decisions.
 
 The request envelope is strict. `target` is routing metadata, never action
 input or caller authority.
@@ -363,6 +546,21 @@ idempotency contract when one exists.
 
 ## Try the HTTP API with curl
 
+For a daemon-local origin, omit `target`; the daemon executes on its current
+machine. This read-only discovery call is a useful first connectivity check:
+
+```bash
+DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "v": 1,
+    "input": { "query": "session", "limit": 5 }
+  }' \
+  "http://127.0.0.1:$DAEMON_PORT/v1/actions/action.spec.search"
+```
+
 For the configured server origin, first find an available machine with the API
 Token-authenticated bootstrap route. Its `id` is the value used in the Action
 target.
@@ -371,6 +569,29 @@ target.
 curl --fail-with-body \
   --header "Authorization: Bearer $HAPPIER_TOKEN" \
   "$HAPPIER_API_ENDPOINT/v1/machines"
+```
+
+The response is a narrow routing bootstrap rather than the full Machine model:
+
+```json
+[
+  {
+    "id": "machine-id",
+    "active": true,
+    "revokedAt": null,
+    "replacedByMachineId": null
+  }
+]
+```
+
+Select only a row that is active, not revoked, and not replaced. For example,
+this prints the eligible ids without silently choosing among them:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  "$HAPPIER_API_ENDPOINT/v1/machines" \
+  | jq -er '.[] | select(.active and .revokedAt == null and .replacedByMachineId == null) | .id'
 ```
 
 Then use the safe, read-only Action discovery operation with that selected
@@ -464,12 +685,16 @@ execution failure:
 
 ```json
 {
-  "ok": false,
-  "errorCode": "result_too_large",
-  "error": "Action execution completed, but its response exceeded the external Action response limit and could not be represented.",
-  "details": {
-    "executionCompleted": true,
-    "maxSerializedBytes": 24000000
+  "v": 1,
+  "actionId": "action.spec.search",
+  "execution": {
+    "ok": false,
+    "errorCode": "result_too_large",
+    "error": "Action execution completed, but its response exceeded the external Action response limit and could not be represented.",
+    "details": {
+      "executionCompleted": true,
+      "maxSerializedBytes": 24000000
+    }
   }
 }
 ```
@@ -481,23 +706,24 @@ current state or use the Action owner's idempotency contract. For large data,
 return Artifact references, use an existing stream Action, or design bounded or
 paginated reads instead of one oversized inline result.
 
-The SDK supports `AbortSignal` and `await close()` aborts outstanding calls.
-During shutdown, it gives active transcript and execution-run cleanup requests
-up to one second to settle before destroying its transport. It does not replay a
-mutation or move a failed mutation to another endpoint. For mutating Actions, the SDK generates a request ID when you do not
-supply one, but that generated value is not returned to the caller. If you may
-need to reconcile an uncertain mutation outcome, generate and retain the ID in
-your own code and pass it as `options.requestId`. A request ID provides
-correlation unless the Action's own contract also gives it idempotency
-semantics; the SDK adds no receipt store or automatic retry subsystem.
+The SDK supports `AbortSignal`; `await close()` is idempotent and aborts
+outstanding calls. During shutdown, it gives active transcript and execution-run
+cleanup requests up to one second to settle before destroying its transport. It
+does not replay a mutation or move a failed mutation to another endpoint. For
+mutating Actions, the SDK generates a request ID when you do not supply one, but
+that generated value is not returned to the caller. If you may need to reconcile
+an uncertain mutation outcome, generate and retain the ID in your own code and
+pass it as `options.requestId`. A request ID provides correlation unless the
+Action's own contract also gives it idempotency semantics; the SDK adds no
+receipt store or automatic retry subsystem.
 
 `session.followTranscript()` is a finite, demand-driven async iterator. It
 pauses between pages while the consumer is not awaiting another item, and an
-early loop exit or `await close()` releases its canonical follow lease. For a genuine
-execution-run stream, use `client.runs.startStream(...)`. The returned handle
-has `runId`, `streamId`, `cancel()`, and an async iterator; normal completion,
-early return, caller abort, and `await close()` cancel that stream. On a
-machine-bound client, stream start, read, and cancel remain on its selected
+early loop exit or `await close()` releases its canonical follow lease. For a
+genuine execution-run stream, use `client.runs.startStream(...)`. The returned
+handle has `runId`, `streamId`, `cancel()`, and an async iterator; normal
+completion, early return, caller abort, and `await close()` cancel that stream.
+On a machine-bound client, stream start, read, and cancel remain on its selected
 machine. Snapshot Actions remain ordinary methods.
 
 ## Server relay, readability, and revocation
@@ -521,4 +747,4 @@ extending access offline.
 - [CLI](/apps/cli) — use the same token for a single command or an automation
   environment.
 - [Versioning and compatibility](/plugins/packaging/versioning-compat) — why
-  the private package has no released SemVer contract yet.
+  this Developer Preview has no released SemVer contract yet.

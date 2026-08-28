@@ -97,24 +97,23 @@ the server retains a digest-backed record, while the full token is shown only to
 its creator. They authenticate automation, not a present user, so they cannot
 approve requests or loosen the security controls that limit them.
 
-The **API** setting starts **Allowed** for API-eligible Actions, so Action
-Settings do not add an approval prompt by default. Before sharing a token, open
-each needed Action under **Settings → Actions**, then review **Integrations →
-API** and change it to **Ask first** or **Off** where appropriate. A non-safe
-contributed Action can still require its own live current-intent confirmation;
-**Allowed** does not suppress that independent safety contract. These settings
-do not expose host-internal Actions or override present-user-only controls such
-as API-token administration, plugin uninstall, Agent session-hook changes,
-approval decisions, and security-policy changes. Trusted plugins have the same
-account-automation authority ceiling.
+The **External API & SDK** setting starts **Allowed** for API-eligible Actions,
+so Action Settings do not add an approval prompt by default. Before sharing a
+token, open each needed Action under **Settings → Actions**, then review
+**Integrations → External API & SDK** and change it to **Ask first** or **Off**
+where appropriate. A non-safe contributed Action can still require its own live
+current-intent confirmation; **Allowed** does not suppress that independent
+safety contract. These settings do not expose host-internal Actions or override
+present-user-only controls such as API-token administration, plugin uninstall,
+Agent session-hook changes, approval decisions, and security-policy changes.
+Trusted plugins have the same account-automation authority ceiling.
 
 The Developer Preview Action API is a separate transport boundary. A configured
 server can read a request and response when it mediates that traffic, even when
 the daemon remains the Action executor. Current development source implements
 that server relay through the daemon's existing server connection, so the daemon
-does not need an inbound public address. Neither origin is published or shipped,
-and the server origin is not live-proven; use daemon-local transport when direct
-local delivery is required.
+does not need an inbound public address. Neither origin is published or shipped.
+Use daemon-local transport when direct local delivery is required.
 
 See [API Tokens](/security/api-tokens) for creation, revocation, and the
 daemon-local validation-cache limit.

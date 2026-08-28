@@ -376,7 +376,22 @@ approve their own requests. Most users should review in the app.
 
 ## Actions (advanced scripting)
 
-Discover actions:
+Use the root Action commands for Account-aware discovery and invocation across
+built-in and plugin-contributed Actions:
+
+```bash
+happier actions search [query...] --json
+happier actions get <action-id> --json
+happier actions invoke <action-id> --machine-id <machine-id> --input-json '<json>' --json
+```
+
+Plugin-contributed Actions use qualified IDs such as
+`acme.notes/actions/save-note`. Use `happier machines list` when you need an
+exact machine ID. The [CLI guide](/apps/cli#discover-machines-and-actions-developer-preview)
+covers authentication, targeting, Action settings, JSON envelopes, and errors.
+
+The session-scoped commands remain useful when your script already identifies
+a session by ID, prefix, or tag. Discover Actions:
 
 ```bash
 happier session actions list --json

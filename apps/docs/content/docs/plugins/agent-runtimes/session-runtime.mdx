@@ -29,11 +29,9 @@ unavailable result rather than silently dropping behavior.
 `dispose` is idempotent and releases only Agent-owned session resources. It
 does not delete host session state, queued input, or transcript state.
 
-An Agent that also declares finite Execution Runs reuses this Session contract:
-its Run opener creates an `AgentSessionRuntime` for the Run and delegates the
-finite Run to `createExecutionRunHostBackendFromSessionRuntime`. The shared
-adapter, rather than a second plugin-owned state machine, maps Session events
-and cancellation into the Run lifecycle.
+The host automatically derives finite Execution Runs from this Session
+contract. The host-owned adapter maps Session events and cancellation into the
+Run lifecycle, so the plugin must not register a second execution-run path.
 
 For a custom Session Agent, this runtime is created from a distinct named
 runner leaf identified by `sessionRunnerFactory`. The `agents.<id>.factory`
@@ -44,5 +42,10 @@ process-global singleton state across those realms.
 After the generic scaffold, the minimal executable
 [`session-agent`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/session-agent)
 reference shows this boundary with a public host confirmation and cancellation.
+It exercises create and exact-provider-id resume, reasoning and assistant
+messages, a tool call/result, one settled terminal event, cancellation during an
+interaction, and a truthful unsupported native-fork capability. Its README
+contains the maintained install/reload/restart/update/disable/revoke/uninstall
+journey and the shared UI selectors.
 Use `advanced-package-root` only when the Agent also needs one of its composite
 capabilities, such as External Sessions or a managed Provider.

@@ -64,35 +64,38 @@ happier plugins dev typecheck .
 happier plugins dev build .
 happier plugins test .
 happier plugins pack . --out ../session-agent.tgz
-happier plugins install ../session-agent.tgz --kind archive
+happier plugins install ../session-agent.tgz --kind archive --json
+happier plugins change approve <pendingChangeId> --json
 ```
 
-It demonstrates a custom Session Agent, its distinct runner leaf, a public host
-interaction, and cancellation. For an External Sessions companion, managed
-Provider, Connected Account purpose, or generation-scoped background work, use
-the composite
+It demonstrates create and resume with exact provider identity, strict
+reasoning/assistant/tool events, a public host interaction, cancellation while
+that interaction is pending, and an explicit truthful unsupported native-fork
+capability. Its README also owns the complete moving-byte source install,
+reload, runner restart, update, disable/enable, archive approval, hard
+revocation, reinstall, and uninstall journey, including the shared UI selectors.
+For an External Sessions companion, managed Provider, Connected Account purpose,
+or generation-scoped background work, use the composite
 [`advanced-package-root`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/advanced-package-root)
 reference instead.
 
-The final two commands exercise the ordinary selected-file archive and
-reviewed install path. Archive installation requires present-user trust
-approval; do not add `--trust` to that flow.
+The final three commands exercise the ordinary selected-file archive and
+reviewed install path. Replace `<pendingChangeId>` only after reviewing the
+prepared change. Archive installation requires present-user trust approval; do
+not add `--trust` to that flow.
 
 ## Runtime contents
 
-A runtime can expose session execution through `sessions`, execution-run
-behavior through `executionRuns`, and adjacent Agent behavior through optional
-typed capabilities.
+A runtime exposes either interactive execution through `sessions` or inherently
+finite execution through `executionRuns`, plus optional typed capabilities.
 
-Not every Agent needs every optional field. It must expose `sessions`,
-`executionRuns`, or both; additional surfaces remain separate capabilities.
+Not every Agent needs every optional field. It must expose `sessions` or
+`executionRuns`; additional surfaces remain separate capabilities.
 
-When one Agent offers both Sessions and finite Execution Runs, its
-`executionRuns.open` opens an `AgentSessionRuntime` and returns
-`createExecutionRunHostBackendFromSessionRuntime({ request, openSession })`.
-That adapter owns Run ordering, terminalization, cancellation, replay, and
-cleanup. The plugin leaf opens the Session and may project a provider checkpoint;
-it does not author a second Run lifecycle.
+For a Session Agent, the host derives finite Execution Runs automatically from
+the registered Session factory. The host owns Run ordering, terminalization,
+cancellation, replay, and cleanup. The plugin leaf opens the Session and maps
+provider-native facts; it does not author a second Run lifecycle.
 
 ## Example pattern
 

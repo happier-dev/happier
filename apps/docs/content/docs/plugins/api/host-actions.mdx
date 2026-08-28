@@ -127,7 +127,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -139,7 +139,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1879,7 +1879,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `cli`, `api`.
 
 ### Input guidance
 
@@ -2931,7 +2931,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `scm.reviewWorkspace.materializePrepared`
 
-**Materialize prepared review workspace** — Materialize prepared checkout facts in one exact selected workspace.
+**Materialize or verify prepared review workspace** — Materialize prepared checkout facts or read the local HEAD of an already-prepared path in one exact selected workspace.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
@@ -2940,9 +2940,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `cwd` (text, required): Selected workspace root
-- `displayName` (text, required): Branch name
-- `baseRef` (text): Prepared base ref
-- `branchMode` (select, required): Branch mode
+- `displayName` (text, required): Workspace label
+- `sourceTip` (json, required): Provider-authorized source tip
+- `verification` (json): Already-prepared path verification
 
 ## `servers.list`
 
@@ -3402,7 +3402,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `transcriptStorage` (text): Transcript storage
 - `terminal` (json): Terminal
 - `checkoutCreationDraft` (json): Checkout creation
-- `initialMessage` (textarea): Initial message
+- `initialInput.text` (textarea): Initial message
+- `initialInput.attachments` (json): Initial attachments
 - `agentSessionStartupInstructionsV1` (json): Startup instructions
 
 ## `session.status.get`
@@ -3652,20 +3653,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Linked session id
 - `enabled` (boolean, required): Enabled
 
-## `sessions.external.follow`
-
-**Follow external session lease** — Attach an ephemeral follow lease to an external session link.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `api`.
-
-### Input guidance
-
-- `sessionId` (text, required): Linked session id
-- `leaseId` (text): Lease id
-- `ttlMs` (text): Lease TTL milliseconds
-
 ## `sessions.external.materialize.start`
 
 **Materialize external session** — Start or converge on the canonical external-session materialization operation.
@@ -3760,19 +3747,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `sessionId` (text, required): Linked session id
 
-## `sessions.external.unfollow`
-
-**Unfollow external session lease** — Detach an external-session follow lease.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `api`.
-
-### Input guidance
-
-- `sessionId` (text, required): Linked session id
-- `leaseId` (text, required): Lease id
-
 ## `sessions.spawn.connected_services.list`
 
 **List spawn connected services** — List connected-service references available for new sessions without exposing credentials.
@@ -3838,7 +3812,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `agent`, `rpc`, `api`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 

@@ -3,7 +3,8 @@ title: Action plugin example
 description: A plugin that exposes one manifest-declared action.
 ---
 
-Use this shape for a simple operation that can be called from CLI, MCP, or a session-agent surface.
+Use this shape for a simple operation that can be called from CLI, MCP, or a
+Session Agent surface.
 
 ## Code-defined declaration
 
@@ -21,6 +22,7 @@ export const { manifest, activate } = definePlugin({
   actions: {
     echo: {
       title: 'Echo',
+      surfaces: ['cli', 'mcp', 'agent'],
       execution: { target: 'daemon' },
       run: async (input) => ({ input }),
     },

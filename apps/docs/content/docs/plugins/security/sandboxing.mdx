@@ -11,6 +11,17 @@ Happier plugins are trusted code packages. The Plugin SDK is a supported interfa
 - React Native plugin UI runs as trusted client code.
 - Dependencies and build outputs belong to the same package trust decision.
 
+Bundled and externally installed plugins are eligible for the same host
+capabilities; each plugin still receives the services and contributions its
+manifest and activation declare. Eligible host Actions start **Allowed** on the
+**Trusted plugins** integration; a present user can change an individual Action
+to **Ask first** or **Off** under **Settings → Actions → Integrations**. Happier
+stamps the calling plugin and its current activation generation, so a plugin
+cannot impersonate another plugin, a retired generation, or the present user.
+Approval decisions and security controls that require a present user remain
+discoverable where useful but return `present_user_required` to plugin
+automation.
+
 Manifest host-access requests constrain host-mediated services. They do not prevent trusted code from using ambient process capabilities, so review package source and dependencies before selecting **Install & Trust**.
 
 ## Isolated UI

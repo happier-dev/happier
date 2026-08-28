@@ -3,12 +3,12 @@ title: Composer
 description: Declare Composer references, attachments, controls and regions, then read the mounted draft from your surface.
 ---
 
-> **Development status:** the four `composer.*` contribution families are
-> **deferred** in the installed SDK's `capability-matrix.json`, which stays the
-> availability authority. The source author contract below is current; a
-> declared Composer family is not yet an advertised runtime capability. The
+> **Developer Preview:** the generated [capability matrix](/plugins/manifest/availability)
+> marks all four `composer.*` contribution families available in current source
+> with maintained consumers. Loaded-platform proof and release availability are
+> separate evidence fields; neither is implied by source availability. The
 > mounted read path (`useComposer` / `useComposerView`) is ordinary
-> `@happier-dev/plugin-ui` API.
+> `@happier-dev/plugin-ui` API, and the SDK remains unpublished.
 
 The Composer is the message draft a person is writing. A plugin touches it in
 two places, and they are deliberately different:

@@ -45,19 +45,24 @@ After `happier plugins create`, start from the maintained
 [`session-agent`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/session-agent)
 reference. It is the minimal executable public-SDK Session Agent: one
 `definePlugin(...)` declaration, one distinct runner leaf, strict runtime
-events, a host confirmation, and cancellation without a Provider or private
-host import.
+events across reasoning, tools, and assistant output, create and exact-identity
+resume, a host confirmation, cancellation, and truthful unsupported native
+fork without a Provider or private host import.
 
 ```bash
 happier plugins dev typecheck .
 happier plugins dev build .
 happier plugins test .
 happier plugins pack . --out ../session-agent.tgz
-happier plugins install ../session-agent.tgz --kind archive
+happier plugins install ../session-agent.tgz --kind archive --json
+happier plugins change approve <pendingChangeId> --json
 ```
 
 The archive install is an explicit lifecycle canary and requires present-user
-trust approval. Do not add `--trust` to the archive flow.
+trust approval. Review the prepared change before substituting its pending id;
+do not add `--trust` to the archive flow. The example README continues through
+source install, reload, Session-runner restart, archive update, disable/enable,
+hard revocation, reinstall, uninstall, and the shared UI selectors.
 
 For a package that also needs External Sessions, a managed Provider, Connected
 Accounts, Resources, or background work, use the composite

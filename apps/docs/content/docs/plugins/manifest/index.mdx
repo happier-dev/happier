@@ -20,6 +20,12 @@ parsing apply the current author-availability fences before projection. Unknown
 behavior keys reject with a path-specific diagnostic; only an explicitly
 documented metadata extension point may accept unknown JSON.
 
+Manifest admission has no generic public byte, node, depth, string, array, or
+record quota matrix. Happier decodes UTF-8 JSON once, normalizes it once for the
+immutable generation, and validates the strict schemas, references, identity,
+and ownership rules. Field-specific limits still apply where a real owner or
+external contract declares one; they are not a universal manifest-size ceiling.
+
 The canonical publication URL for the cold host/install envelope is the
 [Plugin Manifest v2 JSON Schema](https://happier.dev/schemas/plugin-manifest-v2.json).
 The repository's website artifact is generated from the same Protocol owner,

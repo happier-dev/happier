@@ -43,7 +43,7 @@ the public surface; it does not create a separate stability tier per export.
 | Render Plugin UI | `/ui` | `/ui/build` for packaging or `/ui/client` only in hosted-web code |
 | Declare and use data | `/settings`, `/collections`, or `/resources` | `/storage` for daemon persistence contracts |
 | Test a Plugin module | `/testing` | use the source owner’s capability path for precise types |
-| Work on Happier host code | `/host/registration` or `/host/fs/json-owner-file-lock` | never import these paths from an installed Plugin |
+| Work on Happier host code | `/host/registration`, `/host/fs/json-owner-file-lock`, or `/host/ui` | never import these paths from an installed Plugin |
 
 ## Entrypoint route map
 
@@ -59,13 +59,14 @@ the public surface; it does not create a separate stability tier per export.
 | `@happier-dev/plugin-sdk/browser` | Public browser target and Action descriptors plus the toolchain compatibility packet; browser Actions bind canonical Actions to declared targets. | `import type * as Browser from '@happier-dev/plugin-sdk/browser';` |
 | `@happier-dev/plugin-sdk/collections` | Daemon-realm Account collection definitions, references, queries, and collection service types. | `import type * as Collections from '@happier-dev/plugin-sdk/collections';` |
 | `@happier-dev/plugin-sdk/connected-accounts` | Daemon-realm Connected Account references, purpose bindings, health, and materialization result types. | `import type * as ConnectedAccounts from '@happier-dev/plugin-sdk/connected-accounts';` |
-| `@happier-dev/plugin-sdk/events` | Event contribution and event-service types. | `import type * as Events from '@happier-dev/plugin-sdk/events';` |
+| `@happier-dev/plugin-sdk/events` | Event contribution and event-service types plus the canonical Automation Event authoring surfaces: the setup-result JSON-schema constructor and validators, history-gap-reset Action schemas, and the checkpointed Event admission helper. | `import type * as Events from '@happier-dev/plugin-sdk/events';` |
 | `@happier-dev/plugin-sdk/exec` | Host-mediated executable and process-service types for daemon code. | `import type * as Exec from '@happier-dev/plugin-sdk/exec';` |
 | `@happier-dev/plugin-sdk/exec/protocol-clients` | Typed process-protocol client contracts used with the host exec service. | `import type * as ProtocolClients from '@happier-dev/plugin-sdk/exec/protocol-clients';` |
 | `@happier-dev/plugin-sdk/fs` | Daemon-realm host-mediated filesystem service types. | `import type * as FileSystem from '@happier-dev/plugin-sdk/fs';` |
 | `@happier-dev/plugin-sdk/hooks` | Daemon-realm hook contribution and handler contracts. | `import type * as Hooks from '@happier-dev/plugin-sdk/hooks';` |
 | `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | Host-only: do not import from an installed plugin. Happier daemon packages use this scoped JSON owner-file-lock seam. | `import type * as HostFileLock from '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock';` |
 | `@happier-dev/plugin-sdk/host/registration` | Host-only: do not import from an installed plugin. Happier host packages use this registration-rights seam. | `import type * as HostRegistration from '@happier-dev/plugin-sdk/host/registration';` |
+| `@happier-dev/plugin-sdk/host/ui` | Host-only: do not import from an installed plugin. Happier UI hosts use these canonical Host API result decoders for Resource content and clipboard reads. | `import { decodePluginUiResourceContent } from '@happier-dev/plugin-sdk/host/ui';` |
 | `@happier-dev/plugin-sdk/http` | Host-mediated HTTP service types and outcomes. | `import type * as Http from '@happier-dev/plugin-sdk/http';` |
 | `@happier-dev/plugin-sdk/interactions` | Typed questions, confirmations, approvals, and present-user interaction results. | `import type * as Interactions from '@happier-dev/plugin-sdk/interactions';` |
 | `@happier-dev/plugin-sdk/managed-services` | Daemon-realm host-managed service declaration and lifecycle types. | `import type * as ManagedServices from '@happier-dev/plugin-sdk/managed-services';` |

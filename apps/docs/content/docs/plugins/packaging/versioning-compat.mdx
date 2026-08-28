@@ -3,7 +3,7 @@ title: Versioning and compatibility
 description: Developer Preview compatibility policy for the manifest, host, and plugin SDK.
 ---
 
-Plugin compatibility has three independent axes:
+Plugin compatibility has four independent axes:
 
 | Axis | Author field | Meaning |
 | --- | --- | --- |
@@ -79,12 +79,13 @@ undocumented package subpath.
 ## Current publication status
 
 The workspace package is private at `0.0.0` on a prepublication hold.
-Publication requires the consolidated public API, packed external consumer,
-platform, compatibility, and human approval gates. This guide does not promise
+Publication requires the consolidated public API, source-consumer, platform,
+compatibility, and human approval gates. This guide does not promise
 when that work will make an artifact available.
 
 Source declarations and host wiring establish source readiness, not external
-availability. Tool and Command declarations both remain deferred until an exact
-packed external plugin proves invocation through the canonical host catalog,
-replacement, disable, and uninstall currentness. Only the capability matrix in
-a proven published artifact may advertise them as available.
+availability. Tool and Command declarations are advertised only when a loaded
+external plugin proves invocation through the canonical host catalog,
+replacement, disable, and uninstall currentness. The generated capability
+matrix records that evidence-backed availability without becoming a second
+feature registry.

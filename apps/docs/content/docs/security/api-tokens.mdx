@@ -19,7 +19,7 @@ separately from your signed-in sessions.
 
 ## Create a token
 
-1. Open **Settings → Account → API tokens**.
+1. Open **Settings → Account → API Tokens**.
 2. Choose **Create token**, give it a label you will recognize, and select its
    expiry (30 days, 90 days, one year, or no expiry).
 3. Copy the token when it is shown and store it in your secret manager or the
@@ -48,8 +48,9 @@ your CLI profile; use your normal secret-management mechanism to provide it.
 
 ## Choose what automation and plugins may do
 
-In **Settings → Actions**, open an Action and find its **API** and **Trusted
-plugins** entries under **Integrations**. Set each independently to:
+In **Settings → Actions**, open an Action and find its **External API & SDK**
+and **Trusted plugins** entries under **Integrations**. Set each independently
+to:
 
 - **Allowed** — the Action can run from that integration without an approval
   prompt.
@@ -57,16 +58,23 @@ plugins** entries under **Integrations**. Set each independently to:
 - **Off** — the integration cannot invoke the Action.
 
 Every API-eligible Action starts **Allowed**, so API Token calls run without an
-approval prompt unless you change that Action's **API** setting—the External API
-& SDK control—to **Ask first** or **Off**. The **Trusted plugins** setting also
-starts **Allowed** for Actions available on that surface. Review these defaults
-before handing a token to automation. They never override an Action's required
+approval prompt unless you change that Action's **External API & SDK** setting
+to **Ask first** or **Off**. The **Trusted plugins** setting also starts
+**Allowed** for Actions available on that surface. Review these defaults before
+handing a token to automation. They never override an Action's required
 authority, runtime availability, or placement, and host-internal Actions are
 not exposed at all.
 
-An API Token follows the **API** setting. An installed trusted plugin follows
-the **Trusted plugins** setting. Start with the smallest set of Actions your
-automation needs.
+<Callout type="warn">
+  API access is intentionally broad and enabled by default. Before sharing a
+  token, review the Actions that integration needs and set anything else to
+  **Ask first** or **Off**. Happier does not silently narrow a token to a small
+  hard-coded subset on your behalf.
+</Callout>
+
+An API Token follows the **External API & SDK** setting. An installed trusted
+plugin follows the **Trusted plugins** setting. Start with the smallest set of
+Actions your automation needs.
 
 An API token cannot create, revoke, or replace API tokens; sign out every
 device; change Action, API, or security policy; approve requests; install or
@@ -114,7 +122,7 @@ or shipped.
   cannot be revealed again.
 - If an operation returns `present_user_required`, complete it from the app
   while signed in rather than widening the token's authority.
-- If the **API** target is **Off**, or is **Ask first** without a completed
+- If **External API & SDK** is **Off**, or is **Ask first** without a completed
   approval, adjust the Action setting or complete the approval from the app.
 - At either HTTP origin, a malformed, expired, unknown, or revoked API Token
   receives the same opaque HTTP `401` `invalid_token` response. Create a

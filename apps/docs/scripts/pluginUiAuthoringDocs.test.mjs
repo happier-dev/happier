@@ -182,7 +182,7 @@ test('keeps the default scaffold manifest projection aligned with the action dec
   assert.doesNotMatch(manifestIndex, /"placement": "commandPalette"/u);
 });
 
-test('labels held Triage source fixtures as conformance evidence rather than author templates', () => {
+test('labels public Triage source fixtures as specialist conformance evidence rather than author templates', () => {
   for (const exampleName of ['triage-source-target', 'triage-source-contributor']) {
     const exampleRoot = join(repoRoot, 'packages', 'plugin-sdk', 'examples', exampleName);
     const readme = normalizedSource(join(exampleRoot, 'README.md'));
@@ -191,7 +191,7 @@ test('labels held Triage source fixtures as conformance evidence rather than aut
     assert.match(readme, /held conformance fixture/iu);
     assert.match(readme, /rather than a starter template/u);
     assert.doesNotMatch(readme, /This copyable/u);
-    assert.match(packageJson.description, /held internal conformance fixture/iu);
+    assert.match(packageJson.description, /public Developer Preview fixture/iu);
     assert.doesNotMatch(packageJson.description, /copyable/u);
   }
 });

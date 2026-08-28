@@ -62,6 +62,10 @@ If shared-index synchronization failed after HEAD advanced:
 
 Synchronization may have succeeded for only a prefix of a large packet before an index-lock collision. Treat that as a committed transaction with incomplete bookkeeping, not as a failed commit. Compare the packet manifest with the current shared staged paths, repair each exact selected entry from the latest verified HEAD, and use `git update-index --remove` for selected paths absent from that HEAD. Do not recreate the commit and do not clear unrelated inherited staging.
 
+Before repairing, observe whether the staged count is decreasing and the resolved index lock is appearing between samples. That indicates a live per-path synchronizer may still be completing the transaction; do not race it with a second writer. Wait for the owner to finish or establish that it stopped.
+
+For a large known residual set, generate the deletion-aware NUL index-info batch documented in the private-index protocol and apply it with one `git update-index -z --index-info` call. Reserve individual `update-index` repairs for a small, explicitly diagnosed subset. In both cases, synchronize from the latest verified HEAD and confirm no packet path remains staged afterward.
+
 If a staged deletion remains for a path that exists on disk, compare HEAD, index, and filesystem bytes before acting. The safe repair normally updates that selected index entry from verified HEAD while leaving the filesystem untouched; it never deletes the filesystem path to agree with the index.
 
 Never rebuild the entire shared index merely to repair a few known entries unless the user explicitly requested index reconstruction and all staged intent has been inventoried.

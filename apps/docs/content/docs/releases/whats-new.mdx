@@ -79,12 +79,16 @@ so people who do not use Happier can still talk to your agents. See
 
 ## Automations do more than schedules
 
-Two new trigger kinds beyond cron and interval:
+Automations can now own multiple independently enabled automatic triggers with
+OR semantics. Beyond cron and interval schedules, plugins can contribute typed
+events. GitHub, for example, contributes repository push, issue opened, pull
+request opened and pull request merged events. They can be observed either by a
+checkpointed pull on one of your machines or by a webhook that does not need
+your machine awake.
 
-- **Plugin events** — a repository event, an issue, a review request. Observed
-  either by a checkpointed pull on one of your machines, or by a webhook that
-  does not need your machine awake.
-- **Conversation** — a message arriving in a connected channel.
+A message arriving in a connected Discord or Telegram channel can also admit
+an Automation Run directly. That conversation admission is recorded as the
+Run's immutable cause; it is not an automatic trigger row.
 
 See [Automations](/extras/automations).
 

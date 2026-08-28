@@ -27,6 +27,8 @@ test('keeps source, loaded-platform, and release evidence distinct from product 
     const markdown = await renderPluginAvailabilityMarkdown({ matrixPath });
 
     assert.match(markdown, /Product availability is distinct from source API availability/u);
+    assert.match(markdown, /\| Name \| Availability \| Source API \|/u);
+    assert.match(markdown, /\| `sample` \| `available` \| `present` \|/u);
     assert.match(markdown, /Source consumer/u);
     assert.match(markdown, /Loaded-platform proof/u);
     assert.match(markdown, /Release availability/u);

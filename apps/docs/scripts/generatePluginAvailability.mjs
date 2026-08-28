@@ -57,12 +57,13 @@ function evidenceValue(value) {
  */
 function evidenceTable(entries, idKey) {
   return table(
-    ['Name', 'Source API', 'Source consumer', 'Loaded-platform proof', 'Release availability'],
+    ['Name', 'Availability', 'Source API', 'Source consumer', 'Loaded-platform proof', 'Release availability'],
     entries
       .slice()
       .sort((a, b) => String(a[idKey]).localeCompare(String(b[idKey])))
       .map((e) => [
         code(e[idKey]),
+        evidenceValue(e.availabilityDisposition),
         evidenceValue(e.sourceApiAvailability),
         code(e.sourceConsumer),
         evidenceValue(e.loadedPlatformProof),

@@ -1,6 +1,6 @@
 ---
 title: Automations
-description: Run a session on a schedule, on a plugin event, or on demand — and queue recurring messages into a session you already have.
+description: Run one reusable recipe from automatic triggers, a connected conversation, or an explicit Run now action.
 ---
 
 Some work is worth doing on a timer rather than when you remember it: a nightly
@@ -14,29 +14,37 @@ opening the app.
   **Automations**. The experiments switch gates the toggle, so you need both.
 </Callout>
 
-Find them at **Settings → Automations** — "Manage scheduled sessions and
-recurring runs".
+Find them at **Settings → Automations**.
 
-## Two shapes
+Existing schedule automations created by released 0.2 clients remain readable
+and runnable in 0.3. The retained V2 schedule routes are a compatibility seam;
+new 0.3 authoring uses the current automation contract.
 
-**A scheduled session** starts a new session on a machine you choose, on a
-schedule. This is the one for work that should happen whether or not you are
-looking: create it from the new-session flow, where you have already picked the
-machine, folder, agent and model.
+## One recipe, several ways to start it
 
-**A session automation** queues a message into a session that already exists,
-repeatedly. Add one from the session itself when you want a recurring nudge in a
-conversation you are keeping around.
+An Automation stores one mutable recipe and its machine assignments. It can
+start a new Session, continue an existing Session, or run detached work,
+depending on the target you chose while authoring it.
+
+The same Automation can own no automatic triggers, one trigger, or several.
+Every enabled trigger is independent: if any one of them fires, the recipe
+runs. There is no ordering or requirement that several triggers fire together.
+Edits affect occurrences admitted after the edit; an admitted Run keeps the
+recipe and assignments it started with.
 
 ## What can trigger one
 
-A timer is only one of three things that can start an automation.
+A timer is only one of three automatic sources that can start an Automation.
 
 | Trigger | What starts the run |
 | --- | --- |
 | **Schedule** | A cron expression or an interval. |
-| **Manual** | You, from the app or the CLI. Nothing runs on its own. |
 | **Plugin event** | Something a plugin observed — a new issue, a push, a review request. |
+| **Session turn finished** | Completion of the exact active parent turn selected while authoring. |
+
+**Run now is an operation, not a trigger.** An Automation with no automatic
+triggers can still run when you choose **Run now**, invoke it from the CLI, or
+admit an authorized bound conversation.
 
 ### Schedule
 
@@ -51,13 +59,20 @@ This is the one that makes automations more than a scheduler. A plugin declares
 events it can observe, and an automation binds to one — so a GitHub repository
 event can start a session on your machine without you or a timer involved.
 
+The GitHub plugin exposes semantic events for a repository push, an issue being
+opened, a pull request being opened, and a pull request being merged. Polling
+and webhook delivery normalize into those same event identities, so changing
+the observation transport does not change what the Automation means.
+
 An event trigger is observed in one of two ways, and the difference matters
 operationally:
 
 - **Checkpointed pull** — a watcher materialized on a specific machine polls
   the source and records a checkpoint as it goes. It needs that machine to be
-  up; when it comes back, the checkpoint tells it where to resume, so nothing
-  is re-processed and nothing between the two points is lost.
+  up; when it comes back, the checkpoint tells it where to resume without
+  re-processing earlier occurrences. If the upstream source no longer offers
+  the missed range, Happier reports a history gap for that exact trigger so you
+  can recover it explicitly.
 - **Durable push** — the source calls a webhook endpoint Happier owns.
   Delivery does not depend on one of your machines being awake, and the
   endpoint records the moment observation started so earlier events are not
@@ -88,23 +103,51 @@ An event trigger can also carry a **filter**, and a maximum observation age —
 past which an event is considered too old to act on rather than triggering a
 run late.
 
+Plugins may optionally replace the generic setup form with their own setup
+surface. That surface only collects the same strict setup input; Happier still
+owns the trigger, admission, deduplication, and Run history.
+
+### When this turn finishes
+
+From an active Session turn, choose **When this turn finishes…** to create a new
+Automation or add a one-off trigger to an existing compatible Automation. The
+trigger names that exact parent turn, not whichever turn happens to be current
+later. Successful completion admits one Run. Failure or cancellation admits no
+execution Run, and the Automation screen shows the outcome derived from the
+source Session.
+
+If the turn changes before you save, the editor asks you to use the current
+turn instead. The server remains the authority, so closing the app or taking a
+machine offline does not move completion into a client-side watcher.
+
+For plugin authors using 0.3 development builds, the separate
+`@happier/runtime/turn-start`, `@happier/runtime/turn-complete`,
+`@happier/runtime/turn-failed`, and `@happier/runtime/turn-cancelled` Host Event
+hooks are daemon-local, in-memory, best-effort notifications. They are not
+replayed and do not create Automation Runs. The durable exact-turn trigger
+above is admitted from the persisted Session turn settlement instead.
+
 ### Conversation bindings
 
 A channel can bind a conversation to an existing automation. A message admitted
-through that binding starts a Conversation-origin Run, while the automation's
-definition remains a schedule, manual, or plugin-event definition. The binding
-is therefore an invocation path, not a fourth definition trigger.
+through that binding starts a Run with an immutable conversation cause. The
+binding is an invocation path, not another automatic trigger row.
 
 ### Active and paused
 
-Each automation is **Active** or **Paused**. Pausing keeps the definition and
-stops the runs, which is what you want while you are away.
+Each Automation is **Active** or **Paused**, and each automatic trigger can also
+be enabled independently. Pausing the Automation keeps its recipe and every
+trigger but prevents all automatic admission. Disabling one trigger leaves its
+siblings active.
 
 ## Running one now
 
-**Run now** triggers an automation immediately without waiting for its next
-scheduled time — useful for checking that a new automation does what you meant
+**Run now** admits an Automation Run immediately without waiting for its next
+scheduled time — useful for checking that a new Automation does what you meant
 before you leave it alone.
+
+It does not create a durable Manual trigger and does not require the Automation
+to have any automatic trigger rows.
 
 It queues rather than executing synchronously: the assigned daemon picks it up
 when it is available. If the machine is asleep, the run waits rather than
@@ -118,6 +161,27 @@ happier automation run <automation-id> [--idempotency-key <key>] [--json]
 
 Pass `--idempotency-key` when the caller might retry — a repeated key will not
 run the automation twice.
+
+## Concurrency and run history
+
+Each machine runs up to four automation Runs at once by default. Change that
+Account setting under **Settings → Automations** when the machine should take
+more or less work concurrently.
+
+Completed Run history is retained for 30 days by default. Turn on **Keep run
+history forever** in the same settings screen to retain it indefinitely, unless
+the self-hosted server operator has configured a shorter Automation retention
+policy. This setting controls the server-owned history lifecycle; it is not a
+second client-side cache.
+
+Every automatic Run records the stable trigger identity and revision plus an
+immutable bounded cause. Editing or removing the current trigger therefore does
+not rewrite what historical Runs say happened.
+
+To remove one Automation's eligible terminal history immediately, open that
+Automation and choose **Clear run history**. Deleting or disabling an
+Automation stops future admission; a Run admitted before that change keeps its
+frozen recipe and assignments and continues through the normal Run lifecycle.
 
 ## Related
 

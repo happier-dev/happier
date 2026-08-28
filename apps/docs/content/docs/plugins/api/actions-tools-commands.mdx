@@ -44,8 +44,7 @@ diagnostic workflow.
 ## Keep a long daemon Action visible in Activity
 
 > **Development status:** Tracked plugin Actions are part of the current
-> Developer Preview contract. The public SDK package is not yet released for
-> supported use.
+> Developer Preview contract and have not shipped in a public Happier release.
 
 A daemon Action can opt into a host-owned operation view. The user may
 **Collapse** the running view, navigate elsewhere, and reopen it from Activity
@@ -140,6 +139,14 @@ An Action is declared and implemented once. Its `surfaces` say who may invoke
 it; its required `execution` field says where its one handler runs. Those are
 independent decisions.
 
+The **External API & SDK** surface is host-owned rather than author-declared.
+Every installed daemon Action participates in API discovery and dynamic
+invocation through its qualified `<pluginId>/actions/<localId>` identity,
+subject to the Account's setting for that exact Action. For those daemon
+Actions, an author-declared `surfaces` list neither grants nor removes API Token
+access. Client-target Actions remain local to the invoking client and are not a
+daemon Action API fallback.
+
 Adding another invocation surface does not create another handler. Every
 admitted surface resolves the same current declaration and its one registered
 target handler through the canonical dispatcher.
@@ -167,8 +174,8 @@ client, or enter a cross-client queue.
 
 > **Development status:** The explicit `daemon | client` declaration is part
 > of the current Developer Preview contract, whose implementation remains in
-> progress, as is packaged web/iOS/Android certification. The public package
-> surface is not yet released for supported use.
+> progress, as is loaded web/iOS/Android certification. This capability has not
+> shipped in a public Happier release.
 
 For example, the root declaration names the exact client artifact without an
 inline handler:
@@ -250,6 +257,13 @@ and no-blind-retry rules remain canonical for every surface and target.
 
 ## Calling host Actions
 
+Bundled and externally installed plugins use this same service and dispatcher.
+External plugins are not placed on a smaller Action allowlist: once the user
+trusts the plugin, eligible host Actions are available according to the
+Account's **Trusted plugins** Action settings. The host still stamps plugin
+identity, generation, cancellation, and `account_automation` authority, so a
+plugin cannot impersonate a present user or another plugin.
+
 The generated root activation from a daemon `actions.<id>.run` binds a Plugin's
 own manifest-declared handler (the low-level ABI method is
 `api.actions.register(...)`). When a daemon handler needs an existing host
@@ -275,6 +289,23 @@ The same call reaches another plugin's Action by its exact
 `retryable`, and published payload — see
 [Diagnostics and errors](/plugins/testing/diagnostics#errors-across-a-plugin-to-plugin-action-call)
 for what does and does not cross.
+
+When `session.spawn_new` should create or reuse a Git worktree, pass the public
+`checkoutCreationDraft` projection with the rest of the authored Session input:
+
+```ts
+checkoutCreationDraft: {
+  kind: 'git_worktree',
+  displayName: 'review/42',
+  baseRef: 'main',
+  branchMode: 'new',
+}
+```
+
+The host sends that projection through the same canonical Session target
+preparation used by the first-party new-Session flow. Plugin authors do not
+resolve checkout paths themselves and do not receive the host's internal spawn
+options or directory-approval evidence.
 
 ## Tools
 

@@ -7,8 +7,16 @@ A channel connects a conversation somewhere else — a Discord channel, a Telegr
 chat — to a session or an automation on your machine. Messages arrive as input,
 replies go back out, and the people on the other end never install anything.
 
-Two providers ship: **Discord** and **Telegram**. Providers are a contribution
-point rather than a fixed list, so a plugin can add another.
+<Callout type="warn">
+  Conversation channels are part of the current 0.3 Developer Preview. The
+  source and bundled providers are present, but loaded-platform and authenticated
+  provider journeys are still release gates rather than stable-release claims.
+</Callout>
+
+The current 0.3 source bundles **Discord** and **Telegram** providers. Discord
+has no reservation-only shipping hold. Providers are a contribution point
+rather than a fixed list, so a trusted installed plugin receives the same public
+contract and can add another.
 
 ## The two halves
 
@@ -76,8 +84,38 @@ of the conversation binding. Together that is: someone posts in a Discord
 channel, a Run starts on your machine, and the result is delivered back into
 the conversation.
 
-Delivery of an automation's result is handled as an explicit custody handoff, so
-a result is not delivered twice and does not vanish when a run ends.
+For a verified automation that starts or continues a Session, the binding can
+deliver the final result or deliver no result. Execution-run automations support
+no result delivery through a channel. Happier rejects an unsupported pairing or
+binding before saving it.
+
+Final-result delivery uses the same Conversation result envelope, encrypted
+handoff, and delivery custody as the Session itself. Channels does not keep a
+second result store or plaintext fallback, and it does not impose a separate
+Channels-specific result-size ceiling. Failed and cancelled Runs settle the same
+handoff truthfully instead of leaving a conversation waiting forever.
+
+## Approvals and questions
+
+For a Session binding, the owner can allow people in the connected conversation
+to approve or deny the Agent's current permission request. Happier sends the
+Agent's bounded request summary to the conversation, and `/allow <request-id>`
+or `/deny <request-id>` goes back through the Session's ordinary permission
+handler. The binding can allow one request at a time or permission for the
+Session; Channels does not create another grant model.
+
+Agent questions use that same mediation path but are not permission grants. A
+question message includes the real prompt, required/optional state, selection
+mode, and available choices. Reply once with the shown request id and indexed
+answers:
+
+```text
+/answer <request-id> [{"questionIndex":0,"values":["Choice label"]}]
+```
+
+Questions remain answerable when permission approvals are disabled. Happier
+still enforces the binding's Account, participant, Session, and request
+currentness before accepting an answer.
 
 ## Related
 
