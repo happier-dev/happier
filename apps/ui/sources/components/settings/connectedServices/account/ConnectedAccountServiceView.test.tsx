@@ -44,6 +44,12 @@ const administrationTargetState = vi.hoisted(() => ({
         }>;
     }> | null,
 }));
+const administrationSelectedTargetState = vi.hoisted(() => ({
+    current: {
+        serverIdentityId: 'server-identity-a',
+        machineId: 'machine-1',
+    } as Readonly<{ serverIdentityId: string; machineId: string }> | null,
+}));
 const routeState = vi.hoisted(() => ({
     serviceId: undefined as string | undefined,
     pluginId: 'acme.accounts',
@@ -258,7 +264,9 @@ vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
         candidates: [],
         pickerRows: [],
         state: { kind: 'unselected', candidates: [] },
-        selectedTarget: administrationTargetState.current?.target ?? null,
+        selectedTarget: administrationSelectedTargetState.current,
+        selectedTargetServerMatchesActiveAccount:
+            administrationSelectedTargetState.current?.serverIdentityId === 'server-identity-a',
         canExecute: administrationTargetState.current !== null,
         selectTarget: () => {},
         clearTarget: () => {},
@@ -508,6 +516,7 @@ describe('ConnectedAccountServiceView', () => {
                 metadata: { displayName: 'Machine' },
             },
         };
+        administrationSelectedTargetState.current = administrationTargetState.current.target;
         settingsState.current = {
             connectedServicesDefaultProfileByServiceId: {},
             connectedServicesProfileLabelByKey: {},
@@ -516,19 +525,21 @@ describe('ConnectedAccountServiceView', () => {
         activeAccountScopeState.reset();
     });
 
-    it('runs account operations only on the exact Administration-selected server and machine', async () => {
+    it('fails closed when a foreign server target reuses Account A identifiers', async () => {
         administrationTargetState.current = {
             target: {
                 serverIdentityId: 'server-identity-b',
-                machineId: 'machine-selected',
+                machineId: 'machine-1',
             },
             serverId: 'server-b',
             machine: {
-                id: 'machine-selected',
+                id: 'machine-1',
                 active: true,
-                metadata: { displayName: 'Selected' },
+                metadata: { displayName: 'Machine' },
             },
         };
+        administrationSelectedTargetState.current = administrationTargetState.current.target;
+        settingsState.current.connectedServicesProfileLabelByKey['acme.accounts/work/account-a'] = 'Account A label';
         const service = { pluginId: 'acme.accounts', localId: 'work' };
         runControlMock.mockResolvedValueOnce({
             status: 'described',
@@ -547,18 +558,42 @@ describe('ConnectedAccountServiceView', () => {
         });
 
         const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
-        await renderScreen(<ConnectedAccountServiceView />);
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
 
-        await vi.waitFor(() => {
-            expect(runControlMock).toHaveBeenCalledWith(expect.objectContaining({
-                serverId: 'server-b',
-                machineId: 'machine-selected',
-            }));
-        });
+        await act(async () => undefined);
+        expect(runControlMock).not.toHaveBeenCalled();
+        expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
+        expect(applySettingsMock).not.toHaveBeenCalled();
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account-account-scope-mismatch'
+        ))).toHaveLength(1);
+        expect(rendered.tree.findByType('MachineAdministrationTargetSelector' as never)).toBeTruthy();
+        expect(rendered.tree.findAll((node) => (
+            Object.values(node.props).includes('Account A label')
+        ))).toHaveLength(0);
+    });
+
+    it('fails closed for a persisted foreign target even when its daemon is offline', async () => {
+        administrationSelectedTargetState.current = {
+            serverIdentityId: 'server-identity-b',
+            machineId: 'machine-1',
+        };
+        administrationTargetState.current = null;
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        await act(async () => undefined);
+
+        expect(runControlMock).not.toHaveBeenCalled();
+        expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account-account-scope-mismatch'
+        ))).toHaveLength(1);
     });
 
     it('fails closed without a fresh Administration target instead of using another online machine', async () => {
         administrationTargetState.current = null;
+        administrationSelectedTargetState.current = null;
 
         const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
         const rendered = await renderScreen(<ConnectedAccountServiceView />);
@@ -774,6 +809,7 @@ describe('ConnectedAccountServiceView', () => {
                 machineId: 'machine-1',
                 expectedActiveServer: { serverId: 'server-a', generation: 1 },
                 command: { operation: 'read', attemptId: 'attempt-1' },
+                signal: expect.any(AbortSignal),
             });
         });
         expect(runAuthenticationMock).toHaveBeenCalledTimes(3);
@@ -844,6 +880,7 @@ describe('ConnectedAccountServiceView', () => {
                 machineId: 'machine-1',
                 expectedActiveServer: { serverId: 'server-a', generation: 1 },
                 command: { operation: 'read', attemptId: 'attempt-1' },
+                signal: expect.any(AbortSignal),
             });
         });
         // The read proves the attempt neither advanced nor settled, so the lost
@@ -1241,6 +1278,7 @@ describe('ConnectedAccountServiceView', () => {
                     service: { pluginId: 'acme.accounts', localId: 'work' },
                     modeId: 'manual',
                 },
+                signal: expect.any(AbortSignal),
             });
         });
 
@@ -1270,6 +1308,7 @@ describe('ConnectedAccountServiceView', () => {
                     attemptId: 'attempt-1',
                     fields: { token: 'secret-token' },
                 },
+                signal: expect.any(AbortSignal),
             });
         });
     });
@@ -1361,6 +1400,7 @@ describe('ConnectedAccountServiceView', () => {
                 operation: expectedPendingOperation,
                 attemptId: 'attempt-1',
             },
+            signal: expect.any(AbortSignal),
         });
     });
 
@@ -1785,6 +1825,7 @@ describe('ConnectedAccountServiceView', () => {
                         account: account.ref,
                         cleanupGroupReferences: false,
                     },
+                    signal: expect.any(AbortSignal),
                 },
                 {
                     serverId: 'server-a',
@@ -1798,6 +1839,7 @@ describe('ConnectedAccountServiceView', () => {
                         account: account.ref,
                         cleanupGroupReferences: true,
                     },
+                    signal: expect.any(AbortSignal),
                 },
             ]);
         });
@@ -2023,6 +2065,7 @@ describe('ConnectedAccountServiceView', () => {
                     operation: 'beginReconnect',
                     account: account.ref,
                 },
+                signal: expect.any(AbortSignal),
             });
             expect(runControlMock).toHaveBeenCalledWith({
                 serverId: 'server-a',
@@ -2038,6 +2081,7 @@ describe('ConnectedAccountServiceView', () => {
                         account: account.ref,
                     },
                 },
+                signal: expect.any(AbortSignal),
             });
         });
 
@@ -2067,6 +2111,7 @@ describe('ConnectedAccountServiceView', () => {
                     values: { endpoint: 'https://new.example' },
                     secretValues: {},
                 },
+                signal: expect.any(AbortSignal),
             });
             expect(runAuthenticationMock).toHaveBeenLastCalledWith({
                 serverId: 'server-a',
@@ -2080,6 +2125,7 @@ describe('ConnectedAccountServiceView', () => {
                     attemptId: 'attempt-1',
                     expectedConfigurationRevision: 'config-2',
                 },
+                signal: expect.any(AbortSignal),
             });
         });
     });
@@ -2227,6 +2273,7 @@ describe('ConnectedAccountServiceView', () => {
                         account: account.ref,
                     },
                 },
+                signal: expect.any(AbortSignal),
             });
         });
         expect(runAuthenticationMock).toHaveBeenCalledTimes(1);
@@ -2266,6 +2313,7 @@ describe('ConnectedAccountServiceView', () => {
                     values: { origin: 'https://new.example' },
                     secretValues: { apiKey: 'replacement-secret' },
                 },
+                signal: expect.any(AbortSignal),
             });
             expect(modalAlertMock).toHaveBeenCalledWith(
                 'connectedServices.account.configurationUpdatedTitle',
@@ -2390,6 +2438,7 @@ describe('ConnectedAccountServiceView', () => {
                     operation: 'readConfiguration',
                     target,
                 },
+                signal: expect.any(AbortSignal),
             });
         });
 
@@ -2416,6 +2465,7 @@ describe('ConnectedAccountServiceView', () => {
                     values: { origin: 'https://new.example' },
                     secretValues: {},
                 },
+                signal: expect.any(AbortSignal),
             });
             expect(modalAlertMock).toHaveBeenCalledWith(
                 'connectedServices.account.configurationUpdatedTitle',

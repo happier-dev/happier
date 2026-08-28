@@ -10,6 +10,7 @@ import {
 } from '@/sync/api/account/apiProviderAccountUsage';
 import {
     getProviderAccountUsageCacheState,
+    retainProviderAccountUsageCacheEntries,
     subscribeProviderAccountUsageCache,
     updateProviderAccountUsageCacheEntries,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
@@ -134,6 +135,11 @@ export function useProviderAccountUsageSnapshots(
 
     const resolveAccountMode = useCredentialScopedAccountModeResolver({ credentials, credentialScope });
 
+    React.useEffect(() => retainProviderAccountUsageCacheEntries(
+        credentialScope,
+        normalizedRecordIds,
+    ), [credentialScope, normalizedRecordIds]);
+
     React.useEffect(() => {
         if (
             fetchPolicy === 'cache_only'
@@ -195,8 +201,74 @@ export function useProviderAccountUsageSnapshots(
         const requestCredentialScope = credentialScope;
         activeControllersRef.current.add(controller);
         fireAndForget((async () => {
+            type RefreshOutcome = Readonly<
+                | { recordId: string; status: 'success'; opened: ProviderAccountUsageSnapshotV1 | null }
+                | { recordId: string; status: 'error' }
+            >;
+            let pendingOutcomes: RefreshOutcome[] = [];
+            let publicationScheduled = false;
+            const publishPendingOutcomes = () => {
+                publicationScheduled = false;
+                const outcomes = pendingOutcomes;
+                pendingOutcomes = [];
+                if (
+                    outcomes.length === 0
+                    || controller.signal.aborted
+                    || activeCredentialScopeRef.current !== requestCredentialScope
+                ) return;
+                updateProviderAccountUsageCacheEntries(requestCredentialScope, (entries) => {
+                    const next = { ...entries };
+                    for (const outcome of outcomes) {
+                        if (outcome.status === 'success') {
+                            next[outcome.recordId] = {
+                                snapshot: outcome.opened,
+                                nextFetchAtMs: outcome.opened
+                                    ? now + Math.max(
+                                        PROVIDER_ACCOUNT_USAGE_POLL_MS,
+                                        Math.trunc(outcome.opened.staleAfterMs ?? PROVIDER_ACCOUNT_USAGE_POLL_MS),
+                                    )
+                                    : now + PROVIDER_ACCOUNT_USAGE_MISS_RETRY_MS,
+                                consecutiveErrors: 0,
+                                loading: false,
+                                hadError: false,
+                            };
+                        } else {
+                            const recordId = outcome.recordId;
+                            const existing = entries[recordId];
+                            const consecutiveErrors = (existing?.consecutiveErrors ?? 0) + 1;
+                            next[recordId] = {
+                                snapshot: existing?.snapshot ?? null,
+                                nextFetchAtMs: now
+                                    + computeConnectedServiceQuotaErrorBackoffMs(
+                                        consecutiveErrors,
+                                    ),
+                                consecutiveErrors,
+                                loading: false,
+                                hadError: Boolean(existing?.snapshot),
+                            };
+                        }
+                    }
+                    return next;
+                });
+            };
+            const enqueueOutcome = (outcome: RefreshOutcome): void => {
+                if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
+                pendingOutcomes.push(outcome);
+                if (publicationScheduled) return;
+                publicationScheduled = true;
+                queueMicrotask(publishPendingOutcomes);
+            };
             try {
-                const mode = await resolveAccountMode();
+                let mode: CredentialScopedAccountMode;
+                try {
+                    mode = await resolveAccountMode();
+                } catch {
+                    for (const recordId of toFetch) {
+                        enqueueOutcome({ recordId, status: 'error' });
+                    }
+                    if (pendingOutcomes.length > 0) publishPendingOutcomes();
+                    return;
+                }
                 if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
                 await Promise.all(toFetch.map(async (recordId) => {
                     try {
@@ -210,44 +282,15 @@ export function useProviderAccountUsageSnapshots(
                                 generation: activeServer.generation,
                             },
                         });
-                        if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
-
-                        updateProviderAccountUsageCacheEntries(requestCredentialScope, (entries) => ({
-                            ...entries,
-                            [recordId]: {
-                                snapshot: opened,
-                                nextFetchAtMs: opened
-                                    ? now + Math.max(
-                                        PROVIDER_ACCOUNT_USAGE_POLL_MS,
-                                        Math.trunc(opened.staleAfterMs ?? PROVIDER_ACCOUNT_USAGE_POLL_MS),
-                                    )
-                                    : now + PROVIDER_ACCOUNT_USAGE_MISS_RETRY_MS,
-                                consecutiveErrors: 0,
-                                loading: false,
-                                hadError: false,
-                            },
-                        }));
+                        enqueueOutcome({ recordId, status: 'success', opened });
                     } catch {
-                        if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
-                        updateProviderAccountUsageCacheEntries(requestCredentialScope, (entries) => {
-                            const existing = entries[recordId];
-                            const consecutiveErrors = (existing?.consecutiveErrors ?? 0) + 1;
-                            return {
-                                ...entries,
-                                [recordId]: {
-                                    snapshot: existing?.snapshot ?? null,
-                                    nextFetchAtMs: now
-                                        + computeConnectedServiceQuotaErrorBackoffMs(
-                                            consecutiveErrors,
-                                        ),
-                                    consecutiveErrors,
-                                    loading: false,
-                                    hadError: Boolean(existing?.snapshot),
-                                },
-                            };
-                        });
+                        enqueueOutcome({ recordId, status: 'error' });
                     }
                 }));
+                // Promise continuations that settle in the same turn share the
+                // queued publication. This final call only covers runtimes that
+                // defer that microtask past the aggregate continuation.
+                if (pendingOutcomes.length > 0) publishPendingOutcomes();
             } finally {
                 activeControllersRef.current.delete(controller);
             }

@@ -207,6 +207,12 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         selectActionInput: async () => {
             throw new Error('dev surface has no Action input selector');
         },
+        openNewSession: async () => {
+            throw new Error('dev surface cannot open New Session');
+        },
+        settleEphemeralInput: async () => {
+            throw new Error('dev surface has no ephemeral input');
+        },
         readResource: async () => {
             throw new Error('dev surface has no resources');
         },

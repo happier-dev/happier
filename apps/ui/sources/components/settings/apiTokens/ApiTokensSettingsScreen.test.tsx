@@ -182,6 +182,29 @@ afterEach(() => {
 });
 
 describe('ApiTokensSettingsScreen', () => {
+    it('puts the primary create action in the empty state without duplicating it in the header', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        const { controller } = createController({
+            phase: 'ready',
+            tokens: [],
+            isRefreshing: false,
+            listError: null,
+            createDraft: { label: '', expiryPreset: '90d' },
+            createPending: false,
+            createError: null,
+            reveal: null,
+            operation: null,
+            operationTokenId: null,
+            operationError: null,
+            operationNotice: null,
+        });
+
+        const screen = await renderScreen(<ApiTokensSettingsScreen controller={controller} />);
+
+        expect(screen.findByTestId('settings-api-tokens-empty-create')).toBeTruthy();
+        expect(screen.findByTestId('settings-api-tokens-create')).toBeNull();
+    });
+
     it('refreshes again when the authenticated Account scope becomes available after mount', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
         const { controller, refresh } = createController({
@@ -398,6 +421,29 @@ describe('ApiTokensSettingsScreen', () => {
         expect(refresh).toHaveBeenCalledOnce();
     });
 
+    it('announces a background refresh even when the last-known list is empty', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        const { controller } = createController({
+            phase: 'ready',
+            tokens: [],
+            isRefreshing: true,
+            listError: null,
+            createDraft: { label: '', expiryPreset: '90d' },
+            createPending: false,
+            createError: null,
+            reveal: null,
+            operation: null,
+            operationTokenId: null,
+            operationError: null,
+            operationNotice: null,
+        });
+
+        const screen = await renderScreen(<ApiTokensSettingsScreen controller={controller} />);
+
+        expect(screen.findHostByTestId('settings-api-tokens-refreshing')?.props.accessibilityLiveRegion).toBe('polite');
+        expect(screen.findHostByTestId('settings-api-tokens-empty-create')?.props.disabled).toBe(true);
+    });
+
     it('marks a rendered token-list failure as an assertive alert', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
         const { controller } = createController({
@@ -443,7 +489,7 @@ describe('ApiTokensSettingsScreen', () => {
 
         const screen = await renderScreen(<ApiTokensSettingsScreen controller={controller} />);
         const [alert] = screen.findAll((node) => (
-            node.props?.title === 'settingsApiTokens.errors.offline'
+            node.props?.title === 'settingsApiTokens.errors.unavailable'
             && node.props?.mode === 'info'
         ));
 
@@ -477,9 +523,18 @@ describe('ApiTokensSettingsScreen', () => {
             typeof node.type === 'string'
             && typeof flattenStyle(node.props.style).minHeight === 'number'
         )).at(0);
+        const wrappingMetadataRow = finalMetricRow?.findAll((node) => (
+            flattenStyle(node.props.style).flexWrap === 'wrap'
+        )).at(0);
 
         expect(flattenStyle(skeleton?.props.style).height).toBeUndefined();
         expect(sharedMetricNode).toBeTruthy();
+        expect(flattenStyle(wrappingMetadataRow?.props.style)).toMatchObject({
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            minWidth: 0,
+        });
+        expect(wrappingMetadataRow?.children.length).toBeGreaterThan(1);
         expect(runtime.shimmerRepeats).not.toHaveBeenCalled();
     });
 
@@ -577,7 +632,13 @@ describe('ApiTokensSettingsScreen', () => {
             });
         });
 
-        expect(screen.findByTestId('settings-api-tokens-list-transition-exit-layer')).toBeTruthy();
+        const exitLayer = screen.findByTestId('settings-api-tokens-list-transition-exit-layer');
+        expect(exitLayer?.props).toMatchObject({
+            'aria-hidden': true,
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants',
+            pointerEvents: 'none',
+        });
         expect(screen.findByTestId(`settings-api-tokens-row:${tokenA.tokenId}`)).toBeTruthy();
         expect(screen.findByTestId(`settings-api-tokens-row:${tokenB.tokenId}`)).toBeTruthy();
     });

@@ -30,6 +30,7 @@ import { resolveSessionMachineId } from '@/sync/domains/session/external/resolve
 import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
 import {
     resolveScopedPluginSettingsTarget,
+    type ScopedPluginSettingsScope,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import {
     resolveScopedPluginSettingsServerIdentity,
@@ -74,8 +75,6 @@ interface AskUserQuestionInput {
     happierDialog?: unknown;
 }
 
-const ACCOUNT_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'account' as const });
-
 /**
  * A dialog option can carry an Agent-owned candidate setting mutation, but the
  * host accepts it only after the current qualified Agent descriptor allowlists
@@ -94,6 +93,7 @@ type DeclaredAskUserQuestionSettingMutation = Readonly<{
     fieldId: string;
     projectionGeneration: number;
     projectionRevision: number;
+    scope: ScopedPluginSettingsScope;
     field: PluginProjectionEditableSettingField;
     value: string;
 }>;
@@ -124,11 +124,15 @@ async function persistDeclaredAskUserQuestionSetting(
 ): Promise<void> {
     const serverId = input.serverId;
     const target = resolveScopedPluginSettingsTarget({
-        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
+        scope: input.scope,
         serverIdentityId: resolveScopedPluginSettingsServerIdentity(serverId),
+        machineId: input.machineId,
+        serverId,
     });
-    if (!target || target.kind !== 'account') {
-        throw new Error('Unable to persist the selected setting without an exact Account target.');
+    if (!target) {
+        throw new Error(input.scope.kind === 'account'
+            ? 'Unable to persist the selected setting without an exact Account target.'
+            : 'Unable to persist the selected setting without an exact daemon target.');
     }
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) {
@@ -172,11 +176,12 @@ async function persistDeclaredAskUserQuestionSetting(
             && currentDeclaration.fieldId === input.fieldId
             && currentDeclaration.value === input.value
             && currentDeclaration.projectionGeneration === input.projectionGeneration
-            && currentDeclaration.projectionRevision === input.projectionRevision;
+            && currentDeclaration.projectionRevision === input.projectionRevision
+            && currentDeclaration.scope.kind === input.scope.kind;
     };
     const result = await commitScopedPluginSettingsField({
         pluginId: input.pluginId,
-        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
+        scope: input.scope,
         target,
         accountLifetime,
         fields: [projectedField],
@@ -286,17 +291,18 @@ function resolveDeclaredAskUserQuestionSettingMutation(input: Readonly<{
     const identity = projectedAgent.identity;
     const projectionEntry = input.daemonProjection.pluginProjectionById[identity.pluginId];
     if (!projectionEntry) return null;
-    const matchingFields = projectionEntry.editableSettingsGroups
+    const matchingFieldEntries = projectionEntry.editableSettingsGroups
         .filter((group) => (
             group.pluginId === identity.pluginId
-            && group.scope.kind === 'account'
             && group.target.kind === 'agent'
             && group.target.agent.pluginId === identity.pluginId
             && group.target.agent.localId === identity.localId
         ))
-        .flatMap((group) => group.fields.filter((field) => field.key === candidate.settingId));
-    if (matchingFields.length !== 1) return null;
-    const field = matchingFields[0]!;
+        .flatMap((group) => group.fields
+            .filter((field) => field.key === candidate.settingId)
+            .map((field) => ({ field, scope: group.scope })));
+    if (matchingFieldEntries.length !== 1) return null;
+    const { field, scope } = matchingFieldEntries[0]!;
     if (
         field.valueType !== 'string'
         || field.secretCustody !== null
@@ -325,6 +331,7 @@ function resolveDeclaredAskUserQuestionSettingMutation(input: Readonly<{
         fieldId,
         projectionGeneration,
         projectionRevision: input.projectionRevision,
+        scope,
         field,
         value: candidate.value,
     };

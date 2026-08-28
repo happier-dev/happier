@@ -77,12 +77,9 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'automations.detail.runDetail.conversation',
         'automations.detail.runDetail.payload',
         'automations.detail.runMeta.occurrenceTitle',
-        'automations.detail.runMeta.origin.conversation',
+        'automations.detail.runMeta.cause.conversation',
         'automations.detail.status.active',
         'automations.form.schedule.cronTitle',
-        'automations.form.sentence.cronFieldGuide.minute',
-        'automations.form.sentence.intervalUnits.minutes',
-        'automations.form.sentence.minutes',
         'browserDiagnostics.host.families.console',
         'browserDiagnostics.host.families.other',
         'browserDiagnostics.host.families.performance',
@@ -405,8 +402,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'automations.detail.runDetail.payload',
         'automations.form.groupAutomationTitle',
         'automations.form.schedule.cronTitle',
-        'automations.form.sentence.cronFieldGuide.minute',
-        'automations.form.sentence.presets',
         'automations.form.trigger.eventFilterPlaceholder',
         'browserDiagnostics.host.families.performance',
         'browserDiagnostics.host.fields.domContentLoaded',
@@ -961,6 +956,36 @@ describe('i18n integrity', () => {
         // It is closed: every Voice leaf now exists in all eleven locales, and a missing
         // key here would silently render that Voice surface in English again.
         expect(missing).toEqual([]);
+    });
+
+    it('keeps plural Automation trigger and exact-turn copy localized with stable identities', () => {
+        const locales = [
+            { code: 'ru', root: ru }, { code: 'pl', root: pl }, { code: 'es', root: es },
+            { code: 'fr', root: fr }, { code: 'it', root: itLocale }, { code: 'pt', root: pt },
+            { code: 'ca', root: ca }, { code: 'de', root: de }, { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant }, { code: 'ja', root: ja },
+        ];
+        const requiredPrefixes = [
+            'automations.pluralEditor.',
+            'automations.exactTurn.',
+        ];
+        const missing = locales.flatMap((locale) => findMissingKeys(en, locale))
+            .filter(({ key }) => requiredPrefixes.some((prefix) => key.startsWith(prefix)));
+        expect(missing).toEqual([]);
+
+        const interpolationCases = [
+            { key: 'automations.pluralEditor.turnCompletedSource', args: [{ session: 'SESSION_MARKER', ordinal: 17 }], markers: ['SESSION_MARKER', '17'] },
+            { key: 'automations.list.sessionLifecycleParentTurn', args: [{ sessionId: 'SESSION_ID_MARKER' }], markers: ['SESSION_ID_MARKER'] },
+            { key: 'automations.detail.trigger.identity', args: [{ id: 'TRIGGER_ID_MARKER', revision: 23 }], markers: ['TRIGGER_ID_MARKER', '23'] },
+            { key: 'automations.detail.runMeta.triggerIdentity', args: [{ id: 'TRIGGER_ID_MARKER', revision: 29 }], markers: ['TRIGGER_ID_MARKER', '29'] },
+        ] as const;
+        const droppedMarkers = locales.flatMap(({ code, root }) => interpolationCases.flatMap(({ key, args, markers }) => {
+            const rendered = callSampledTranslation(readTranslationLeaf(root, key), args);
+            return rendered && markers.every((marker) => rendered.includes(marker))
+                ? []
+                : [`${code}: ${key} dropped ${markers.join(', ')}`];
+        }));
+        expect(droppedMarkers).toEqual([]);
     });
 
     it('keeps the Voice diagnostic-recording consent complete in every supported locale', () => {

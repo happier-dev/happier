@@ -6,6 +6,7 @@ import {
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
     resolveSessionHandoffProgressTimeline,
+    type ActionOperationSnapshotV1,
     type SessionHandoffProgressCheckpoint,
     type SessionHandoffStatus,
 } from '@happier-dev/protocol';
@@ -24,6 +25,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
     message?: string;
     status?: SessionHandoffStatus;
+    operation?: ActionOperationSnapshotV1;
     onResume?: () => Promise<void> | void;
 }>;
 
@@ -322,7 +324,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ setChrome, title, message, status, onResume }: Props) {
+export function SessionHandoffProgressModal({ setChrome, title, message, status, operation, onResume }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -443,6 +445,11 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
         progressLabel,
     ].filter((part): part is string => Boolean(part)).join('. ');
     const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover && !isAwaitingUserResume;
+    const operationProgress = operation?.progress;
+    const operationProgressFraction = operationProgress?.kind === 'determinate'
+        ? Math.max(0, Math.min(1, operationProgress.current / operationProgress.total))
+        : null;
+    const operationProgressLabel = operationProgress?.label ?? null;
     const resumeInFlightRef = React.useRef(false);
     const [resumeInFlight, setResumeInFlight] = React.useState(false);
     const handleResume = React.useCallback(() => {
@@ -496,6 +503,37 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
                         onPress={handleResume}
                         disabled={resumeInFlight}
                     />
+                </View>
+            ) : null}
+            {operationProgress && !effectiveStatus ? (
+                <View testID="session-handoff-operation-progress" style={styles.progressSection}>
+                    {operationProgressFraction !== null ? (
+                        <View
+                            testID="session-handoff-operation-progress-bar"
+                            style={styles.progressTrack}
+                            accessibilityRole="progressbar"
+                            accessibilityLabel={operationProgressLabel ?? resolvedTitle}
+                            accessibilityValue={{
+                                min: 0,
+                                max: 100,
+                                now: Math.round(operationProgressFraction * 100),
+                            }}
+                        >
+                            <View style={[styles.progressFill, { width: `${Math.max(operationProgressFraction * 100, 4)}%` }]} />
+                        </View>
+                    ) : null}
+                    {operationProgressLabel || operationProgressFraction !== null ? (
+                        <View style={styles.progressMetaRow}>
+                            {operationProgressFraction !== null ? (
+                                <Text style={styles.progressMetaText}>
+                                    {Math.round(operationProgressFraction * 100)}%
+                                </Text>
+                            ) : null}
+                            {operationProgressLabel ? (
+                                <Text style={styles.currentPath}>{operationProgressLabel}</Text>
+                            ) : null}
+                        </View>
+                    ) : null}
                 </View>
             ) : null}
             {effectiveStatus ? (

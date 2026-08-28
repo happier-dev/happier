@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { buildExternalSessionsAgentBrowseHref } from '@/components/sessions/external/browse/externalSessionBrowseNavigation';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 
 import { ExternalSessionsAgentSettingsSection } from './ExternalSessionsAgentSettingsSection';
 import { useExternalSessionsIntegrationController } from './externalSessionsIntegrationController';
@@ -41,7 +41,7 @@ export const AgentDetailExternalSessionsSection = React.memo(function AgentDetai
     }>,
 ) {
     const router = useRouter();
-    const settings = useSettings();
+    const rawExternalSessionsSettings = useSetting('externalSessionsSettingsV1');
     const enabled = useFeatureEnabled('sessions.direct');
     const { agentId, behaviorAgentId, agentTitle, machineId, serverId, agent, browseAvailable } = props;
 
@@ -93,7 +93,7 @@ export const AgentDetailExternalSessionsSection = React.memo(function AgentDetai
         [controllerAgent],
     );
     const autoLinkSources = useExternalSessionsAutoLinkSources({
-        rawSettings: settings.externalSessionsSettingsV1,
+        rawSettings: rawExternalSessionsSettings,
         knownAgents: autoLinkKnownAgents,
         enabled: machineId !== null && agent !== null,
         ...(machineId && agent ? { scope: { machineId, agent } } : {}),

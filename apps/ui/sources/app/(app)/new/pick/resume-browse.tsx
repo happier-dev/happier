@@ -21,7 +21,7 @@ import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStor
 import { useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -109,7 +109,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
             agentType: agentTypeParam,
         });
     }, [agentTypeParam, params.backendTarget, params.backendTargetKey]);
-    const effectiveBackendTarget = React.useMemo<BackendTargetRefV2>(() => {
+    const effectiveBackendTarget = React.useMemo<PersistedBackendTargetRefV2>(() => {
         return resolveResumePickerBackendTarget({
             tempBackendTarget: tempSessionData?.backendTarget ?? null,
             routeBackendTarget,

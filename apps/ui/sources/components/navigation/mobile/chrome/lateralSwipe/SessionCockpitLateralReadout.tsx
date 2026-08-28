@@ -1,9 +1,9 @@
 import * as React from 'react';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Text } from '@/components/ui/text/Text';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSessionLateralSwipe } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -74,6 +74,7 @@ export const SessionCockpitLateralReadout = React.memo(function SessionCockpitLa
     props: SessionCockpitLateralReadoutProps,
 ) {
     const { progress, picker } = useSessionLateralSwipe();
+    const { theme } = useUnistyles();
     const target = useSessionLateralPickerSelection({
         sessionId: props.sessionId,
         ...(props.serverId === undefined ? null : { serverId: props.serverId }),
@@ -95,7 +96,15 @@ export const SessionCockpitLateralReadout = React.memo(function SessionCockpitLa
 
     return (
         <Animated.View pointerEvents="none" style={[styles.root, readoutStyle]} testID="session-cockpit-lateral-readout">
-            <AgentIcon agentId={target.agentId} size={18} />
+            <SessionAgentCatalogIdentityIcon
+                // Unknown identity degrades to the catalog owner's neutral mark;
+                // the capsule never borrows a default Agent's brand.
+                agentId={target.agentId ?? ''}
+                machineId={target.machineId}
+                serverId={target.serverId ?? null}
+                color={theme.colors.text.primary}
+                size={18}
+            />
             <Text style={styles.title} numberOfLines={1} testID="session-cockpit-lateral-readout-title">
                 {target.title}
             </Text>

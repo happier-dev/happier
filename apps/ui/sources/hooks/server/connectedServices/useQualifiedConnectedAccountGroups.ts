@@ -12,10 +12,11 @@ import {
     type QualifiedConnectedAccountUiPeerTransport,
     type QualifiedConnectedAccountUiSource,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import type {
-    ConnectedServiceAuthGroupPolicyV1,
-    PluginContributionIdentityV1,
-    QualifiedConnectedAccountRef,
+import {
+    sameQualifiedConnectedAccountGroupRef,
+    type ConnectedServiceAuthGroupPolicyV1,
+    type PluginContributionIdentityV1,
+    type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
 export type QualifiedConnectedAccountPeerTransportState = Readonly<{
@@ -103,20 +104,13 @@ function upsertGroup(
     groups: readonly QualifiedConnectedAccountUiGroup[],
     group: QualifiedConnectedAccountUiGroup,
 ): readonly QualifiedConnectedAccountUiGroup[] {
-    const index = groups.findIndex((candidate) => sameGroupRef(candidate, group));
+    const index = groups.findIndex((candidate) => (
+        sameQualifiedConnectedAccountGroupRef(candidate.ref, group.ref)
+    ));
     if (index === -1) return [...groups, group];
     const next = [...groups];
     next[index] = group;
     return next;
-}
-
-function sameGroupRef(
-    left: QualifiedConnectedAccountUiGroup,
-    right: QualifiedConnectedAccountUiGroup,
-): boolean {
-    return left.ref.groupId === right.ref.groupId
-        && left.ref.service.pluginId === right.ref.service.pluginId
-        && left.ref.service.localId === right.ref.service.localId;
 }
 
 function sameGroupRevision(
@@ -142,7 +136,7 @@ function isCurrentGroupRevision(params: Readonly<{
 }>): boolean {
     return params.state.basis === params.basis
         && params.state.groups.some((candidate) => (
-            sameGroupRef(candidate, params.group)
+            sameQualifiedConnectedAccountGroupRef(candidate.ref, params.group.ref)
             && sameGroupRevision(candidate, params.group)
         ));
 }

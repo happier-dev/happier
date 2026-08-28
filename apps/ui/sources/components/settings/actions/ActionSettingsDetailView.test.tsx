@@ -245,6 +245,10 @@ describe('ActionSettingsDetailView', () => {
             bar.testIDPrefix === 'settings-actions:action:review.start:target:plugin:mode'
             && bar.activeTabId === 'allowed',
         )).toBe(true);
+        const apiMode = capture.segmentedTabBars.find((bar) =>
+            bar.testIDPrefix === 'settings-actions:action:review.start:target:api:mode',
+        );
+        expect(apiMode?.accessibilityLabel).toBe('External API & SDK');
         const commandPaletteSwitch = capture.switches.find((switchProps) =>
             switchProps.testID === 'settings-actions:action:review.start:target:command_palette:enabled',
         );
@@ -474,9 +478,14 @@ describe('ActionSettingsDetailView', () => {
             item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:contextual_ui'
         ))).toBe(true);
         for (const targetId of ['api', 'plugin'] as const) {
+            const target = capture.items.find((item) => (
+                item.testID === `settings-actions:action:happier.inspector/actions/self-check:target:${targetId}`
+            ));
             const modeControl = capture.segmentedTabBars.find((bar) => (
                 bar.testIDPrefix === `settings-actions:action:happier.inspector/actions/self-check:target:${targetId}:mode`
             ));
+            expect(modeControl?.accessibilityLabel).toBe(target?.title);
+            expect(modeControl?.targetSize).toBe('platform');
             expect(modeControl?.activeTabId).toBe('allowed');
             expect((modeControl?.tabs as Array<{ id: string }>).map((tab) => tab.id)).toEqual([
                 'off',

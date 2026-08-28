@@ -2,7 +2,7 @@ import type { CapabilityDetectRequest, CapabilityDetectResult, CapabilityId } fr
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
-import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -88,7 +88,7 @@ export function buildInstallablesBackgroundActionKey(params: Readonly<{
 
 export async function ensureAgentInstallablesBackground(
     opts: Readonly<{
-        agentId: AgentId;
+        agentId: string;
         machineId: string;
         serverId?: string | null;
         settings: Settings;

@@ -30,6 +30,11 @@ import {
     readTerminalStreamInputErrorCode,
 } from '@/sync/domains/terminal/stream/carrier';
 import {
+    createTerminalRendererAckDelivery,
+    type TerminalRendererAckDelivery,
+    type TerminalRendererAckDeliveryDiagnostic,
+} from '@/sync/domains/terminal/stream/ackDelivery';
+import {
     applyTerminalRendererAck,
     createTerminalStreamCreditState,
     type TerminalStreamCreditState,
@@ -93,6 +98,7 @@ export function useMachineTerminalSession(params: Readonly<{
     const terminalRendererHandleRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const terminalPreviewDecoderRef = React.useRef(createTerminalUtf8ProjectionDecoder());
     const terminalStreamCarrierRef = React.useRef<ReturnType<typeof createMachineRpcTerminalStreamCarrier> | null>(null);
+    const terminalRendererAckDeliveryRef = React.useRef<TerminalRendererAckDelivery | null>(null);
     const terminalStreamRuntimeRef = React.useRef<TerminalStreamRuntime | null>(null);
     const terminalCreditStateRef = React.useRef<TerminalStreamCreditState | null>(null);
     const pendingRendererWriteRef = React.useRef<PendingRendererWrite | null>(null);
@@ -100,6 +106,8 @@ export function useMachineTerminalSession(params: Readonly<{
     const replaceCachedPreviewOnReplayRef = React.useRef(false);
     const terminalStreamDoneRef = React.useRef(false);
     const clearActiveTerminalStream = React.useCallback(() => {
+        terminalRendererAckDeliveryRef.current?.dispose();
+        terminalRendererAckDeliveryRef.current = null;
         terminalStreamCarrierRef.current = null;
         terminalStreamRuntimeRef.current = null;
         terminalCreditStateRef.current = null;
@@ -167,8 +175,8 @@ export function useMachineTerminalSession(params: Readonly<{
         writeGeneration?: number;
     }>) => {
         const state = terminalCreditStateRef.current;
-        const carrier = terminalStreamCarrierRef.current;
-        if (!state || !carrier || input.terminalId !== terminalIdRef.current) {
+        const delivery = terminalRendererAckDeliveryRef.current;
+        if (!state || !delivery || input.terminalId !== terminalIdRef.current) {
             return;
         }
         if (input.writeGeneration !== undefined && state.surfaceEpoch !== input.writeGeneration) {
@@ -186,7 +194,7 @@ export function useMachineTerminalSession(params: Readonly<{
             return;
         }
         terminalCreditStateRef.current = result.state;
-        void carrier.acknowledge(ack);
+        delivery.enqueue(ack);
     }, []);
     const replaceCachedPreviewWithReplay = React.useCallback((terminalId: string) => {
         if (!replaceCachedPreviewOnReplayRef.current) {
@@ -207,12 +215,27 @@ export function useMachineTerminalSession(params: Readonly<{
             output: '',
         }));
     }, [params.terminalRef, terminalRendererHandleRef, updateSurfaceState]);
-    const { initialTerminalSize, latestTerminalSizeRef, onInput, onPaste, onResize, onReady } = useEmbeddedTerminalTransportHandlers({
+    const {
+        initialTerminalSize,
+        latestTerminalSizeRef,
+        onInput,
+        onPaste,
+        onResize,
+        onReady: notifyTransportReady,
+    } = useEmbeddedTerminalTransportHandlers({
         machineId: params.machineId,
         terminalIdRef,
         terminalStreamCarrierRef,
         onInputError: handleInputError,
     });
+    const onReady = React.useCallback((cols: number, rows: number) => {
+        notifyTransportReady(cols, rows);
+        // Native crash/unavailability fallback is child-local state. Hydrate the
+        // replacement renderer here because it does not rerender this hook owner.
+        if (status === 'connected' || status === 'exited') {
+            hydrateTerminalRendererIfNeeded();
+        }
+    }, [hydrateTerminalRendererIfNeeded, notifyTransportReady, status]);
 
     const clearTerminal = React.useCallback(() => {
         terminalPreviewDecoderRef.current.reset();
@@ -389,6 +412,10 @@ export function useMachineTerminalSession(params: Readonly<{
                 machineId: params.machineId,
             });
             terminalStreamCarrierRef.current = carrier;
+            terminalRendererAckDeliveryRef.current = createTerminalRendererAckDelivery({
+                send: carrier.acknowledge,
+                onDiagnostic: reportTerminalRendererAckDeliveryDiagnostic,
+            });
             terminalCreditStateRef.current = byteStreamEnabled
                 ? createTerminalStreamCreditState({
                     terminalId: ensured.terminalId,
@@ -819,6 +846,25 @@ function isQueuedRendererWriteResult(
     result: ReturnType<NonNullable<EmbeddedTerminalRendererHandle['writeBytes']>>,
 ): result is Readonly<{ status: 'queued' }> {
     return typeof result === 'object' && result !== null && result.status === 'queued';
+}
+
+function reportTerminalRendererAckDeliveryDiagnostic(
+    diagnostic: TerminalRendererAckDeliveryDiagnostic,
+): void {
+    if (diagnostic.kind === 'delivery-suppressed') {
+        return;
+    }
+    if (diagnostic.kind === 'retry-scheduled') {
+        console.warn('[terminal-stream] renderer ACK delivery failed; retry scheduled', {
+            errorCode: diagnostic.errorCode,
+            retryAttempt: diagnostic.retryAttempt,
+        });
+        return;
+    }
+    console.warn('[terminal-stream] renderer ACK delivery failed; retry budget exhausted', {
+        errorCode: diagnostic.errorCode,
+        retryAttempts: diagnostic.retryAttempts,
+    });
 }
 
 function containsTerminalReplayOutput(frames: readonly TerminalStreamFrame[], terminalId: string): boolean {

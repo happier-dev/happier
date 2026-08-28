@@ -1,6 +1,9 @@
 import * as React from 'react';
 
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import {
+    arePluginMachineExecutionOriginsEqual,
+    type PluginMachineExecutionOriginV1,
+} from '@happier-dev/protocol';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
     applyInstalledAppShellPluginUiReactNativeExecutableAuthorityInvalidation,
@@ -41,7 +44,6 @@ import {
 } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     selectPluginDestinationSurfacePlacements,
-    selectRenderablePluginRightSidebarTabPlacements,
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
@@ -169,10 +171,7 @@ function areSamePluginExecutionOrigin(
         left !== null
         && left !== undefined
         && right !== null
-        && left.serverIdentityId === right.serverIdentityId
-        && left.materializationRef.machineId === right.materializationRef.machineId
-        && left.materializationRef.materializationId === right.materializationRef.materializationId
-        && left.materializationRef.pluginId === right.materializationRef.pluginId
+        && arePluginMachineExecutionOriginsEqual(left, right)
     );
 }
 
@@ -605,6 +604,11 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                     await reconcileAppShellProjectedClientExecutables({
                         projection: next,
                         platform: clientExecutablePlatform,
+                        // Catalog authority is independent from executable
+                        // interaction readiness. Keeping it here prevents a
+                        // disabled/offline projected provider from reappearing
+                        // through generated fallback metadata.
+                        voiceProviderProjection: voicePluginUiProjection,
                         voice: voiceInteractionEnabled && voiceMachineId && voicePluginUiProjection
                             ? Object.freeze({
                                 projection: voicePluginUiProjection,
@@ -851,21 +855,4 @@ export function useProjectedPluginLocalizedTextResolver(): PluginLocalizedTextRe
         () => createPluginLocalizedTextResolver({ projection, locale }),
         [locale, projection],
     );
-}
-
-/**
- * Whether the active app-shell projection has at least one renderable
- * `app.rightSidebarTab` placement. Drives the decision to mount the tabbed
- * `AppScopeRightSidebar` in the app-shell right pane. Uses the SAME renderable
- * selector (`availability === 'available'` + policy gate) the sidebar itself
- * consumes, so the host never mounts an empty/fail-closed tabbed sidebar.
- */
-export function useAppShellHasRenderableRightSidebarTabPlacements(): boolean {
-    const projection = useAppShellPluginUiProjection();
-    return React.useMemo(() => (
-        (projection.phase === 'current' || projection.phase === 'retainedOffline')
-            && projection.pluginUiProjection
-            ? selectRenderablePluginRightSidebarTabPlacements(projection.pluginUiProjection, 'app').length > 0
-            : false
-    ), [projection.phase, projection.pluginUiProjection]);
 }

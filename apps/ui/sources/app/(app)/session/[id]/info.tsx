@@ -5,6 +5,7 @@ import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { storage, useProfile, useSession, useLocalSetting, useSetting, useSettings, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
@@ -58,7 +59,10 @@ import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navi
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+    resolveSessionActionDefaultBackend,
+    resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
@@ -85,7 +89,7 @@ import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { useSessionListMoveSheet } from '@/components/sessions/shell/move-sheet/useSessionListMoveSheet';
 import type { SessionListMoveSheetTarget } from '@/components/sessions/shell/move-sheet/buildSessionListMoveSheetTargets';
 import {
-    buildSessionFolderWorkspaceRefKey,
+    buildSessionFolderWorkspaceTargets,
     normalizeSessionFolderWorkspaceRef,
     normalizeSessionFolders,
     type SessionFolderWorkspaceRefV1,
@@ -98,6 +102,8 @@ import {
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import { buildSessionOrganizationTagLabelById } from '@/sync/domains/session/organization/tagLabels';
+import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
 import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
 import {
@@ -125,19 +131,6 @@ const SESSION_INFO_IDLE_MOVE_RESULT = Object.freeze({
     visual: Object.freeze({ kind: 'none' as const }),
 });
 
-function parseTagPromptValue(value: string | null): string[] | null {
-    if (value == null) return null;
-    const seen = new Set<string>();
-    const tags: string[] = [];
-    for (const rawTag of value.split(',')) {
-        const tag = rawTag.trim();
-        if (!tag || seen.has(tag)) continue;
-        seen.add(tag);
-        tags.push(tag);
-    }
-    return tags;
-}
-
 function resolveSessionInfoWorkspaceRef(
     session: Session,
     serverId: string | null,
@@ -155,32 +148,12 @@ function resolveSessionInfoWorkspaceRef(
     });
 }
 
-function resolveFolderDepth(
-    folderId: string,
-    parentIdByFolderId: ReadonlyMap<string, string | null>,
-): number {
-    let depth = 0;
-    let current = parentIdByFolderId.get(folderId) ?? null;
-    const seen = new Set([folderId]);
-    while (current && !seen.has(current)) {
-        seen.add(current);
-        depth += 1;
-        current = parentIdByFolderId.get(current) ?? null;
-    }
-    return depth;
-}
-
 function buildSessionInfoMoveTargets(params: Readonly<{
     sessionFolders: unknown;
     workspace: SessionFolderWorkspaceRefV1 | null;
 }>): SessionListMoveSheetTarget[] {
     if (!params.workspace) return [];
-    const workspaceKey = buildSessionFolderWorkspaceRefKey(params.workspace);
     const normalized = normalizeSessionFolders(params.sessionFolders);
-    const parentIdByFolderId = new Map<string, string | null>();
-    for (const folder of normalized.folders) {
-        parentIdByFolderId.set(folder.id, folder.parentId ?? null);
-    }
     const targets: SessionListMoveSheetTarget[] = [{
         id: 'session-info-move-folder:root',
         kind: 'root',
@@ -188,23 +161,17 @@ function buildSessionInfoMoveTargets(params: Readonly<{
         disabled: false,
         result: SESSION_INFO_IDLE_MOVE_RESULT,
     }];
-    for (const folder of normalized.folders) {
-        if (buildSessionFolderWorkspaceRefKey(folder.workspace) !== workspaceKey) continue;
-        targets.push({
-            id: `session-info-move-folder:${folder.id}`,
+    targets.push(...buildSessionFolderWorkspaceTargets({
+        folders: normalized,
+        workspace: params.workspace,
+    }).map((folder) => ({
+            id: `session-info-move-folder:${folder.folderId}`,
             kind: 'folder',
-            label: folder.name,
+            label: folder.title,
             disabled: false,
             result: SESSION_INFO_IDLE_MOVE_RESULT,
-        });
-    }
-    return targets.sort((left, right) => {
-        if (left.kind === 'root') return -1;
-        if (right.kind === 'root') return 1;
-        const leftDepth = resolveFolderDepth(left.id.replace('session-info-move-folder:', ''), parentIdByFolderId);
-        const rightDepth = resolveFolderDepth(right.id.replace('session-info-move-folder:', ''), parentIdByFolderId);
-        return leftDepth - rightDepth || left.label.localeCompare(right.label);
-    });
+        })));
+    return targets;
 }
 
 function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability, routeScope }: Readonly<{
@@ -288,8 +255,9 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         [agentId, enabledAgentIds, session],
     );
     const sessionActionDefaultBackendEntry = React.useMemo(() => {
-        if (!sessionActionDefaultBackend) return null;
-        const selectedTargetKey = resolveBackendTargetKeyV2(sessionActionDefaultBackend.backendTarget);
+        const target = resolveSessionActionDefaultTarget(sessionActionDefaultBackend);
+        if (!target) return null;
+        const selectedTargetKey = resolveBackendTargetKeyV2(target);
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
             acpCatalogSettingsV1: (acpCatalogSettingsV1 as any) ?? { v: 2, backends: [] },
@@ -540,6 +508,10 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         : [];
     const sessionInfoTags = sessionInfoTagEntries.flatMap((tag) =>
         tag.display.status === 'available' ? [tag.display.value] : []);
+    const sessionInfoTagIds = sessionInfoTagEntries.map((tag) => tag.tagId);
+    const sessionInfoTagLabelById = buildSessionOrganizationTagLabelById(
+        organizationProjection?.tagsById ?? {},
+    );
     const sessionInfoTagDetail = sessionInfoTagEntries
         .map((tag) => tag.display.status === 'available'
             ? tag.display.value
@@ -645,24 +617,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [getSessionOrganizationMutationScopeOrThrow, isPinnedSession, scopedMutationServerId, session.id, sessionActionTarget, sessionSettingsKey]);
     const [pinningSession, performTogglePinned] = useHappyAction(handleTogglePinned);
 
-    const handleEditTags = useCallback(async () => {
+    const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
+    const [editingTags, setEditingTags] = React.useState(false);
+    const applySessionInfoTagLabels = useCallback(async (nextTags: readonly string[]) => {
         if (!sessionSettingsKey) return;
-        const rawTags = await Modal.prompt(
-            t('sessionsList.selectionSetTagsPromptTitle'),
-            t('sessionsList.selectionTagsPromptMessage'),
-            {
-                defaultValue: sessionInfoTags.join(', '),
-                placeholder: t('sessionsList.selectionTagsPlaceholder'),
-                confirmText: t('common.save'),
-                cancelText: t('common.cancel'),
-            },
-        );
-        const nextTags = parseTagPromptValue(rawTags);
-        if (nextTags == null) return;
         await executeSessionAction({
             actionId: SESSION_ACTION_EDIT_TAGS_ID,
             target: sessionActionTarget,
-            input: { tags: nextTags },
+            input: { tags: [...nextTags] },
             context: {
                 operations: {
                     setTags: async (_sessionId, tags, opts) => {
@@ -676,8 +638,28 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 },
             },
         });
-    }, [getSessionOrganizationMutationScopeOrThrow, scopedMutationServerId, session.id, sessionActionTarget, sessionInfoTags, sessionSettingsKey]);
-    const [editingTags, performEditTags] = useHappyAction(handleEditTags);
+    }, [getSessionOrganizationMutationScopeOrThrow, scopedMutationServerId, session.id, sessionActionTarget, sessionSettingsKey]);
+    const runSessionInfoTagUpdate = useCallback((nextTags: readonly string[]) => {
+        setEditingTags(true);
+        void applySessionInfoTagLabels(nextTags).catch((error) => {
+            Modal.alert(
+                t('common.error'),
+                error instanceof HappyError ? error.message : t('errors.unknownError'),
+            );
+        }).finally(() => setEditingTags(false));
+    }, [applySessionInfoTagLabels]);
+    const tagMenuContent = React.useMemo(() => buildSessionTagsMenuContent({
+        tags: Object.entries(sessionInfoTagLabelById).map(([id, label]) => ({ id, label })),
+        selectedTagIds: sessionInfoTagIds,
+        iconColor: theme.colors.text.secondary,
+        onToggle: (tagId) => {
+            const nextTagIds = sessionInfoTagIds.includes(tagId)
+                ? sessionInfoTagIds.filter((candidate) => candidate !== tagId)
+                : [...sessionInfoTagIds, tagId];
+            runSessionInfoTagUpdate(nextTagIds.flatMap((id) => sessionInfoTagLabelById[id] ?? []));
+        },
+        onCreate: (label) => runSessionInfoTagUpdate([...sessionInfoTags, label]),
+    }), [runSessionInfoTagUpdate, sessionInfoTagIds, sessionInfoTagLabelById, sessionInfoTags, theme.colors.text.secondary]);
 
     const handleMoveToFolder = useCallback(async () => {
         if (!sessionFoldersEnabled || moveTargets.length === 0) return;
@@ -1038,11 +1020,28 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         />
                     ) : null}
                     {sessionSettingsKey && tagsInfoItemProps ? (
-                        <Item
-                            {...tagsInfoItemProps}
-                            detail={sessionInfoTagDetail || undefined}
-                            onPress={performEditTags}
-                            loading={editingTags}
+                        <DropdownMenu
+                            open={tagMenuOpen}
+                            onOpenChange={setTagMenuOpen}
+                            items={tagMenuContent.dropdownItems}
+                            onSelect={tagMenuContent.dropdownOnSelect}
+                            closeOnSelect={false}
+                            onCreateItem={tagMenuContent.dropdownOnCreate}
+                            search
+                            searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                            emptyLabel={t('sessionTags.noTagsFound')}
+                            placement="auto-vertical"
+                            variant="slim"
+                            matchTriggerWidth={false}
+                            maxWidthCap={320}
+                            trigger={({ toggle }) => (
+                                <Item
+                                    {...tagsInfoItemProps}
+                                    detail={sessionInfoTagDetail || undefined}
+                                    onPress={toggle}
+                                    loading={editingTags}
+                                />
+                            )}
                         />
                     ) : null}
                     {sessionFoldersEnabled && moveTargets.length > 0 && moveToFolderInfoItemProps ? (

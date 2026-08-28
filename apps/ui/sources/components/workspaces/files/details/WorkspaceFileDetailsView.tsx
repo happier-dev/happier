@@ -283,11 +283,6 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     const runtimeFormFactor = host
         ? resolvePluginUiRuntimeFormFactor({ deviceType })
         : 'tablet';
-    const binding = React.useMemo(() => (
-        props.scope && host
-            ? createWorkspaceFileOpenableContentBinding({ target: props.scope, filePath: props.filePath })
-            : null
-    ), [host?.targetKind, props.filePath, props.scope]);
     const candidates = React.useMemo(() => (
         host?.projection
             ? resolveWorkspaceFileViewerCandidates({
@@ -298,6 +293,15 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
             })
             : []
     ), [host?.platform, host?.projection, host?.targetKind, runtimeFormFactor]);
+    const preferences = React.useMemo(() => (
+        readWorkspaceFileViewerPreferences(settings.workspaceFileViewerPreferencesV1)
+    ), [settings.workspaceFileViewerPreferencesV1]);
+    const hasViewerDemand = candidates.length > 0 || Object.keys(preferences.selections).length > 0;
+    const binding = React.useMemo(() => (
+        props.scope && host && hasViewerDemand
+            ? createWorkspaceFileOpenableContentBinding({ target: props.scope, filePath: props.filePath })
+            : null
+    ), [hasViewerDemand, host?.targetKind, props.filePath, props.scope]);
     const [stat, setStat] = React.useState<OpenableContentStatResultV1 | null>(null);
 
     React.useEffect(() => {
@@ -316,9 +320,6 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
         };
     }, [binding]);
 
-    const preferences = React.useMemo(() => (
-        readWorkspaceFileViewerPreferences(settings.workspaceFileViewerPreferencesV1)
-    ), [settings.workspaceFileViewerPreferencesV1]);
     const choiceModel = React.useMemo(() => (
         stat?.status === 'ready'
             ? resolveWorkspaceFileViewerChoiceModel({

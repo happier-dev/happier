@@ -3,9 +3,10 @@ import { Platform } from 'react-native';
 
 import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useLocalSettingMutable, useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
+import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { resolveGitTabBadge } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { t } from '@/text';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
@@ -85,6 +86,10 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
         () => (session ? readSessionPresentationAgentId(session) : null) ?? DEFAULT_AGENT_ID,
         [session],
     );
+    // The session's reachable machine target scopes catalog identity resolution;
+    // the same owner the Session header uses, so the capsule and the header
+    // cannot resolve one session's Agent through two different machines.
+    const reachableMachineTarget = useSessionReachableMachineTarget(props.sessionId);
     const agentCore = getAgentCore(agentId);
     const gitBadge = resolveGitTabBadge(gitBadgeMode, scmStatus);
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -108,11 +113,13 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
                     id: 'chat',
                     label: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
                     icon: {
-                        render: ({ active, size }) => (
-                            <AgentIcon
+                        render: ({ size, tintColor }) => (
+                            <SessionAgentCatalogIdentityIcon
                                 agentId={agentId}
+                                machineId={reachableMachineTarget?.machineId ?? null}
+                                serverId={props.serverId ?? null}
+                                color={tintColor}
                                 size={size}
-                                style={{ opacity: active ? 1 : 0.68 }}
                                 testID="session-cockpit-tab-chat-agent-icon"
                             />
                         ),

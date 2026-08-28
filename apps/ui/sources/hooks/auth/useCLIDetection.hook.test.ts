@@ -244,6 +244,23 @@ describe('useCLIDetection (hook)', () => {
         expect(Object.values(latest?.login ?? {}).every((value) => value === null)).toBe(true);
     });
 
+    it('treats an explicit empty login-status scope as fail-closed', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        await renderHookState(() => useCLIDetection('m1', {
+            autoDetect: false,
+            includeLoginStatus: true,
+            includeLoginStatusForAgentIds: [],
+            agentIds: ['codex'],
+        }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.request?.requests).toEqual([{ id: 'cli.codex' }]);
+    });
+
     it('uses canonical provider ids for scoped CLI requests even when the binary detect key differs', async () => {
         agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex-alt';
 

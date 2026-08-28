@@ -160,6 +160,7 @@ export function createMachineAdministrationTargetSelectionFixture(
             allowSoleCandidate: true,
         }),
         selectedTarget,
+        selectedTargetServerMatchesActiveAccount: selectedTarget?.serverIdentityId === serverIdentityId,
         canExecute: resolve() !== null,
         selectTarget: () => undefined,
         clearTarget: () => undefined,
@@ -263,6 +264,7 @@ export function createMachineAdministrationTargetSelectionMock(
                     allowSoleCandidate: true,
                 }),
                 selectedTarget: target,
+                selectedTargetServerMatchesActiveAccount: target?.serverIdentityId === serverIdentityId,
                 canExecute: resolve(target) !== null,
                 selectTarget: (next: MachineAdministrationTargetV1) => {
                     state.selectedTargets.push(next);

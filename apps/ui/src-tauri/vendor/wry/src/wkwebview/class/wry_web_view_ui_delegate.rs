@@ -80,6 +80,7 @@ impl WryNSWindowDelegate {
 }
 
 pub struct WryWebViewUIDelegateIvars {
+  media_capture_enabled: bool,
   #[cfg(target_os = "macos")]
   new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
   #[cfg(target_os = "macos")]
@@ -133,7 +134,12 @@ define_class!(
       decision_handler: &Block<dyn Fn(WKPermissionDecision)>,
     ) {
       //https://developer.apple.com/documentation/webkit/wkpermissiondecision?language=objc
-      (*decision_handler).call((WKPermissionDecision::Grant,));
+      let decision = if self.ivars().media_capture_enabled {
+        WKPermissionDecision::Grant
+      } else {
+        WKPermissionDecision::Deny
+      };
+      (*decision_handler).call((decision,));
     }
 
     #[cfg(target_os = "macos")]
@@ -265,6 +271,7 @@ impl WryWebViewUIDelegate {
   pub fn new(
     mtm: MainThreadMarker,
     new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
+    media_capture_enabled: bool,
   ) -> Retained<Self> {
     #[cfg(target_os = "ios")]
     let _new_window_req_handler = new_window_req_handler;
@@ -272,6 +279,7 @@ impl WryWebViewUIDelegate {
     let delegate = mtm
       .alloc::<WryWebViewUIDelegate>()
       .set_ivars(WryWebViewUIDelegateIvars {
+        media_capture_enabled,
         #[cfg(target_os = "macos")]
         new_window_req_handler,
         #[cfg(target_os = "macos")]

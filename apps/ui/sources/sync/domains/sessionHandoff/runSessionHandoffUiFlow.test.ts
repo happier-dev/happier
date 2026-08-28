@@ -158,6 +158,48 @@ describe('runSessionHandoffUiFlow', () => {
     await expect(flowPromise).resolves.toEqual({ ok: true, handoffId: 'handoff_1' });
   });
 
+  it('updates the modal from the canonical parent action operation during source packaging', async () => {
+    const actionResolution: { current: ((value: { ok: true; handoffId: string }) => void) | null } = { current: null };
+    executeSessionHandoffActionMock.mockImplementationOnce(() => new Promise((resolve) => {
+      actionResolution.current = resolve as typeof actionResolution.current;
+    }));
+    const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    const flowPromise = runSessionHandoffUiFlow({
+      execute: vi.fn() as any,
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      context: {
+        defaultSessionId: 'sess_1',
+        surface: 'ui',
+        placement: 'session_info',
+        actionRequestId: 'handoff-action-request-1',
+      } as any,
+    });
+
+    await vi.waitFor(() => expect(openSessionHandoffProgressModalMock).toHaveBeenCalledTimes(1));
+    actionOperationStore.mergeSnapshots([{
+      version: 1,
+      operationId: 'handoff-operation-1',
+      requestId: 'handoff-action-request-1',
+      revision: 1,
+      actionId: 'session.handoff',
+      state: 'running',
+      scope: { accountId: 'account-1', machineId: 'machine-source', sessionId: 'sess_1' },
+      title: 'Hand off session',
+      createdAt: 1,
+      startedAt: 1,
+      progress: { kind: 'determinate', current: 1024, total: 2048, label: 'Packaging session state' },
+      cancellation: 'supported',
+    }]);
+
+    expect(modalUpdateMock).toHaveBeenCalledWith('modal_1', {
+      operation: expect.objectContaining({ requestId: 'handoff-action-request-1' }),
+    });
+    actionResolution.current?.({ ok: true, handoffId: 'handoff_1' });
+    await flowPromise;
+  });
+
   it('keeps hydrated interrupted handoff status passive and sends one exact revision-bound Resume only after the user presses it', async () => {
     const actionResolution: {
       current: ((value: { ok: true; handoffId: string }) => void) | null;

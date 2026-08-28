@@ -11,7 +11,6 @@ export function createDraftAcpBackend(now = Date.now()): AcpBackendDefinitionV1 
         auth: {
             support: 'unsupported',
         },
-        transportProfile: 'generic',
         defaultMode: undefined,
         defaultModel: undefined,
         capabilities: {

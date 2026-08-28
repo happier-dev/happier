@@ -699,6 +699,13 @@ struct WebViewAttributes<'a> {
   /// [window.open]: https://developer.mozilla.org/en-US/docs/Web/API/Window/open
   pub new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
 
+  /// Whether this webview may grant WebKit media-capture requests.
+  ///
+  /// This is enabled by default for backward compatibility. Hosts embedding
+  /// arbitrary remote content should disable it for that child view rather
+  /// than relying on a process-wide microphone permission.
+  pub media_capture_enabled: bool,
+
   /// Enables clipboard access for the page rendered on **Linux** and **Windows**.
   ///
   /// macOS doesn't provide such method and is always enabled by default. But your app will still need to add menu
@@ -830,6 +837,7 @@ impl Default for WebViewAttributes<'_> {
       download_started_handler: Some(Box::new(|_, _| true)),
       download_completed_handler: None,
       new_window_req_handler: None,
+      media_capture_enabled: true,
       clipboard: false,
       #[cfg(debug_assertions)]
       devtools: true,
@@ -1326,6 +1334,15 @@ impl<'a> WebViewBuilder<'a> {
     callback: impl Fn(String, NewWindowFeatures) -> NewWindowResponse + 'static,
   ) -> Self {
     self.attrs.new_window_req_handler = Some(Box::new(callback));
+    self
+  }
+
+  /// Sets whether WebKit media-capture requests may be granted for this view.
+  ///
+  /// This currently affects macOS and iOS, where Wry owns the `WKUIDelegate`
+  /// permission decision. It defaults to `true` for compatibility.
+  pub fn with_media_capture_enabled(mut self, enabled: bool) -> Self {
+    self.attrs.media_capture_enabled = enabled;
     self
   }
 

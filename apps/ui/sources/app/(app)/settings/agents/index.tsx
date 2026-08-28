@@ -10,11 +10,9 @@ import { resolveAgentChannelLabelKey } from '@/components/settings/agents/agentC
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import {
     getResolvedAgentCatalogEntries,
-    type ResolvedAgentCatalogEntry,
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { getAgentCore } from '@/agents/catalog/catalog';
-import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
+import { createAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { useSetting } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
@@ -23,10 +21,7 @@ import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
-
-function resolveAgentRowIconName(entry: ResolvedAgentCatalogEntry): string {
-    return getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
-}
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 
 export default React.memo(function ProviderSettingsIndexScreen() {
     const router = useRouter();
@@ -49,9 +44,10 @@ export default React.memo(function ProviderSettingsIndexScreen() {
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
         enabled: executionTarget !== null,
-        retainInputsAcrossScopeChange: true,
     });
-    const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
+    const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready'
+        ? daemonMergedProjection.inputs
+        : null;
 
     const agentEntries = React.useMemo(() => {
         return getResolvedAgentCatalogEntries({
@@ -91,12 +87,16 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                             key={entry.agentId}
                             title={entry.title}
                             subtitle={`${state} • ${channel}`}
-                            icon={<Icon name={resolveAgentRowIconName(entry) as any} size={29} color={theme.colors.text.secondary} />}
-                            onPress={() => router.push((
-                                entry.identity
-                                    ? createPluginAgentSettingsRoute(entry.identity)
-                                    : `/(app)/settings/agents/${entry.agentId}`
-                            ) as any)}
+                            icon={(
+                                <AgentCatalogIdentityIcon
+                                    entry={entry}
+                                    machineId={executionTarget?.machine.id ?? null}
+                                    serverId={executionTarget?.serverId ?? null}
+                                    current={daemonMergedProjection.phase === 'ready'}
+                                    color={theme.colors.text.secondary}
+                                />
+                            )}
+                            onPress={() => router.push(createAgentSettingsRoute(entry) as never)}
                         />
                     );
                 })}
@@ -104,14 +104,8 @@ export default React.memo(function ProviderSettingsIndexScreen() {
             <AgentSetupFlow
                 machineId={executionTarget?.machine.id ?? null}
                 serverId={executionTarget?.serverId ?? null}
-                agentEntries={agentEntries.map((entry) => ({
-                    agentId: entry.agentId,
-                    catalogAgentId: entry.catalogAgentId,
-                    title: entry.title,
-                    subtitle: entry.subtitle,
-                    iconAgentId: entry.iconAgentId,
-                    iconName: entry.iconName,
-                }))}
+                projectionCurrent={daemonMergedProjection.phase === 'ready'}
+                agentEntries={agentEntries}
             />
             <AcpCatalogSettingsSections />
         </ItemList>

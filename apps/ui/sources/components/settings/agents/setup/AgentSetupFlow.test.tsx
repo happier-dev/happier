@@ -2,7 +2,12 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createModalModuleMock, renderScreen } from '@/dev/testkit';
+import {
+    createModalModuleMock,
+    createResolvedAgentCatalogEntryFixture,
+    renderScreen,
+} from '@/dev/testkit';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -278,14 +283,16 @@ describe('AgentSetupFlow', () => {
         const { AgentSetupFlow } = await import('./AgentSetupFlow');
         const screen = await renderScreen(React.createElement(AgentSetupFlow, {
             presentation: 'wizard',
-            agentEntries: [{
+            agentEntries: [createResolvedAgentCatalogEntryFixture({
                 agentId: 'acme.headless.provider',
-                catalogAgentId: null,
-                title: 'Acme Headless Provider',
-                subtitle: 'Plugin provider',
-                iconAgentId: 'claude',
-                iconName: 'stack-simple',
-            }],
+                overrides: {
+                    catalogAgentId: null,
+                    title: 'Acme Headless Provider',
+                    subtitle: 'Plugin provider',
+                    iconAgentId: 'claude',
+                    iconName: 'stack-simple',
+                },
+            })],
         }));
 
         expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
@@ -300,28 +307,24 @@ describe('AgentSetupFlow', () => {
         const { AgentSetupFlow } = await import('./AgentSetupFlow');
         const screen = await renderScreen(React.createElement(AgentSetupFlow, {
             agentEntries: [
-                {
+                createResolvedAgentCatalogEntryFixture({
                     agentId: 'codex',
-                    catalogAgentId: 'codex',
-                    title: 'Codex',
-                    iconAgentId: 'codex',
-                    iconName: 'code',
-                },
-                {
+                    overrides: { title: 'Codex', iconName: 'code' },
+                }),
+                createResolvedAgentCatalogEntryFixture({
                     agentId: 'claude',
-                    catalogAgentId: 'claude',
-                    title: 'Claude',
-                    iconAgentId: 'claude',
-                    iconName: 'sparkle',
-                },
-                {
+                    overrides: { title: 'Claude', iconName: 'sparkle' },
+                }),
+                createResolvedAgentCatalogEntryFixture({
                     agentId: 'acme.review.provider',
-                    catalogAgentId: null,
-                    title: 'Acme Review Provider',
-                    subtitle: 'Plugin provider',
-                    iconAgentId: null,
-                    iconName: 'stack-simple',
-                },
+                    overrides: {
+                        catalogAgentId: null,
+                        title: 'Acme Review Provider',
+                        subtitle: 'Plugin provider',
+                        iconAgentId: null,
+                        iconName: 'stack-simple',
+                    },
+                }),
             ],
         }));
 
@@ -334,17 +337,24 @@ describe('AgentSetupFlow', () => {
     it('renders projected plugin providers in setup with plugin identity preserved while using optional backing runtime capabilities', async () => {
         const { AgentSetupFlow } = await import('./AgentSetupFlow');
         const screen = await renderScreen(React.createElement(AgentSetupFlow, {
-            agentEntries: [{
+            agentEntries: [createResolvedAgentCatalogEntryFixture({
                 agentId: 'acme.review.provider',
-                catalogAgentId: 'claude',
-                title: 'Acme Review Provider',
-                subtitle: 'Plugin provider',
-                iconAgentId: 'claude',
-                iconName: 'stack-simple',
-            }],
+                overrides: {
+                    qualifiedId: 'acme.review/provider',
+                    identity: { pluginId: 'acme.review', localId: 'provider' },
+                    catalogAgentId: 'claude',
+                    title: 'Acme Review Provider',
+                    subtitle: 'Plugin provider',
+                    iconAgentId: 'claude',
+                    iconName: 'stack-simple',
+                },
+            })],
         }));
 
         expect(screen.findByTestId('provider-setup-option-acme.review.provider')).toBeTruthy();
+        const option = screen.findByTestId('provider-setup-option-acme.review.provider');
+        expect(option?.props.icon?.type).toBe(AgentCatalogIdentityIcon);
+        expect(option?.props.icon?.props.entry.identity).toEqual({ pluginId: 'acme.review', localId: 'provider' });
 
         await screen.pressByTestIdAsync('provider-setup-start-card');
 
@@ -365,14 +375,16 @@ describe('AgentSetupFlow', () => {
     it('keeps plugin providers in the setup flow even when they have no built-in runtime carrier', async () => {
         const { AgentSetupFlow } = await import('./AgentSetupFlow');
         const screen = await renderScreen(React.createElement(AgentSetupFlow, {
-            agentEntries: [{
+            agentEntries: [createResolvedAgentCatalogEntryFixture({
                 agentId: 'acme.headless.provider',
-                catalogAgentId: null,
-                title: 'Acme Headless Provider',
-                subtitle: 'Plugin provider',
-                iconAgentId: 'claude',
-                iconName: 'stack-simple',
-            }],
+                overrides: {
+                    catalogAgentId: null,
+                    title: 'Acme Headless Provider',
+                    subtitle: 'Plugin provider',
+                    iconAgentId: 'claude',
+                    iconName: 'stack-simple',
+                },
+            })],
         }));
 
         expect(screen.findByTestId('provider-setup-option-acme.headless.provider')).toBeTruthy();
@@ -382,14 +394,16 @@ describe('AgentSetupFlow', () => {
     it('keeps explicit ACP-carried provider entries visible without treating them as runnable CLI setup targets', async () => {
         const { AgentSetupFlow } = await import('./AgentSetupFlow');
         const screen = await renderScreen(React.createElement(AgentSetupFlow, {
-            agentEntries: [{
+            agentEntries: [createResolvedAgentCatalogEntryFixture({
                 agentId: 'acme.acp.provider',
-                catalogAgentId: null,
-                title: 'Acme ACP Provider',
-                subtitle: 'Plugin provider',
-                iconAgentId: null,
-                iconName: 'stack-simple',
-            }],
+                overrides: {
+                    catalogAgentId: null,
+                    title: 'Acme ACP Provider',
+                    subtitle: 'Plugin provider',
+                    iconAgentId: null,
+                    iconName: 'stack-simple',
+                },
+            })],
         }));
 
         expect(screen.findByTestId('provider-setup-option-acme.acp.provider')).toBeTruthy();

@@ -296,6 +296,103 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(run).not.toHaveBeenCalled();
     });
 
+    it('inspects a foreign daemon but never offers Account A Saved Secrets with colliding ids', async () => {
+        state.credential = { required: true };
+        state.savedSecrets = [{
+            id: 'secret-collision',
+            name: 'Account A key',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'YWNjb3VudC1h' } },
+            createdAt: 1,
+            updatedAt: 1,
+        }];
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Account A machine' },
+            {
+                machineId: 'machine-a',
+                displayName: 'Account B machine',
+                serverIdentityId: 'srv_b',
+                serverId: 'server-b',
+                serverLabel: 'Server B',
+            },
+        ]);
+        administrationTarget.controller.select('machine-a', 'srv_b');
+
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(
+            <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
+        );
+        await flushHookEffects();
+
+        const credentialRow = screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'settings-provider-authoring-api-key',
+        );
+        expect(credentialRow?.props.disabled).toBe(true);
+        expect(credentialRow?.props.onPress).toBeUndefined();
+        expect(credentialRow?.props.subtitle).toBe('settingsProviders.local.accountScopeMismatchDescription');
+        const connect = screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'settings-provider-authoring-connect',
+        );
+        expect(connect?.props.disabled).toBe(true);
+        expect(modalShow).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(providerHarness.state.requests.some((request) => (
+            request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
+            && (request.payload as { serverId?: string }).serverId === 'server-b'
+        ))).toBe(true);
+    });
+
+    it('refuses a selected Account A secret when the target switches to B before save dispatch', async () => {
+        state.credential = { required: true };
+        state.savedSecrets = [{
+            id: 'secret-collision',
+            name: 'Account A key',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'YWNjb3VudC1h' } },
+            createdAt: 1,
+            updatedAt: 1,
+        }];
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Account A machine' },
+            {
+                machineId: 'machine-a',
+                displayName: 'Account B machine',
+                serverIdentityId: 'srv_b',
+                serverId: 'server-b',
+                serverLabel: 'Server B',
+            },
+        ]);
+
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(
+            <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
+        );
+        await flushHookEffects();
+        await act(async () => {
+            screen.findAllByType('Item').find(
+                (item) => item.props.testID === 'settings-provider-authoring-api-key',
+            )?.props.onPress?.();
+        });
+        const picker = modalShow.mock.calls.at(-1)?.[0] as {
+            props?: { onSelectId?: (id: string | null) => void };
+        } | undefined;
+        await act(async () => picker?.props?.onSelectId?.('secret-collision'));
+        const accountASave = screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'settings-provider-authoring-connect',
+        )?.props.onPress;
+
+        await act(async () => {
+            administrationTarget.controller.select('machine-a', 'srv_b');
+            accountASave?.();
+            await Promise.resolve();
+        });
+
+        expect(run).not.toHaveBeenCalled();
+        expect(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'settings-provider-authoring-api-key',
+        )?.props.disabled).toBe(true);
+    });
+
     it('shows the Provider website independently from credential metadata', async () => {
         state.websiteUrl = 'https://provider.example.test';
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');

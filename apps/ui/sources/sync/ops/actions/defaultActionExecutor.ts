@@ -67,6 +67,11 @@ import {
   resolvePromptInvocationForActions,
 } from './resolvePromptInvocations';
 import { listSpawnProfilesForActions } from './listSpawnProfiles';
+import {
+  listAgentConfigOptionsForActions,
+  listAgentSessionModesForActions,
+  listSpawnConnectedServicesForActions,
+} from './agentInventoryActionDeps';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
@@ -478,6 +483,9 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
       const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;
       return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
     },
+    agentsConfigOptionsList: async (args) => await listAgentConfigOptionsForActions(args),
+    agentsSessionModesList: async (args) => await listAgentSessionModesForActions(args),
+    spawnConnectedServicesList: async (args) => await listSpawnConnectedServicesForActions(args),
 
     sessionSendMessage: async ({ sessionId, message, serverId, requestedAction }) =>
       await sendSessionMessageWithServerScope({ sessionId, message, serverId, requestedAction }),

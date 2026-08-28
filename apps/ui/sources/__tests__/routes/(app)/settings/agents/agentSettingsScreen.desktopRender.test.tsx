@@ -142,6 +142,9 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 if (key === 'serverSelectionActiveTargetKind') return 'server';
                 if (key === 'serverSelectionActiveTargetId') return 'server1';
                 if (key === 'contextSelectionsV1') return settingsState.contextSelectionsV1;
+                if (key === 'externalSessionsSettingsV1') {
+                    return settingsState.externalSessionsSettingsV1;
+                }
                 return undefined;
             }) as any,
             useSettingMutable: ((key: string) => [
@@ -264,6 +267,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getServerProfileById: (serverId: string) => (
+        serverId === 'server1'
+            ? { id: 'server1', serverIdentityId: 'server1' }
+            : null
+    ),
     areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => left === right,
 }));
 
@@ -320,6 +328,11 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: () => React.createElement('ItemRowActions'),
 }));
 
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: 'VirtualizedList',
+    VirtualizedSectionList: 'VirtualizedSectionList',
+}));
+
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
     VoiceSurface: () => React.createElement('VoiceSurface'),
 }));
@@ -338,6 +351,7 @@ describe('PluginAgentSettingsScreen desktop render', () => {
             backendEnabledByTargetKey: {},
             sessionDefaultPermissionModeByTargetKey: {},
             backendCliSourcePreferenceByTargetKey: {},
+            connectedAccountPurposeBindingsV1: { v: 1, bindings: [] },
             contextSelectionsV1: undefined,
         };
         localSettingsState = {

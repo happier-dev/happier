@@ -80,6 +80,12 @@ describe('getInstallablesRegistryEntries', () => {
                                 sourceKind: 'manual_only',
                                 display: {
                                     name: 'Acme Tool',
+                                    subtitle: 'Tools for Acme workspaces',
+                                },
+                                description: 'Acme-owned install instructions.',
+                                ui: {
+                                    iconName: 'hammer-outline',
+                                    setupUrl: 'https://docs.acme.test/tool/setup',
                                 },
                                 defaultPolicy: {
                                     autoInstallWhenNeeded: false,
@@ -98,12 +104,27 @@ describe('getInstallablesRegistryEntries', () => {
             key: 'acme-tool',
             capabilityId: 'dep.acme-tool',
             title: 'Acme Tool',
+            subtitle: 'Tools for Acme workspaces',
+            iconName: 'hammer-outline',
+            setupUrl: 'https://docs.acme.test/tool/setup',
+            installLabels: {
+                install: 'Install',
+                update: 'Update',
+                reinstall: 'Reinstall',
+            },
+            installModal: {
+                installTitle: 'Install Acme Tool?',
+                updateTitle: 'Update Acme Tool?',
+                reinstallTitle: 'Reinstall Acme Tool?',
+                description: 'Acme-owned install instructions.',
+            },
             supportsManagedOverrideInstall: false,
             defaultPolicy: {
                 autoInstallWhenNeeded: false,
                 autoUpdateMode: 'notify',
             },
         }));
+        expect(JSON.stringify(acme)).not.toContain('codexAcp');
     });
 
     it('uses supplied projection entries as the source of truth instead of prepending compatibility catalog entries', () => {

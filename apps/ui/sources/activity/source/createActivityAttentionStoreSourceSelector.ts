@@ -1,7 +1,10 @@
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { serializeExternalSessionSourceForComparison } from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
+import {
+    serializeExternalSessionJsonForComparison,
+    serializeExternalSessionSourceForComparison,
+} from '@/sync/domains/session/external/serializeExternalSessionSourceForComparison';
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -83,7 +86,8 @@ function readLinkedExternalSessionSignature(metadata: unknown): string {
         link.remoteSessionId,
         serializeExternalSessionSourceForComparison(link.source),
         readNumber(link.lastKnownActivityAtMs) ?? '',
-        link.codexBackendMode ?? '',
+        serializeExternalSessionJsonForComparison(link.runtimeDescriptorV1),
+        serializeExternalSessionJsonForComparison(link.linkData),
     ]);
 }
 

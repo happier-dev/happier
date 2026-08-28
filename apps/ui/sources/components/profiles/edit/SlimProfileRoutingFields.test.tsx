@@ -14,7 +14,7 @@ import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/prot
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import type { OptionPickerOverlayProps } from '@/components/sessions/pickers/OptionPickerOverlay';
-import { renderScreen } from '@/dev/testkit';
+import { createResolvedAgentCatalogEntryFixture, renderScreen } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
@@ -104,6 +104,7 @@ vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
 
 function claudeEntry(): ResolvedBackendCatalogEntry {
     return {
+        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'claude' }),
         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         backendTargetKey: 'agent:claude',
         kind: 'builtInAgent',
@@ -114,6 +115,7 @@ function claudeEntry(): ResolvedBackendCatalogEntry {
         iconAgentId: 'claude',
         title: 'Claude',
         subtitle: 'Claude',
+        cliAuthBackgroundCheckSafe: false,
     };
 }
 

@@ -8,7 +8,7 @@ import { t } from '@/text';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
-import { getAgentBehavior } from '@/agents/catalog/catalog';
+import { getAgentBehavior, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { Text } from '@/components/ui/text/Text';
@@ -270,8 +270,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     // Agent's descriptor is a per-machine fact, and two machines can hold
     // different versions of it: without the machine, a request on machine B
     // could be answered with machine A's stop handling, permission-update or
-    // exec-policy behavior.
-    const permissionBehavior = getAgentBehavior(agentId, resolveSessionMachineId(metadata)).permissions;
+    // exec-policy behavior. Bundled behavior is local/static; projected external
+    // behavior therefore requires an owning machine and otherwise fails closed.
+    const owningMachineId = resolveSessionMachineId(metadata);
+    const permissionBehavior = agentId && (isBundledAgentId(agentId) || owningMachineId !== null)
+        ? getAgentBehavior(agentId, owningMachineId).permissions
+        : undefined;
     const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
     const permissionFooterBehavior = permissionBehavior?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';

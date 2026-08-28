@@ -109,8 +109,7 @@ function normalizeRequestedAgentIds(agentIds: readonly string[] | null | undefin
 
 function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explicitAgentIds?: readonly string[]): string[] {
     if (!includeLoginStatus) return [];
-    const normalizedExplicit = normalizeRequestedAgentIds(explicitAgentIds);
-    if (normalizedExplicit.length > 0) return normalizedExplicit;
+    if (explicitAgentIds !== undefined) return normalizeRequestedAgentIds(explicitAgentIds);
     return CLI_PROBE_AGENT_IDS.filter((agentId) => isAgentCliAuthBackgroundCheckSafe(agentId));
 }
 

@@ -96,6 +96,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     segmentSizing?: 'equal' | 'content';
     /** Optional active-label style override for specific consumers */
     activeLabelStyle?: StyleProp<TextStyle>;
+    /** Expand each segment to the platform touch-target floor when its consumer owns enough room. */
+    targetSize?: 'platform';
     /** Accessible name for the tab group. */
     accessibilityLabel?: string;
     /**
@@ -305,6 +307,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     // Icons replace labels only when the whole bar is iconic; a half-iconic row reads as broken.
     const iconOnly = props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const platformTarget = props.targetSize === 'platform';
 
     /**
      * The press frame's vertical budget — bounded on BOTH sides.
@@ -319,16 +322,18 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
      * sentence that asks for 44/48, and the space to satisfy both is a CONSUMER fact this component
      * cannot see. So it claims only the space it owns: its own track padding.
      *
-     * CEILING, stated plainly: the 44pt/48dp platform floor is NOT reached on any variant. What is
-     * met everywhere is WCAG 2.2 Level AA SC 2.5.8 (24 x 24 CSS px), which DESIGN.md routes a dense
-     * pointer layout to. Resulting target heights (drawn box + this padding on each side):
+     * DEFAULT CEILING, stated plainly: the 44pt/48dp platform floor is not reached by the dense
+     * default. What is met everywhere is WCAG 2.2 Level AA SC 2.5.8 (24 x 24 CSS px), which
+     * DESIGN.md routes a dense pointer layout to. Resulting default target heights (drawn box +
+     * this padding on each side):
      *
      *   label  regular  28 + 4 = 32      icon  regular  34 + 4 = 38
      *   label  compact  20 + 4 = 24      icon  compact  28 + 4 = 32
      *
      * Compact-label lands exactly on the 24px floor, which is why the label slot and the surface
-     * padding above are load-bearing rather than decorative. Raising this needs vertical room a
-     * consumer grants, not a taller drawn control — the visible height is the user's complaint.
+     * padding above are load-bearing rather than decorative. `targetSize="platform"` is the
+     * explicit grant from a consumer that owns enough horizontal and vertical room; only then does
+     * the surface take the extra height and each flush segment take the 44/48 width floor.
      */
     const drawnSegmentHeight = (compact
         ? SEGMENT_PADDING_VERTICAL_PX.compact
@@ -343,7 +348,11 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const tabFrameTarget = React.useMemo(() => ({
         paddingVertical: targetExpandY,
         marginVertical: -targetExpandY,
-    }), [targetExpandY]);
+        ...(platformTarget ? { minWidth: minimumInteractiveTargetSize } : {}),
+    }), [minimumInteractiveTargetSize, platformTarget, targetExpandY]);
+    const tabSurfaceTarget = React.useMemo(() => platformTarget ? ({
+        minHeight: minimumInteractiveTargetSize - SEGMENT_TRACK_PADDING_PX * 2,
+    }) : null, [minimumInteractiveTargetSize, platformTarget]);
 
     // RN Web's Pressable hands `focused` to its own style callback only, and the ring belongs on the
     // drawn surface — around the frame it would outline a box the user cannot see.
@@ -442,6 +451,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 style={[
                                     styles.tabSurface,
                                     compact ? styles.tabSurfaceCompact : null,
+                                    tabSurfaceTarget,
                                     contentSized ? styles.tabSurfaceContent : null,
                                     showOwnActiveSurface ? styles.tabActive : null,
                                     !disabled && focusedTabId === tab.id ? styles.tabFocused : null,

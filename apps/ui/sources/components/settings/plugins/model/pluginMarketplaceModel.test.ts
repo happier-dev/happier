@@ -6,6 +6,7 @@ import {
     formatCatalogSubtitle,
     formatPluginInstallationReviewBody,
     isPluginMutationVisibleAfterRefresh,
+    projectInstalledPluginLifecycleCapabilities,
     readPendingPluginChangeReview,
     readPendingPluginChangeStatus,
     readPendingPluginChanges,
@@ -99,6 +100,45 @@ const catalog: PluginMarketplaceCatalog = {
         updateable: true,
     }],
 };
+
+describe('installed plugin lifecycle capabilities', () => {
+    it('does not advertise user-managed lifecycle mutations for host-bundled plugins', () => {
+        expect(projectInstalledPluginLifecycleCapabilities({
+            ...installed,
+            enabled: true,
+            rollbackAvailability: 'available',
+            source: {
+                kind: 'bundled',
+                locator: '@happier-dev/plugins-bundled',
+                trustPolicy: 'local_trusted',
+            },
+        })).toEqual({
+            canEnable: false,
+            canDisable: false,
+            canRollback: false,
+            canUninstall: false,
+            canForgetTrust: false,
+        });
+    });
+
+    it('projects only currently meaningful lifecycle actions for user-managed plugins', () => {
+        expect(projectInstalledPluginLifecycleCapabilities({
+            ...installed,
+            enabled: false,
+            rollbackAvailability: 'available',
+            source: {
+                ...installed.source,
+                trustPolicy: 'untrusted',
+            },
+        })).toEqual({
+            canEnable: true,
+            canDisable: false,
+            canRollback: true,
+            canUninstall: true,
+            canForgetTrust: false,
+        });
+    });
+});
 
 describe('installed marketplace catalog formatting', () => {
     it('resolves all four management labels from the current translation function on each render', () => {

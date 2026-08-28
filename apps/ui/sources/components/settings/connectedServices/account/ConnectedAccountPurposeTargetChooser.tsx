@@ -3,6 +3,7 @@ import { usePathname } from 'expo-router';
 
 import type {
   PluginContributionIdentityV1,
+  PluginLocalizedStringV2,
   QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 
@@ -29,8 +30,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   declaration: Readonly<{
     purpose: string;
     service: PluginContributionIdentityV1;
-    title?: string;
-    required: boolean;
+    title?: PluginLocalizedStringV2;
+    required?: boolean;
   }>;
   value: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
   onChange: (target: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => void;
@@ -62,7 +63,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     );
   }, [localizePluginText, props.declaration.service, registry.entries]);
   const choices = React.useMemo(() => buildConnectedAccountPurposeTargetChoices({
-    declaration: props.declaration,
+    declaration: { ...props.declaration, required: props.declaration.required === true },
     selectedTarget: props.value,
     accounts,
     groups,
@@ -81,7 +82,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   ]);
   const selectedId = connectedAccountPurposeTargetChoiceId(props.value);
   const selected = choices.find((choice) => choice.id === selectedId) ?? null;
-  const purposeTitle = props.declaration.title ?? serviceTitle;
+  const declaredPurposeTitle = props.declaration.title
+    ? localizePluginText(props.declaration.service.pluginId, props.declaration.title)
+    : '';
+  const purposeTitle = declaredPurposeTitle || serviceTitle;
   const selectedTargetAccessibilityLabel = selected?.selectable
     ? selected.presentation.accessibilityLabel
     : null;

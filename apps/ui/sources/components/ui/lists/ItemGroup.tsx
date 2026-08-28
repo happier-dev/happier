@@ -56,6 +56,8 @@ export interface ItemGroupProps {
     footerTextStyle?: StyleProp<TextStyle>;
     containerStyle?: StyleProp<ViewStyle>;
     constrainToContentWidth?: boolean;
+    /** Clips edge-to-edge child surfaces to the rounded inner card boundary. */
+    clipContent?: boolean;
     /** Joins independently virtualized chunks into one logical group surface. */
     virtualizedSegment?: ItemGroupVirtualizedSegment;
     /**
@@ -125,6 +127,9 @@ const stylesheet = StyleSheet.create((theme) => {
         contentContainerInner: {
             borderRadius: Platform.select({ ios: 10, default: 16 }),
         },
+        contentContainerInnerClipped: {
+            overflow: 'hidden',
+        },
         // The element the columned body measures itself by. It carries no inset
         // of its own, so its width is the group's content box in BOTH column
         // states — measuring the card instead would shrink by the content margin
@@ -187,6 +192,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
     accessibilityLabel?: string;
     virtualizedSegment?: ItemGroupVirtualizedSegment;
     containerStyle?: StyleProp<ViewStyle>;
+    clipContent?: boolean;
 }>) {
     const styles = stylesheet;
     const { virtualizedSegment } = props;
@@ -210,6 +216,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
         >
             <View style={[
                 styles.contentContainerInner,
+                props.clipContent ? styles.contentContainerInnerClipped : undefined,
                 virtualizedSegment?.first === false
                     ? styles.virtualizedSurfaceContinuesBefore
                     : undefined,
@@ -403,9 +410,13 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         selectableItemCountOverride,
         virtualizedSegment,
         columns,
+        clipContent = false,
     } = props;
 
     const wantsColumns = (columns ?? 1) > 1;
+    if (wantsColumns && clipContent) {
+        throw new Error('ItemGroup clipContent cannot be combined with columns');
+    }
     resolveHappierItemGroupConstraints({
         role: accessibilityRole,
         accessibilityLabel,
@@ -458,6 +469,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                             accessibilityLabel={accessibilityLabel}
                             virtualizedSegment={virtualizedSegment}
                             containerStyle={containerStyle}
+                            clipContent={clipContent}
                         >
                             {projectedChildren}
                         </ItemGroupSharedCardBody>

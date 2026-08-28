@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
-export type SurfaceStateKind = 'empty' | 'loading' | 'error' | 'unavailable';
+export type SurfaceStateKind = 'empty' | 'loading' | 'error' | 'warning' | 'unavailable';
 export type SurfaceStateAccessibilitySemantics = 'status' | 'alert';
 
 export type SurfaceStateAction = Readonly<{
@@ -22,6 +22,7 @@ export type SurfaceStateAction = Readonly<{
 const DEFAULT_ICONS: Record<Exclude<SurfaceStateKind, 'loading'>, IconName> = {
     empty: 'tray',
     error: 'warning-circle',
+    warning: 'warning-circle',
     unavailable: 'cloud-slash',
 };
 
@@ -101,6 +102,8 @@ export function SurfaceStateCard(props: Readonly<{
 
     const tint = props.kind === 'error'
         ? theme.colors.state.danger.foreground
+        : props.kind === 'warning'
+            ? theme.colors.state.warning.foreground
         : theme.colors.text.secondary;
     const accessibilityLiveRegion = props.accessibilitySemantics === 'alert'
         ? 'assertive'

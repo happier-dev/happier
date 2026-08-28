@@ -8,6 +8,8 @@ import { installPermissionShellCommonModuleMocks } from './permissionShellTestHe
 
 const EXTERNAL_AGENT_ID = 'acme.agent';
 
+const resolvedAgentState = vi.hoisted(() => ({ agentId: 'acme.agent' as string | null }));
+
 const ops = vi.hoisted(() => ({
     sessionAllow: vi.fn(async (..._args: unknown[]) => {}),
     sessionDeny: vi.fn(async (..._args: unknown[]) => {}),
@@ -28,7 +30,7 @@ vi.mock('@/sync/ops', () => ({
 }));
 
 vi.mock('@/agents/catalog/resolve', () => ({
-    resolveAgentIdForPermissionUi: () => EXTERNAL_AGENT_ID,
+    resolveAgentIdForPermissionUi: () => resolvedAgentState.agentId,
 }));
 
 // The footer copy owner is deliberately NOT stubbed here: an external Agent
@@ -66,12 +68,26 @@ describe('PermissionFooter for an external Agent', () => {
             '@/agents/registry/agentUiBehaviorProjection'
         );
         clearProjectedAgentUiBehaviorDescriptors();
+        resolvedAgentState.agentId = EXTERNAL_AGENT_ID;
         ops.sessionAllow.mockClear();
         ops.sessionDeny.mockClear();
         ops.sessionAbort.mockClear();
     });
 
     it('renders only denial for an external Agent that ships no descriptor', async () => {
+        const screen = await renderPendingPermissionFooter();
+
+        expect(screen.findAllByTestId('permission-footer.deny').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('permission-footer.allow')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.stop')).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('permission-footer.deny');
+        expect(ops.sessionDeny).toHaveBeenCalledWith('s1', 'p1', undefined, undefined, 'denied');
+        expect(ops.sessionAbort).not.toHaveBeenCalled();
+    });
+
+    it('renders only denial when the prompt has no identifiable Agent', async () => {
+        resolvedAgentState.agentId = null;
         const screen = await renderPendingPermissionFooter();
 
         expect(screen.findAllByTestId('permission-footer.deny').length).toBeGreaterThan(0);
@@ -99,11 +115,26 @@ describe('PermissionFooter for an external Agent', () => {
             },
         });
 
-        const screen = await renderPendingPermissionFooter();
+        const screen = await renderPendingPermissionFooter({ machineId: 'm1' });
         await screen.pressByTestIdAsync('permission-footer.stop');
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
         expect(ops.sessionAbort).not.toHaveBeenCalled();
+    });
+
+    it('does not borrow an external Agent descriptor when the owning machine is unknown', async () => {
+        await publishForMachine('machine-a', {
+            permissions: {
+                promptProtocol: 'claude',
+                footer: { stopHandling: 'denyOnly' },
+            },
+        });
+
+        const screen = await renderPendingPermissionFooter();
+
+        expect(screen.findAllByTestId('permission-footer.allow')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.stop')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.deny').length).toBeGreaterThan(0);
     });
 
 });

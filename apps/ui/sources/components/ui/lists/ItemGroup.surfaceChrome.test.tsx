@@ -39,10 +39,10 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-async function renderItemGroup() {
+async function renderItemGroup(props?: Readonly<{ clipContent?: boolean }>) {
     const { ItemGroup } = await import('./ItemGroup');
     return renderScreen(
-        <ItemGroup title="Group">
+        <ItemGroup title="Group" clipContent={props?.clipContent}>
             {React.createElement('View')}
         </ItemGroup>,
     );
@@ -74,5 +74,16 @@ describe('ItemGroup surface chrome', () => {
         expect(style.borderWidth).toBe(0);
         expect(style.borderTopWidth).toBe(0);
         expect(hasShadow(style)).toBe(false);
+    });
+
+    it('clips only the inner rounded surface when embedded content paints to the card edges', async () => {
+        const screen = await renderItemGroup({ clipContent: true });
+        const roundedNodes = screen.findAllByType('View' as never).map((node) => flattenStyle(node.props.style));
+
+        expect(roundedNodes).toContainEqual(expect.objectContaining({
+            borderRadius: 16,
+            overflow: 'hidden',
+        }));
+        expect(findGroupSurfaceStyle(screen).overflow).toBe('visible');
     });
 });

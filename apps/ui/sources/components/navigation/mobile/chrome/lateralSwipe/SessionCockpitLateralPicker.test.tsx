@@ -17,6 +17,7 @@ import { SESSION_LATERAL_PICKER_ROW_PITCH_PX, resolveSessionLateralPickerFrame }
 
 const sessionNamesState = vi.hoisted(() => ({
     bySessionId: {} as Record<string, string>,
+    metadataBySessionId: {} as Record<string, Record<string, unknown>>,
 }));
 const reducedMotionState = vi.hoisted(() => ({
     value: false,
@@ -35,6 +36,11 @@ vi.mock('react-native-worklets', () => ({
 
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
+
+vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
+    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
+        React.createElement('SessionAgentCatalogIdentityIcon', props),
 }));
 
 // The scrim is a shared primitive with its own suite; here it only has to prove that the
@@ -66,7 +72,7 @@ vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
             sessions: Object.fromEntries(
                 Object.entries(sessionNamesState.bySessionId).map(([sessionId, name]) => [
                     sessionId,
-                    { metadata: { name } },
+                    { metadata: { name, ...sessionNamesState.metadataBySessionId[sessionId] } },
                 ]),
             ),
         }),
@@ -169,6 +175,7 @@ describe('SessionCockpitLateralPicker', () => {
         standardCleanup();
         resetSessionNavigationCursorForTests();
         sessionNamesState.bySessionId = {};
+        sessionNamesState.metadataBySessionId = {};
         reducedMotionState.value = false;
     });
 
@@ -207,6 +214,35 @@ describe('SessionCockpitLateralPicker', () => {
         // The immediate neighbour is what the capsule readout is already naming; a copy
         // of it above the bar would be the same session drawn twice.
         expect(text).not.toContain('In the capsule');
+    });
+
+    it('renders an external destination through the catalog identity owner', async () => {
+        sessionNamesState.bySessionId = {
+            'session-2': 'In the capsule',
+            'session-3': 'External destination',
+        };
+        sessionNamesState.metadataBySessionId['session-3'] = {
+            machineId: 'machine_external',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme.plugin/ultracode',
+                agent: {},
+            },
+        };
+        publishVisibleSessionOrder(['session-0', 'session-1', 'session-2', 'session-3']);
+        const { harness, screen } = await renderPicker('session-1');
+
+        act(() => {
+            openPicker(harness, 'next', 0);
+        });
+
+        expect(screen.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as never)?.props).toMatchObject({
+            agentId: 'acme.plugin/ultracode',
+            machineId: 'machine_external',
+            serverId: null,
+            size: 18,
+        });
     });
 
 

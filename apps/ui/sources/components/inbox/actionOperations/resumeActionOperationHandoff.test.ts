@@ -42,11 +42,11 @@ describe('resumeActionOperationHandoff', () => {
         })).resolves.toEqual({ kind: 'requested' });
 
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(1, {
-            machineId: 'machine-target', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET,
+            machineId: 'machine-target', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
             payload: { handoffId: 'handoff-1' },
         });
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(2, {
-            machineId: 'machine-target', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME,
+            machineId: 'machine-target', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3,
             payload: {
                 handoffId: 'handoff-1',
                 jobId: 'job-1',

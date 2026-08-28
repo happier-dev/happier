@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1083,6 +1084,7 @@ export const ru = {
   },
 
   automations: {
+    ...automationTriggerSetTranslations.ru,
     unsupportedReference: ({ reference }: { reference: string }) =>
         `Автоматизации сохраняют только текст сообщения, поэтому ${reference} больше не будет указывать на выбранный объект. Удалите ссылку из сообщения или укажите путь к файлу.`,
     list: {
@@ -1090,7 +1092,8 @@ export const ru = {
       cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ""}${timezone ? ` (${timezone})` : ""}`,
       schedule: "Расписание",
       event: ({ eventId }: { eventId: string }) => `Событие: ${eventId}`,
-      manual: "Вручную",
+      sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Когда завершится ход · ${sessionId}`,
+      noAutomaticTriggers: 'Нет автоматических триггеров',
       noNextRun: "Следующий запуск не запланирован",
       nextRun: ({ time }: { time: string }) => `Следующий запуск: ${time}`,
       nextRunPending: "Следующий запуск ожидается",
@@ -1142,70 +1145,18 @@ export const ru = {
         cronHelpText:
           "Стандартный cron из 5 полей: минута час день-месяца месяц день-недели.",
       },
-      sentence: {
-        run: "Запускать",
-        every: "каждые",
-        onSchedule: "по расписанию",
-        runEvery: "Запускать каждые",
-        minutes: "минут",
-        presets: "Пресеты",
-        intervalUnits: {
-          minutes: "Минуты",
-          hours: "Часы",
-          days: "Дни",
-        },
-        cronFieldGuide: {
-          minute: "Минута",
-          hour: "Час",
-          dayOfMonth: "День",
-          month: "Месяц",
-          weekday: "День нед.",
-        },
-        useCron: "Использовать cron-выражение",
-        useInterval: "Переключиться на интервал",
-        addNotes: "Добавить заметки",
-        notes: "ЗАМЕТКИ",
-        localTimezone: "местное время",
-        scheduleControlA11y: "Изменить расписание автоматизации",
-        intervalValue: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} дн.`;
-          if (minutes === 60) return "1 час";
-          if (minutes % 60 === 0) return `${minutes / 60} ч`;
-          return `${minutes} мин`;
-        },
-        intervalCadence: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `каждые ${minutes / (24 * 60)} дн.`;
-          if (minutes === 60) return "каждый час";
-          if (minutes % 60 === 0) return `каждые ${minutes / 60} ч`;
-          return `каждые ${minutes} мин`;
-        },
-        cronPresets: {
-          weekdays9am: "Будни в 9:00",
-          hourly: "Каждый час",
-          monday9am: "Понедельник в 9:00",
-          dailyMidnight: "Каждый день в полночь",
-        },
-        cronCadences: {
-          weekdays9am: "по будням в 9:00",
-          hourly: "каждый час",
-          monday9am: "по понедельникам в 9:00",
-          dailyMidnight: "каждый день в полночь",
-        },
-        cronCadenceExpression: ({ expression }: { expression: string }) => `по cron-расписанию ${expression}`,
-        timezone: ({ timezone }: { timezone: string }) => `Часовой пояс: ${timezone}`,
-      },
     },
     session: {
       emptyTitle: "Нет автоматизаций",
       emptyBody:
-        "Добавьте автоматизацию, чтобы ставить запланированные сообщения в очередь этой сессии.",
+        "Добавьте автоматизацию, чтобы выполнять работу в этой сессии при срабатывании любого триггера.",
       addAutomation: "Добавить автоматизацию",
       failedToLoad: "Не удалось загрузить автоматизации.",
     },
     screen: {
       emptyTitle: "Автоматизаций пока нет",
       emptyBody:
-        "Создайте её через поток «Новая сессия», чтобы запускать запланированные сессии на ваших машинах.",
+        "Создайте её через «Новую сессию», затем добавьте расписания, события или триггеры конкретного хода.",
       createAutomationA11y: "Создать автоматизацию",
     },
     settings: {
@@ -1228,7 +1179,7 @@ export const ru = {
       overviewGroupTitle: "Обзор",
       overview: {
         nameTitle: "Имя",
-        scheduleTitle: "Расписание",
+        triggersTitle: "Расписание",
         statusTitle: "Статус",
         nextRunTitle: "Следующий запуск",
       },
@@ -1241,6 +1192,11 @@ export const ru = {
         watcherUnwatched: "Нет наблюдателя",
         endpointTitle: "Конечная точка вебхука",
         endpointObservingSince: ({ time }: { time: string }) => `Принимает доставки с ${time}`,
+        transportTitle: "How events arrive",
+        transportCheckpointedPull: "Polling",
+        transportDurablePush: "Webhook",
+        disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+        disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
         sourceStatusUnreported: "Ожидание первого отчёта",
         sourceStatusUnavailable: "Статус источника недоступен",
         sourceCatalogStatusUnavailable: "Актуальность источника недоступна",
@@ -1252,10 +1208,6 @@ export const ru = {
       },
       actionsGroupTitle: "Действия",
       runNowTitle: "Запустить сейчас",
-      runNowQueuedBadge: "В очереди",
-      runNowQueuedLine: "В очереди.",
-      runNowQueuedSubtitle:
-        "В очереди. Назначенный демон выполнит запуск, когда будет доступен.",
       pauseAutomation: "Приостановить автоматизацию",
       resumeAutomation: "Возобновить автоматизацию",
       editAutomation: "Редактировать автоматизацию",
@@ -1278,12 +1230,33 @@ export const ru = {
       assignmentsUpdateFailed: "Не удалось обновить назначения машин.",
       recentRunsTitle: "Недавние запуски",
       loadMoreRuns: "Загрузить ещё запуски",
+      trigger: {
+          identity: ({ id, revision }: { id: string; revision: number }) => `Триггер ${id} · версия ${revision}`,
+          sourceSession: 'Исходная сессия',
+          sourceTurn: 'Точный исходный ход',
+          run: "Связанный запуск",
+          status: {
+            waiting: "Ожидание этого хода",
+            paused: "Приостановлена",
+            triggered: "Запущена",
+            running: "Выполняется",
+            finished: "Завершена",
+            sourceFailed: "Исходный ход завершился с ошибкой",
+            sourceCancelled: "Исходный ход отменён",
+            sourceUnavailable: "Источник недоступен",
+          },
+      },
       runMeta: {
-        originTitle: "Происхождение",
-        origin: {
-          scheduled: "Запланированный",
+        triggerIdentityTitle: 'Идентификатор триггера',
+        triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · версия ${revision}`,
+        triggerRetired: 'Триггер удалён',
+        triggerRetiredSubtitle: 'Этот запуск сохраняет неизменную причину, хотя триггера больше нет в автоматизации.',
+        causeTitle: "Происхождение",
+        cause: {
+          schedule: "Запланированный",
           manual: "Ручной",
           pluginEvent: "Событие",
+          sessionLifecycle: 'Ход сессии завершён',
           conversation: "Разговор",
         },
         state: {
@@ -1304,9 +1277,9 @@ export const ru = {
         admitted: ({ time }: { time: string }) => `Принято: ${time}`,
         occurrenceTitle: "Идентификатор события",
         sourceTitle: "Источник наблюдения",
+        eventReferenceTitle: "Ссылка на событие",
         scheduled: ({ time }: { time: string }) => `Запланировано: ${time}`,
         updated: ({ time }: { time: string }) => `Обновлено: ${time}`,
-        contentRemoved: 'Содержимое запуска удалено',
         error: ({ message }: { message: string }) => `Ошибка: ${message}`,
         attemptTitle: "Попытка",
         attempt: ({ attempt }: { attempt: number }) => `Попытка ${attempt}`,
@@ -2921,6 +2894,8 @@ export const ru = {
   },
 
   connectedServices: {
+    accountScopeMismatchTitle: 'Переключите учётную запись сервера, чтобы продолжить',
+    accountScopeMismatchDescription: 'Эта машина принадлежит учётной записи другого сервера. Переключитесь на неё, чтобы управлять подключёнными учётными записями.',
     fallbackName: "Подключённый сервис",
     serviceNames: {
       claudeSubscription: "Подписка Claude",
@@ -7633,11 +7608,11 @@ export const ru = {
       turnDiffRecap: "Сводка изменений за этот ход",
     },
     askUserQuestion: {
-      claudeDialogNotice: {
-        header: 'Диалог Claude',
-        question: 'Claude показывает диалог. Откройте терминал, чтобы проверить его и выбрать, как продолжить.',
-        openTerminal: 'Открыть терминал',
-        description: 'Проверьте диалог и ответьте на него в терминале Claude.',
+      attachedTerminalNotice: {
+        header: 'Диалог терминала',
+        question: 'Агент показывает диалог. Откройте подключённый терминал, чтобы проверить его и выбрать, как продолжить.',
+        openTerminal: 'Открыть подключённый терминал',
+        description: 'Проверьте диалог и ответьте на него в подключённом терминале.',
       },
       submit: "Отправить ответ",
       multipleQuestions: ({ count }: { count: number }) =>
@@ -9323,6 +9298,7 @@ export const ru = {
             sessionHandoffFeature: "Чтобы использовать это действие, включите поддержку передачи обслуживания сеанса.",
             notAvailableInThisApp: 'Эта точка показа пока недоступна в этом клиенте.',
             requiredByAgentPolicy: 'Политика требует подтверждения для агента. Это действие всегда сначала спрашивает.',
+            presentUserRequired: 'Для этой операции требуется ваше присутствие в Happier. API-токены и доверенные плагины могут обнаружить её, но не выполнить.',
         },
         targets: {
             session_header: {
@@ -9386,12 +9362,12 @@ export const ru = {
                 subtitle: "Доступно через интерфейс командной строки управления сеансом.",
             },
             api: {
-                title: "API",
-                subtitle: "Доступно через внешний API действий.",
+                title: "Внешний API и SDK",
+                subtitle: "Доступно для API-токенов через HTTP и SDK.",
             },
             plugin: {
                 title: "Доверенные плагины",
-                subtitle: "Доступно доверенным плагинам как действие.",
+                subtitle: "Доступно доверенным встроенным и установленным плагинам.",
             },
             contextual_ui: {
                 title: "Контекстный пользовательский интерфейс",
@@ -11256,6 +11232,16 @@ settingsSession: {
     logoutSubtitle: "Выйти из аккаунта и очистить локальные данные",
     logoutConfirm:
       "Вы уверены, что хотите выйти? Убедитесь, что вы сохранили резервную копию секретного ключа!",
+    deleteAccount: "Удалить аккаунт",
+    deleteAccountSubtitle: "Навсегда удалить этот аккаунт и его данные с сервера",
+    deleteAccountConfirmTitle: "Удалить этот аккаунт?",
+    deleteAccountConfirmBody: "Данные аккаунта на этом сервере будут удалены навсегда. Это действие нельзя отменить. Введите DELETE, чтобы продолжить.",
+    deleteAccountInvalidTitle: "Подтверждение не совпадает",
+    deleteAccountInvalidBody: "Введите DELETE точно, чтобы продолжить.",
+    deleteAccountFailedTitle: "Удаление не подтверждено",
+    deleteAccountFailed: "Happier не удалось подтвердить удаление. Локальный вход сохранён, чтобы вы могли повторить попытку.",
+    deleteAccountCleanupFailedTitle: "Аккаунт удалён",
+    deleteAccountCleanupFailed: "Сервер подтвердил удаление, но этому устройству не удалось полностью очистить локальные данные. Снова откройте Happier и выйдите, если аккаунт всё ещё отображается.",
     encryptionUpdateFailed: "Не удалось обновить настройку шифрования",
     secretKeyMissing: "Секретный ключ недоступен. Сначала восстановите аккаунт.",
     restoreRequiredTitle: "Требуется восстановление",
@@ -11425,6 +11411,18 @@ settingsSession: {
                         "body": "Ваш код, prompts и содержимое сессий шифруются на устройстве до отправки на любой сервер. Private by design. Open by default.",
                         "alt": "Абстрактное изображение-заглушка для приватности и self-hosting."
                     },
+                    "worktrees": {
+                        "title": "Отдельный worktree для сессии. Или нет.",
+                        "wideTitle": "Отдельный worktree для сессии.\nИли нет.",
+                        "body": "Запускайте сессию в собственном worktree Git, чтобы несколько агентов работали с одним репозиторием, не мешая друг другу, либо начинайте в текущей папке.",
+                        "alt": "Абстрактное изображение-заглушка для worktree Git."
+                    },
+                    "handoff": {
+                        "title": "Переносите сессию между машинами.",
+                        "wideTitle": "Переносите активную сессию\nна другую машину.",
+                        "body": "Передайте активную сессию на другой компьютер и продолжите с того места, где остановились, при желании вместе с рабочим деревом.",
+                        "alt": "Абстрактное изображение-заглушка для переноса сессии между машинами."
+                    },
                     "pets": {
                         "title": "Никогда не оставайтесь одни. Meet Pets.",
                         "wideTitle": "Никогда не оставайтесь одни.\nПознакомьтесь с Pets.",
@@ -11522,6 +11520,8 @@ settingsSession: {
       fallbackValue: 'Содержимое нативного терминала недоступно. Используйте xterm WebView для доступного содержимого терминала.',
       focusAction: 'Перейти к терминалу',
       copySelectionAction: 'Копировать выделение',
+      selectAllAction: 'Выбрать весь вывод терминала',
+      openLinkAction: 'Открыть выбранную ссылку',
     },
     dockMenuA11y: "Закрепить терминал",
     largePasteTitle: "Вставить большой ввод в терминал?",

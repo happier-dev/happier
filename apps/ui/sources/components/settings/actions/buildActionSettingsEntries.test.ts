@@ -88,6 +88,35 @@ describe('buildActionSettingsEntries', () => {
         expect(review?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
     });
 
+    it('keeps present-user operations discoverable without pretending automation can execute them', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+
+        const approvalDecision = entries.find((entry) => entry.actionId === 'approval.request.decide');
+        expect(approvalDecision).toBeTruthy();
+        for (const targetId of ['api', 'plugin'] as const) {
+            expect(approvalDecision?.targets.find((target) => target.id === targetId)).toMatchObject({
+                state: 'unavailable',
+                reasonKey: 'settingsActions.reasons.presentUserRequired',
+            });
+        }
+        expect(approvalDecision?.targets.find((target) => target.id === 'contextual_ui')).toMatchObject({
+            state: 'on',
+        });
+    });
+
     it('keeps an Inspector-shaped contributed action visible with API and trusted-plugin controls', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
 

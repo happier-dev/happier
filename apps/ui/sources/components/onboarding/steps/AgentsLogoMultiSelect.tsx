@@ -10,6 +10,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 export type AgentsLogoMultiSelectEntry = Readonly<{
     agentId: string;
+    icon?: React.ReactNode;
     iconAgentId?: AgentId | null;
     setupAgentId?: AgentId | null;
     iconName?: string | null;
@@ -75,6 +76,7 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
             // A logo tile carries no name text, so an agent whose icon cannot resolve
             // would render an empty placeholder tile — skip those entries entirely.
             return entries.filter((entry) => {
+                if (entry.icon) return true;
                 if (!entry.iconAgentId) return Boolean(entry.iconName);
                 return getAgentIconSvgXml(entry.iconAgentId, theme) != null
                     || getAgentIconSource(entry.iconAgentId) != null;
@@ -110,7 +112,7 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
                         }}
                         style={[styles.tile, isSelected ? styles.tileSelected : null]}
                     >
-                        {entry.iconAgentId ? (
+                        {entry.icon ?? (entry.iconAgentId ? (
                             <AgentIcon agentId={entry.iconAgentId} size={22} />
                         ) : (
                             <Icon
@@ -118,7 +120,7 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
                                 size={20}
                                 color={isSelected ? theme.colors.text.primary : theme.colors.text.secondary}
                             />
-                        )}
+                        ))}
                         {isReady ? (
                             <StatusDot
                                 testID={`${props.testID}-provider-${entry.agentId}-ready-dot`}

@@ -199,6 +199,8 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         inspectComposerContent: async () => unavailable(),
         releaseComposerContent: async () => unavailable(),
         selectActionInput: async () => unavailable(),
+        openNewSession: async () => unavailable(),
+        settleEphemeralInput: async () => unavailable(),
         executeAction: executeAction as PluginUiHostApi['executeAction'],
         readResource: async () => unavailable(),
         statOpenableContent: async () => unavailable(),

@@ -98,6 +98,62 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(third).not.toBe(second);
     });
 
+    it('invalidates when plugin-owned external-session runtime evidence changes', () => {
+        const selector = createActivityAttentionStoreSourceSelector();
+        const baseState = storage.getState();
+        const firstSession = createSessionFixture({
+            id: 'external-runtime-evidence-change',
+            metadata: {
+                path: '/Users/tester/project',
+                host: 'tester.local',
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    machineId: 'machine-1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome', home: 'user' },
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'appServer' },
+                    },
+                    linkData: { checkpoint: 'before' },
+                },
+            },
+        });
+        const secondSession = createSessionFixture({
+            ...firstSession,
+            metadata: {
+                path: '/Users/tester/project',
+                host: 'tester.local',
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    machineId: 'machine-1',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome', home: 'user' },
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'acp' },
+                    },
+                    linkData: { checkpoint: 'after' },
+                },
+            },
+        });
+
+        const first = selector({
+            ...baseState,
+            sessions: { [firstSession.id]: firstSession },
+        });
+        const second = selector({
+            ...baseState,
+            sessions: { [secondSession.id]: secondSession },
+        });
+
+        expect(second).not.toBe(first);
+    });
+
     it('invalidates layout-v1 activity only when the owner metadata view changes', () => {
         const selector = createActivityAttentionStoreSourceSelector();
         const baseState = storage.getState();

@@ -2,7 +2,7 @@ import React from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 
-import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId, resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -21,7 +21,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -108,7 +108,7 @@ export default function ResumePickerScreen() {
             agentType: params.agentType,
         });
     }, [params.agentType, params.backendTarget, params.backendTargetKey]);
-    const effectiveBackendTarget = React.useMemo<BackendTargetRefV2>(() => {
+    const effectiveBackendTarget = React.useMemo<PersistedBackendTargetRefV2>(() => {
         return resolveResumePickerBackendTarget({
             tempBackendTarget: tempSessionData?.backendTarget ?? null,
             routeBackendTarget,
@@ -131,13 +131,19 @@ export default function ResumePickerScreen() {
             return selectedBackendEntry.catalogAgentId;
         }
         if (explicitSelectedBuiltInAgentId) {
+            if (effectiveBackendTarget.kind === 'agent') {
+                return resolveBundledAgentIdFromContributionIdentity(effectiveBackendTarget.identity)
+                    ?? explicitSelectedBuiltInAgentId;
+            }
             return resolvePersistedAgentIdForBackendTarget({
                 backendTarget: effectiveBackendTarget,
                 persistedAgentId: params.agentType ?? settings.lastUsedAgent,
                 selectedBuiltInAgentId: explicitSelectedBuiltInAgentId,
             });
         }
-        return resolveCatalogAgentIdForBackendTarget(effectiveBackendTarget);
+        return effectiveBackendTarget.kind === 'agent'
+            ? resolveBundledAgentIdFromContributionIdentity(effectiveBackendTarget.identity)
+            : resolveCatalogAgentIdForBackendTarget(effectiveBackendTarget);
     }, [effectiveBackendTarget, explicitSelectedBuiltInAgentId, params.agentType, selectedBackendEntry?.catalogAgentId, settings.lastUsedAgent]);
     const operationalAgentId = React.useMemo(() => {
         return resolveBackendTargetOperationalAgentId({

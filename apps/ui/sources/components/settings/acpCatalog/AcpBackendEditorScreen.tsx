@@ -6,7 +6,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     AcpBackendDefinitionV1Schema,
     type AcpBackendDefinitionV1,
-    type AcpCatalogAuthParserV1,
     type AcpCatalogAuthSupportV1,
     type AcpCatalogSupportHintV1,
 } from '@happier-dev/protocol';
@@ -26,7 +25,6 @@ import { upsertAcpBackendDefinitionV1 } from '@/sync/domains/acpCatalog/acpCatal
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { createDraftAcpBackend } from './createDraftAcpBackend';
 import { parseMultilineField, stringifyMultilineField } from './multilineFields';
-import { resolveAcpBackendTransportProfile } from './resolveAcpBackendTransportProfile';
 import { Icon } from '@/components/ui/icons/Icon';
 
 const authSupportOptions: DropdownMenuItem[] = [
@@ -34,13 +32,6 @@ const authSupportOptions: DropdownMenuItem[] = [
     { id: 'status_only', title: 'Status only' },
     { id: 'manual_only', title: 'Manual only' },
     { id: 'unsupported', title: 'Unsupported' },
-];
-
-const authParserOptions: DropdownMenuItem[] = [
-    { id: 'unknown', title: 'Unknown' },
-    { id: 'exitCodeOnly', title: 'Exit code only' },
-    { id: 'stdoutNonEmpty', title: 'Stdout non-empty' },
-    { id: 'kiroWhoamiJson', title: 'Kiro whoami JSON' },
 ];
 
 const supportHintOptions: DropdownMenuItem[] = [
@@ -97,7 +88,6 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     }, [existing]);
 
     const [authSupportMenuOpen, setAuthSupportMenuOpen] = React.useState(false);
-    const [authParserMenuOpen, setAuthParserMenuOpen] = React.useState(false);
     const [supportsModesMenuOpen, setSupportsModesMenuOpen] = React.useState(false);
     const [supportsModelsMenuOpen, setSupportsModelsMenuOpen] = React.useState(false);
     const [supportsConfigOptionsMenuOpen, setSupportsConfigOptionsMenuOpen] = React.useState(false);
@@ -116,10 +106,6 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
             title: draft.title.trim(),
             description: draft.description?.trim() ? draft.description.trim() : undefined,
             command: draft.command.trim(),
-            transportProfile: resolveAcpBackendTransportProfile({
-                command: draft.command,
-                auth: draft.auth,
-            }),
             auth: draft.auth
                 ? {
                     ...draft.auth,
@@ -131,8 +117,6 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                             args: draft.auth.loginCommand.args,
                         }
                         : undefined,
-                    statusCommand: draft.auth.statusCommand?.length ? draft.auth.statusCommand : undefined,
-                    parser: draft.auth.parser,
                 }
                 : undefined,
         });
@@ -246,23 +230,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                         <TextInput style={styles.textInput} value={draft.auth?.loginCommand?.command ?? ''} autoCapitalize="none" autoCorrect={false} onChangeText={(text) => updateDraft((current) => withUpdatedAt({ ...current, auth: { ...(current.auth ?? { support: 'unsupported' }), loginCommand: { command: text, args: current.auth?.loginCommand?.args ?? [] } } }))} />
                         <Text style={styles.fieldLabel}>{t('settings.acpCatalogLoginArgs')}</Text>
                         <TextInput style={styles.textInput} value={stringifyMultilineField(draft.auth?.loginCommand?.args)} multiline onChangeText={(text) => updateDraft((current) => withUpdatedAt({ ...current, auth: { ...(current.auth ?? { support: 'unsupported' }), loginCommand: { command: current.auth?.loginCommand?.command ?? '', args: parseMultilineField(text) } } }))} />
-                        <Text style={styles.fieldLabel}>{t('settings.acpCatalogStatusCommand')}</Text>
-                        <TextInput style={styles.textInput} value={stringifyMultilineField(draft.auth?.statusCommand)} multiline onChangeText={(text) => updateDraft((current) => withUpdatedAt({ ...current, auth: { ...(current.auth ?? { support: 'unsupported' }), statusCommand: parseMultilineField(text) } }))} />
                     </View>
-                    <DropdownMenu
-                        open={authParserMenuOpen}
-                        onOpenChange={setAuthParserMenuOpen}
-                        variant="selectable"
-                        search={false}
-                        selectedId={draft.auth?.parser ?? 'unknown'}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        itemTrigger={{ title: t('settings.acpCatalogAuthParser'), subtitle: draft.auth?.parser ?? 'unknown', icon: <Icon name="chart-line" size={29} color={theme.colors.accent.orange} /> }}
-                        items={authParserOptions}
-                        onSelect={(id) => updateDraft((current) => withUpdatedAt({ ...current, auth: { ...(current.auth ?? { support: 'unsupported' }), parser: id as AcpCatalogAuthParserV1 } }))}
-                    />
                 </ItemGroup>
 
                 <ItemGroup title={t('settings.acpCatalogCapabilities')}>

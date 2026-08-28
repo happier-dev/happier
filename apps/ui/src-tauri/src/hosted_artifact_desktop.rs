@@ -317,6 +317,7 @@ pub enum HostedArtifactRegistrationResult {
 pub struct HostedArtifactOpenViewRequest {
     view_id: String,
     token: String,
+    title: String,
     initial_path_and_query: String,
 }
 
@@ -1888,6 +1889,17 @@ impl WryHostedArtifactView {
         #[cfg(target_os = "macos")]
         {
             let native_webview = webview.webview();
+            let accessibility_title = NSString::from_str(&request.title);
+            // The hosted guest may set or change its own document title, but
+            // that is not a substitute for the host-owned plugin/surface
+            // identity. Name the native WKWebView boundary itself before it
+            // enters the accessibility tree.
+            unsafe {
+                let _: () = msg_send![
+                    &*native_webview,
+                    setAccessibilityLabel: &*accessibility_title
+                ];
+            }
             let view_id_for_history = request.view_id.clone();
             let window_for_history = window.clone();
             let history_observer = HostedArtifactHistoryObserver::new(
@@ -2332,6 +2344,25 @@ mod tests {
                 "X-Content-Type-Options": "nosniff"
             }
         })
+    }
+
+    #[test]
+    fn open_view_request_requires_and_preserves_the_host_owned_accessible_title() {
+        let request = serde_json::from_value::<HostedArtifactOpenViewRequest>(json!({
+            "viewId": "hpa_view_test",
+            "token": "hpat_test_token",
+            "title": "Plugin preview",
+            "initialPathAndQuery": "/"
+        }))
+        .expect("hosted Artifact open request should admit its resolved title");
+        assert_eq!(request.title, "Plugin preview");
+
+        assert!(serde_json::from_value::<HostedArtifactOpenViewRequest>(json!({
+            "viewId": "hpa_view_test",
+            "token": "hpat_test_token",
+            "initialPathAndQuery": "/"
+        }))
+        .is_err());
     }
 
     #[test]

@@ -126,6 +126,7 @@ function createSelection(params: Readonly<{
             pickerRows,
             state,
             selectedTarget: target,
+            selectedTargetServerMatchesActiveAccount: false,
             canExecute: params.availability === 'online' && candidate.observation === 'live',
             selectTarget,
             clearTarget: vi.fn(),

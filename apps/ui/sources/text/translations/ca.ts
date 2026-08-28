@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1041,6 +1042,7 @@ export const ca = {
     },
 
     automations: {
+        ...automationTriggerSetTranslations.ca,
         unsupportedReference: ({ reference }: { reference: string }) =>
             `Les automatitzacions només desen el text del missatge, així que ${reference} ja no apuntaria al que has triat. Elimina-ho del missatge o menciona una ruta de fitxer.`,
         list: {
@@ -1048,7 +1050,8 @@ export const ca = {
             cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ''}${timezone ? ` (${timezone})` : ''}`,
             schedule: 'Programació',
             event: ({ eventId }: { eventId: string }) => `Esdeveniment: ${eventId}`,
-            manual: 'Manual',
+            sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Quan acabi un torn · ${sessionId}`,
+            noAutomaticTriggers: 'No hi ha activadors automàtics',
             noNextRun: 'Sense propera execució',
             nextRun: ({ time }: { time: string }) => `Propera: ${time}`,
             nextRunPending: 'Propera execució pendent',
@@ -1099,69 +1102,17 @@ export const ca = {
                 cronHelpText:
                     'Cron estàndard de 5 camps: minut hora dia-del-mes mes dia-de-la-setmana.',
             },
-            sentence: {
-                run: 'Executa',
-                every: 'cada',
-                onSchedule: 'segons la programació',
-                runEvery: 'Executa cada',
-                minutes: 'minuts',
-                presets: 'Predefinits',
-                intervalUnits: {
-                    minutes: 'Minuts',
-                    hours: 'Hores',
-                    days: 'Dies',
-                },
-                cronFieldGuide: {
-                    minute: 'Minut',
-                    hour: 'Hora',
-                    dayOfMonth: 'Dia',
-                    month: 'Mes',
-                    weekday: 'Setmana',
-                },
-                useCron: 'Fes servir una expressió cron',
-                useInterval: 'Canvia a interval',
-                addNotes: 'Afegeix notes',
-                notes: 'NOTES',
-                localTimezone: 'hora local',
-                scheduleControlA11y: 'Edita la programació de l’automatització',
-                intervalValue: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} dia${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return '1 hora';
-                    if (minutes % 60 === 0) return `${minutes / 60} hores`;
-                    return `${minutes} minut${minutes === 1 ? '' : 's'}`;
-                },
-                intervalCadence: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `cada ${minutes / (24 * 60)} dia${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return 'cada hora';
-                    if (minutes % 60 === 0) return `cada ${minutes / 60} hores`;
-                    return `cada ${minutes} minut${minutes === 1 ? '' : 's'}`;
-                },
-                cronPresets: {
-                    weekdays9am: 'Dies feiners a les 9:00',
-                    hourly: 'Cada hora',
-                    monday9am: 'Dilluns a les 9:00',
-                    dailyMidnight: 'Cada dia a mitjanit',
-                },
-                cronCadences: {
-                    weekdays9am: 'els dies feiners a les 9:00',
-                    hourly: 'cada hora',
-                    monday9am: 'els dilluns a les 9:00',
-                    dailyMidnight: 'cada dia a mitjanit',
-                },
-                cronCadenceExpression: ({ expression }: { expression: string }) => `amb la programació cron ${expression}`,
-                timezone: ({ timezone }: { timezone: string }) => `Zona horària: ${timezone}`,
-            },
         },
         session: {
             emptyTitle: 'Cap automatització',
-            emptyBody: 'Afegeix una automatització per posar a la cua missatges programats en aquesta sessió.',
+            emptyBody: 'Afegeix una automatització per executar feina en aquesta sessió quan s’activi qualsevol dels seus desencadenants.',
             addAutomation: 'Afegeix automatització',
             failedToLoad: 'No s\'han pogut carregar les automatitzacions.',
         },
         screen: {
             emptyTitle: 'Encara no hi ha automatitzacions',
             emptyBody:
-                'Crea\'n una des del flux de Sessió nova per executar sessions programades a les teves màquines.',
+                'Crea\'n una des de Sessió nova i afegeix programacions, esdeveniments o desencadenants de torn exactes.',
             createAutomationA11y: 'Crea automatització',
         },
         settings: {
@@ -1184,7 +1135,7 @@ export const ca = {
             overviewGroupTitle: 'Resum',
             overview: {
                 nameTitle: 'Nom',
-                scheduleTitle: 'Programació',
+                triggersTitle: 'Programació',
                 statusTitle: 'Estat',
                 nextRunTitle: 'Propera execució',
             },
@@ -1197,6 +1148,11 @@ export const ca = {
                 watcherUnwatched: 'Sense observador',
                 endpointTitle: 'Punt final de webhook',
                 endpointObservingSince: ({ time }: { time: string }) => `Rep lliuraments des de ${time}`,
+                transportTitle: "How events arrive",
+                transportCheckpointedPull: "Polling",
+                transportDurablePush: "Webhook",
+                disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+                disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
                 sourceStatusUnreported: "A l'espera del primer informe",
                 sourceStatusUnavailable: "Estat de la font no disponible",
                 sourceCatalogStatusUnavailable: 'Actualitat de la font no disponible',
@@ -1208,10 +1164,6 @@ export const ca = {
             },
             actionsGroupTitle: 'Accions',
             runNowTitle: 'Executa ara',
-            runNowQueuedBadge: 'A la cua',
-            runNowQueuedLine: 'A la cua.',
-            runNowQueuedSubtitle:
-                'A la cua. El dimoni assignat la recollirà quan estigui disponible.',
             pauseAutomation: 'Pausa l\'automatització',
             resumeAutomation: 'Reprèn l\'automatització',
             editAutomation: 'Edita automatització',
@@ -1234,12 +1186,33 @@ export const ca = {
             assignmentsUpdateFailed: 'No s\'han pogut actualitzar les assignacions de màquina.',
             recentRunsTitle: 'Execucions recents',
             loadMoreRuns: 'Carrega més execucions',
+            trigger: {
+                identity: ({ id, revision }: { id: string; revision: number }) => `Activador ${id} · revisió ${revision}`,
+                sourceSession: 'Sessió d’origen',
+                sourceTurn: 'Torn d’origen exacte',
+                run: "Execució coincident",
+                status: {
+                    waiting: "Esperant aquest torn",
+                    paused: "En pausa",
+                    triggered: "Activada",
+                    running: "En execució",
+                    finished: "Finalitzada",
+                    sourceFailed: "El torn d'origen ha fallat",
+                    sourceCancelled: "El torn d'origen s'ha cancel·lat",
+                    sourceUnavailable: "Origen no disponible",
+                },
+            },
             runMeta: {
-                originTitle: 'Origen',
-                origin: {
-                    scheduled: 'Programada',
+                triggerIdentityTitle: 'Identitat de l’activador',
+                triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · revisió ${revision}`,
+                triggerRetired: 'Activador retirat',
+                triggerRetiredSubtitle: 'Aquesta execució conserva la seva causa immutable encara que l’activador ja no formi part de l’automatització.',
+                causeTitle: 'Origen',
+                cause: {
+                    schedule: 'Programada',
                     manual: 'Manual',
                     pluginEvent: 'Esdeveniment',
+                    sessionLifecycle: 'Torn de sessió completat',
                     conversation: 'Conversació',
                 },
                 state: {
@@ -1260,9 +1233,9 @@ export const ca = {
                 admitted: ({ time }: { time: string }) => `Admesa: ${time}`,
                 occurrenceTitle: 'Ocurrència',
                 sourceTitle: 'Font d\'observació',
+                eventReferenceTitle: 'Referència de l\'esdeveniment',
                 scheduled: ({ time }: { time: string }) => `Programada: ${time}`,
                 updated: ({ time }: { time: string }) => `Actualitzada: ${time}`,
-                contentRemoved: 'Contingut de l’execució eliminat',
                 error: ({ message }: { message: string }) => `Error: ${message}`,
                 attemptTitle: 'Intent',
                 attempt: ({ attempt }: { attempt: number }) => `Intent ${attempt}`,
@@ -2640,6 +2613,8 @@ export const ca = {
     },
 
     connectedServices: {
+        accountScopeMismatchTitle: 'Canvia de compte del servidor per continuar',
+        accountScopeMismatchDescription: 'Aquesta màquina pertany al compte d’un altre servidor. Canvia a aquest compte del servidor per gestionar-ne els comptes connectats.',
         fallbackName: 'Servei connectat',
         serviceNames: {
             claudeSubscription: 'Subscripció de Claude',
@@ -6771,11 +6746,11 @@ deps: {
             turnDiffRecap: 'Recap dels canvis d’aquest torn',
         },
         askUserQuestion: {
-            claudeDialogNotice: {
-                header: 'Diàleg de Claude',
-                question: 'Claude mostra un diàleg. Obre el terminal per revisar-lo i triar com continuar.',
-                openTerminal: 'Obre el terminal',
-                description: 'Revisa i respon el diàleg al terminal de Claude.',
+            attachedTerminalNotice: {
+                header: 'Diàleg del terminal',
+                question: 'L’agent mostra un diàleg. Obre el terminal adjunt per revisar-lo i triar com continuar.',
+                openTerminal: 'Obre el terminal adjunt',
+                description: 'Revisa i respon el diàleg al terminal adjunt.',
             },
             submit: 'Envia resposta',
             multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntes' })}`,
@@ -8444,6 +8419,7 @@ deps: {
             sessionHandoffFeature: 'Activa el suport de traspàs de sessió per utilitzar aquesta acció.',
             notAvailableInThisApp: 'Aquest destí encara no es mostra en aquest client.',
             requiredByAgentPolicy: 'La política exigeix aprovació per a l\'agent. Aquesta acció sempre pregunta primer.',
+            presentUserRequired: 'Aquesta operació requereix que siguis present a Happier. Els tokens d’API i els connectors de confiança la poden descobrir, però no executar.',
         },
         targets: {
             session_header: {
@@ -8507,12 +8483,12 @@ deps: {
                 subtitle: 'Disponible a través de la superfície CLI de control de sessió.',
             },
             api: {
-                title: 'API',
-                subtitle: 'Disponible mitjançant l’API externa d’accions.',
+                title: 'API externa i SDK',
+                subtitle: 'Disponible per als tokens d’API mitjançant HTTP i l’SDK.',
             },
             plugin: {
                 title: 'Connectors de confiança',
-                subtitle: 'Disponible per als connectors de confiança com a acció.',
+                subtitle: 'Disponible per als connectors integrats i instal·lats de confiança.',
             },
             contextual_ui: {
                 title: 'IU contextual',
@@ -10207,6 +10183,16 @@ settingsSession: {
         logout: 'Tanca la sessió',
         logoutSubtitle: 'Tanca la sessió i esborra les dades locals',
         logoutConfirm: 'Estàs segur que vols tancar la sessió? Assegura\'t d\'haver fet una còpia de seguretat de la teva clau secreta!',
+        deleteAccount: "Suprimeix el compte",
+        deleteAccountSubtitle: "Suprimeix permanentment aquest compte i les seves dades del servidor",
+        deleteAccountConfirmTitle: "Vols suprimir aquest compte?",
+        deleteAccountConfirmBody: "Això suprimeix permanentment les dades del compte emmagatzemades al servidor i no es pot desfer. Escriu DELETE per continuar.",
+        deleteAccountInvalidTitle: "La confirmació no coincideix",
+        deleteAccountInvalidBody: "Escriu exactament DELETE per continuar.",
+        deleteAccountFailedTitle: "Supressió no confirmada",
+        deleteAccountFailed: "Happier no ha pogut confirmar la supressió. S’ha conservat la sessió local perquè puguis tornar-ho a provar.",
+        deleteAccountCleanupFailedTitle: "Compte suprimit",
+        deleteAccountCleanupFailed: "El servidor ha confirmat la supressió, però aquest dispositiu no ha pogut acabar d’esborrar les dades locals. Torna a obrir Happier i tanca la sessió si el compte encara apareix.",
         encryptionUpdateFailed: 'No s\'ha pogut actualitzar la configuració de xifrat',
         secretKeyMissing: 'Clau secreta no disponible. Restaura el teu compte primer.',
         restoreRequiredTitle: 'Cal restaurar',
@@ -10388,6 +10374,18 @@ settingsSession: {
                         "body": "El teu codi, prompts i contingut de sessió es xifren al dispositiu abans d’arribar a cap servidor. Privat per disseny. Obert per defecte.",
                         "alt": "Imatge abstracta de marcador per a privadesa i autoallotjament."
                     },
+                    "worktrees": {
+                        "title": "Un worktree per sessió. O no.",
+                        "wideTitle": "Un worktree per sessió.\nO no.",
+                        "body": "Inicia una sessió al seu propi worktree de Git perquè diversos agents treballin el mateix repositori sense trepitjar-se, o comença a la carpeta on ja ets.",
+                        "alt": "Imatge abstracta de marcador de posició per als worktrees de Git."
+                    },
+                    "handoff": {
+                        "title": "Mou una sessió entre màquines.",
+                        "wideTitle": "Mou una sessió en curs\na una altra màquina.",
+                        "body": "Passa una sessió en curs a un altre ordinador i continua on s’havia quedat, enduent-te l’arbre de treball si vols.",
+                        "alt": "Imatge abstracta de marcador de posició per moure una sessió entre màquines."
+                    },
                     "pets": {
                         "title": "No et sentis mai sol. Coneix Pets.",
                         "wideTitle": "No et sentis mai sol.\nConeix Pets.",
@@ -10480,6 +10478,8 @@ settingsSession: {
             fallbackValue: 'El contingut del terminal natiu no està disponible. Utilitza la WebView xterm per accedir al contingut del terminal.',
             focusAction: 'Posa el focus al terminal',
             copySelectionAction: 'Copia la selecció',
+            selectAllAction: 'Selecciona tota la sortida del terminal',
+            openLinkAction: "Obre l'enllaç seleccionat",
         },
         dockMenuA11y: 'Acoblar terminal',
         largePasteTitle: 'Vols enganxar una entrada gran al terminal?',

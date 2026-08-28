@@ -639,7 +639,11 @@ impl InnerWebView {
       webview.setNavigationDelegate(Some(proto_navigation_policy_delegate));
 
       let ui_delegate: Retained<WryWebViewUIDelegate> =
-        WryWebViewUIDelegate::new(mtm, attributes.new_window_req_handler);
+        WryWebViewUIDelegate::new(
+          mtm,
+          attributes.new_window_req_handler,
+          attributes.media_capture_enabled,
+        );
       let proto_ui_delegate = ProtocolObject::from_ref(&*ui_delegate);
       webview.setUIDelegate(Some(proto_ui_delegate));
 

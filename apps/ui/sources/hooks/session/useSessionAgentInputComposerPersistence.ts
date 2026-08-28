@@ -15,6 +15,7 @@ import {
 import { structuredInputMentionSurvivesText } from '@/components/sessions/agentInput/structuredInputMentions';
 import {
     ComposerStructuredInputMentionsSchema,
+    parseComposerStructuredInputMentionsForText,
     type ComposerStructuredInputMention,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import {
@@ -133,16 +134,18 @@ function readStructuredMentions(
     owner: AgentInputDraftOwner | null,
     text: string | undefined,
 ): readonly ComposerStructuredInputMention[] {
-    if (!owner || owner.kind !== 'session') return [];
+    if (!owner || owner.kind !== 'session') {
+        return [];
+    }
     const value = scope
         ? getSessionDraftSnapshot(scope, { kind: 'session', sessionId: owner.sessionId })
             ?.document.composer.mentions.value
         : [];
+    if (typeof text === 'string') {
+        return parseComposerStructuredInputMentionsForText(value, text).mentions;
+    }
     const parsed = ComposerStructuredInputMentionsSchema.safeParse(value);
-    return filterMentionsForText(
-        parsed.success ? parsed.data : [],
-        text,
-    );
+    return filterMentionsForText(parsed.success ? parsed.data : [], text);
 }
 
 type ScopedComposerPersistenceState = Readonly<{

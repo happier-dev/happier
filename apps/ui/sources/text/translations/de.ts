@@ -13,6 +13,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1017,6 +1018,7 @@ export const de: TranslationStructure = {
     },
 
     automations: {
+        ...automationTriggerSetTranslations.de,
         unsupportedReference: ({ reference }: { reference: string }) =>
             `Automationen speichern nur den Nachrichtentext, deshalb ${reference} würde nicht mehr auf das zeigen, was du gewählt hast. Nimm es aus der Nachricht oder nenn stattdessen einen Dateipfad.`,
         openA11y: 'Automationen öffnen',
@@ -1025,7 +1027,8 @@ export const de: TranslationStructure = {
             cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ''}${timezone ? ` (${timezone})` : ''}`,
             schedule: 'Zeitplan',
             event: ({ eventId }: { eventId: string }) => `Ereignis: ${eventId}`,
-            manual: 'Manuell',
+            sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Wenn ein Turn endet · ${sessionId}`,
+            noAutomaticTriggers: 'Keine automatischen Auslöser',
             noNextRun: 'Kein nächster Lauf',
             nextRun: ({ time }: { time: string }) => `Nächster: ${time}`,
             nextRunPending: 'Nächster Lauf steht aus',
@@ -1130,69 +1133,17 @@ export const de: TranslationStructure = {
                 maximumObservationAgePlaceholder: '30000',
                 maximumObservationAgeInvalid: 'Gib eine ganze Zahl in Millisekunden ein.',
             },
-            sentence: {
-                run: 'Ausführen',
-                every: 'alle',
-                onSchedule: 'nach Zeitplan',
-                runEvery: 'Ausführen alle',
-                minutes: 'Minuten',
-                presets: 'Presets',
-                intervalUnits: {
-                    minutes: 'Minuten',
-                    hours: 'Stunden',
-                    days: 'Tage',
-                },
-                cronFieldGuide: {
-                    minute: 'Minute',
-                    hour: 'Stunde',
-                    dayOfMonth: 'Tag',
-                    month: 'Monat',
-                    weekday: 'Wochentag',
-                },
-                useCron: 'Stattdessen Cron-Ausdruck verwenden',
-                useInterval: 'Zu Intervall wechseln',
-                addNotes: 'Notizen hinzufügen',
-                notes: 'NOTIZEN',
-                localTimezone: 'Ortszeit',
-                scheduleControlA11y: 'Zeitplan der Automation bearbeiten',
-                intervalValue: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} Tag${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return '1 Stunde';
-                    if (minutes % 60 === 0) return `${minutes / 60} Stunden`;
-                    return `${minutes} Minute${minutes === 1 ? '' : 's'}`;
-                },
-                intervalCadence: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `alle ${minutes / (24 * 60)} Tag${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return 'jede Stunde';
-                    if (minutes % 60 === 0) return `alle ${minutes / 60} Stunden`;
-                    return `alle ${minutes} Minute${minutes === 1 ? '' : 's'}`;
-                },
-                cronPresets: {
-                    weekdays9am: '9 Uhr wochentags',
-                    hourly: 'Jede Stunde',
-                    monday9am: 'Montag 9 Uhr',
-                    dailyMidnight: 'Täglich um Mitternacht',
-                },
-                cronCadences: {
-                    weekdays9am: 'wochentags um 9 Uhr',
-                    hourly: 'jede Stunde',
-                    monday9am: 'montags um 9 Uhr',
-                    dailyMidnight: 'täglich um Mitternacht',
-                },
-                cronCadenceExpression: ({ expression }: { expression: string }) => `nach Cron-Zeitplan ${expression}`,
-                timezone: ({ timezone }: { timezone: string }) => `Zeitzone: ${timezone}`,
-            },
         },
         session: {
             emptyTitle: 'Keine Automationen',
-            emptyBody: 'Füge eine Automation hinzu, um geplante Nachrichten in diese Session einzureihen.',
+            emptyBody: 'Füge eine Automation hinzu, die bei einem ihrer Trigger Arbeit in dieser Session ausführt.',
             addAutomation: 'Automation hinzufügen',
             addEventAutomation: 'Ereignis-Automation hinzufügen',
             failedToLoad: 'Automationen konnten nicht geladen werden.',
         },
         screen: {
             emptyTitle: 'Noch keine Automationen',
-            emptyBody: 'Erstelle eine im Ablauf „Neue Session“, um geplante Sessions auf deinen Rechnern laufen zu lassen.',
+            emptyBody: 'Erstelle eine über „Neue Session“ und füge Zeitpläne, Events oder exakte Turn-Trigger hinzu.',
             createAutomationA11y: 'Automation erstellen',
         },
         settings: {
@@ -1215,7 +1166,7 @@ export const de: TranslationStructure = {
             overviewGroupTitle: 'Überblick',
             overview: {
                 nameTitle: 'Name',
-                scheduleTitle: 'Zeitplan',
+                triggersTitle: 'Zeitplan',
                 statusTitle: 'Status',
                 nextRunTitle: 'Nächster Run',
             },
@@ -1228,6 +1179,11 @@ export const de: TranslationStructure = {
                 watcherUnwatched: 'Nicht beobachtet',
                 endpointTitle: 'Webhook-Endpunkt',
                 endpointObservingSince: ({ time }: { time: string }) => `Empfängt Zustellungen seit ${time}`,
+                transportTitle: "How events arrive",
+                transportCheckpointedPull: "Polling",
+                transportDurablePush: "Webhook",
+                disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+                disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
                 sourceStatusUnreported: 'Wartet auf die erste Meldung',
                 sourceStatusUnavailable: 'Quellenstatus nicht verfügbar',
                 sourceCatalogStatusUnavailable: 'Quellenaktualität nicht verfügbar',
@@ -1239,9 +1195,6 @@ export const de: TranslationStructure = {
             },
             actionsGroupTitle: 'Aktionen',
             runNowTitle: 'Jetzt ausführen',
-            runNowQueuedBadge: 'In Warteschlange',
-            runNowQueuedLine: 'In der Warteschlange.',
-            runNowQueuedSubtitle: 'In der Warteschlange. Der zugewiesene Daemon übernimmt sie, sobald er verfügbar ist.',
             pauseAutomation: 'Automation pausieren',
             resumeAutomation: 'Automation fortsetzen',
             editAutomation: 'Automation bearbeiten',
@@ -1263,12 +1216,33 @@ export const de: TranslationStructure = {
             assignmentsUpdateFailed: 'Rechnerzuweisungen konnten nicht aktualisiert werden.',
             recentRunsTitle: 'Letzte Runs',
             loadMoreRuns: 'Mehr Runs laden',
+            trigger: {
+                identity: ({ id, revision }: { id: string; revision: number }) => `Auslöser ${id} · Revision ${revision}`,
+                sourceSession: 'Quell-Session',
+                sourceTurn: 'Exakter Quell-Turn',
+                run: "Zugehöriger Lauf",
+                status: {
+                    waiting: "Wartet auf diesen Turn",
+                    paused: "Pausiert",
+                    triggered: "Ausgelöst",
+                    running: "Wird ausgeführt",
+                    finished: "Abgeschlossen",
+                    sourceFailed: "Quell-Turn fehlgeschlagen",
+                    sourceCancelled: "Quell-Turn abgebrochen",
+                    sourceUnavailable: "Quelle nicht verfügbar",
+                },
+            },
             runMeta: {
-                originTitle: 'Herkunft',
-                origin: {
-                    scheduled: 'Geplant',
+                triggerIdentityTitle: 'Auslöseridentität',
+                triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · Revision ${revision}`,
+                triggerRetired: 'Auslöser entfernt',
+                triggerRetiredSubtitle: 'Dieser Run behält seine unveränderliche Ursache, obwohl der Auslöser nicht mehr zur Automation gehört.',
+                causeTitle: 'Herkunft',
+                cause: {
+                    schedule: 'Geplant',
                     manual: 'Manuell',
                     pluginEvent: 'Ereignis',
+                    sessionLifecycle: 'Session-Turn abgeschlossen',
                     conversation: 'Gespräch',
                 },
                 state: {
@@ -1289,9 +1263,9 @@ export const de: TranslationStructure = {
                 admitted: ({ time }: { time: string }) => `Zugelassen: ${time}`,
                 occurrenceTitle: 'Vorkommen',
                 sourceTitle: 'Beobachtungsquelle',
+                eventReferenceTitle: 'Event-Referenz',
                 scheduled: ({ time }: { time: string }) => `Geplant: ${time}`,
                 updated: ({ time }: { time: string }) => `Aktualisiert: ${time}`,
-                contentRemoved: 'Inhalt der Ausführung entfernt',
                 error: ({ message }: { message: string }) => `Fehler: ${message}`,
                 attemptTitle: 'Versuch',
                 attempt: ({ attempt }: { attempt: number }) => `Versuch ${attempt}`,
@@ -2914,6 +2888,8 @@ export const de: TranslationStructure = {
     },
 
     connectedServices: {
+        accountScopeMismatchTitle: 'Wechsle das Server-Konto, um fortzufahren',
+        accountScopeMismatchDescription: 'Diese Maschine gehört zum Konto eines anderen Servers. Wechsle zu diesem Server-Konto, um dessen verbundene Konten zu verwalten.',
         fallbackName: 'Verbundener Dienst',
         serviceNames: {
             claudeSubscription: 'Claude-Abo',
@@ -7842,11 +7818,11 @@ export const de: TranslationStructure = {
             cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
         },
         askUserQuestion: {
-            claudeDialogNotice: {
-                header: 'Claude-Dialog',
-                question: 'Claude zeigt einen Dialog. Öffne das Terminal, um ihn anzusehen und zu entscheiden, wie es weitergeht.',
-                openTerminal: 'Claude-Terminal öffnen',
-                description: 'Sieh dir den Dialog in Claudes Terminal an und beantworte ihn.',
+            attachedTerminalNotice: {
+                header: 'Terminal-Dialog',
+                question: 'Der Agent zeigt einen Dialog. Öffne das verbundene Terminal, um ihn anzusehen und zu entscheiden, wie es weitergeht.',
+                openTerminal: 'Verbundenes Terminal öffnen',
+                description: 'Sieh dir den Dialog im verbundenen Terminal an und beantworte ihn.',
             },
             submit: 'Antwort senden',
             multipleQuestions: ({ count }: { count: number }) => `${count} Fragen`,
@@ -9534,6 +9510,7 @@ export const de: TranslationStructure = {
             sessionHandoffFeature: 'Aktiviere die Unterstützung für Session-Übergaben, um diese Aktion zu nutzen.',
             notAvailableInThisApp: 'Dieses Ziel gibt es in diesem Client noch nicht.',
             requiredByAgentPolicy: 'Für den Agent ist die Freigabe per Richtlinie vorgeschrieben. Diese Aktion fragt immer zuerst.',
+            presentUserRequired: 'Dieser Vorgang erfordert deine Anwesenheit in Happier. API-Tokens und vertrauenswürdige Plugins können ihn finden, aber nicht ausführen.',
         },
         targets: {
             session_header: {
@@ -9597,12 +9574,12 @@ export const de: TranslationStructure = {
                 subtitle: 'Verfügbar über die CLI-Oberfläche zur Session-Steuerung.',
             },
             api: {
-                title: 'API',
-                subtitle: 'Über die externe Action-API verfügbar.',
+                title: 'Externe API & SDK',
+                subtitle: 'Für API-Tokens über HTTP und das SDK verfügbar.',
             },
             plugin: {
                 title: 'Vertrauenswürdige Plugins',
-                subtitle: 'Für vertrauenswürdige Plugins als Aktion verfügbar.',
+                subtitle: 'Für vertrauenswürdige integrierte und installierte Plugins verfügbar.',
             },
             contextual_ui: {
                 title: 'Kontextbezogene UI',
@@ -11610,6 +11587,16 @@ settingsSession: {
         logout: 'Abmelden',
         logoutSubtitle: 'Abmelden und lokale Daten löschen',
         logoutConfirm: 'Willst du dich wirklich abmelden? Stell sicher, dass du deinen Secret Key gesichert hast!',
+        deleteAccount: "Konto löschen",
+        deleteAccountSubtitle: "Dieses Konto und seine Daten dauerhaft von diesem Server löschen",
+        deleteAccountConfirmTitle: "Dieses Konto löschen?",
+        deleteAccountConfirmBody: "Dadurch werden die auf diesem Server gespeicherten Kontodaten dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden. Gib zum Fortfahren DELETE ein.",
+        deleteAccountInvalidTitle: "Bestätigung stimmt nicht überein",
+        deleteAccountInvalidBody: "Gib zum Fortfahren genau DELETE ein.",
+        deleteAccountFailedTitle: "Löschung nicht bestätigt",
+        deleteAccountFailed: "Happier konnte die Löschung nicht bestätigen. Deine lokale Anmeldung wurde beibehalten, damit du es erneut versuchen kannst.",
+        deleteAccountCleanupFailedTitle: "Konto gelöscht",
+        deleteAccountCleanupFailed: "Der Server hat die Löschung bestätigt, aber dieses Gerät konnte die lokalen Daten nicht vollständig entfernen. Öffne Happier erneut und melde dich ab, falls das Konto noch erscheint.",
         encryptionUpdateFailed: 'Die Verschlüsselungseinstellung ließ sich nicht ändern',
         secretKeyMissing: 'Secret Key nicht verfügbar. Stell zuerst dein Konto wieder her.',
         restoreRequiredTitle: 'Wiederherstellung nötig',
@@ -11804,6 +11791,18 @@ settingsSession: {
                         "body": "Dein Code, deine Prompts und deine Session-Inhalte werden auf deinem Gerät verschlüsselt, bevor sie einen Server erreichen. Privat by Design. Offen von Haus aus.",
                         "alt": "Abstraktes Platzhalterbild für Datenschutz und Self-Hosting."
                     },
+                    "worktrees": {
+                        "title": "Ein Worktree pro Session. Oder nicht.",
+                        "wideTitle": "Ein Worktree pro Session.\nOder nicht.",
+                        "body": "Starte eine Session in einem eigenen Git-Worktree, damit mehrere Agents am selben Repository arbeiten können, ohne sich in die Quere zu kommen – oder starte im Ordner, in dem du gerade bist.",
+                        "alt": "Abstraktes Platzhalterbild für Git-Worktrees."
+                    },
+                    "handoff": {
+                        "title": "Verschiebe eine Session auf einen anderen Rechner.",
+                        "wideTitle": "Verschiebe eine laufende Session\nauf einen anderen Rechner.",
+                        "body": "Übergib eine laufende Session an einen anderen Computer und mach dort weiter, wo sie aufgehört hat – auf Wunsch samt Arbeitsverzeichnis.",
+                        "alt": "Abstraktes Platzhalterbild für das Verschieben einer Session zwischen Rechnern."
+                    },
                     "pets": {
                         "title": "Nie mehr allein. Das sind die Pets.",
                         "wideTitle": "Nie mehr allein.\nDas sind die Pets.",
@@ -11896,6 +11895,8 @@ settingsSession: {
             fallbackValue: 'Native Terminalinhalte sind nicht verfügbar. Nutze die xterm-WebView für barrierefreie Terminalinhalte.',
             focusAction: 'Terminal fokussieren',
             copySelectionAction: 'Auswahl kopieren',
+            selectAllAction: 'Gesamte Terminalausgabe auswählen',
+            openLinkAction: 'Ausgewählten Link öffnen',
         },
         dockMenuA11y: 'Terminal andocken',
         largePasteTitle: 'Große Eingabe ins Terminal einfügen?',
@@ -12538,6 +12539,11 @@ settingsSession: {
         },
         installables: {
             screenTitle: 'Installierbares',
+            reinstall: 'Neu installieren',
+            installTitle: ({ title }: { title: string }) => `${title} installieren?`,
+            updateTitle: ({ title }: { title: string }) => `${title} aktualisieren?`,
+            reinstallTitle: ({ title }: { title: string }) => `${title} neu installieren?`,
+            installDescription: ({ title }: { title: string }) => `${title} wird auf dem ausgewählten Rechner installiert.`,
             aboutGroupTitle: 'Über',
             aboutSubtitle: 'Tools verwalten, die Happier auf diesem Rechner installieren und aktuell halten kann.',
             experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimentell)`,

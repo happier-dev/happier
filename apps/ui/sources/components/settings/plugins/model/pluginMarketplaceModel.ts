@@ -71,6 +71,33 @@ export type InstalledPluginEntry = Readonly<{
     diagnostics: readonly InstalledPluginDiagnostic[];
 }>;
 
+export type InstalledPluginLifecycleCapabilities = Readonly<{
+    canEnable: boolean;
+    canDisable: boolean;
+    canRollback: boolean;
+    canUninstall: boolean;
+    canForgetTrust: boolean;
+}>;
+
+/**
+ * Projects only lifecycle operations the canonical catalog can perform for
+ * this exact installed source. Bundled entries are host-derived, always-on
+ * inventory: presenting ordinary install mutations for them would promise a
+ * lifecycle the daemon deliberately rejects.
+ */
+export function projectInstalledPluginLifecycleCapabilities(
+    installed: InstalledPluginEntry,
+): InstalledPluginLifecycleCapabilities {
+    const userManaged = installed.source.kind !== 'bundled';
+    return Object.freeze({
+        canEnable: userManaged && !installed.enabled,
+        canDisable: userManaged && installed.enabled,
+        canRollback: userManaged && installed.rollbackAvailability === 'available',
+        canUninstall: userManaged,
+        canForgetTrust: userManaged && installed.source.trustPolicy !== 'untrusted',
+    });
+}
+
 export type DevelopmentPluginEntry = Readonly<{
     installed: InstalledPluginEntry;
     sourceRootPath: string;

@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1056,6 +1057,7 @@ export const fr = {
   },
 
   automations: {
+    ...automationTriggerSetTranslations.fr,
     unsupportedReference: ({ reference }: { reference: string }) =>
         `Les automatisations n’enregistrent que le texte du message : ${reference} ne désignerait donc plus ce que vous avez choisi. Retirez cette référence du message ou mentionnez plutôt un chemin de fichier.`,
     openA11y: "Ouvrir les automatisations",
@@ -1064,7 +1066,8 @@ export const fr = {
       cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ""}${timezone ? ` (${timezone})` : ""}`,
       schedule: "Planification",
       event: ({ eventId }: { eventId: string }) => `Événement : ${eventId}`,
-      manual: "Manuel",
+      sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `À la fin d’un tour · ${sessionId}`,
+      noAutomaticTriggers: 'Aucun déclencheur automatique',
       noNextRun: "Aucune exécution prévue",
       nextRun: ({ time }: { time: string }) => `Prochaine : ${time}`,
       nextRunPending: "Prochaine exécution en attente",
@@ -1115,70 +1118,18 @@ export const fr = {
         cronHelpText:
           "Cron standard à 5 champs : minute heure jour-du-mois mois jour-de-semaine.",
       },
-      sentence: {
-        run: "Exécuter",
-        every: "toutes les",
-        onSchedule: "selon la planification",
-        runEvery: "Exécuter toutes les",
-        minutes: "minutes",
-        presets: "Préréglages",
-        intervalUnits: {
-          minutes: "Procès-verbal",
-          hours: "Heures",
-          days: "Jours",
-        },
-        cronFieldGuide: {
-          minute: "Minutes",
-          hour: "Heure",
-          dayOfMonth: "Jour",
-          month: "Mois",
-          weekday: "Jour de semaine",
-        },
-        useCron: "Utiliser plutôt une expression cron",
-        useInterval: "Passer à l’intervalle",
-        addNotes: "Ajouter des notes",
-        notes: "NOTES",
-        localTimezone: "heure locale",
-        scheduleControlA11y: "Modifier la planification de l’automatisation",
-        intervalValue: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} jour${minutes === 24 * 60 ? "" : "s"}`;
-          if (minutes === 60) return "1 heure";
-          if (minutes % 60 === 0) return `${minutes / 60} heures`;
-          return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-        },
-        intervalCadence: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `tous les ${minutes / (24 * 60)} jour${minutes === 24 * 60 ? "" : "s"}`;
-          if (minutes === 60) return "toutes les heures";
-          if (minutes % 60 === 0) return `toutes les ${minutes / 60} heures`;
-          return `toutes les ${minutes} minute${minutes === 1 ? "" : "s"}`;
-        },
-        cronPresets: {
-          weekdays9am: "9 h en semaine",
-          hourly: "Toutes les heures",
-          monday9am: "Lundi 9 h",
-          dailyMidnight: "Tous les jours à minuit",
-        },
-        cronCadences: {
-          weekdays9am: "à 9 h en semaine",
-          hourly: "toutes les heures",
-          monday9am: "le lundi à 9 h",
-          dailyMidnight: "tous les jours à minuit",
-        },
-        cronCadenceExpression: ({ expression }: { expression: string }) => `selon la planification cron ${expression}`,
-        timezone: ({ timezone }: { timezone: string }) => `Fuseau horaire : ${timezone}`,
-      },
     },
     session: {
       emptyTitle: "Aucune automatisation",
       emptyBody:
-        "Ajoute une automatisation pour mettre des messages planifiés en file dans cette session.",
+        "Ajoute une automatisation pour exécuter du travail dans cette session dès qu’un de ses déclencheurs se produit.",
       addAutomation: "Ajouter une automatisation",
       failedToLoad: "Échec du chargement des automatisations.",
     },
     screen: {
       emptyTitle: "Pas encore d’automatisations",
       emptyBody:
-        "Crée-en une depuis le flux Nouvelle session pour lancer des sessions planifiées sur tes machines.",
+        "Crée-en une depuis Nouvelle session, puis ajoute des planifications, des événements ou des déclencheurs de tour précis.",
       createAutomationA11y: "Créer une automatisation",
     },
     settings: {
@@ -1201,7 +1152,7 @@ export const fr = {
       overviewGroupTitle: "Vue d’ensemble",
       overview: {
         nameTitle: "Nom",
-        scheduleTitle: "Planification",
+        triggersTitle: "Planification",
         statusTitle: "Statut",
         nextRunTitle: "Prochaine exécution",
       },
@@ -1214,6 +1165,11 @@ export const fr = {
         watcherUnwatched: "Non surveillé",
         endpointTitle: "Endpoint webhook",
         endpointObservingSince: ({ time }: { time: string }) => `Reçoit des livraisons depuis ${time}`,
+        transportTitle: "How events arrive",
+        transportCheckpointedPull: "Polling",
+        transportDurablePush: "Webhook",
+        disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+        disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
         sourceStatusUnreported: "En attente du premier rapport",
         sourceStatusUnavailable: "État de la source indisponible",
         sourceCatalogStatusUnavailable: "Actualité de la source indisponible",
@@ -1225,10 +1181,6 @@ export const fr = {
       },
       actionsGroupTitle: "Actions",
       runNowTitle: "Exécuter maintenant",
-      runNowQueuedBadge: "En file",
-      runNowQueuedLine: "En file.",
-      runNowQueuedSubtitle:
-        "En file. Le daemon assigné la prendra dès qu’il sera disponible.",
       pauseAutomation: "Mettre l’automatisation en pause",
       resumeAutomation: "Reprendre l’automatisation",
       editAutomation: "Modifier l’automatisation",
@@ -1252,12 +1204,33 @@ export const fr = {
         "Échec de la mise à jour des affectations de machines.",
       recentRunsTitle: "Exécutions récentes",
       loadMoreRuns: "Charger plus d’exécutions",
+      trigger: {
+          identity: ({ id, revision }: { id: string; revision: number }) => `Déclencheur ${id} · révision ${revision}`,
+          sourceSession: 'Session source',
+          sourceTurn: 'Tour source exact',
+          run: "Exécution associée",
+          status: {
+            waiting: "En attente de ce tour",
+            paused: "En pause",
+            triggered: "Déclenchée",
+            running: "En cours",
+            finished: "Terminée",
+            sourceFailed: "Le tour source a échoué",
+            sourceCancelled: "Le tour source a été annulé",
+            sourceUnavailable: "Source indisponible",
+          },
+      },
       runMeta: {
-        originTitle: "Origine",
-        origin: {
-          scheduled: "Planifié",
+        triggerIdentityTitle: 'Identité du déclencheur',
+        triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · révision ${revision}`,
+        triggerRetired: 'Déclencheur retiré',
+        triggerRetiredSubtitle: 'Cette exécution conserve sa cause immuable même si le déclencheur ne fait plus partie de l’automatisation.',
+        causeTitle: "Origine",
+        cause: {
+          schedule: "Planifié",
           manual: "Manuel",
           pluginEvent: "Événement",
+          sessionLifecycle: 'Tour de session terminé',
           conversation: "Conversation",
         },
         state: {
@@ -1278,9 +1251,9 @@ export const fr = {
         admitted: ({ time }: { time: string }) => `Admis : ${time}`,
         occurrenceTitle: "Occurrence",
         sourceTitle: "Source d’observation",
+        eventReferenceTitle: "Référence de l’événement",
                 scheduled: ({ time }: { time: string }) => `Planifiée : ${time}`,
                 updated: ({ time }: { time: string }) => `Mise à jour : ${time}`,
-                contentRemoved: 'Contenu de l’exécution supprimé',
                 error: ({ message }: { message: string }) => `Erreur : ${message}`,
         attemptTitle: "Tentative",
         attempt: ({ attempt }: { attempt: number }) => `Tentative ${attempt}`,
@@ -2968,6 +2941,8 @@ export const fr = {
   },
 
   connectedServices: {
+    accountScopeMismatchTitle: 'Change de compte serveur pour continuer',
+    accountScopeMismatchDescription: 'Cette machine appartient au compte d’un autre serveur. Passe à ce compte serveur pour gérer ses comptes connectés.',
     fallbackName: "Service connecté",
     serviceNames: {
       claudeSubscription: "Abonnement Claude",
@@ -7634,11 +7609,11 @@ export const fr = {
       turnDiffRecap: "Récapitulatif des changements survenus pendant ce tour",
     },
     askUserQuestion: {
-      claudeDialogNotice: {
-        header: 'Dialogue Claude',
-        question: 'Claude affiche un dialogue. Ouvre le terminal pour le consulter et choisir la suite.',
-        openTerminal: 'Ouvrir le terminal Claude',
-        description: 'Consulte et réponds au dialogue dans le terminal de Claude.',
+      attachedTerminalNotice: {
+        header: 'Dialogue du terminal',
+        question: 'L’agent affiche un dialogue. Ouvre le terminal joint pour le consulter et choisir la suite.',
+        openTerminal: 'Ouvrir le terminal joint',
+        description: 'Consulte le dialogue et réponds-y dans le terminal joint.',
       },
       submit: "Envoyer la réponse",
       multipleQuestions: ({ count }: { count: number }) =>
@@ -9331,6 +9306,7 @@ export const fr = {
             sessionHandoffFeature: 'Active la prise en charge du handoff de session pour utiliser cette action.',
             notAvailableInThisApp: 'Cette cible n’est pas encore exposée dans ce client.',
             requiredByAgentPolicy: 'L’approbation est requise par la politique de l’agent. Cette action demande toujours d’abord.',
+            presentUserRequired: 'Cette opération nécessite votre présence dans Happier. Les jetons API et les plugins approuvés peuvent la découvrir, mais pas l’exécuter.',
         },
         targets: {
             session_header: {
@@ -9394,12 +9370,12 @@ export const fr = {
                 subtitle: 'Disponible via la surface CLI de contrôle de session.',
             },
             api: {
-                title: 'API',
-                subtitle: 'Disponible via l’API externe des actions.',
+                title: 'API externe et SDK',
+                subtitle: 'Disponible pour les jetons API via HTTP et le SDK.',
             },
             plugin: {
                 title: 'Plugins approuvés',
-                subtitle: 'Disponible comme action pour les plugins approuvés.',
+                subtitle: 'Disponible pour les plugins intégrés et installés approuvés.',
             },
             contextual_ui: {
                 title: 'UI contextuelle',
@@ -11277,6 +11253,16 @@ settingsSession: {
     logoutSubtitle: "Se déconnecter et effacer les données locales",
     logoutConfirm:
       "Veux-tu vraiment te déconnecter ? Assure-toi d’avoir sauvegardé ta clé secrète !",
+    deleteAccount: "Supprimer le compte",
+    deleteAccountSubtitle: "Supprimer définitivement ce compte et ses données de ce serveur",
+    deleteAccountConfirmTitle: "Supprimer ce compte ?",
+    deleteAccountConfirmBody: "Cette action supprime définitivement les données du compte stockées sur ce serveur et ne peut pas être annulée. Saisis DELETE pour continuer.",
+    deleteAccountInvalidTitle: "La confirmation ne correspond pas",
+    deleteAccountInvalidBody: "Saisis exactement DELETE pour continuer.",
+    deleteAccountFailedTitle: "Suppression non confirmée",
+    deleteAccountFailed: "Happier n’a pas pu confirmer la suppression. Ta connexion locale a été conservée pour te permettre de réessayer.",
+    deleteAccountCleanupFailedTitle: "Compte supprimé",
+    deleteAccountCleanupFailed: "Le serveur a confirmé la suppression, mais cet appareil n’a pas pu terminer l’effacement des données locales. Rouvre Happier et déconnecte-toi si le compte apparaît encore.",
     encryptionUpdateFailed: "Échec de la mise à jour du réglage de chiffrement",
     secretKeyMissing: "Clé secrète indisponible. Restaure d’abord ton compte.",
     restoreRequiredTitle: "Restauration requise",
@@ -11460,6 +11446,18 @@ settingsSession: {
                         "body": "Ton code, tes prompts et le contenu de tes sessions sont chiffrés sur ton appareil avant d’atteindre le moindre serveur. Privé par conception. Ouvert par défaut.",
                         "alt": "Image d’illustration abstraite pour la confidentialité et l’auto-hébergement."
                     },
+                    "worktrees": {
+                        "title": "Un worktree par session. Ou pas.",
+                        "wideTitle": "Un worktree par session.\nOu pas.",
+                        "body": "Démarre une session dans son propre worktree Git pour que plusieurs agents travaillent sur le même dépôt sans se gêner, ou démarre dans le dossier où tu es déjà.",
+                        "alt": "Image d’illustration abstraite pour les worktrees Git."
+                    },
+                    "handoff": {
+                        "title": "Déplace une session d’une machine à l’autre.",
+                        "wideTitle": "Déplace une session en cours\nvers une autre machine.",
+                        "body": "Passe une session en cours à un autre ordinateur et reprends là où elle s’est arrêtée, en emportant si tu veux l’arborescence de travail.",
+                        "alt": "Image d’illustration abstraite pour le déplacement d’une session entre machines."
+                    },
                     "pets": {
                         "title": "Ne te sens plus jamais seul. Voici les Pets.",
                         "wideTitle": "Ne te sens plus jamais seul.\nVoici les Pets.",
@@ -11557,6 +11555,8 @@ settingsSession: {
       fallbackValue: 'Le contenu du terminal natif est indisponible. Utilisez la WebView xterm pour un contenu de terminal accessible.',
       focusAction: 'Activer le terminal',
       copySelectionAction: 'Copier la sélection',
+      selectAllAction: 'Sélectionner toute la sortie du terminal',
+      openLinkAction: 'Ouvrir le lien sélectionné',
     },
     dockMenuA11y: "Ancrer le terminal",
     largePasteTitle: "Coller une saisie terminal volumineuse ?",

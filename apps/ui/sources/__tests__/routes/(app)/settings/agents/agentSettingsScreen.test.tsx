@@ -33,11 +33,6 @@ let mockAgentPluginId: string | null = null;
 let mockRecoveryMachineId: string | null = null;
 let mockRecoveryServerId: string | null = null;
 let mockInstallIntent: string | null = null;
-let mockAgentModelOverride: Readonly<{
-    defaultMode: string | null;
-    allowedModes: readonly string[];
-}> | null = null;
-let mockAgentStaticModelsOverride: readonly Readonly<{ id: string; name: string }>[] | null = null;
 let shouldThrowOnAppPaneScope = false;
 const routerPushSpy = vi.fn();
 const mockAgentCatalogProjection = vi.hoisted(
@@ -51,7 +46,15 @@ const mockAgentCatalogProjection = vi.hoisted(
         isBuiltIn: boolean;
         backendTargetKey: string | null;
         enabled: boolean | null;
+        qualifiedId?: string;
+        identity?: Readonly<{ pluginId: string; localId: string }> | null;
+        connectedAccounts?: readonly Readonly<{
+            purpose: string;
+            service: Readonly<{ pluginId: string; localId: string }>;
+            required: boolean;
+        }>[];
         authPlugin: any;
+        cli?: any;
         backendEntry: any;
     } | null>(() => null),
 );
@@ -449,6 +452,9 @@ installSessionSettingsEntryModuleMocks({
                     if (key === 'serverSelectionGroups') return {};
                     if (key === 'serverSelectionActiveTargetKind') return 'server';
                     if (key === 'serverSelectionActiveTargetId') return 'server1';
+                    if (key === 'externalSessionsSettingsV1') {
+                        return settingsState.externalSessionsSettingsV1;
+                    }
                     return undefined;
                 } }),
                 useProfile: () => ({
@@ -531,8 +537,8 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     },
 }));
 
-vi.mock('@/components/settings/connectedServices/ConnectedServicesDefaultAuthRow', () => ({
-    ConnectedServicesDefaultAuthRow: (props: any) => React.createElement('ConnectedServicesDefaultAuthRow', props),
+vi.mock('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser', () => ({
+    ConnectedAccountPurposeTargetChooser: (props: any) => React.createElement('ConnectedAccountPurposeTargetChooser', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -767,18 +773,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         ...actual,
         AGENT_IDS: ['legacy.codex', 'legacy.customAcp', 'legacy.opencode'],
         isBundledAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude' || v === 'antigravity',
-        getAgentCore: (agentId: string) => {
-            const core = createMockAgentCore(agentId);
-            return mockAgentModelOverride
-                ? {
-                    ...core,
-                    model: {
-                        ...core.model,
-                        ...mockAgentModelOverride,
-                    },
-                }
-                : core;
-        },
+        getAgentCore: (agentId: string) => createMockAgentCore(agentId),
     };
 });
 
@@ -826,8 +821,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual: any = await importOriginal();
     return {
         ...actual,
-        getAgentStaticModels: (agentId: string) =>
-            mockAgentStaticModelsOverride ?? actual.getAgentStaticModels(agentId),
         getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }),
         getAgentCliRuntimeSpec: () => ({
             id: 'codex',
@@ -927,8 +920,6 @@ describe('PluginAgentSettingsScreen', () => {
         mockRecoveryMachineId = null;
         mockRecoveryServerId = null;
         mockInstallIntent = null;
-        mockAgentModelOverride = null;
-        mockAgentStaticModelsOverride = null;
         setAdministrationExecutionTarget('m1', 'server1');
         shouldThrowOnAppPaneScope = false;
         tauriDesktopState.value = true;
@@ -966,6 +957,7 @@ describe('PluginAgentSettingsScreen', () => {
         settingsState.opencodeServerBaseUrl = '';
         settingsState.opencodeServerBaseUrlByServerIdV1 = {};
         settingsState.externalSessionsSettingsV1 = undefined;
+        settingsState.connectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
         machinesState = [
             { id: 'm1', metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' } },
             { id: 'm2', metadata: { displayName: 'Machine Two', host: 'm2', homeDir: '/Users/m2' } },
@@ -1012,6 +1004,19 @@ describe('PluginAgentSettingsScreen', () => {
                 isBuiltIn,
                 backendTargetKey: isBuiltIn ? buildCanonicalBackendTargetKey(agentId) : null,
                 enabled: isBuiltIn ? true : null,
+                connectedAccounts: [],
+                cli: {
+                    executable: { binaryName: agentId, sourcePreference: 'system-first' },
+                    install: {
+                        managed: agentId === 'codex' ? { kind: 'github_release_binary', githubRepo: 'openai/codex', binaryName: 'codex' } : null,
+                        manual: { kind: 'none' },
+                        docsUrl: agentId === 'codex' ? 'https://github.com/openai/codex' : null,
+                    },
+                    auth: {
+                        support: agentId === 'codex' ? 'login_terminal' : 'unsupported',
+                        loginLaunches: agentId === 'codex' ? [{ kind: 'primary', args: ['login'] }] : [],
+                    },
+                },
                 authPlugin: agentId === 'codex'
                     ? {
                         agentId,
@@ -1580,7 +1585,7 @@ describe('PluginAgentSettingsScreen', () => {
         });
     });
 
-    it('keeps the projected provider detail visible while a new active-server projection loads', async () => {
+    it('does not render or probe with the previous machine Agent projection while a new target loads', async () => {
         mockProviderId = 'acme.review.provider';
         machineContributionRegistryProjectionDescribeMock.mockResolvedValueOnce({
             supported: true,
@@ -1593,6 +1598,7 @@ describe('PluginAgentSettingsScreen', () => {
 
         const initialItems = screen.findAllByType('Item' as any);
         expect(initialItems.some((node: any) => node.props?.title === 'Acme Review Provider')).toBe(true);
+        useCLIDetectionMock.mockClear();
 
         let resolveReload!: (value: {
             supported: true;
@@ -1615,8 +1621,10 @@ describe('PluginAgentSettingsScreen', () => {
             serverId: 'server2',
         }));
         const loadingItems = screen.findAllByType('Item' as any);
-        expect(loadingItems.some((node: any) => node.props?.title === 'Acme Review Provider')).toBe(true);
-        expect(loadingItems.some((node: any) => node.props?.title === 'settingsAgents.notAvailable')).toBe(false);
+        expect(loadingItems.some((node: any) => node.props?.title === 'Acme Review Provider')).toBe(false);
+        expect(useCLIDetectionMock).not.toHaveBeenCalledWith('m3', expect.objectContaining({
+            autoDetect: true,
+        }));
 
         await act(async () => {
             resolveReload({
@@ -1624,6 +1632,13 @@ describe('PluginAgentSettingsScreen', () => {
                 projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
             });
         });
+        await flushHookEffects();
+
+        const readyItems = screen.findAllByType('Item' as any);
+        expect(readyItems.some((node: any) => node.props?.title === 'Acme Review Provider')).toBe(true);
+        expect(useCLIDetectionMock).toHaveBeenCalledWith('m3', expect.objectContaining({
+            autoDetect: true,
+        }));
     });
 
     it('refetches daemon projection inputs for the selected machine instead of pinning the first machine', async () => {
@@ -1671,7 +1686,7 @@ describe('PluginAgentSettingsScreen', () => {
         expect(items.some((node: any) => node.props?.title === 'settingsAgents.notAvailable')).toBe(false);
         expect(items.some((node: any) => node.props?.subtitle === 'settingsAgents.channelPlugin')).toBe(true);
         const projectedIdentityRow = items.find((node: any) => node.props?.title === 'Acme Review Provider');
-        expect(projectedIdentityRow?.props?.icon?.props?.name).toBe('code-slash-outline');
+        expect(projectedIdentityRow?.props?.icon?.props?.entry?.iconAgentId).toBe('codex');
     });
 
     it('renders the projected provider detail screen even when the provider has no built-in runtime carrier', async () => {
@@ -1695,7 +1710,7 @@ describe('PluginAgentSettingsScreen', () => {
         expect(items.some((node: any) => node.props?.title === 'Acme Headless Provider')).toBe(true);
         expect(items.some((node: any) => node.props?.title === 'settingsAgents.notAvailable')).toBe(false);
         const projectedIdentityRow = items.find((node: any) => node.props?.title === 'Acme Headless Provider');
-        expect(projectedIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+        expect(projectedIdentityRow?.props?.icon?.props?.entry?.iconAgentId).toBe('claude');
     });
 
     it('renders the installed Agent plugin settings on the no-CLI Agent screen', async () => {
@@ -1728,6 +1743,37 @@ describe('PluginAgentSettingsScreen', () => {
         const settingsSection = screen.findByType(PluginDetailGenericSettingsSection);
         expect(settingsSection.props).toMatchObject({ pluginId: 'acme.headless' });
         expect(settingsSection.props.projection.editableSettingsGroups).toHaveLength(1);
+    });
+
+    it('renders qualified Connected Account purposes on the no-CLI Agent screen', async () => {
+        mockProviderId = 'acme.headless.provider';
+        mockAgentCatalogProjection.mockReturnValue({
+            agentId: 'acme.headless.provider',
+            qualifiedId: 'acme.headless.provider',
+            identity: { pluginId: 'acme.headless', localId: 'provider' },
+            catalogAgentId: null,
+            iconAgentId: null,
+            title: 'Acme Headless Provider',
+            subtitle: 'Plugin provider',
+            iconName: 'stack-simple',
+            isBuiltIn: false,
+            backendTargetKey: null,
+            enabled: null,
+            authPlugin: null,
+            connectedAccounts: [{
+                purpose: 'primary',
+                service: { pluginId: 'acme.headless', localId: 'account' },
+                required: false,
+            }],
+            backendEntry: null,
+        });
+
+        const screen = await renderPluginAgentSettingsScreen();
+        expect(screen.findByType('ConnectedAccountPurposeTargetChooser' as any).props.declaration).toEqual({
+            purpose: 'primary',
+            service: { pluginId: 'acme.headless', localId: 'account' },
+            required: false,
+        });
     });
 
     it('does not synthesize a built-in target key for plugin-backed provider controls when projection truth is missing', async () => {
@@ -2088,34 +2134,6 @@ describe('PluginAgentSettingsScreen', () => {
         });
     });
 
-    it('shows the provider default model as a friendly model name instead of a raw model id', async () => {
-        mockProviderId = 'claude';
-
-        const screen = await renderPluginAgentSettingsScreen();
-        const items = screen.findAllByType('Item' as any);
-        const defaultModelItem = items.find((item: any) => item?.props?.title === 'settingsAgents.defaultModelTitle');
-        const acpApplyBehaviorItem = items.find((item: any) => item?.props?.title === 'settingsAgents.acpApplyBehaviorTitle');
-
-        expect(defaultModelItem?.props?.subtitle).toBe('Sonnet 4.6');
-        expect(acpApplyBehaviorItem?.props?.subtitle).toBe('settingsAgents.acpApplyBehaviorSetModel');
-    });
-
-    it('does not fabricate a static model catalog for an Agent with dynamic models only', async () => {
-        mockAgentModelOverride = {
-            defaultMode: null,
-            allowedModes: [],
-        };
-        mockAgentStaticModelsOverride = [];
-
-        const screen = await renderPluginAgentSettingsScreen();
-        const items = screen.findAllByType('Item' as any);
-        const defaultModelItem = items.find((item: any) => item?.props?.title === 'settingsAgents.defaultModelTitle');
-        const catalogModelListItem = items.find((item: any) => item?.props?.title === 'settingsAgents.catalogModelListTitle');
-
-        expect(defaultModelItem?.props?.subtitle).toBe('settingsAgents.notAvailable');
-        expect(catalogModelListItem?.props?.subtitle).toBe('settingsAgents.catalogModelListEmpty');
-    });
-
     it('renders an authentication section when local CLI auth details are available', async () => {
         cliDetectionState.available = { codex: true };
         cliDetectionState.login = { codex: true };
@@ -2306,20 +2324,6 @@ describe('PluginAgentSettingsScreen', () => {
         });
     });
 
-    it('reflects the canonical configured runtime-kind surface in the badges', async () => {
-        mockProviderId = 'codex';
-        (settingsState as any).codexBackendMode = 'mcp';
-        const screen = await renderPluginAgentSettingsScreen();
-        const badgeGrid = screen.findByType('BadgeGrid' as any);
-        const localControlItem = badgeGrid.props.items.find((item: any) => item.id === 'localControl');
-        expect(localControlItem).toMatchObject({
-            status: 'positive',
-            detail: 'settingsAgents.supported',
-        });
-
-        delete (settingsState as any).codexBackendMode;
-    });
-
     it('redirects the custom ACP provider route back to the providers index', async () => {
         mockProviderId = 'customAcp';
         const screen = await renderPluginAgentSettingsScreen();
@@ -2369,7 +2373,70 @@ describe('PluginAgentSettingsScreen', () => {
         expect(items.some((node: any) => node.props?.title === 'Acme Review Backend')).toBe(true);
         expect(items.some((node: any) => node.props?.title === 'settingsAgents.notFoundTitle')).toBe(false);
         const fallbackIdentityRow = items.find((node: any) => node.props?.title === 'Acme Review Backend');
-        expect(fallbackIdentityRow?.props?.icon?.props?.name).toBe('sparkles-outline');
+        expect(fallbackIdentityRow?.props?.icon?.props?.entry?.iconAgentId).toBe('claude');
+        expect(screen.findByType('BadgeGrid' as any)).toBeNull();
+        expect(items.some((node: any) => node.props?.title === 'settingsProviders.models.manage')).toBe(false);
+    });
+
+    it('renders external Agent capabilities and CLI details only from its exact current public projection', async () => {
+        mockProviderId = 'acme.review.provider';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: {
+                ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+                agentsById: {
+                    'acme.review.provider': {
+                        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById['acme.review.provider'],
+                        capabilities: {
+                            surfaces: ['terminal'],
+                            sessions: {
+                                open: ['create', 'resume'],
+                                delivery: ['newTurn'],
+                                cancel: true,
+                            },
+                        },
+                        cli: {
+                            executable: {
+                                binaryName: 'acme-review',
+                                sourcePreference: 'managed-first',
+                            },
+                            install: {
+                                managed: {
+                                    kind: 'managed_package',
+                                    packageName: '@acme/review',
+                                    binaryName: 'acme-review',
+                                },
+                                manual: { kind: 'none' },
+                                docsUrl: 'https://example.com/acme-review',
+                            },
+                            auth: {
+                                support: 'unsupported',
+                                loginLaunches: [],
+                            },
+                        },
+                    },
+                },
+            } satisfies PluginProjectionV2,
+        });
+
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
+            agentIds: ['acme.review.provider'],
+        }));
+        expect(screen.findByTestId('settings-provider-detected-cli')?.props.subtitle)
+            .toBe('acme-review • machine.detectedCliUnknown');
+        expect(screen.findByType('AgentCliInstallItem' as any).props.capabilityId)
+            .toBe('cli.acme.review.provider');
+        expect(screen.findByType('BadgeGrid' as any).props.items).toEqual([
+            expect.objectContaining({ id: 'resume', status: 'positive' }),
+            expect.objectContaining({ id: 'localControl', status: 'positive' }),
+        ]);
+        expect(screen.findAllByType('Item' as any).some(
+            (node: any) => node.props?.title === 'settingsAgents.defaultModelTitle',
+        )).toBe(false);
     });
 
     /**
@@ -2469,17 +2536,59 @@ describe('PluginAgentSettingsScreen', () => {
         expect(textNodes.some((node: any) => node.props?.children === 'Unknown')).toBe(false);
     });
 
-    it('routes provider default-auth recovery rows to the service-specific settings route', async () => {
-        const screen = await renderPluginAgentSettingsScreen();
-
-        screen
-            .findByType('ConnectedServicesDefaultAuthRow' as any)
-            .props.onOpenConnectedServicesSettings('anthropic');
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/[serviceId]',
-            params: { serviceId: 'anthropic' },
+    it('writes projected Agent account defaults through the qualified purpose binding owner', async () => {
+        mockProviderId = 'acme.review.provider';
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: {
+                ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+                agentsById: {
+                    ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById,
+                    'acme.review.provider': {
+                        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById['acme.review.provider'],
+                        connectedAccounts: [{
+                            purpose: 'primary',
+                            service: { pluginId: 'acme.review', localId: 'account' },
+                            required: false,
+                        }],
+                    },
+                },
+            },
         });
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        const chooser = screen.findByType('ConnectedAccountPurposeTargetChooser' as any);
+        expect(chooser.props.declaration).toMatchObject({
+            purpose: 'primary',
+            service: { pluginId: 'acme.review', localId: 'account' },
+        });
+        chooser.props.onChange({
+            kind: 'account',
+            account: {
+                service: { pluginId: 'acme.review', localId: 'account' },
+                accountId: 'work',
+            },
+        });
+        expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
+            connectedAccountPurposeBindingsV1: {
+                v: 1,
+                bindings: [{
+                    purpose: {
+                        consumer: { pluginId: 'acme.review', localId: 'provider' },
+                        purpose: 'primary',
+                    },
+                    target: {
+                        kind: 'account',
+                        account: {
+                            service: { pluginId: 'acme.review', localId: 'account' },
+                            accountId: 'work',
+                        },
+                    },
+                }],
+            },
+        }));
     });
 });
 const settingsState = {
@@ -2491,4 +2600,5 @@ const settingsState = {
     opencodeServerBaseUrl: '',
     opencodeServerBaseUrlByServerIdV1: {} as Record<string, string>,
     externalSessionsSettingsV1: undefined as any,
+    connectedAccountPurposeBindingsV1: { v: 1 as const, bindings: [] as any[] },
 };

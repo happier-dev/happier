@@ -11,6 +11,7 @@ import {
     type PluginUiProjectionModel,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
@@ -323,7 +324,7 @@ function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
     onBinding?: (binding: PluginSurfaceDestinationNavigationBinding) => void;
 }>>): React.ReactElement {
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: Object.values(props.projection.surfacePlacementsById),
+        placements: selectPluginDestinationSurfacePlacements(props.projection),
         settingsPages: Object.values(props.projection.settingsPagesById),
         targetKind: 'app',
         accountLifetime: accountLifetimeState.lifetime,

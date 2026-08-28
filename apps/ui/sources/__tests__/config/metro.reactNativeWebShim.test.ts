@@ -399,6 +399,7 @@ describe('metro.config.js (web)', () => {
             '.dist.hstack-stage-publish-1',
             'dist.staging.publish-1',
             'dist.probe.publish-1',
+            'dist.__finalize_backup__.publish-1',
         ]) {
             expect(
                 isBlocked(join(packageRoot, transientDirectoryName, 'src/index.ts')),
@@ -408,6 +409,9 @@ describe('metro.config.js (web)', () => {
 
         expect(
             isBlocked(String.raw`C:\repo\packages\protocol\.tmp.publish-1\src\index.ts`),
+        ).toBe(true);
+        expect(
+            isBlocked(String.raw`C:\repo\packages\protocol\dist.__finalize_backup__.publish-1\index.js`),
         ).toBe(true);
         expect(isBlocked(join(packageRoot, 'src/index.ts'))).toBe(false);
         expect(isBlocked(join(packageRoot, 'dist/index.js'))).toBe(true);

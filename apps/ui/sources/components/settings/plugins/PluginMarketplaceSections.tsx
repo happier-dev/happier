@@ -19,6 +19,7 @@ import {
     formatInstalledSubtitle,
     formatPendingPluginChangeSubtitle,
     formatPendingPluginChangeTitle,
+    projectInstalledPluginLifecycleCapabilities,
     readPendingPluginChangeListingId,
     type DevelopmentPluginEntry,
     type InstalledPluginEntry,
@@ -37,36 +38,41 @@ export function InstalledPluginsSection(props: Readonly<{
     const { theme } = useUnistyles();
     return (
         <ItemGroup title={t('deps.ui.installed')}>
-            {props.installedPlugins.length > 0 ? props.installedPlugins.map((entry) => (
-                <Item
-                    key={entry.pluginId}
-                    testID={`settings.plugins.marketplace.installed.${entry.pluginId}`}
-                    title={entry.title}
-                    subtitle={formatInstalledSubtitle(entry)}
-                    detail={entry.version}
-                    icon={<Icon name="archive" size={29} color={theme.colors.text.secondary} />}
-                    onPress={() => props.onNavigateToPlugin(entry.pluginId)}
-                    rightElementOutsidePressable
-                    rightElement={(
-                        <ItemRowActions
-                            title={entry.title}
-                            compactActionIds={[entry.enabled ? 'disable' : 'enable']}
-                            overflowTriggerTestID={`settings.plugins.marketplace.installed.${entry.pluginId}.actions.overflow`}
-                            actions={[
-                                {
-                                    id: entry.enabled ? 'disable' : 'enable',
-                                    title: entry.enabled ? t('common.disable') : t('common.enable'),
-                                    subtitle: entry.enabled ? t('common.enabled') : t('common.disabled'),
-                                    icon: entry.enabled ? 'x-circle' : 'check-circle',
-                                    inlineTestID: `settings.plugins.marketplace.installed.${entry.pluginId}.action.${entry.enabled ? 'disable' : 'enable'}`,
-                                    disabled: !props.canRunActions || props.isPluginActionInFlight(entry.pluginId),
-                                    onPress: () => props.onRunAction(entry.enabled ? 'disable' : 'enable', entry.pluginId),
-                                },
-                            ]}
-                        />
-                    )}
-                />
-            )) : (
+            {props.installedPlugins.length > 0 ? props.installedPlugins.map((entry) => {
+                const capabilities = projectInstalledPluginLifecycleCapabilities(entry);
+                const toggleAction = entry.enabled ? 'disable' : 'enable';
+                const canToggle = entry.enabled ? capabilities.canDisable : capabilities.canEnable;
+                return (
+                    <Item
+                        key={entry.pluginId}
+                        testID={`settings.plugins.marketplace.installed.${entry.pluginId}`}
+                        title={entry.title}
+                        subtitle={formatInstalledSubtitle(entry)}
+                        detail={entry.version}
+                        icon={<Icon name="archive" size={29} color={theme.colors.text.secondary} />}
+                        onPress={() => props.onNavigateToPlugin(entry.pluginId)}
+                        rightElementOutsidePressable={canToggle}
+                        rightElement={canToggle ? (
+                            <ItemRowActions
+                                title={entry.title}
+                                compactActionIds={[toggleAction]}
+                                overflowTriggerTestID={`settings.plugins.marketplace.installed.${entry.pluginId}.actions.overflow`}
+                                actions={[
+                                    {
+                                        id: toggleAction,
+                                        title: entry.enabled ? t('common.disable') : t('common.enable'),
+                                        subtitle: entry.enabled ? t('common.enabled') : t('common.disabled'),
+                                        icon: entry.enabled ? 'x-circle' : 'check-circle',
+                                        inlineTestID: `settings.plugins.marketplace.installed.${entry.pluginId}.action.${toggleAction}`,
+                                        disabled: !props.canRunActions || props.isPluginActionInFlight(entry.pluginId),
+                                        onPress: () => props.onRunAction(toggleAction, entry.pluginId),
+                                    },
+                                ]}
+                            />
+                        ) : null}
+                    />
+                );
+            }) : (
                 <Item
                     testID="settings.plugins.marketplace.installed.empty"
                     title={t('deps.ui.notInstalled')}

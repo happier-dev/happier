@@ -361,6 +361,46 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findAllByType('Item').map((item) => item.props.title)).toContain('Boundary detail');
     });
 
+    it('keeps foreign-daemon inspection but disables active-Account Saved Secrets with colliding ids', async () => {
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Account A machine' },
+            {
+                machineId: 'machine-a',
+                displayName: 'Account B machine',
+                serverIdentityId: 'srv_b',
+                serverId: 'server-b',
+                serverLabel: 'Server B',
+            },
+        ]);
+        administrationTarget.controller.select('machine-a', 'srv_b');
+        state.connection = connection({
+            credential: {
+                accountBound: true,
+                boundMachineIds: ['machine-a'],
+                keyUrl: null,
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await flushHookEffects();
+
+        expect(providerHarness.state.requests.some((request) => (
+            request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
+            && (request.payload as { serverId?: string }).serverId === 'server-b'
+        ))).toBe(true);
+        for (const testID of [
+            'provider-connection-account-api-key',
+            'provider-connection-machine-api-key',
+        ]) {
+            const row = screen.findAllByType('Item').find((item) => item.props.testID === testID);
+            expect(row?.props.disabled).toBe(true);
+            expect(row?.props.onPress).toBeUndefined();
+            expect(row?.props.subtitle).toBe('settingsProviders.local.accountScopeMismatchDescription');
+        }
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it('opens a website-only projected Provider destination without mutating connection state', async () => {
         state.connection = connection({
             websiteUrl: 'https://provider.example.test',
@@ -1565,6 +1605,58 @@ describe('ProviderConnectionDetailScreen', () => {
         const testIDs = screen.findAllByType('Item').map((item) => item.props.testID);
         expect(testIDs).toContain('provider-connection-managed-account-scope');
         expect(testIDs).not.toContain('provider-connection-managed-configure');
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('synchronously retires an open Account purpose editor when the target switches to another server', async () => {
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Account A machine' },
+            {
+                machineId: 'machine-a',
+                displayName: 'Account B machine',
+                serverIdentityId: 'srv_b',
+                serverId: 'server-b',
+            },
+        ]);
+        connectedAccountProfileState.groups = [{
+            ref: {
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                groupId: 'account-a-team',
+            },
+            displayName: 'Account A team',
+        }];
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposes: [{
+                    purpose: 'upstream',
+                    service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                    required: true,
+                }],
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        ));
+        expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1);
+
+        await act(async () => {
+            administrationTarget.controller.select('machine-a', 'srv_b');
+            await Promise.resolve();
+        });
+
+        expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
+        expect(screen.findAllByType('Item').map((item) => item.props.title))
+            .not.toContain('Account A team');
+        expect(screen.findAllByType('Item').map((item) => item.props.testID))
+            .toContain('provider-connection-managed-account-scope');
         expect(run).not.toHaveBeenCalled();
     });
 

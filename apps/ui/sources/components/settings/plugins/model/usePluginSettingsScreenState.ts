@@ -65,6 +65,7 @@ import {
     resolvePluginMarketplaceErrorMessage,
     resolvePluginReadOnlySnapshotNotice,
     type DevelopmentPluginEntry,
+    projectInstalledPluginLifecycleCapabilities,
     type InstalledPluginEntry,
     type PendingPluginChangeDecision,
     type PendingPluginChangeListing,
@@ -919,7 +920,14 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         ) {
             return;
         }
-        if (action === 'rollback' && installed.rollbackAvailability !== 'available') {
+        const capabilities = projectInstalledPluginLifecycleCapabilities(installed);
+        if (
+            (action === 'enable' && !capabilities.canEnable)
+            || (action === 'disable' && !capabilities.canDisable)
+            || (action === 'rollback' && !capabilities.canRollback)
+            || (action === 'uninstall' && !capabilities.canUninstall)
+            || (action === 'forgetTrust' && !capabilities.canForgetTrust)
+        ) {
             return;
         }
         if (action === 'enable' || action === 'disable') {

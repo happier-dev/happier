@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { OverlayScrim } from '@/components/ui/overlays/OverlayScrim';
 import { Text } from '@/components/ui/text/Text';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { useSessionLateralSwipe } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -156,6 +156,7 @@ const SessionCockpitLateralPickerRow = React.memo(function SessionCockpitLateral
     reducedMotion: boolean;
 }>) {
     const { picker } = useSessionLateralSwipe();
+    const { theme } = useUnistyles();
     const { entryIndex, reducedMotion } = props;
     const rowStyle = useAnimatedStyle(() => {
         const motion = resolveSessionLateralPickerRowMotion({
@@ -172,7 +173,15 @@ const SessionCockpitLateralPickerRow = React.memo(function SessionCockpitLateral
 
     return (
         <Animated.View style={[styles.row, rowStyle]} testID={SESSION_LATERAL_PICKER_ROW_TEST_ID}>
-            <AgentIcon agentId={props.target.agentId} size={18} />
+            <SessionAgentCatalogIdentityIcon
+                // Unknown identity degrades to the catalog owner's neutral mark;
+                // the row never borrows a default Agent's brand.
+                agentId={props.target.agentId ?? ''}
+                machineId={props.target.machineId}
+                serverId={props.target.serverId ?? null}
+                color={theme.colors.text.primary}
+                size={18}
+            />
             {/* Glyph and title only. The capsule owns the position readout, so a row
                 gaining "5 of 18" is what tells you it has arrived. */}
             <Text style={styles.title} numberOfLines={1}>

@@ -19,9 +19,41 @@ describe('parseOauthCallbackUrl', () => {
     expect(res).toEqual({ code: 'abc', state: 'st1' });
   });
 
+  it('uses the canonical full IPv4 loopback range', () => {
+    const res = parseOauthCallbackUrl({
+      url: 'http://127.0.0.2:54545/callback?code=abc&state=st1',
+      redirectUri: 'http://localhost:54545/callback',
+    });
+    expect(res).toEqual({ code: 'abc', state: 'st1' });
+  });
+
+  it('uses the canonical localhost subdomain classification', () => {
+    const res = parseOauthCallbackUrl({
+      url: 'http://oauth.localhost:54545/callback?code=abc&state=st1',
+      redirectUri: 'http://localhost:54545/callback',
+    });
+    expect(res).toEqual({ code: 'abc', state: 'st1' });
+  });
+
   it('treats loopback host variants as equivalent ([::1])', () => {
     const res = parseOauthCallbackUrl({
       url: 'http://[::1]:54545/callback?code=abc&state=st1',
+      redirectUri: 'http://localhost:54545/callback',
+    });
+    expect(res).toEqual({ code: 'abc', state: 'st1' });
+  });
+
+  it('uses the canonical IPv4-mapped IPv6 loopback classification', () => {
+    const res = parseOauthCallbackUrl({
+      url: 'http://[::ffff:127.0.0.1]:54545/callback?code=abc&state=st1',
+      redirectUri: 'http://localhost:54545/callback',
+    });
+    expect(res).toEqual({ code: 'abc', state: 'st1' });
+  });
+
+  it('uses the canonical trailing-dot hostname normalization', () => {
+    const res = parseOauthCallbackUrl({
+      url: 'http://localhost.:54545/callback?code=abc&state=st1',
       redirectUri: 'http://localhost:54545/callback',
     });
     expect(res).toEqual({ code: 'abc', state: 'st1' });

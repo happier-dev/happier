@@ -50,6 +50,7 @@ const cockpitPluginProjectionState = vi.hoisted(() => ({
         serverId: null as string | null,
         interactionEnabled: false,
         platform: 'web' as 'web' | 'ios',
+        phase: 'establishing' as 'establishing' | 'current' | 'retainedOffline' | 'unavailable',
     },
 }));
 const cockpitDeviceType = vi.hoisted(() => ({ value: 'phone' as 'phone' | 'tablet' }));
@@ -318,10 +319,60 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
             serverId: null,
             interactionEnabled: false,
             platform: 'web',
+            phase: 'establishing',
         };
         cockpitDeviceType.value = 'phone';
         const { transcriptNavigationPaneStore } = await import('@/components/sessions/transcript/navigation/transcriptNavigationPaneStore');
         transcriptNavigationPaneStore.set('session-1', null);
+    });
+
+    it('keeps a restoring plugin cockpit destination loading only while projection establishment is active', async () => {
+        const CockpitHarness = await loadCockpitHarness();
+        const establishing = await renderScreen(
+            <CockpitHarness events={[]} initialSurface={REVIEW_PLUGIN_SURFACE} />,
+        );
+
+        expect(establishing.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+
+        standardCleanup();
+        cockpitPluginProjectionState.value = {
+            ...cockpitPluginProjectionState.value,
+            phase: 'unavailable',
+        };
+        const settled = await renderScreen(
+            <CockpitHarness events={[]} initialSurface={REVIEW_PLUGIN_SURFACE} />,
+        );
+
+        expect(settled.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+
+        standardCleanup();
+        cockpitPluginProjectionState.value = {
+            ...cockpitPluginProjectionState.value,
+            phase: 'retainedOffline',
+        };
+        const retainedWithoutDestination = await renderScreen(
+            <CockpitHarness events={[]} initialSurface={REVIEW_PLUGIN_SURFACE} />,
+        );
+        expect(retainedWithoutDestination.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+    });
+
+    it('keeps an exact retained-offline plugin destination mounted but interaction-disabled', async () => {
+        cockpitPluginProjectionState.value = {
+            pluginUiProjection: createCockpitPluginProjection(),
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            interactionEnabled: false,
+            platform: 'web',
+            phase: 'retainedOffline',
+        };
+        const CockpitHarness = await loadCockpitHarness();
+        const screen = await renderScreen(
+            <CockpitHarness events={[]} initialSurface={REVIEW_PLUGIN_SURFACE} />,
+        );
+
+        expect(screen.tree.findByType('PluginSurfacePlacementHost' as never).props)
+            .toMatchObject({ projectionInteractionEnabled: false });
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
     });
 
     it('renders the session timeline with no transcript host mounted for the session', async () => {
@@ -406,6 +457,7 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
             serverId: 'server-1',
             interactionEnabled: true,
             platform: 'web',
+            phase: 'current',
         };
         const events: string[] = [];
         const CockpitHarness = await loadCockpitHarness();
@@ -439,6 +491,7 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
             serverId: 'server-1',
             interactionEnabled: true,
             platform: 'ios',
+            phase: 'current',
         };
         const events: string[] = [];
         const CockpitHarness = await loadCockpitHarness();

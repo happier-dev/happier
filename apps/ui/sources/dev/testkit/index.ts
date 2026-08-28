@@ -1,5 +1,6 @@
 export * from './cleanup/standardCleanup';
 export * from './fixtures/featureFixtures';
+export * from './fixtures/agentCatalogFixtures';
 export * from './fixtures/releasedServerV021Compatibility';
 export * from './fixtures/localServices';
 export * from './fixtures/machineFixtures';

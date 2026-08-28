@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1039,6 +1040,7 @@ export const ja = {
   },
 
   automations: {
+    ...automationTriggerSetTranslations.ja,
     unsupportedReference: ({ reference }: { reference: string }) =>
         `オートメーションはメッセージ本文だけを保存するため、${reference} は選んだ対象を指さなくなります。メッセージから削除するか、代わりにファイルパスをメンションしてください。`,
     list: {
@@ -1046,7 +1048,8 @@ export const ja = {
       cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ""}${timezone ? `（${timezone}）` : ""}`,
       schedule: "スケジュール",
       event: ({ eventId }: { eventId: string }) => `イベント: ${eventId}`,
-      manual: "手動",
+      sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `ターンが終了したとき · ${sessionId}`,
+      noAutomaticTriggers: '自動トリガーはありません',
       noNextRun: "次回の実行なし",
       nextRun: ({ time }: { time: string }) => `次回: ${time}`,
       nextRunPending: "次回の実行は保留中",
@@ -1097,70 +1100,18 @@ export const ja = {
         cronSubtitle: "高度なスケジュール式。",
         cronHelpText: "標準の 5 フィールド cron: 分 時 日 月 曜日。",
       },
-      sentence: {
-        run: "実行",
-        every: "間隔",
-        onSchedule: "スケジュール",
-        runEvery: "実行間隔",
-        minutes: "分",
-        presets: "プリセット",
-        intervalUnits: {
-          minutes: "分",
-          hours: "時間",
-          days: "日",
-        },
-        cronFieldGuide: {
-          minute: "分",
-          hour: "時",
-          dayOfMonth: "日",
-          month: "月",
-          weekday: "曜日",
-        },
-        useCron: "Cron 式を使用",
-        useInterval: "間隔に切り替え",
-        addNotes: "メモを追加",
-        notes: "メモ",
-        localTimezone: "ローカル時刻",
-        scheduleControlA11y: "オートメーションのスケジュールを編集",
-        intervalValue: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 日`;
-          if (minutes === 60) return "1 時間";
-          if (minutes % 60 === 0) return `${minutes / 60} 時間`;
-          return `${minutes} 分`;
-        },
-        intervalCadence: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 日ごと`;
-          if (minutes === 60) return "1 時間ごと";
-          if (minutes % 60 === 0) return `${minutes / 60} 時間ごと`;
-          return `${minutes} 分ごと`;
-        },
-        cronPresets: {
-          weekdays9am: "平日 9:00",
-          hourly: "毎時",
-          monday9am: "月曜 9:00",
-          dailyMidnight: "毎日 0:00",
-        },
-        cronCadences: {
-          weekdays9am: "平日 9:00",
-          hourly: "毎時",
-          monday9am: "月曜 9:00",
-          dailyMidnight: "毎日 0:00",
-        },
-        cronCadenceExpression: ({ expression }: { expression: string }) => `cron スケジュール ${expression}`,
-        timezone: ({ timezone }: { timezone: string }) => `タイムゾーン: ${timezone}`,
-      },
     },
     session: {
       emptyTitle: "オートメーションはありません",
       emptyBody:
-        "このセッションにスケジュールされたメッセージをキューするには、オートメーションを追加してください。",
+        "いずれかのトリガーが発火したときにこのセッションで処理を実行するオートメーションを追加します。",
       addAutomation: "オートメーションを追加",
       failedToLoad: "オートメーションの読み込みに失敗しました。",
     },
     screen: {
       emptyTitle: "まだオートメーションはありません",
       emptyBody:
-        "「新しいセッション」フローから作成して、マシン上でスケジュールされたセッションを実行できます。",
+        "「新しいセッション」から作成し、スケジュール、イベント、または特定ターンのトリガーを追加します。",
       createAutomationA11y: "オートメーションを作成",
     },
     settings: {
@@ -1183,7 +1134,7 @@ export const ja = {
       overviewGroupTitle: "概要",
       overview: {
         nameTitle: "名前",
-        scheduleTitle: "スケジュール",
+        triggersTitle: "スケジュール",
         statusTitle: "状態",
         nextRunTitle: "次の実行",
       },
@@ -1196,6 +1147,11 @@ export const ja = {
         watcherUnwatched: "監視なし",
         endpointTitle: "Webhook エンドポイント",
         endpointObservingSince: ({ time }: { time: string }) => `${time} から配信を受信中`,
+        transportTitle: "How events arrive",
+        transportCheckpointedPull: "Polling",
+        transportDurablePush: "Webhook",
+        disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+        disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
         sourceStatusUnreported: "最初の報告を待機中",
         sourceStatusUnavailable: "ソースの状態を取得できません",
         sourceCatalogStatusUnavailable: "ソースの最新性が不明です",
@@ -1207,10 +1163,6 @@ export const ja = {
       },
       actionsGroupTitle: "操作",
       runNowTitle: "今すぐ実行",
-      runNowQueuedBadge: "キュー済み",
-      runNowQueuedLine: "キューに追加しました。",
-      runNowQueuedSubtitle:
-        "キュー済み。割り当てられたデーモンが利用可能になり次第処理します。",
       pauseAutomation: "オートメーションを一時停止",
       resumeAutomation: "オートメーションを再開",
       editAutomation: "オートメーションを編集",
@@ -1234,12 +1186,33 @@ export const ja = {
       assignmentsUpdateFailed: "マシン割り当ての更新に失敗しました。",
       recentRunsTitle: "最近の実行",
       loadMoreRuns: "さらに実行を読み込む",
+      trigger: {
+          identity: ({ id, revision }: { id: string; revision: number }) => `トリガー ${id} · リビジョン ${revision}`,
+          sourceSession: '元のセッション',
+          sourceTurn: '対象の元のターン',
+          run: "対応する実行",
+          status: {
+            waiting: "このターンを待機中",
+            paused: "一時停止中",
+            triggered: "トリガー済み",
+            running: "実行中",
+            finished: "完了",
+            sourceFailed: "元のターンが失敗しました",
+            sourceCancelled: "元のターンがキャンセルされました",
+            sourceUnavailable: "元のセッションを利用できません",
+          },
+      },
       runMeta: {
-        originTitle: "発生元",
-        origin: {
-          scheduled: "スケジュール",
+        triggerIdentityTitle: 'トリガー ID',
+        triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · リビジョン ${revision}`,
+        triggerRetired: 'トリガーは削除済み',
+        triggerRetiredSubtitle: 'トリガーがオートメーションから削除されても、この実行には不変の実行理由が保持されます。',
+        causeTitle: "発生元",
+        cause: {
+          schedule: "スケジュール",
           manual: "手動",
           pluginEvent: "イベント",
+          sessionLifecycle: 'セッションのターン完了',
           conversation: "会話",
         },
         state: {
@@ -1260,9 +1233,9 @@ export const ja = {
         admitted: ({ time }: { time: string }) => `受付: ${time}`,
         occurrenceTitle: "発生 ID",
         sourceTitle: "監視ソース",
+        eventReferenceTitle: "イベント参照",
                 scheduled: ({ time }: { time: string }) => `スケジュール: ${time}`,
                 updated: ({ time }: { time: string }) => `更新: ${time}`,
-                contentRemoved: '実行コンテンツを削除しました',
                 error: ({ message }: { message: string }) => `エラー: ${message}`,
         attemptTitle: "試行",
         attempt: ({ attempt }: { attempt: number }) => `試行 ${attempt}`,
@@ -3279,6 +3252,8 @@ localTailscale: {
   },
 
   connectedServices: {
+    accountScopeMismatchTitle: '続行するにはサーバーアカウントを切り替えてください',
+    accountScopeMismatchDescription: 'このマシンは別のサーバーアカウントに属しています。接続済みアカウントを管理するには、そのサーバーアカウントに切り替えてください。',
     fallbackName: "連携サービス",
     serviceNames: {
       claudeSubscription: "Claude サブスクリプション",
@@ -7841,11 +7816,11 @@ localTailscale: {
       },
     },
     askUserQuestion: {
-      claudeDialogNotice: {
-        header: 'Claude のダイアログ',
-        question: 'Claude がダイアログを表示しています。ターミナルを開いて内容を確認し、続行方法を選択してください。',
-        openTerminal: 'ターミナルを開く',
-        description: 'Claude のターミナルでダイアログを確認して回答します。',
+      attachedTerminalNotice: {
+        header: 'ターミナルのダイアログ',
+        question: 'エージェントがダイアログを表示しています。接続されたターミナルを開いて内容を確認し、続行方法を選択してください。',
+        openTerminal: '接続されたターミナルを開く',
+        description: '接続されたターミナルでダイアログを確認して回答します。',
       },
       submit: "回答を送信",
       multipleQuestions: ({ count }: { count: number }) => `${count}件の質問`,
@@ -9595,6 +9570,7 @@ localTailscale: {
             sessionHandoffFeature: "このアクションを使うにはセッションハンドオフを有効にしてください。",
             notAvailableInThisApp: 'このターゲットは、このクライアントではまだ表示されません。',
             requiredByAgentPolicy: 'ポリシーによりエージェントの承認が必要です。このアクションは常に最初に確認します。',
+            presentUserRequired: 'この操作には、Happier であなたが操作中である必要があります。API トークンと信頼できるプラグインは検出できますが、実行できません。',
         },
         targets: {
             session_header: {
@@ -9658,12 +9634,12 @@ localTailscale: {
                 subtitle: "セッション制御 CLI の画面から利用できます。",
             },
             api: {
-                title: "API",
-                subtitle: "外部 Action API を通じて利用できます。",
+                title: "外部 API と SDK",
+                subtitle: "API トークンから HTTP と SDK を通じて利用できます。",
             },
             plugin: {
                 title: "信頼できるプラグイン",
-                subtitle: "信頼できるプラグインでアクションとして利用できます。",
+                subtitle: "信頼できる組み込みプラグインとインストール済みプラグインで利用できます。",
             },
             contextual_ui: {
                 title: "コンテキスト UI",
@@ -11522,6 +11498,16 @@ settingsSession: {
     logoutSubtitle: "サインアウトしてローカルデータを消去",
     logoutConfirm:
       "ログアウトしてもよろしいですか？シークレットキーのバックアップを取っていることを確認してください！",
+    deleteAccount: "アカウントを削除",
+    deleteAccountSubtitle: "このアカウントとサーバー上のデータを完全に削除します",
+    deleteAccountConfirmTitle: "このアカウントを削除しますか？",
+    deleteAccountConfirmBody: "サーバーに保存されたアカウントデータが完全に削除されます。この操作は取り消せません。続行するには DELETE と入力してください。",
+    deleteAccountInvalidTitle: "確認が一致しません",
+    deleteAccountInvalidBody: "続行するには DELETE と正確に入力してください。",
+    deleteAccountFailedTitle: "削除を確認できませんでした",
+    deleteAccountFailed: "Happier は削除を確認できませんでした。再試行できるよう、ローカルのサインイン情報は保持されています。",
+    deleteAccountCleanupFailedTitle: "アカウントを削除しました",
+    deleteAccountCleanupFailed: "サーバーは削除を確認しましたが、この端末のローカルデータを完全に消去できませんでした。Happier を開き直し、アカウントが残っている場合はログアウトしてください。",
     encryptionUpdateFailed: "暗号化設定の更新に失敗しました",
     secretKeyMissing: "秘密鍵を利用できません。先にアカウントを復元してください。",
     restoreRequiredTitle: "復元が必要です",
@@ -11705,6 +11691,18 @@ settingsSession: {
                         "body": "コード、prompts、セッション内容は、サーバーに届く前にあなたのデバイス上で暗号化されます。Private by design. Open by default.",
                         "alt": "プライバシーとセルフホスト用の抽象的なプレースホルダー画像。"
                     },
+                    "worktrees": {
+                        "title": "セッションごとに worktree。あるいは、なしで。",
+                        "wideTitle": "セッションごとに worktree。\nあるいは、なしで。",
+                        "body": "セッションを専用の Git worktree で開始すれば、複数のエージェントが同じリポジトリで衝突せずに作業できます。現在のフォルダーでそのまま開始することもできます。",
+                        "alt": "Git worktree 用の抽象的なプレースホルダー画像。"
+                    },
+                    "handoff": {
+                        "title": "セッションをマシン間で移動。",
+                        "wideTitle": "実行中のセッションを\n別のマシンへ。",
+                        "body": "実行中のセッションを別のコンピューターに引き継ぎ、中断した場所から続行できます。必要であれば作業ツリーも一緒に移せます。",
+                        "alt": "セッションをマシン間で移動するための抽象的なプレースホルダー画像。"
+                    },
                     "pets": {
                         "title": "一人で作業しなくていい。Petsに会おう。",
                         "wideTitle": "一人で作業しなくていい。\nPetsに会おう。",
@@ -11802,6 +11800,8 @@ settingsSession: {
       fallbackValue: 'ネイティブターミナルの内容を利用できません。アクセシブルなターミナル内容には xterm WebView を使用してください。',
       focusAction: 'ターミナルにフォーカス',
       copySelectionAction: '選択範囲をコピー',
+      selectAllAction: 'ターミナル出力をすべて選択',
+      openLinkAction: '選択したリンクを開く',
     },
     dockMenuA11y: "ターミナルをドック",
     largePasteTitle: "大きなターミナル入力を貼り付けますか？",

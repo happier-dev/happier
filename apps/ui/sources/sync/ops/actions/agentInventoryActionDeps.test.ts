@@ -4,10 +4,15 @@ import { storage } from '@/sync/domains/state/storage';
 
 type MachineCapabilitiesInvokeFn =
   typeof import('@/sync/ops/capabilities').machineCapabilitiesInvoke;
+type MachineContributionRegistryProjectionDescribeFn =
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
 
-const { machineCapabilitiesInvoke } = vi.hoisted(() => ({
+const { machineCapabilitiesInvoke, machineContributionRegistryProjectionDescribe } = vi.hoisted(() => ({
   machineCapabilitiesInvoke: vi.fn<MachineCapabilitiesInvokeFn>(
     async () => ({ supported: false, reason: 'not-supported' }),
+  ),
+  machineContributionRegistryProjectionDescribe: vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+    async () => ({ supported: false, reason: 'not-supported' }) as never,
   ),
 }));
 
@@ -17,6 +22,11 @@ vi.mock('@/sync/ops/capabilities', async (importOriginal) => {
     ...actual,
     machineCapabilitiesInvoke,
   };
+});
+
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>();
+  return { ...actual, machineContributionRegistryProjectionDescribe };
 });
 
 import { createDefaultActionExecutor } from './defaultActionExecutor';
@@ -33,6 +43,8 @@ const original = (() => {
 beforeEach(() => {
   machineCapabilitiesInvoke.mockReset();
   machineCapabilitiesInvoke.mockResolvedValue({ supported: false, reason: 'not-supported' });
+  machineContributionRegistryProjectionDescribe.mockReset();
+  machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' } as never);
   storage.setState((state) => ({
     ...state,
     settings: {
@@ -62,11 +74,28 @@ afterEach(() => {
 
 describe('defaultActionExecutor canonical agent inventory corridor', () => {
   it('answers sessions.spawn.connected_services.list for a novel external qualified Agent instead of unsupported_action', async () => {
+    machineContributionRegistryProjectionDescribe.mockResolvedValueOnce({
+      supported: true,
+      projection: {
+        v: 2,
+        generation: 1,
+        agentsById: {
+          'acme-voice-agent': {
+            id: 'acme-voice-agent',
+            identity: { pluginId: 'acme.voice', localId: 'agent' },
+            title: 'Acme Voice Agent',
+            connectedAccounts: [{ purpose: 'models', service: { pluginId: 'openai', localId: 'chatgpt' } }],
+          },
+        },
+        backendsById: {},
+        familiesById: {},
+      },
+    } as never);
     const executor = createDefaultActionExecutor();
 
     const res = await executor.execute(
       'sessions.spawn.connected_services.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
       { surface: 'voice' },
     );
 

@@ -1,3 +1,5 @@
+import { isLoopbackHostname } from '@happier-dev/protocol';
+
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { digest } from '@/platform/digest';
 import { encodeBase64 } from '@/encryption/base64';
@@ -61,18 +63,6 @@ export function parseOauthCallbackUrl(params: Readonly<{ url: string; redirectUr
     const raw = pathname || '/';
     if (raw.length <= 1) return raw;
     return raw.replace(/\/+$/, '');
-  };
-
-  const isLoopbackHostname = (hostname: string): boolean => {
-    const raw = String(hostname ?? '').toLowerCase();
-    const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
-    // Some URL implementations normalize IPv6 loopback as the expanded form.
-    return (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '::1' ||
-      host === '0:0:0:0:0:0:0:1'
-    );
   };
 
   const resolveDefaultPort = (url: URL): string => {

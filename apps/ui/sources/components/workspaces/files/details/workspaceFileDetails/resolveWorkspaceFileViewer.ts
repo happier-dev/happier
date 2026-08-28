@@ -1,4 +1,5 @@
 import {
+    arePluginMachineExecutionOriginsEqual,
     compareOpenableContentViewerMatchesV1,
     matchOpenableContentViewerV1,
     normalizeOpenableContentPreferenceSelectorV1,
@@ -265,10 +266,11 @@ function haveSameOrigin(
         && left.serverId === right.serverId
         && left.generation === right.generation
         && left.interactionEnabled === right.interactionEnabled
-        && leftExecutionOrigin?.serverIdentityId === rightExecutionOrigin?.serverIdentityId
-        && leftExecutionOrigin?.materializationRef.pluginId === rightExecutionOrigin?.materializationRef.pluginId
-        && leftExecutionOrigin?.materializationRef.machineId === rightExecutionOrigin?.materializationRef.machineId
-        && leftExecutionOrigin?.materializationRef.materializationId === rightExecutionOrigin?.materializationRef.materializationId;
+        && (leftExecutionOrigin === null || leftExecutionOrigin === undefined
+            ? rightExecutionOrigin === null || rightExecutionOrigin === undefined
+            : rightExecutionOrigin !== null
+                && rightExecutionOrigin !== undefined
+                && arePluginMachineExecutionOriginsEqual(leftExecutionOrigin, rightExecutionOrigin));
 }
 
 function derivePreferenceSelectors(metadata: OpenableContentMetadataV1): readonly OpenableContentPreferenceSelectorV1[] {

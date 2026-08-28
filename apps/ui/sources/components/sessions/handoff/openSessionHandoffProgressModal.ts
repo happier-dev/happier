@@ -1,4 +1,4 @@
-import type { SessionHandoffStatus } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1, SessionHandoffStatus } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 
 import { SessionHandoffProgressModal } from './SessionHandoffProgressModal';
@@ -7,6 +7,7 @@ export function openSessionHandoffProgressModal(params?: Readonly<{
     title?: string;
     message?: string;
     status?: SessionHandoffStatus;
+    operation?: ActionOperationSnapshotV1;
 }>): string {
     return Modal.show({
         component: SessionHandoffProgressModal,
@@ -14,6 +15,7 @@ export function openSessionHandoffProgressModal(params?: Readonly<{
             ...(params?.title ? { title: params.title } : {}),
             ...(params?.message ? { message: params.message } : {}),
             ...(params?.status ? { status: params.status } : {}),
+            ...(params?.operation ? { operation: params.operation } : {}),
         },
         closeOnBackdrop: false,
     });

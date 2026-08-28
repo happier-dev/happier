@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1077,6 +1078,7 @@ export const pl = {
     },
 
   automations: {
+    ...automationTriggerSetTranslations.pl,
     unsupportedReference: ({ reference }: { reference: string }) =>
         `Automatyzacje zapisują tylko tekst wiadomości, więc ${reference} nie wskazywałoby już tego, co wybrano. Usuń to z wiadomości albo wskaż ścieżkę pliku.`,
     list: {
@@ -1084,7 +1086,8 @@ export const pl = {
       cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ""}${timezone ? ` (${timezone})` : ""}`,
       schedule: "Harmonogram",
       event: ({ eventId }: { eventId: string }) => `Zdarzenie: ${eventId}`,
-      manual: "Ręczne",
+      sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Gdy zakończy się przebieg · ${sessionId}`,
+      noAutomaticTriggers: 'Brak automatycznych wyzwalaczy',
       noNextRun: "Brak następnego uruchomienia",
       nextRun: ({ time }: { time: string }) => `Następne: ${time}`,
       nextRunPending: "Następne uruchomienie oczekuje",
@@ -1136,70 +1139,18 @@ export const pl = {
         cronHelpText:
           "Standardowy cron 5‑polowy: minuta godzina dzień-miesiąca miesiąc dzień-tygodnia.",
       },
-      sentence: {
-        run: "Uruchom",
-        every: "co",
-        onSchedule: "według harmonogramu",
-        runEvery: "Uruchamiaj co",
-        minutes: "minut",
-        presets: "Presety",
-        intervalUnits: {
-          minutes: "Minuty",
-          hours: "Godziny",
-          days: "Dni",
-        },
-        cronFieldGuide: {
-          minute: "Minuta",
-          hour: "Godzina",
-          dayOfMonth: "Dzień",
-          month: "Miesiąc",
-          weekday: "Dzień tyg.",
-        },
-        useCron: "Użyj wyrażenia cron",
-        useInterval: "Przełącz na interwał",
-        addNotes: "Dodaj notatki",
-        notes: "NOTATKI",
-        localTimezone: "czas lokalny",
-        scheduleControlA11y: "Edytuj harmonogram automatyzacji",
-        intervalValue: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} dni`;
-          if (minutes === 60) return "1 godzina";
-          if (minutes % 60 === 0) return `${minutes / 60} godz.`;
-          return `${minutes} min`;
-        },
-        intervalCadence: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `co ${minutes / (24 * 60)} dni`;
-          if (minutes === 60) return "co godzinę";
-          if (minutes % 60 === 0) return `co ${minutes / 60} godz.`;
-          return `co ${minutes} min`;
-        },
-        cronPresets: {
-          weekdays9am: "Dni robocze o 9:00",
-          hourly: "Co godzinę",
-          monday9am: "Poniedziałek o 9:00",
-          dailyMidnight: "Codziennie o północy",
-        },
-        cronCadences: {
-          weekdays9am: "w dni robocze o 9:00",
-          hourly: "co godzinę",
-          monday9am: "w poniedziałki o 9:00",
-          dailyMidnight: "codziennie o północy",
-        },
-        cronCadenceExpression: ({ expression }: { expression: string }) => `według harmonogramu cron ${expression}`,
-        timezone: ({ timezone }: { timezone: string }) => `Strefa czasowa: ${timezone}`,
-      },
     },
     session: {
       emptyTitle: "Brak automatyzacji",
       emptyBody:
-        "Dodaj automatyzację, aby dodawać do kolejki zaplanowane wiadomości w tej sesji.",
+        "Dodaj automatyzację, aby wykonywać pracę w tej sesji po uruchomieniu dowolnego wyzwalacza.",
       addAutomation: "Dodaj automatyzację",
       failedToLoad: "Nie udało się wczytać automatyzacji.",
     },
     screen: {
       emptyTitle: "Brak automatyzacji",
       emptyBody:
-        "Utwórz ją z poziomu nowej sesji, aby uruchamiać zaplanowane sesje na swoich maszynach.",
+        "Utwórz ją z poziomu nowej sesji, a następnie dodaj harmonogramy, zdarzenia lub wyzwalacze konkretnej tury.",
       createAutomationA11y: "Utwórz automatyzację",
     },
     settings: {
@@ -1222,7 +1173,7 @@ export const pl = {
       overviewGroupTitle: "Przegląd",
       overview: {
         nameTitle: "Nazwa",
-        scheduleTitle: "Harmonogram",
+        triggersTitle: "Harmonogram",
         statusTitle: "Stan",
         nextRunTitle: "Następne uruchomienie",
       },
@@ -1235,6 +1186,11 @@ export const pl = {
         watcherUnwatched: "Brak obserwatora",
         endpointTitle: "Punkt końcowy webhooka",
         endpointObservingSince: ({ time }: { time: string }) => `Odbiera dostawy od ${time}`,
+        transportTitle: "How events arrive",
+        transportCheckpointedPull: "Polling",
+        transportDurablePush: "Webhook",
+        disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+        disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
         sourceStatusUnreported: "Oczekiwanie na pierwszy raport",
         sourceStatusUnavailable: "Stan źródła niedostępny",
         sourceCatalogStatusUnavailable: "Aktualność źródła niedostępna",
@@ -1246,10 +1202,6 @@ export const pl = {
       },
       actionsGroupTitle: "Akcje",
       runNowTitle: "Uruchom teraz",
-      runNowQueuedBadge: "W kolejce",
-      runNowQueuedLine: "W kolejce.",
-      runNowQueuedSubtitle:
-        "W kolejce. Przypisany demon uruchomi ją, gdy będzie dostępny.",
       pauseAutomation: "Wstrzymaj automatyzację",
       resumeAutomation: "Wznów automatyzację",
       editAutomation: "Edytuj automatyzację",
@@ -1272,12 +1224,33 @@ export const pl = {
       assignmentsUpdateFailed: "Nie udało się zaktualizować przypisań maszyn.",
       recentRunsTitle: "Ostatnie uruchomienia",
       loadMoreRuns: "Wczytaj więcej uruchomień",
+      trigger: {
+          identity: ({ id, revision }: { id: string; revision: number }) => `Wyzwalacz ${id} · rewizja ${revision}`,
+          sourceSession: 'Sesja źródłowa',
+          sourceTurn: 'Dokładny przebieg źródłowy',
+          run: "Powiązane uruchomienie",
+          status: {
+            waiting: "Oczekiwanie na tę turę",
+            paused: "Wstrzymana",
+            triggered: "Wyzwolona",
+            running: "W toku",
+            finished: "Zakończona",
+            sourceFailed: "Tura źródłowa nie powiodła się",
+            sourceCancelled: "Tura źródłowa została anulowana",
+            sourceUnavailable: "Źródło niedostępne",
+          },
+      },
       runMeta: {
-        originTitle: "Pochodzenie",
-        origin: {
-          scheduled: "Zaplanowane",
+        triggerIdentityTitle: 'Tożsamość wyzwalacza',
+        triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · rewizja ${revision}`,
+        triggerRetired: 'Wyzwalacz wycofany',
+        triggerRetiredSubtitle: 'To uruchomienie zachowuje niezmienną przyczynę, mimo że wyzwalacza nie ma już w automatyzacji.',
+        causeTitle: "Pochodzenie",
+        cause: {
+          schedule: "Zaplanowane",
           manual: "Ręczne",
           pluginEvent: "Zdarzenie",
+          sessionLifecycle: 'Przebieg sesji zakończony',
           conversation: "Rozmowa",
         },
         state: {
@@ -1298,9 +1271,9 @@ export const pl = {
         admitted: ({ time }: { time: string }) => `Przyjęto: ${time}`,
         occurrenceTitle: "Wystąpienie",
         sourceTitle: "Źródło obserwacji",
+        eventReferenceTitle: "Odwołanie do zdarzenia",
                 scheduled: ({ time }: { time: string }) => `Zaplanowano: ${time}`,
                 updated: ({ time }: { time: string }) => `Zaktualizowano: ${time}`,
-                contentRemoved: 'Usunięto zawartość uruchomienia',
                 error: ({ message }: { message: string }) => `Błąd: ${message}`,
         attemptTitle: "Próba",
         attempt: ({ attempt }: { attempt: number }) => `Próba ${attempt}`,
@@ -2997,6 +2970,8 @@ export const pl = {
   },
 
   connectedServices: {
+    accountScopeMismatchTitle: 'Przełącz konto serwera, aby kontynuować',
+    accountScopeMismatchDescription: 'Ta maszyna należy do konta innego serwera. Przełącz się na to konto serwera, aby zarządzać jego połączonymi kontami.',
     fallbackName: "Połączona usługa",
     serviceNames: {
       claudeSubscription: "Subskrypcja Claude",
@@ -7648,11 +7623,11 @@ export const pl = {
       turnDiffRecap: "Podsumowanie zmian z tej tury",
     },
     askUserQuestion: {
-      claudeDialogNotice: {
-        header: 'Okno dialogowe Claude',
-        question: 'Claude wyświetla okno dialogowe. Otwórz terminal, aby je sprawdzić i wybrać sposób kontynuacji.',
-        openTerminal: 'Otwórz terminal',
-        description: 'Sprawdź okno dialogowe i odpowiedz na nie w terminalu Claude.',
+      attachedTerminalNotice: {
+        header: 'Okno dialogowe terminala',
+        question: 'Agent wyświetla okno dialogowe. Otwórz dołączony terminal, aby je sprawdzić i wybrać sposób kontynuacji.',
+        openTerminal: 'Otwórz dołączony terminal',
+        description: 'Sprawdź okno dialogowe i odpowiedz na nie w dołączonym terminalu.',
       },
       submit: "Wyślij odpowiedź",
       multipleQuestions: ({ count }: { count: number }) =>
@@ -9337,6 +9312,7 @@ export const pl = {
             sessionHandoffFeature: 'Włącz obsługę handoff sesji, aby użyć tej akcji.',
             notAvailableInThisApp: 'To miejsce wyświetlania nie jest jeszcze dostępne w tym kliencie.',
             requiredByAgentPolicy: 'Zasady wymagają zatwierdzenia dla agenta. Ta akcja zawsze pyta najpierw.',
+            presentUserRequired: 'Ta operacja wymaga Twojej obecności w Happier. Tokeny API i zaufane wtyczki mogą ją znaleźć, ale nie mogą jej wykonać.',
         },
         targets: {
             session_header: {
@@ -9400,12 +9376,12 @@ export const pl = {
                 subtitle: 'Dostępne przez interfejs CLI sterowania sesją.',
             },
             api: {
-                title: 'API',
-                subtitle: 'Dostępne przez zewnętrzne API akcji.',
+                title: 'Zewnętrzne API i SDK',
+                subtitle: 'Dostępne dla tokenów API przez HTTP i SDK.',
             },
             plugin: {
                 title: 'Zaufane wtyczki',
-                subtitle: 'Dostępne jako akcja dla zaufanych wtyczek.',
+                subtitle: 'Dostępne dla zaufanych wbudowanych i zainstalowanych wtyczek.',
             },
             contextual_ui: {
                 title: 'Interfejs kontekstowy',
@@ -11282,6 +11258,16 @@ settingsSession: {
     logoutSubtitle: "Wyloguj się i wyczyść dane lokalne",
     logoutConfirm:
       "Czy na pewno chcesz się wylogować? Upewnij się, że masz kopię zapasową klucza tajnego!",
+    deleteAccount: "Usuń konto",
+    deleteAccountSubtitle: "Trwale usuń to konto i jego dane z tego serwera",
+    deleteAccountConfirmTitle: "Usunąć to konto?",
+    deleteAccountConfirmBody: "Spowoduje to trwałe usunięcie danych konta przechowywanych na tym serwerze i nie można tego cofnąć. Wpisz DELETE, aby kontynuować.",
+    deleteAccountInvalidTitle: "Potwierdzenie jest niezgodne",
+    deleteAccountInvalidBody: "Wpisz dokładnie DELETE, aby kontynuować.",
+    deleteAccountFailedTitle: "Usunięcie niepotwierdzone",
+    deleteAccountFailed: "Happier nie mógł potwierdzić usunięcia. Lokalne logowanie zostało zachowane, aby można było spróbować ponownie.",
+    deleteAccountCleanupFailedTitle: "Konto usunięte",
+    deleteAccountCleanupFailed: "Serwer potwierdził usunięcie, ale to urządzenie nie zakończyło czyszczenia danych lokalnych. Otwórz Happier ponownie i wyloguj się, jeśli konto nadal jest widoczne.",
     encryptionUpdateFailed: "Nie udało się zaktualizować ustawienia szyfrowania",
     secretKeyMissing: "Brak klucza tajnego. Najpierw przywróć konto.",
     restoreRequiredTitle: "Wymagane przywrócenie",
@@ -11465,6 +11451,18 @@ settingsSession: {
                         "body": "Twój kod, prompty i treść sesji są szyfrowane na urządzeniu, zanim trafią na jakikolwiek serwer. Prywatne z założenia. Otwarte domyślnie.",
                         "alt": "Abstrakcyjny obraz zastępczy dla prywatności i self-hostingu."
                     },
+                    "worktrees": {
+                        "title": "Worktree na sesję. Albo nie.",
+                        "wideTitle": "Worktree na sesję.\nAlbo nie.",
+                        "body": "Uruchom sesję we własnym worktree Gita, aby kilka agentów pracowało na tym samym repozytorium bez kolizji, albo zacznij w folderze, w którym już jesteś.",
+                        "alt": "Abstrakcyjny obraz zastępczy dla worktree Gita."
+                    },
+                    "handoff": {
+                        "title": "Przenieś sesję między maszynami.",
+                        "wideTitle": "Przenieś działającą sesję\nna inną maszynę.",
+                        "body": "Przekaż działającą sesję na inny komputer i kontynuuj w miejscu, w którym się zatrzymała — w razie potrzeby razem z drzewem roboczym.",
+                        "alt": "Abstrakcyjny obraz zastępczy dla przenoszenia sesji między maszynami."
+                    },
                     "pets": {
                         "title": "Nigdy nie czuj się sam. Poznaj Pets.",
                         "wideTitle": "Nigdy nie czuj się sam.\nPoznaj Pets.",
@@ -11562,6 +11560,8 @@ settingsSession: {
       fallbackValue: 'Natywna zawartość terminala jest niedostępna. Użyj widoku xterm WebView, aby uzyskać dostęp do terminala.',
       focusAction: 'Ustaw fokus na terminalu',
       copySelectionAction: 'Kopiuj zaznaczenie',
+      selectAllAction: 'Zaznacz całe wyjście terminala',
+      openLinkAction: 'Otwórz wybrany link',
     },
     dockMenuA11y: "Dokuj terminal",
     largePasteTitle: "Wkleić dużą zawartość do terminala?",

@@ -24,6 +24,7 @@ import {
     normalizePluginUiProjection,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 
 import {
     resolvePluginAppPages,
@@ -599,7 +600,7 @@ function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
         placements: selectPluginAppPagePlacements(props.model),
     }), [props.model]);
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: Object.values(props.model.surfacePlacementsById),
+        placements: selectPluginDestinationSurfacePlacements(props.model),
         settingsPages: Object.values(props.model.settingsPagesById),
         targetKind: 'app',
         accountLifetime: pluginSurfaceAccountLifetime.value,

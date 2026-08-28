@@ -312,6 +312,31 @@ describe('SegmentedTabBar', () => {
         expect((frame.minWidth as number) * 6 + 4).toBeLessThanOrEqual(148);
     });
 
+    it('reaches the platform target when a consumer explicitly owns enough room', async () => {
+        const { SegmentedTabBar } = await import('./SegmentedTabBar');
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+
+        for (const [platform, minimum] of [['web', 44], ['ios', 44], ['android', 48]] as const) {
+            (Platform as { OS: string }).OS = platform;
+            try {
+                const screen = await renderScreen(
+                    <SegmentedTabBar
+                        tabs={TABS}
+                        activeTabId="alpha"
+                        onSelectTab={() => {}}
+                        testIDPrefix="seg"
+                        targetSize="platform"
+                    />,
+                );
+                expect(flattenStyle(requireTab(screen, 'seg:alpha').props.style).minWidth).toBe(minimum);
+                expect(flattenStyle(requireTabSurface(screen, 'seg:alpha').props.style).minHeight).toBe(minimum - 4);
+            } finally {
+                (Platform as { OS: string }).OS = previousPlatform;
+            }
+        }
+    });
+
     // The frame is plain box model rather than `hitSlop` because react-native-web 0.21 implements
     // `hitSlop` only in its legacy `Touchable` export, and the desktop app IS the web bundle. It
     // must not come back on native either: hit-slop is exactly the overhang this control cannot

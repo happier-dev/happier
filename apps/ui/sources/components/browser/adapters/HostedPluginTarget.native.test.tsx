@@ -34,10 +34,6 @@ describe('HostedPluginTarget native', () => {
                     allowedCallbackOrigins: [],
                     allowedConnectOrigins: [],
                     csp: {
-                        scriptSrc: 'selfOnly',
-                        styleSrc: 'selfOnly',
-                        imgSrc: 'selfOnly',
-                        fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly',
                         allowDataUrls: false,
                         allowBlobUrls: false,
@@ -81,10 +77,6 @@ describe('HostedPluginTarget native', () => {
                     ],
                     allowedConnectOrigins: [],
                     csp: {
-                        scriptSrc: 'selfOnly',
-                        styleSrc: 'selfOnly',
-                        imgSrc: 'selfOnly',
-                        fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly',
                         allowDataUrls: false,
                         allowBlobUrls: false,
@@ -217,10 +209,6 @@ describe('HostedPluginTarget native', () => {
                     allowedCallbackOrigins: [],
                     allowedConnectOrigins: [],
                     csp: {
-                        scriptSrc: 'selfOnly',
-                        styleSrc: 'selfOnly',
-                        imgSrc: 'selfOnly',
-                        fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly',
                         allowDataUrls: false,
                         allowBlobUrls: false,

@@ -180,7 +180,14 @@ describe('machine managed installables projection', () => {
                             key: 'dep.antigravity.localharness',
                             capabilityId: 'dep.antigravity.localharness',
                             sourceKind: 'managed_pypi_wheel_asset',
-                            display: { name: 'Antigravity localharness' },
+                            display: {
+                                name: 'Antigravity localharness',
+                                subtitle: 'Local browser harness',
+                            },
+                            ui: {
+                                setupUrl: 'https://docs.example.test/antigravity/localharness',
+                                iconName: 'browser',
+                            },
                             defaultPolicy: {
                                 autoInstallWhenNeeded: true,
                                 autoUpdateMode: 'notify',
@@ -198,6 +205,8 @@ describe('machine managed installables projection', () => {
         const screen = await renderSettingsView(<MachineInstallablesScreen />);
 
         expect(screen.findRowByTitle('Antigravity localharness')).not.toBeNull();
+        expect(screen.findRowByTitle('Antigravity localharness')?.props.subtitle).toBe('Local browser harness • deps.ui.notInstalled');
+        expect(screen.findRowByTitle('common.open')?.props.subtitle).toBe('https://docs.example.test/antigravity/localharness');
         expect(screen.findRowByTitle('Raw declaration must not become an install action')).toBeNull();
 
         await act(async () => {

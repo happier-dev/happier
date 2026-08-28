@@ -11,7 +11,10 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
-import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import {
+  resolveSessionActionDefaultBackend,
+  resolveSessionActionDefaultTarget,
+} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { t } from '@/text';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -353,7 +356,7 @@ export function buildCommandPaletteCommands(
             input: buildExecutionRunActionDraftInputForUi({
               actionId: entry.spec.id as any,
               sessionId,
-              defaultBackendTarget: defaultBackend?.backendTarget ?? null,
+              defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
               defaultBackendId: defaultBackend?.defaultBackendId ?? null,
               instructions: '',
             }),

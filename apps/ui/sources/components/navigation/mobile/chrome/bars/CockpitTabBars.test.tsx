@@ -26,6 +26,9 @@ const cockpitPinsState = vi.hoisted(() => ({
     value: [] as string[],
     set: vi.fn(),
 }));
+const reachableMachineState = vi.hoisted(() => ({
+    target: null as { machineId: string; basePath: string } | null,
+}));
 type LateralTarget = { sessionId: string; title: string; position: number; total: number } | null;
 const lateralNavigationState = vi.hoisted(() => ({
     previous: null as LateralTarget,
@@ -135,6 +138,15 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
+vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
+    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
+        React.createElement('SessionAgentCatalogIdentityIcon', props),
+}));
+
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionReachableMachineTarget: () => reachableMachineState.target,
+}));
+
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
     useLayoutMaxWidth: () => 960,
@@ -153,6 +165,7 @@ describe('cockpit tab bars', () => {
         badgeSettingsState.openTabs = true;
         cockpitPinsState.value = [];
         cockpitPinsState.set.mockClear();
+        reachableMachineState.target = null;
         lateralNavigationState.previous = null;
         lateralNavigationState.next = null;
         lateralNavigationState.navigate.mockClear();
@@ -294,7 +307,12 @@ describe('cockpit tab bars', () => {
 
         expect(screen.getTextContent()).toContain('en:agentInput.agent.codex');
         const icon = screen.findByTestId('session-cockpit-tab-chat-agent-icon');
-        expect(icon?.props.agentId).toBe('codex');
+        expect(icon?.type).toBe('SessionAgentCatalogIdentityIcon');
+        expect(icon?.props).toMatchObject({
+            agentId: 'codex',
+            machineId: null,
+            serverId: null,
+        });
     });
 
     it('uses strict shared Agent presentation for a layout1 owner', async () => {
@@ -342,6 +360,34 @@ describe('cockpit tab bars', () => {
         );
 
         expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('claude');
+    });
+
+    it('renders an external Agent through the machine-scoped catalog identity owner', async () => {
+        sessionMetadataState.metadataLayoutVersion = 1;
+        sessionMetadataState.metadata = {
+            v: 1,
+            agentPresentation: { agentId: 'acme.plugin/ultracode' },
+        };
+        reachableMachineState.target = { machineId: 'machine_external', basePath: '/repo' };
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+
+        const screen = await renderScreen(
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                serverId="server_external"
+                activeSurface="chat"
+                terminalTabAvailable={false}
+                openDetailsTabCount={0}
+                onSurfacePress={() => {}}
+            />,
+        );
+
+        expect(screen.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
+            agentId: 'acme.plugin/ultracode',
+            machineId: 'machine_external',
+            serverId: 'server_external',
+        });
     });
 
     it('shows a changed-files count badge by default when the session is dirty', async () => {

@@ -102,7 +102,6 @@ describe('AcpCatalogSettingsScreen', () => {
                     command: 'kiro-cli',
                     args: ['acp', '--agent', 'spec'],
                     env: {},
-                    transportProfile: 'kiro',
                     defaultMode: 'plan',
                     defaultModel: 'sonnet',
                     capabilities: {
@@ -125,7 +124,7 @@ describe('AcpCatalogSettingsScreen', () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
     });
 
-    it('renders built-in and configured backends and routes backend actions to the backend editor', async () => {
+    it('renders configured backends and routes backend actions to the backend editor', async () => {
         const { AcpCatalogSettingsScreen } = await import('./AcpCatalogSettingsScreen');
         const screen = await renderSettingsView(React.createElement(AcpCatalogSettingsScreen));
 
@@ -139,7 +138,7 @@ describe('AcpCatalogSettingsScreen', () => {
 
         expect(builtInKiroRow).toBeNull();
         expect(builtInCustomAcpRow).toBeNull();
-        expect(builtInOhMyPiRow).toBeTruthy();
+        expect(builtInOhMyPiRow).toBeNull();
         expect(backendRow).toBeTruthy();
         expect(backendRow?.props.title).toBe('Custom Kiro');
         expect(addBackendRow).toBeTruthy();

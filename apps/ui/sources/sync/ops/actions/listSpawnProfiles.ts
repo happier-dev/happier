@@ -26,8 +26,21 @@ export function listSpawnProfilesForActions(
 ): SpawnProfilesListResult {
     const state = storage.getState();
     const snapshot = readUiAiLaunchProfileSnapshot(state.settings.profiles);
+    const agentIds = new Set<string>(AGENT_IDS);
+    for (const profile of snapshot.profiles) {
+        if (!('compatibilityByTargetKey' in profile)) continue;
+        const targetKeys = [
+            ...Object.keys(profile.compatibilityByTargetKey),
+            ...(profile.preferredAgentTargetKey ? [profile.preferredAgentTargetKey] : []),
+        ];
+        for (const targetKey of targetKeys) {
+            if (!targetKey.startsWith('agent:')) continue;
+            const qualifiedAgentId = targetKey.slice('agent:'.length).trim();
+            if (qualifiedAgentId) agentIds.add(qualifiedAgentId);
+        }
+    }
     return projectLaunchProfileListV1(snapshot.profiles, {
-        agentIds: AGENT_IDS,
+        agentIds: [...agentIds],
         ...(args.agentId === undefined ? {} : { agentId: args.agentId }),
         ...(args.limit === undefined ? {} : { limit: args.limit }),
         unreadableCount: snapshot.unreadableCount,

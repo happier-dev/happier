@@ -82,7 +82,6 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
             />
         );
     }
-
     return (
         <View
             testID={`${props.testIDPrefix}:mode`}
@@ -92,11 +91,12 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
             ]}
         >
             <SegmentedTabBar
-                compact
+                accessibilityLabel={props.accessibilityLabel}
                 disabled={props.disabled}
                 testIDPrefix={`${props.testIDPrefix}:mode`}
                 tabs={approvalTabs}
                 activeTabId={props.controlState.value}
+                targetSize="platform"
                 onSelectTab={props.onChange}
             />
             {floored ? (

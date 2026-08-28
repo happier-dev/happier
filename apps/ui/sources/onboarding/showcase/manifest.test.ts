@@ -11,7 +11,12 @@ describe('ONBOARDING_SHOWCASE_MANIFEST', () => {
 
         expect(overview?.kind).toBe('list');
         if (overview?.kind !== 'list') return;
-        expect(overview.rows).toHaveLength(21);
+        // Hardcoded on purpose: adding a product-story seed adds an onboarding
+        // beat, and that should be a decision someone makes rather than a count
+        // that silently follows. 23 = the seeds with an onboarding placement.
+        expect(overview.rows).toHaveLength(23);
+        // Unchanged by `worktrees` and `handoff`: both declare `artworkId: null`,
+        // so they add overview rows without adding illustrated detail cards.
         expect(details).toHaveLength(13);
         expect(details.every((card) => card.kind === 'image')).toBe(true);
     });

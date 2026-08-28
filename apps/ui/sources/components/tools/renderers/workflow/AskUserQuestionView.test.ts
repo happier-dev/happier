@@ -312,6 +312,40 @@ describe('AskUserQuestionView', () => {
         });
     }
 
+    function publishAttachedTerminalAskUserQuestionDescriptor() {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-1',
+            descriptorsByAgentId: {
+                'acme.terminal': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme.terminal',
+                    agentId: 'acme.terminal',
+                    version: 1,
+                    display: {},
+                    behavior: {
+                        askUserQuestion: {
+                            dialogs: [{
+                                dialogId: 'unrecognized_confirmation',
+                                terminalNotice: {
+                                    headerKey: 'tools.askUserQuestion.attachedTerminalNotice.header',
+                                    questionKey: 'tools.askUserQuestion.attachedTerminalNotice.question',
+                                },
+                                terminalSecondaryAction: {
+                                    kind: 'openAttachedTerminal',
+                                    labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+                                    descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
+                                },
+                            }],
+                        },
+                    },
+                    session: {},
+                    message: {},
+                    components: { slots: [] },
+                },
+            },
+        });
+    }
+
     function makeSuggestionsWithFreeformTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'AskUserQuestion',
@@ -431,6 +465,8 @@ describe('AskUserQuestionView', () => {
         activeAskUserQuestionRequestId = 'toolu_1';
         activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
         askUserQuestionSessionState.current = null;
+        daemonMergedProjectionState.current.inputs.pluginProjectionById['acme.review']!
+            .editableSettingsGroups[0]!.scope.kind = 'account';
     });
 
     it('submits answers via permission approval without sending a follow-up user message', async () => {
@@ -666,7 +702,7 @@ describe('AskUserQuestionView', () => {
         }));
 
         const action = screen.findByProps({ testID: 'ask-user-question.open-attached-terminal' });
-        await pressTestInstanceAsync(action, 'Open Claude terminal');
+        await pressTestInstanceAsync(action, 'Open attached terminal');
 
         expect(openAttachedSessionTerminal).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
@@ -674,6 +710,26 @@ describe('AskUserQuestionView', () => {
     });
 
     it('replaces an optionless terminal-notice prompt with the host notice copy', async () => {
+        publishAttachedTerminalAskUserQuestionDescriptor();
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'acme.terminal', agent: {} },
+            },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
         const screen = await renderView(makeTool({
             input: {
                 happierDialog: {
@@ -689,12 +745,12 @@ describe('AskUserQuestionView', () => {
         expect(findTestInstanceByTypeContainingText(
             screen,
             'Text',
-            'tools.askUserQuestion.claudeDialogNotice.header',
+            'tools.askUserQuestion.attachedTerminalNotice.header',
         )).toBeTruthy();
         expect(findTestInstanceByTypeContainingText(
             screen,
             'Text',
-            'tools.askUserQuestion.claudeDialogNotice.question',
+            'tools.askUserQuestion.attachedTerminalNotice.question',
         )).toBeTruthy();
         // The raw TUI prompt text never reaches the user.
         expect(findTestInstanceByTypeContainingText(screen, 'Text', 'Open terminal?')).toBeUndefined();
@@ -722,7 +778,7 @@ describe('AskUserQuestionView', () => {
         expect(findTestInstanceByTypeContainingText(
             screen,
             'Text',
-            'tools.askUserQuestion.claudeDialogNotice.question',
+            'tools.askUserQuestion.attachedTerminalNotice.question',
         )).toBeUndefined();
     });
 
@@ -880,6 +936,160 @@ describe('AskUserQuestionView', () => {
         expect(machinePluginSettingsSet).not.toHaveBeenCalled();
         expect(resolvePreferredServerIdForSessionId).not.toHaveBeenCalled();
         expect(useSettingMutable).not.toHaveBeenCalledWith('claudeUnifiedTerminalWorkspaceTrust');
+    });
+
+    it('persists an external Agent choice through its own qualified settings declaration', async () => {
+        publishReviewAskUserQuestionDescriptor(['always_include']);
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'acme.review', agent: {} },
+            },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'review_scope' },
+                questions: [{
+                    header: 'Review scope',
+                    question: 'Remember this scope?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'always_include',
+                        label: 'Always include selected files',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'reviewScopePreference',
+                            value: 'always_include',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Always include selected files');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            'Remember this scope?': ['always_include'],
+        });
+        expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
+            pluginId: 'acme.review',
+            fieldId: 'reviewScopePreference',
+            mutation: { kind: 'set', value: 'always_include' },
+            expectedRevision: { kind: 'account', value: 1 },
+            scope: { kind: 'account' },
+            target: {
+                kind: 'account',
+                serverIdentityId: 'srv_server_a',
+            },
+            fields: [{ key: 'reviewScopePreference', redacted: false }],
+        });
+        expect(machinePluginSettingsSet).not.toHaveBeenCalled();
+        expect(useSettingMutable).not.toHaveBeenCalledWith('reviewScopePreference');
+    });
+
+    it('uses the external Agent setting catalog scope instead of forcing an Account write', async () => {
+        publishReviewAskUserQuestionDescriptor(['always_include']);
+        daemonMergedProjectionState.current.inputs.pluginProjectionById['acme.review']!
+            .editableSettingsGroups[0]!.scope.kind = 'daemon';
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'acme.review', agent: {} },
+            },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        scopedPluginSettingsRead.mockResolvedValueOnce({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'daemon' },
+                target: {
+                    kind: 'daemon',
+                    serverIdentityId: 'srv_server_a',
+                    machineId: 'machine-1',
+                    serverId: 'server-a',
+                },
+                revision: { kind: 'daemon', value: 'revision-1' },
+                values: {},
+            },
+        });
+        scopedPluginSettingsWrite.mockResolvedValueOnce({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'daemon' },
+                target: {
+                    kind: 'daemon',
+                    serverIdentityId: 'srv_server_a',
+                    machineId: 'machine-1',
+                    serverId: 'server-a',
+                },
+                revision: { kind: 'daemon', value: 'revision-2' },
+                values: { reviewScopePreference: 'always_include' },
+            },
+        });
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'review_scope' },
+                questions: [{
+                    header: 'Review scope',
+                    question: 'Remember this scope?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'always_include',
+                        label: 'Always include selected files',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'reviewScopePreference',
+                            value: 'always_include',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Always include selected files');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
+            pluginId: 'acme.review',
+            fieldId: 'reviewScopePreference',
+            mutation: { kind: 'set', value: 'always_include' },
+            expectedRevision: { kind: 'daemon', value: 'revision-1' },
+            scope: { kind: 'daemon' },
+            target: {
+                kind: 'daemon',
+                serverIdentityId: 'srv_server_a',
+                machineId: 'machine-1',
+                serverId: 'server-a',
+            },
+            fields: [{ key: 'reviewScopePreference', redacted: false }],
+        });
     });
 
     it('refuses a remembered choice when the owning Agent projection changes while approval is in flight', async () => {

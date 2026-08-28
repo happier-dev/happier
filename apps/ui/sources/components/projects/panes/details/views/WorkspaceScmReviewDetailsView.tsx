@@ -18,10 +18,9 @@ import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/re
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
 import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
-import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
 import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     selectPluginPermissionPendingRequests,
 } from '@/sync/domains/plugins/permissions/store';
@@ -55,11 +54,10 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true;
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
-    const reviewCommentsExecutor = React.useMemo(() => createReviewCommentsHttpActionExecutor(), []);
-    const pluginPermissionGrantExecutor = React.useMemo(() => createPluginPermissionGrantHttpActionExecutor(), []);
+    const frontDoorActionExecutor = React.useMemo(() => createFrontDoorUiActionExecutor(), []);
     const pluginPermissionGrantActions = React.useMemo(
-        () => createPluginPermissionGrantActions({ execute: pluginPermissionGrantExecutor }),
-        [pluginPermissionGrantExecutor],
+        () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }),
+        [frontDoorActionExecutor],
     );
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
     const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope>(() => ({
@@ -139,7 +137,7 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
             {reviewCommentsEnabled ? (
                 <ReviewCommentsSessionSurface
                     workspaceId={props.workspaceRefId}
-                    execute={reviewCommentsExecutor}
+                    execute={frontDoorActionExecutor}
                     directWriteGrants={directWriteGrants}
                     pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
                     onGrantDirectWrite={pluginPermissionGrants.grant}

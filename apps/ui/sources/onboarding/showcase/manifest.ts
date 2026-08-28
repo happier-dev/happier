@@ -30,6 +30,8 @@ const authoredFeatures: readonly Feature[] = [
     { id: 'voice', iconId: 'voice', titleKey: 'journey.beats.a10.title', bodyKey: 'journey.beats.a10.body', imageKey: 'onboarding-voice' },
     { id: 'machines', iconId: 'machines', titleKey: 'journey.reel.features.crossPlatform.title', bodyKey: 'journey.reel.features.crossPlatform.body' },
     { id: 'surfaces', iconId: 'surfaces', titleKey: 'releaseNotes.onboardingShowcase.cards.welcome.everywhereTitle', bodyKey: 'releaseNotes.onboardingShowcase.cards.welcome.everywhereBody' },
+    { id: 'worktrees', iconId: 'worktrees', titleKey: 'releaseNotes.onboardingShowcase.cards.worktrees.title', bodyKey: 'releaseNotes.onboardingShowcase.cards.worktrees.body' },
+    { id: 'handoff', iconId: 'handoff', titleKey: 'releaseNotes.onboardingShowcase.cards.handoff.title', bodyKey: 'releaseNotes.onboardingShowcase.cards.handoff.body' },
     { id: 'mcp', iconId: 'globe', titleKey: 'journey.beats.a11.title', bodyKey: 'journey.beats.a11.body', imageKey: 'onboarding-mcp' },
     { id: 'subscriptions', iconId: 'subscriptions', titleKey: 'releaseNotes.onboardingShowcase.cards.accounts.title', bodyKey: 'releaseNotes.onboardingShowcase.cards.accounts.body', imageKey: 'onboarding-subscriptions' },
     { id: 'accounts', iconId: 'accounts', titleKey: 'journey.beats.a12.title', bodyKey: 'journey.beats.a12.body', imageKey: 'onboarding-sail-past-limits' },

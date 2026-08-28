@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
     ConnectedServiceBindingsV1Schema,
+    parseQualifiedPluginContributionKey,
     type ConnectedServiceBindingSelectionV1,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceId,
@@ -23,12 +24,19 @@ import { NewSessionConnectedServicesSelectionContent } from '@/components/sessio
 import { useActionSettingsNarrowLayout } from '@/components/settings/actions/useActionSettingsNarrowLayout';
 import { t } from '@/text';
 import {
-    buildConnectedServiceAccountGroupOptionsByServiceId,
-    buildConnectedServiceProfileOptionsByServiceId,
-    resolveAgentSupportedConnectedServiceIds,
-} from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+    applyAgentKindRestrictionsToQualifiedProfileOptions,
+    buildQualifiedConnectedAccountGroupOptionsByServiceId,
+    buildQualifiedConnectedAccountProfileOptionsByServiceId,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import {
+    resolveQualifiedConnectedAccountServiceKey,
+} from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import {
+    resolveConnectedServiceDisplayName,
+    resolveQualifiedConnectedServiceRegistryDisplayName,
+} from './model/resolveConnectedServiceDisplayName';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveConnectedServicesAuthLabel,
@@ -40,8 +48,16 @@ export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     agentId: string;
     agentTitle: string;
     agentCore: Pick<AgentCore, 'connectedServices'>;
+    connectedAccountServiceKeys?: readonly string[];
+    /**
+     * Declared Connected Account service keys for this Agent. Current callers
+     * pass canonical qualified keys from the authoritative machine Agent
+     * catalog projection; released bundled scalar declarations are also
+     * accepted and translated only through the generated built-in mapping.
+     */
+    connectedAccountsV4?: ReadonlyArray<AccountProfile['connectedAccountsV4'][number]>;
+    connectedAccountGroupsV4?: ReadonlyArray<AccountProfile['connectedAccountGroupsV4'][number]>;
     accountGroupsEnabled: boolean;
-    accountProfileConnectedServicesV2: ReadonlyArray<AccountProfile['connectedServicesV2'][number]>;
     settings: {
         connectedServicesProfileLabelByKey: Record<string, string | undefined>;
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
@@ -152,32 +168,38 @@ function resolveReadyAutoSwitchPoolForProfile(params: Readonly<{
 export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultAuthRowProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const narrowLayout = useActionSettingsNarrowLayout();
     const [locallyDismissedKeys, setLocallyDismissedKeys] = React.useState<Readonly<Record<string, boolean>>>({});
 
-    const supportedServiceIds = React.useMemo(() => resolveAgentSupportedConnectedServiceIds({
-        agentCore: props.agentCore,
-    }), [props.agentCore]);
+    const supportedServiceIds = React.useMemo<string[]>(() => {
+        const unique: string[] = [];
+        for (const serviceId of props.connectedAccountServiceKeys ?? []) {
+            const qualified = resolveQualifiedConnectedAccountServiceKey(serviceId);
+            if (qualified && !unique.includes(qualified)) unique.push(qualified);
+        }
+        return unique;
+    }, [props.connectedAccountServiceKeys]);
 
-    const profileOptionsByServiceId = React.useMemo(() => buildConnectedServiceProfileOptionsByServiceId({
-        accountProfileConnectedServicesV2: props.accountProfileConnectedServicesV2,
+    const profileOptionsByServiceId = React.useMemo(() => applyAgentKindRestrictionsToQualifiedProfileOptions({
+        optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+            accounts: props.connectedAccountsV4 ?? [],
+            supportedServiceIds: supportedServiceIds,
+            labelsByKey: props.settings.connectedServicesProfileLabelByKey,
+        }),
         agentCore: props.agentCore,
-        supportedConnectedServiceIds: supportedServiceIds,
-        labelsByKey: props.settings.connectedServicesProfileLabelByKey,
     }), [
-        props.accountProfileConnectedServicesV2,
+        props.connectedAccountsV4,
         props.agentCore,
         props.settings.connectedServicesProfileLabelByKey,
         supportedServiceIds,
     ]);
 
-    const accountGroupOptionsByServiceId = React.useMemo(() => buildConnectedServiceAccountGroupOptionsByServiceId({
-        accountGroupsFeatureEnabled: props.accountGroupsEnabled,
-        accountProfileConnectedServicesV2: props.accountProfileConnectedServicesV2,
-        supportedConnectedServiceIds: supportedServiceIds,
+    const accountGroupOptionsByServiceId = React.useMemo(() => buildQualifiedConnectedAccountGroupOptionsByServiceId({
+        groups: props.connectedAccountGroupsV4 ?? [],
+        supportedServiceIds: supportedServiceIds,
     }), [
-        props.accountGroupsEnabled,
-        props.accountProfileConnectedServicesV2,
+        props.connectedAccountGroupsV4,
         supportedServiceIds,
     ]);
 
@@ -198,7 +220,12 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         accountGroupOptionsByServiceId,
         accountGroupsEnabled: props.accountGroupsEnabled,
         defaultProfileIdByServiceId: props.settings.connectedServicesDefaultProfileByServiceId,
-        resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t),
+        resolveServiceTitle: (serviceId) => {
+            const service = parseQualifiedPluginContributionKey(serviceId);
+            return service
+                ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServicesRegistry, service, t)
+                : resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t);
+        },
         nativeLabel: t('connectedServices.authChip.nativeLabel'),
         formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
     });

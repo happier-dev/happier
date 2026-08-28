@@ -3,7 +3,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 import type {
     ExternalSessionsAutoLinkSourceDescriptor,
@@ -20,8 +20,16 @@ const announceForAccessibilityMock = vi.hoisted(() => vi.fn());
 const actionFocusMock = vi.hoisted(() => vi.fn());
 const sectionFocusFallbackMock = vi.hoisted(() => vi.fn());
 const nativeFocusMock = vi.hoisted(() => vi.fn());
+const modalConfirmMock = vi.hoisted(() => vi.fn(async () => false));
 
 installUiListsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            confirmResult: false,
+            spies: { confirm: modalConfirmMock },
+        }).module;
+    },
     reactNative: async () => {
         const {
             createFocusablePressableMock,
@@ -173,6 +181,8 @@ describe('ExternalSessionsIntegrationSection Item boundary', () => {
         actionFocusMock.mockClear();
         sectionFocusFallbackMock.mockClear();
         nativeFocusMock.mockClear();
+        modalConfirmMock.mockReset();
+        modalConfirmMock.mockResolvedValue(false);
     });
 
     it.each(['web', 'ios'] as const)(
@@ -271,6 +281,84 @@ describe('ExternalSessionsIntegrationSection Item boundary', () => {
             });
 
             expect(screen.findAllByTestId('settings-external-sessions-auto-link-source')).toHaveLength(0);
+            const fallback = screen.findByTestId('settings-external-sessions-focus-fallback');
+            expect(fallback?.props).toMatchObject({
+                accessibilityLabel: 'externalSessions.settingsIntegrationsGroupTitle',
+                accessible: true,
+            });
+            if (platformOS === 'web') {
+                expect(fallback?.props).toMatchObject({ role: 'region', tabIndex: -1 });
+                await act(async () => {
+                    fallback?.props.onFocus?.();
+                });
+                expect(screen.findByTestId('settings-external-sessions-focus-fallback')?.props.style)
+                    .toMatchObject({
+                        outlineStyle: 'solid',
+                        outlineWidth: 2,
+                        outlineColor: expect.any(String),
+                    });
+            }
+            if (platformOS === 'web') {
+                expect(sectionFocusFallbackMock).toHaveBeenCalledOnce();
+                expect(actionFocusMock).not.toHaveBeenCalled();
+            } else {
+                expect(nativeFocusMock).toHaveBeenCalledOnce();
+                expect(nativeFocusMock).toHaveBeenLastCalledWith(202);
+            }
+        },
+    );
+
+    it.each(['web', 'ios'] as const)(
+        'returns a user-uninstalled integration to the surviving integrations region on %s',
+        async (platformOS) => {
+            accessibilityPlatform.os = platformOS;
+            modalConfirmMock.mockResolvedValueOnce(true);
+            const { ExternalSessionsIntegrationSection } = await import(
+                './ExternalSessionsIntegrationSection'
+            );
+            function UninstallFallbackHarness() {
+                const [integrations, setIntegrations] = React.useState<
+                    readonly ExternalSessionsIntegrationDescriptor[]
+                >([integration('enabled', 'installed_enabled')]);
+                const operations = React.useMemo<ExternalSessionsIntegrationOperations>(() => ({
+                    reviewAndInstall: async () => {},
+                    disable: async () => {},
+                    enable: async () => {},
+                    uninstall: async () => {
+                        setIntegrations([]);
+                    },
+                    checkAgain: async () => {},
+                }), []);
+
+                return (
+                    <ExternalSessionsIntegrationSection
+                        integrations={integrations}
+                        autoLinkSources={[]}
+                        machineId="machine-1"
+                        agent={null}
+                        operations={operations}
+                    />
+                );
+            }
+
+            const screen = await renderScreen(<UninstallFallbackHarness />);
+            const uninstall = findHostNodeByTestID(
+                screen.findAllByTestId('settings-external-sessions-action-enabled-uninstall'),
+            );
+
+            await act(async () => {
+                uninstall?.props.onPress();
+                await Promise.resolve();
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(modalConfirmMock).toHaveBeenCalledOnce();
+            expect(screen.findByTestId('settings-external-sessions-action-enabled-uninstall')).toBeNull();
+            expect(screen.findByTestId('settings-external-sessions-focus-fallback')?.props)
+                .toMatchObject({
+                    accessibilityLabel: 'externalSessions.settingsIntegrationsGroupTitle',
+                    accessible: true,
+                });
             if (platformOS === 'web') {
                 expect(sectionFocusFallbackMock).toHaveBeenCalledOnce();
                 expect(actionFocusMock).not.toHaveBeenCalled();

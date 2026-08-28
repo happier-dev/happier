@@ -1497,6 +1497,10 @@ impl WryDesktopBrowserView {
                 load_info.record_page_load(event, url);
             })
             .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
+            // This child browser intentionally renders arbitrary HTTP(S)
+            // pages. The app shell owns Voice capture; remote content must not
+            // inherit its process-wide microphone authorization.
+            .with_media_capture_enabled(false)
             .with_download_started_handler(|_, _| false);
 
         // Injected in-page devtools: when the view was opened with a diagnostics init script, run it

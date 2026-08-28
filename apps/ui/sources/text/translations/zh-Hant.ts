@@ -15,6 +15,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 /**
@@ -755,6 +756,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
   },
 
     automations: {
+        ...automationTriggerSetTranslations['zh-Hant'],
         unsupportedReference: ({ reference }: { reference: string }) =>
             `自動化只會儲存訊息內容，因此 ${reference} 將不再指向你選擇的對象。請從訊息中移除，或改為提及檔案路徑。`,
         list: {
@@ -762,7 +764,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `：${expression}` : ''}${timezone ? `（${timezone}）` : ''}`,
             schedule: '排程',
             event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
-            manual: '手動',
+            sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `當輪次結束時 · ${sessionId}`,
+            noAutomaticTriggers: '沒有自動觸發器',
             noNextRun: '沒有下次執行',
             nextRun: ({ time }: { time: string }) => `下次：${time}`,
             nextRunPending: '下次執行待定',
@@ -775,68 +778,16 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             schedule: {
                 cronTitle: 'Cron 表達式',
             },
-            sentence: {
-                run: '執行',
-                every: '每隔',
-                onSchedule: '按排程',
-                runEvery: '執行間隔',
-                minutes: '分鐘',
-                presets: '預設',
-                intervalUnits: {
-                    minutes: '分鐘',
-                    hours: '小時',
-                    days: '天',
-                },
-                cronFieldGuide: {
-                    minute: '分鐘',
-                    hour: '小時',
-                    dayOfMonth: '日期',
-                    month: '月份',
-                    weekday: '星期',
-                },
-                useCron: '改用 cron 表達式',
-                useInterval: '切換到間隔',
-                addNotes: '新增備註',
-                notes: '備註',
-                localTimezone: '本地時間',
-                scheduleControlA11y: '編輯自動化排程',
-                intervalValue: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 天`;
-                    if (minutes === 60) return '1 小時';
-                    if (minutes % 60 === 0) return `${minutes / 60} 小時`;
-                    return `${minutes} 分鐘`;
-                },
-                intervalCadence: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `每 ${minutes / (24 * 60)} 天`;
-                    if (minutes === 60) return '每小時';
-                    if (minutes % 60 === 0) return `每 ${minutes / 60} 小時`;
-                    return `每 ${minutes} 分鐘`;
-                },
-                cronPresets: {
-                    weekdays9am: '工作日 9:00',
-                    hourly: '每小時',
-                    monday9am: '週一 9:00',
-                    dailyMidnight: '每天午夜',
-                },
-                cronCadences: {
-                    weekdays9am: '工作日 9:00',
-                    hourly: '每小時',
-                    monday9am: '每週一 9:00',
-                    dailyMidnight: '每天午夜',
-                },
-                cronCadenceExpression: ({ expression }: { expression: string }) => `按 cron 排程 ${expression}`,
-                timezone: ({ timezone }: { timezone: string }) => `時區：${timezone}`,
-            },
         },
         session: {
             emptyTitle: '暫無自動化',
-            emptyBody: '新增自動化以將排程訊息加入此工作階段佇列。',
+            emptyBody: '新增自動化，在任一觸發器啟動時於此工作階段執行工作。',
             addAutomation: '新增自動化',
             failedToLoad: '載入自動化失敗。',
         },
         screen: {
             emptyTitle: '暫無自動化',
-            emptyBody: '可從「新建工作階段」流程建立，以在你的裝置上執行排程工作階段。',
+            emptyBody: '從「新建工作階段」建立，然後加入排程、事件或精確回合觸發器。',
             createAutomationA11y: '建立自動化',
         },
         settings: {
@@ -863,6 +814,11 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 watcherUnwatched: '未設定觀察器',
                 endpointTitle: 'Webhook 端點',
                 endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投遞`,
+                transportTitle: "How events arrive",
+                transportCheckpointedPull: "Polling",
+                transportDurablePush: "Webhook",
+                disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+                disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
                 sourceStatusUnreported: '等待首次回報',
                 sourceStatusUnavailable: '來源狀態不可用',
                 sourceCatalogStatusUnavailable: '來源時效性無法取得',
@@ -872,12 +828,33 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 watcherInstallationReplaced: '這台機器已重新安裝，重新設定之前這個觀察器無法觀察事件。',
                 watcherMachineOffline: '這台機器目前離線，因此這個觀察器現在沒有在觀察事件。',
             },
+            trigger: {
+                identity: ({ id, revision }: { id: string; revision: number }) => `觸發器 ${id} · 修訂版 ${revision}`,
+                sourceSession: '來源工作階段',
+                sourceTurn: '確切來源輪次',
+                run: "關聯執行",
+                status: {
+                    waiting: "等待此輪完成",
+                    paused: "已暫停",
+                    triggered: "已觸發",
+                    running: "執行中",
+                    finished: "已完成",
+                    sourceFailed: "來源輪次失敗",
+                    sourceCancelled: "來源輪次已取消",
+                    sourceUnavailable: "來源不可用",
+                },
+            },
             runMeta: {
-                originTitle: '來源',
-                origin: {
-                    scheduled: '已排程',
+                triggerIdentityTitle: '觸發器識別資訊',
+                triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · 修訂版 ${revision}`,
+                triggerRetired: '觸發器已移除',
+                triggerRetiredSubtitle: '即使此觸發器已不在自動化中，本次執行仍會保留其不可變的原因。',
+                causeTitle: '來源',
+                cause: {
+                    schedule: '已排程',
                     manual: '手動',
                     pluginEvent: '事件',
+                    sessionLifecycle: '工作階段輪次已完成',
                     conversation: '對話',
                 },
                 state: {
@@ -898,7 +875,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 admitted: ({ time }: { time: string }) => `已接納：${time}`,
                 occurrenceTitle: '事件識別碼',
                 sourceTitle: '觀察來源',
-                contentRemoved: '執行內容已移除',
+                eventReferenceTitle: '事件參照',
                 nativeExecutionTitle: '原生執行',
                 nativeExecutionCall: ({ callId }: { callId: string }) => `呼叫 ${callId}`,
                 nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
@@ -1454,6 +1431,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     connectedServices: {
+        accountScopeMismatchTitle: '切換伺服器帳戶以繼續',
+        accountScopeMismatchDescription: '此機器屬於另一個伺服器帳戶。請切換到該伺服器帳戶以管理其已連線帳戶。',
         fallbackName: '已連線服務',
         serviceNames: {
             claudeSubscription: 'Claude 訂閱',
@@ -6064,11 +6043,11 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             turnDiffRecap: '本回合變更摘要',
         },
         askUserQuestion: {
-            claudeDialogNotice: {
-                header: 'Claude 對話框',
-                question: 'Claude 正在顯示對話框。請開啟終端機查看並選擇如何繼續。',
-                openTerminal: '開啟終端機',
-                description: '在 Claude 終端機中查看並回答該對話框。',
+            attachedTerminalNotice: {
+                header: '終端機對話框',
+                question: '代理正在顯示對話框。請開啟已連接的終端機查看並選擇如何繼續。',
+                openTerminal: '開啟已連接的終端機',
+                description: '在已連接的終端機中查看並回答該對話框。',
             },
             submit: '提交答案',
             multipleQuestions: ({ count }: { count: number }) => `${count} 個問題`,
@@ -7637,6 +7616,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             sessionHandoffFeature: '啟用工作階段交接支援後才能使用此操作。',
             notAvailableInThisApp: '此目標目前尚未在此用戶端中顯示。',
             requiredByAgentPolicy: '原則要求代理取得核准。此操作一律會先詢問。',
+            presentUserRequired: '此操作需要你本人在 Happier 中操作。API 權杖和受信任的外掛可以找到它，但無法執行。',
         },
         targets: {
             session_header: {
@@ -7700,12 +7680,12 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 subtitle: '可透過工作階段控制 CLI 介面使用。',
             },
             api: {
-                title: 'API',
-                subtitle: '可透過外部操作 API 使用。',
+                title: '外部 API 與 SDK',
+                subtitle: 'API 權杖可透過 HTTP 和 SDK 使用。',
             },
             plugin: {
                 title: '受信任的外掛',
-                subtitle: '受信任的外掛可將其作為操作使用。',
+                subtitle: '受信任的內建和已安裝外掛均可使用。',
             },
             contextual_ui: {
                 title: '情境式 UI',
@@ -8970,6 +8950,16 @@ settingsSession: {
         logout: '登出',
         logoutSubtitle: '登出並清除本機資料',
         logoutConfirm: '您確定要登出嗎？請確保您已備份金鑰！',
+        deleteAccount: "刪除帳戶",
+        deleteAccountSubtitle: "從此伺服器永久刪除此帳戶及其資料",
+        deleteAccountConfirmTitle: "刪除此帳戶？",
+        deleteAccountConfirmBody: "這會永久刪除此伺服器上儲存的帳戶資料，且無法復原。請輸入 DELETE 以繼續。",
+        deleteAccountInvalidTitle: "確認內容不相符",
+        deleteAccountInvalidBody: "請輸入完全一致的 DELETE 以繼續。",
+        deleteAccountFailedTitle: "未確認刪除",
+        deleteAccountFailed: "Happier 無法確認刪除結果。系統保留了你的本機登入，讓你可以重試。",
+        deleteAccountCleanupFailedTitle: "帳戶已刪除",
+        deleteAccountCleanupFailed: "伺服器已確認刪除，但此裝置未能完成本機資料清理。請重新開啟 Happier；如果仍顯示此帳戶，請登出。",
         encryptionUpdateFailed: '無法更新加密設定',
         secretKeyMissing: '密鑰不可用。請先復原你的帳戶。',
         restoreRequiredTitle: '需要復原',
@@ -9151,6 +9141,18 @@ settingsSession: {
                         "body": "你的程式碼、prompts 和工作階段內容會先在裝置上加密，才會到達任何伺服器。Private by design. Open by default.",
                         "alt": "隱私與自行託管的抽象佔位圖。"
                     },
+                    "worktrees": {
+                        "title": "每個工作階段一個 worktree。或者不用。",
+                        "wideTitle": "每個工作階段一個 worktree。\n或者不用。",
+                        "body": "在專屬的 Git worktree 中啟動工作階段，讓多個代理在同一個儲存庫中作業而互不干擾；也可以直接在目前資料夾開始。",
+                        "alt": "Git worktree 的抽象預留位置圖片。"
+                    },
+                    "handoff": {
+                        "title": "在裝置之間搬移工作階段。",
+                        "wideTitle": "把執行中的工作階段\n搬到另一台裝置。",
+                        "body": "把執行中的工作階段交給另一台電腦，從中斷處繼續；需要的話還能帶上工作目錄。",
+                        "alt": "在裝置之間搬移工作階段的抽象預留位置圖片。"
+                    },
                     "pets": {
                         "title": "別再一個人撐著。認識 Pets。",
                         "wideTitle": "別再一個人撐著。\n認識 Pets。",
@@ -9243,6 +9245,8 @@ settingsSession: {
             fallbackValue: '原生終端機內容無法使用。請使用 xterm WebView 存取無障礙終端機內容。',
             focusAction: '聚焦終端機',
             copySelectionAction: '複製所選內容',
+            selectAllAction: '選取全部終端機輸出',
+            openLinkAction: '開啟所選連結',
         },
         dockMenuA11y: '停靠終端',
         largePasteTitle: '要貼上大量終端機輸入嗎？',

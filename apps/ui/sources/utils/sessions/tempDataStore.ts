@@ -3,38 +3,26 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type {
     AcpConfigOptionOverridesV1,
+    AgentExecutionTargetV1,
     BackendTargetRefV2,
-    ComposerAttachmentAuthorValueV1,
+    RuntimeDescriptorV1,
     SessionMcpSelectionV1,
     SessionModelSelectionV1,
     SessionSpawnSourceContextV1,
+    SessionExecutionTargetV1,
+    SessionOrganizationPlacementV1,
 } from '@happier-dev/protocol';
-import type { CodexBackendMode } from '@happier-dev/protocol';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
-import type { PluginEventAutomationEditSeed } from '@/components/automations/editor/pluginEventAutomationEditSeed';
 
 export interface TempDataEntry {
     data: any;
     timestamp: number;
 }
 
-/**
- * Author-shaped input that exists only between a trusted host selection and
- * the mounted New Session composer.  It is deliberately not a draft format:
- * the mounted composer resolves contribution authority and mints the finished
- * attachment records before the New Session draft persists them.
- */
-export type NewSessionPluginAttachmentSeedV1 = Readonly<{
-    pluginId: string;
-    attachmentLocalId: string;
-    value: ComposerAttachmentAuthorValueV1;
-}>;
-
 export type NewSessionPluginSeedHandoffV1 = Readonly<{
-    attachments?: readonly NewSessionPluginAttachmentSeedV1[];
     placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
 }>;
 
@@ -43,9 +31,12 @@ export interface NewSessionData {
     machineId?: string;
     directory?: string;
     path?: string;
+    executionTarget?: SessionExecutionTargetV1 | null;
+    organizationPlacement?: SessionOrganizationPlacementV1;
     replacePersistedDraftSelections?: boolean;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     agentType?: AgentId;
+    agentTarget?: AgentExecutionTargetV1 | null;
     backendTarget?: BackendTargetRefV2;
     selectedProfileId?: string | null;
     transcriptStorage?: 'persisted' | 'direct';
@@ -55,19 +46,9 @@ export interface NewSessionData {
     modelMode?: ModelMode;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
-    codexBackendMode?: CodexBackendMode | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
     automationDraft?: NewSessionAutomationDraft | null;
-    /** One-shot direct-detail handoff; never persisted or indexed by this store. */
-    eventAutomationEditSeed?: PluginEventAutomationEditSeed;
-    /** UI-only server scope for an Event existing-session target. */
-    eventAutomationExistingSessionServerId?: string | null;
-    /** One-shot Session → Event authoring handoff; never persisted by this store. */
-    eventAutomationInitialTarget?: Readonly<{
-        kind: 'existingSession';
-        sessionId: string;
-        serverId: string;
-    }>;
     backendNewSessionOptionStateByTargetKey?: BackendNewSessionOptionStateByTargetKey;
     agentNewSessionOptionStateByAgentId?: BackendNewSessionOptionStateByTargetKey;
     resumeSessionId?: string;
@@ -88,8 +69,9 @@ export interface NewSessionData {
      */
     sourceContextServerId?: string | null;
     /**
-     * One-shot host → mounted-composer input. It is consumed with this
-     * `NewSessionData` entry and is never a second persisted New Session draft.
+     * One-shot host → mounted New Session placement choice. Attachment requests
+     * use the Account + draft keyed pre-admission owner instead, because route
+     * temp data is destructively consumed before a Composer remount.
      */
     pluginNewSessionSeed?: NewSessionPluginSeedHandoffV1;
 }

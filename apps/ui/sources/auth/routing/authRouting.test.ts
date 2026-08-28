@@ -73,22 +73,25 @@ describe('isPublicRouteForUnauthenticated', () => {
         expect(isPublicRouteForUnauthenticated(segments)).toBe(expected);
     });
 
-    it('allows the stage D-PERF route before auth only in dev or debug-export builds', () => {
+    it('allows credential-free QA routes before auth only in dev or debug-export builds', () => {
         withDevBuild(true, () => {
             withDebugRouteEnv(undefined, () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
             });
         });
 
         withDevBuild(false, () => {
             withDebugRouteEnv(undefined, () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });
         });
 
         withDevBuild(false, () => {
             withDebugRouteEnv('1', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
             });
         });
     });

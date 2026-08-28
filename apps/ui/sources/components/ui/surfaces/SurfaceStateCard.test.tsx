@@ -55,6 +55,20 @@ describe('SurfaceStateCard', () => {
         expect(screen.findByTestId('state-card')?.props.accessibilityLiveRegion).toBeUndefined();
     });
 
+    it('renders a warning state with the canonical warning glyph', async () => {
+        const { SurfaceStateCard } = await import('./SurfaceStateCard');
+        const screen = await renderScreen(
+            <SurfaceStateCard
+                testID="state-card"
+                kind="warning"
+                title="Selection changed"
+                reason="Choose the current value before continuing."
+            />,
+        );
+
+        expect(screen.findAll((node) => node.props?.name === 'warning-circle')).toHaveLength(1);
+    });
+
     it('announces only opted-in state transitions with the requested urgency', async () => {
         const { SurfaceStateCard } = await import('./SurfaceStateCard');
         const screen = await renderScreen(

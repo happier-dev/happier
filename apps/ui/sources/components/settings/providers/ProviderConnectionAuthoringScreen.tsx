@@ -113,7 +113,12 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const machines = useAllMachines();
     const savedSecrets = useSetting('secrets');
     const providerTarget = useProviderSettingsTarget();
-    const { machineId, resolveCurrentTarget, serverId } = providerTarget;
+    const {
+        machineId,
+        resolveCurrentTarget,
+        selectedTargetServerMatchesActiveAccount,
+        serverId,
+    } = providerTarget;
     const query = useProviderConnections({ enabled, machineId, serverId });
     const mutation = useProviderConnectionMutation({
         resolveTarget: resolveCurrentTarget,
@@ -122,6 +127,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const connectionId = React.useRef(`pc_${randomUUID()}`).current;
     const [draft, setDraft] = React.useState<CustomProviderDraft>(() => createCustomProviderDraft('openai-responses'));
     const [secretId, setSecretId] = React.useState<string | null>(null);
+    const effectiveSecretId = selectedTargetServerMatchesActiveAccount ? secretId : null;
     // A SavedSecret reference belongs to the Account Settings that hold it, so
     // the selection is retired with the Account that made it. The rest of the
     // draft describes a machine-local Provider connection and stays.
@@ -129,6 +135,9 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         setSecretId(null);
     }, []);
     useRetireProviderStateOnAccountChange(discardAccountScopedSecretSelection);
+    React.useEffect(() => {
+        if (!selectedTargetServerMatchesActiveAccount) setSecretId(null);
+    }, [selectedTargetServerMatchesActiveAccount]);
     const [presetOpen, setPresetOpen] = React.useState(false);
     const [credentialOpen, setCredentialOpen] = React.useState(false);
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
@@ -173,8 +182,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         ? draft.endpoints.some((endpoint) => endpoint.enabled && endpoint.probePathsText.trim().length > 0)
         : draft.catalog === 'probe';
     const selectedSecretObservation = React.useMemo(() => {
-        if (!draftRequiresApiKey || secretId === null) return null;
-        const secret = savedSecrets.find((candidate) => candidate.id === secretId);
+        if (!draftRequiresApiKey || effectiveSecretId === null) return null;
+        const secret = savedSecrets.find((candidate) => candidate.id === effectiveSecretId);
         if (!secret) return { status: 'missing' as const };
         const persistedEnvelope = secret.encryptedValue.encryptedValue;
         return {
@@ -182,26 +191,26 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             hasPendingValue: typeof secret.encryptedValue.value === 'string',
             recordFingerprint: persistedEnvelope
                 ? createProviderSavedSecretRecordFingerprintV1({
-                    secretId,
+                    secretId: effectiveSecretId,
                     persistedEncryptedEnvelope: persistedEnvelope,
                 })
                 : null,
         };
-    }, [draftRequiresApiKey, savedSecrets, secretId]);
+    }, [draftRequiresApiKey, effectiveSecretId, savedSecrets]);
     // Unsaved work is the draft itself. The target machine is a persisted
     // Machine Administration preference that survives navigation and is
     // restored on return, and it can be initialized automatically from a sole
     // verified candidate after the first render — including it here would mark
     // a pristine form dirty and prompt for changes the user never made.
     const authoringStateKey = JSON.stringify({
-        draft, secretId, enableAfterSaving,
+        draft, secretId: effectiveSecretId, enableAfterSaving,
         selectedCandidateId, contributionDisplayName,
         contributionEndpointValues,
     });
     const probeObservationKey = JSON.stringify({
         machineId,
         draft: draftProbeObservationFacts(draft),
-        savedSecretId: draftRequiresApiKey ? secretId : null,
+        savedSecretId: draftRequiresApiKey ? effectiveSecretId : null,
         selectedSecretObservation,
     });
     const initialAuthoringStateKeyRef = React.useRef(authoringStateKey);
@@ -271,13 +280,14 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     }, []);
 
     const pickSecret = React.useCallback(() => {
+        if (!selectedTargetServerMatchesActiveAccount) return;
         Modal.show({
             component: SavedSecretPickerModal,
             props: { selectedId: secretId, onSelectId: setSecretId },
             chrome: { kind: 'card', title: t('settingsProviders.detail.pickSecretTitle'), dimensions: { size: 'lg' } },
             closeOnBackdrop: true,
         });
-    }, [secretId]);
+    }, [secretId, selectedTargetServerMatchesActiveAccount]);
 
     const reviewConnectionDraft = React.useCallback(() => {
         mutation.clearError();
@@ -292,7 +302,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         setManualModelsError(null);
         setInvalidField(null);
         const previewCredential = authoringPreview?.credential ?? contribution?.credential ?? null;
-        if (props.contributionKey && previewCredential?.required && !secretId) {
+        if (props.contributionKey && previewCredential?.required && !effectiveSecretId) {
             setLocalError('provider_secret_missing');
             pickSecret();
             return false;
@@ -310,7 +320,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 baseUrlFieldRef.current?.focus();
                 return false;
             }
-            if (draftRequiresApiKey && !secretId) {
+            if (draftRequiresApiKey && !effectiveSecretId) {
                 setLocalError('provider_secret_missing');
                 pickSecret();
                 return false;
@@ -330,7 +340,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 return {
                     action: 'createContribution' as const,
                     machineId, connectionId, contributionKey: props.contributionKey,
-                    displayName: contributionDisplayName, savedSecretId: secretId, enable: enableAfterSaving,
+                    displayName: contributionDisplayName, savedSecretId: effectiveSecretId, enable: enableAfterSaving,
                     authoringReview: {
                         candidateId: authoringPreview.candidateId,
                         fingerprint: authoringPreview.fingerprint,
@@ -342,7 +352,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 action: 'createCustom' as const,
                 machineId, connectionId, template: buildCustomProviderTemplate(draft),
                 manualModels: manualModels.accepted.map((id) => ({ id })),
-                savedSecretId: draftRequiresApiKey ? secretId : null, enable: enableAfterSaving,
+                savedSecretId: draftRequiresApiKey ? effectiveSecretId : null, enable: enableAfterSaving,
             };
             if (!request) return false;
             const result = await mutation.run(request, 'save');
@@ -356,7 +366,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             setLocalError('provider_connection_invalid');
         }
         return false;
-    }, [authoringPreview, connectionId, contribution?.credential, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, enableAfterSaving, machineId, mutation, pickSecret, props.contributionKey, router, secretId]);
+    }, [authoringPreview, connectionId, contribution?.credential, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, mutation, pickSecret, props.contributionKey, router]);
 
     const chooseAuthoringCandidate = React.useCallback(async (candidateId: string) => {
         const candidate = query.data?.discoveryCandidates.find((entry) => entry.candidateId === candidateId);
@@ -405,7 +415,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 serverId: target.serverId,
                 draftConnectionId: connectionId,
                 template,
-                savedSecretId: draftRequiresApiKey ? secretId : null,
+                savedSecretId: draftRequiresApiKey ? effectiveSecretId : null,
                 actionNonce: `probe_${randomUUID()}`,
             });
             if (probeGenerationRef.current !== generation) return;
@@ -423,7 +433,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 machineId,
             }));
         }
-    }, [connectionId, draft, draftRequiresApiKey, machineId, props.contributionKey, resolveCurrentTarget, secretId]);
+    }, [connectionId, draft, draftRequiresApiKey, effectiveSecretId, machineId, props.contributionKey, resolveCurrentTarget]);
 
     const requestUnsavedChangesDecision = React.useCallback(() => promptUnsavedChangesAlert(
         (title, message, buttons) => Modal.alert(title, message, buttons),
@@ -505,7 +515,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 previewCredential={previewCredential}
                 endpointTemplates={contributionEndpointTemplates}
                 endpointValues={contributionEndpointValues}
-                secretSelected={secretId !== null}
+                secretSelected={effectiveSecretId !== null}
+                savedSecretSelectionEnabled={selectedTargetServerMatchesActiveAccount}
                 preview={authoringPreview}
                 previewLoading={authoringPreviewLoading}
                 enableAfterSaving={enableAfterSaving}
@@ -544,7 +555,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 localEndpoint,
                 enableAfterSaving,
                 draftRequiresApiKey,
-                secretSelected: secretId !== null,
+                secretSelected: effectiveSecretId !== null,
+                savedSecretSelectionEnabled: selectedTargetServerMatchesActiveAccount,
                 manualModelsError,
                 draftHasProbe,
                 probeState,

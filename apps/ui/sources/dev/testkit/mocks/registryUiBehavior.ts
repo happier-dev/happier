@@ -32,6 +32,7 @@ export function createRegistryUiBehaviorModuleMock(
         resolveAgentUiBehaviorFromFlavor: () => ({}),
         resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
         resolveBundledAgentUiBehaviorProjection: () => null,
+        resolveConfiguredAgentRuntimeKindFromUiBehavior: () => null,
         resolveOwningMachineIdForSession: () => null,
         resolvePendingDeliveryLabelKeyForSession: () => null,
         resolvePendingDeliveryTransientActionForSession: () => null,

@@ -456,15 +456,20 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       >
         {AGENT_IDS.map((agentId) => {
           const agentCore = getAgentCore(agentId);
-          if ((agentCore.connectedServices?.supportedServiceIds ?? []).length === 0) return null;
+          // Released bundled Agents keep their exact scalar declarations;
+          // the row translates them through the generated built-in mapping.
+          const declaredServices = agentCore.connectedServices?.supportedServiceIds ?? [];
+          if (declaredServices.length === 0) return null;
           return (
             <ConnectedServicesDefaultAuthRow
               key={agentId}
               agentId={agentId}
               agentTitle={t(agentCore.displayNameKey)}
               agentCore={agentCore}
+              connectedAccountServiceKeys={declaredServices}
+              connectedAccountsV4={qualifiedAccounts}
+              connectedAccountGroupsV4={qualifiedGroups}
               accountGroupsEnabled={accountGroupsEnabled}
-              accountProfileConnectedServicesV2={services}
               settings={{
                 connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,

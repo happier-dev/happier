@@ -1080,6 +1080,60 @@ describe('useMachineTerminalSession', () => {
         await hook.unmount();
     });
 
+    it('hydrates a replacement renderer when its ready event follows a child-local fallback', async () => {
+        const terminalKey = 'session:s-renderer-fallback:terminal';
+        replaceTerminalSurfaceState(terminalKey, {
+            terminalId: 'term-renderer-fallback',
+            cursor: 14,
+            cursorMode: 'byte-offset',
+            output: 'cached output',
+            detectedUrl: null,
+        });
+        terminalOps.ensure.mockResolvedValue({
+            ok: true,
+            terminalId: 'term-renderer-fallback',
+            reused: true,
+        });
+        terminalOps.streamReadBytes.mockImplementation(() => new Promise(() => {}));
+        const firstRenderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(() => true),
+            writeBytes: vi.fn(() => true),
+            clear: vi.fn(),
+        };
+        const fallbackRenderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(() => true),
+            writeBytes: vi.fn(() => true),
+            clear: vi.fn(),
+        };
+        const terminalRef = {
+            current: firstRenderer as EmbeddedTerminalRendererHandle | null,
+        };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey,
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        expect(firstRenderer.write).toHaveBeenCalledWith('cached output');
+
+        terminalRef.current = fallbackRenderer;
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+
+        expect(fallbackRenderer.clear).toHaveBeenCalledTimes(1);
+        expect(fallbackRenderer.write).toHaveBeenCalledWith('cached output');
+        await hook.unmount();
+    });
+
     it('routes user input through the stream carrier after connection', async () => {
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-input', reused: false });
         terminalOps.streamReadBytes.mockResolvedValue({

@@ -428,7 +428,7 @@ describe('AppShell plugin UI invocation host', () => {
         });
     });
 
-    it('keeps the complete UI host API present while unsupported openable content fails closed', async () => {
+    it('keeps the complete UI host API present while unsupported mounted-only methods fail closed', async () => {
         const ui = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
@@ -442,6 +442,8 @@ describe('AppShell plugin UI invocation host', () => {
             expectedRevision: 'revision-1',
             maxBytes: 1_024,
         })).rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        await expect(ui.settleEphemeralInput({ kind: 'cancelled' }))
+            .rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
         expect(ui.version().methods).toEqual(['executeAction']);
     });
 });

@@ -13,10 +13,9 @@
 
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import type { AgentId } from '@/agents/registry/registryCore';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { t } from '@/text';
 import { SESSION_LATERAL_PICKER_MAX_REACHABLE_ENTRIES } from './sessionLateralPickerState';
 import {
@@ -30,14 +29,22 @@ import {
     type VisibleSessionNavigationEntry,
 } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { storage } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 export type SessionLateralNavigationTarget = Readonly<{
     sessionId: string;
     serverId?: string;
-    agentId: AgentId;
+    /**
+     * The session's open presentation Agent identity from the canonical
+     * layout-aware view — exact for a novel external Agent, `null` when
+     * unknown. Consumers render the catalog owner's neutral mark; this path
+     * never substitutes a default or bundled Agent.
+     */
+    agentId: string | null;
+    /** The session's own machine fact, scoping catalog identity resolution. */
+    machineId: string | null;
     title: string;
     /** 1-based position inside the captured order, for the readout and its announcement. */
     position: number;
@@ -120,10 +127,31 @@ function readSessionMetadata(sessionId: string | undefined) {
     return storage.getState().sessions[sessionId]?.metadata ?? null;
 }
 
+/**
+ * One non-reactive presentation-identity read per target, through the same
+ * canonical layout-aware view Session rows and the tab bar read: the exact
+ * open Agent identity (a novel external Agent included), `null` when unknown —
+ * never a flavor/default substitution — plus the machine fact that scopes
+ * catalog resolution.
+ */
+function readSessionIdentityView(sessionId: string | undefined): Readonly<{
+    agentId: string | null;
+    machineId: string | null;
+}> {
+    if (!sessionId) return { agentId: null, machineId: null };
+    const session = storage.getState().sessions[sessionId];
+    if (!session) return { agentId: null, machineId: null };
+    return {
+        agentId: readSessionPresentationAgentId(session),
+        machineId: readSessionOwnerMetadataView(session)?.machineId ?? null,
+    };
+}
+
 function buildTarget(
     cursor: SessionNavigationCursor | null,
     entry: VisibleSessionNavigationEntry | null,
     metadata: ReturnType<typeof readSessionMetadata>,
+    identity: ReturnType<typeof readSessionIdentityView>,
 ): SessionLateralNavigationTarget | null {
     if (!cursor || !entry) return null;
     const position = cursor.entries.findIndex((candidate) => candidate.sessionKey === entry.sessionKey) + 1;
@@ -131,9 +159,8 @@ function buildTarget(
     return {
         sessionId: entry.sessionId,
         ...(entry.serverId ? { serverId: entry.serverId } : null),
-        agentId: resolveAgentIdFromSessionMetadata(metadata)
-            ?? resolveAgentIdFromFlavor(metadata?.flavor)
-            ?? DEFAULT_AGENT_ID,
+        agentId: identity.agentId,
+        machineId: identity.machineId,
         title: getSessionName({ id: entry.sessionId, metadata: metadata ?? null }),
         position,
         total: cursor.entries.length,
@@ -167,11 +194,21 @@ export function useSessionCockpitLateralNavigation(params: Readonly<{
     // dependency on the storage module in every route suite) bought nothing: the title and agent
     // are only ever read to paint the readout during a drag and to announce the landing.
     const previous = React.useMemo(
-        () => buildTarget(cursor, previousEntry, readSessionMetadata(previousEntry?.sessionId)),
+        () => buildTarget(
+            cursor,
+            previousEntry,
+            readSessionMetadata(previousEntry?.sessionId),
+            readSessionIdentityView(previousEntry?.sessionId),
+        ),
         [cursor, previousEntry],
     );
     const next = React.useMemo(
-        () => buildTarget(cursor, nextEntry, readSessionMetadata(nextEntry?.sessionId)),
+        () => buildTarget(
+            cursor,
+            nextEntry,
+            readSessionMetadata(nextEntry?.sessionId),
+            readSessionIdentityView(nextEntry?.sessionId),
+        ),
         [cursor, nextEntry],
     );
 
@@ -190,7 +227,12 @@ export function useSessionCockpitLateralNavigation(params: Readonly<{
             direction,
             SESSION_LATERAL_PICKER_MAX_REACHABLE_ENTRIES,
         )
-            .map((entry) => buildTarget(currentCursor, entry, readSessionMetadata(entry.sessionId)))
+            .map((entry) => buildTarget(
+                currentCursor,
+                entry,
+                readSessionMetadata(entry.sessionId),
+                readSessionIdentityView(entry.sessionId),
+            ))
             .filter((target): target is SessionLateralNavigationTarget => target !== null);
     }, []);
 

@@ -99,6 +99,20 @@ export function assertHostedArtifactRuntimeIdentity(actualValue, expected) {
   return actual;
 }
 
+export function assertHostedArtifactNativeChildProofComplete({ artifactRoot, proof }) {
+  const recorded = readRecord(proof);
+  const kind = typeof recorded?.kind === 'string' ? recorded.kind : 'proof_state_missing';
+  if (
+    !recorded
+    || recorded.nativeChildProofComplete !== true
+    || recorded.hostBoundaryOnly !== false
+    || kind !== 'native_child_checks_complete'
+  ) {
+    throw new Error(`desktop_hosted_artifact_native_child_proof_blocked:${kind}:${artifactRoot}`);
+  }
+  return recorded;
+}
+
 function buildNavigationScript(route) {
   return `(() => {
     const next = ${JSON.stringify(route)};
@@ -220,14 +234,17 @@ export async function runHostedArtifactPluginUiMcpQa({
     'Do not mark the desktop capability proved until these native-child checks and exact identities are recorded.',
     '',
   ].join('\n'));
-  await writeTextArtifact(join(artifactRoot, 'result.json'), `${JSON.stringify({
+  const proof = Object.freeze({
     kind: 'capture_ready_for_native_child_checks',
+    hostBoundaryOnly: true,
+    nativeChildProofComplete: false,
+  });
+  await writeTextArtifact(join(artifactRoot, 'result.json'), `${JSON.stringify({
+    ...proof,
     capability,
     runtime: captureAttribution,
     identity,
     title: config.title,
-    hostBoundaryOnly: true,
-    nativeChildProofComplete: false,
   }, null, 2)}\n`);
-  return { artifactRoot, capability, identity };
+  return { artifactRoot, capability, identity, proof };
 }

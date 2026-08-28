@@ -7,6 +7,7 @@ import {
     runNativeCryptoWorkerProbe,
     type NativeCryptoWorkerProbeReport,
 } from '@/dev/nativeCryptoWorkerProbe';
+import { readLoadedNativeBundleRevision } from '@/dev/loadedNativeBundleRevision';
 
 const probeCheckRows = [
     ['moduleAvailable', 'Native module available', 'module-available'],
@@ -23,6 +24,7 @@ function statusTestId(status: 'pass' | 'fail' | 'running'): string {
 }
 
 export default function NativeCryptoWorkerDevScreen() {
+    const loadedBundleRevision = readLoadedNativeBundleRevision();
     const [report, setReport] = React.useState<NativeCryptoWorkerProbeReport | null>(null);
     const [running, setRunning] = React.useState(true);
     const [errorName, setErrorName] = React.useState<string | null>(null);
@@ -56,6 +58,13 @@ export default function NativeCryptoWorkerDevScreen() {
     return (
         <ItemList>
             <ItemGroup title="Native Crypto Worker Probe">
+                <Item
+                    testID={`native-crypto-worker-probe-loaded-bundle-revision:${loadedBundleRevision ?? 'unavailable'}`}
+                    title="Loaded bundle revision"
+                    detail={loadedBundleRevision ?? 'unavailable'}
+                    mode="info"
+                    showChevron={false}
+                />
                 <Item
                     testID={statusTestId(status)}
                     title="Probe status"

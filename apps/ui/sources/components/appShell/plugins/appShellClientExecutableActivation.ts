@@ -37,6 +37,8 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
     projection: PluginUiProjectionModel | null;
     platform: PluginContributionClientPlatform;
     voice: AppShellVoiceExecutableProjection | null;
+    /** Current daemon Voice catalog even when interaction/runtime activation is unavailable. */
+    voiceProviderProjection?: PluginUiProjectionModel | null;
     reader?: PluginAccountAvailabilityReader | null;
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
     /** The existing AppShell destination binding; it remains the navigation owner. */
@@ -47,7 +49,7 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
 }>): Promise<readonly PluginUiClientExecutableReconciliationAttempt[]> {
     const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
     const createDerivedScope = createProjectedExternalVoiceProviderDerivedScopeFactory({
-        projection: input.voice?.projection ?? null,
+        projection: input.voiceProviderProjection ?? input.voice?.projection ?? null,
         hostPlatform: input.platform,
         executableHost,
         actionProjection: input.projection,

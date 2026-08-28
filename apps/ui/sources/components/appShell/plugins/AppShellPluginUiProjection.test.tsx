@@ -21,7 +21,6 @@ import {
     selectCurrentAppShellPluginExecutionOrigins,
     selectCurrentAppShellPluginUiCurrentness,
     settleAppShellPluginRuntimeUpdate,
-    useAppShellHasRenderableRightSidebarTabPlacements,
     useAppShellPluginUiProjection,
 } from './AppShellPluginUiProjection';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -630,11 +629,6 @@ function ScopedProjectionProbe() {
     return React.createElement('ScopedProjectionProbe', { value });
 }
 
-function RightSidebarTabProbe() {
-    const value = useAppShellHasRenderableRightSidebarTabPlacements();
-    return React.createElement('RightSidebarTabProbe', { value });
-}
-
 function accountLifetimeFixture(input: Readonly<{
     accountId: string;
     isCurrent?: () => boolean;
@@ -745,6 +739,18 @@ function pluginUiProjectionWithClientAction(input: Readonly<{
     const localId = 'open-client-action';
     return PluginProjectionV2Schema.parse({
         ...pluginUiProjectionWithAppTab(input),
+        // Client Action registration is version-bound. Account Availability
+        // selects the exact origin, while the daemon projection supplies the
+        // package version that the generic registration index must publish.
+        installedPackagesById: {
+            [input.pluginId]: {
+                id: input.pluginId,
+                displayName: input.pluginId,
+                version: '1.0.0',
+                enabled: true,
+                source: { kind: 'registryPackage', locator: input.pluginId },
+            },
+        },
         actionsById: {
             [`${input.pluginId}/${localId}`]: {
                 id: localId,
@@ -2621,7 +2627,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const screen = await renderScreen(
             <AppShellPluginUiProjectionProvider>
                 <ProjectionProbe />
-                <RightSidebarTabProbe />
             </AppShellPluginUiProjectionProvider>,
         );
         await flushHookEffects({ cycles: 6 });
@@ -2639,7 +2644,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         // No Account Availability reader exists in this harness. F7 fails closed
         // rather than deriving a source from projection order or freshness.
-        expect(screen.tree.findByType('RightSidebarTabProbe' as never).props.value).toBe(false);
 
         const value = screen.tree.findByType('ProjectionProbe' as never).props.value;
         const placements = value.pluginUiProjection

@@ -102,13 +102,12 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createPartialStorageModuleMock(importOriginal, {
         useAllSessions: () => effectBoundary.sessions,
         useAllMachines: () => effectBoundary.machines,
-        useSettings: () => ({
-            backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
-        }),
-        useSetting: (name: string) => (
-            name === 'externalSessionsSettingsV1' ? effectBoundary.settings : null
-        ),
+        useSetting: (name: string) => {
+            if (name === 'externalSessionsSettingsV1') return effectBoundary.settings;
+            if (name === 'backendEnabledByTargetKey') return {};
+            if (name === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
+            return null;
+        },
         useSettingMutable: (name: string) => {
             if (name === 'contextSelectionsV1') {
                 return [effectBoundary.contextSelections, effectBoundary.setContextSelections];

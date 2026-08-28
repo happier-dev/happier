@@ -328,6 +328,49 @@ describe('useProviderAccountUsageSnapshots', () => {
         await hook.unmount();
     });
 
+    it('settles every loading record through the existing LKG backoff when account-mode resolution fails', async () => {
+        vi.useFakeTimers();
+        const snapshot = makeUsageSnapshot({ staleAfterMs: 1, meterId: 'mode-lkg' });
+        const resolveAccountModeSpy = vi.fn()
+            .mockResolvedValueOnce('plain')
+            .mockRejectedValueOnce(new Error('mode unavailable'));
+        vi.doMock('./useCredentialScopedAccountModeResolver', () => ({
+            useCredentialScopedAccountModeResolver: () => resolveAccountModeSpy,
+        }));
+        getProviderAccountUsageSnapshotPlainSpy.mockResolvedValue(snapshot);
+
+        try {
+            const { useProviderAccountUsageSnapshots } = await loadHook();
+            const cache = await import('@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache');
+            const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]));
+            await flushHookEffects({ cycles: 5, turns: 5 });
+
+            expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(snapshot);
+            const retryStartedAtMs = Date.now();
+            await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 30_001 });
+            await flushHookEffects({ cycles: 5, turns: 5 });
+
+            expect(resolveAccountModeSpy).toHaveBeenCalledTimes(2);
+            expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(snapshot);
+            expect(hook.getCurrent().stateByRecordId[snapshot.recordId]).toBe('error_last_known_good');
+            expect(hook.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(false);
+            const scopeEntries = Object.values(
+                cache.getProviderAccountUsageCacheState().entriesByCredentialScope,
+            )[0];
+            expect(scopeEntries?.[snapshot.recordId]).toMatchObject({
+                snapshot,
+                consecutiveErrors: 1,
+                loading: false,
+                hadError: true,
+            });
+            expect(scopeEntries?.[snapshot.recordId]?.nextFetchAtMs).toBeGreaterThan(retryStartedAtMs);
+            await hook.unmount();
+        } finally {
+            vi.doUnmock('./useCredentialScopedAccountModeResolver');
+        }
+    });
+
     it('serves canonical cache entries in cache-only mode without refetching', async () => {
         const snapshot = makeUsageSnapshot();
         getProviderAccountUsageSnapshotPlainSpy.mockResolvedValue(snapshot);
@@ -356,5 +399,70 @@ describe('useProviderAccountUsageSnapshots', () => {
         await act(async () => {
             tree.unmount();
         });
+    });
+
+    it('publishes all independently settled records in one batched cache update', async () => {
+        const first = makeUsageSnapshot({ accountSubjectId: 'first' });
+        const second = makeUsageSnapshot({ accountSubjectId: 'second' });
+        let releaseFirst!: () => void;
+        let releaseSecond!: () => void;
+        const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+        getProviderAccountUsageSnapshotPlainSpy.mockImplementation(async (_credentials, params) => {
+            if (params.recordId === first.recordId) {
+                await firstGate;
+                return first;
+            }
+            await secondGate;
+            return second;
+        });
+
+        const { useProviderAccountUsageSnapshots } = await loadHook();
+        const cache = await import('@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache');
+        const hook = await renderHook(() =>
+            useProviderAccountUsageSnapshots([first.recordId, second.recordId]));
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(getProviderAccountUsageSnapshotPlainSpy).toHaveBeenCalledTimes(2);
+
+        const listener = vi.fn();
+        const unsubscribe = cache.subscribeProviderAccountUsageCache(listener);
+        releaseFirst();
+        releaseSecond();
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().snapshotsByRecordId[first.recordId]).toEqual(first);
+        expect(hook.getCurrent().snapshotsByRecordId[second.recordId]).toEqual(second);
+
+        unsubscribe();
+        await hook.unmount();
+        expect(cache.getProviderAccountUsageCacheState().entriesByCredentialScope)
+            .toEqual({});
+    });
+
+    it('publishes a fast record while a slower sibling remains loading', async () => {
+        const fast = makeUsageSnapshot({ accountSubjectId: 'fast' });
+        const slow = makeUsageSnapshot({ accountSubjectId: 'slow' });
+        let releaseSlow!: () => void;
+        const slowGate = new Promise<void>((resolve) => { releaseSlow = resolve; });
+        getProviderAccountUsageSnapshotPlainSpy.mockImplementation(async (_credentials, params) => {
+            if (params.recordId === fast.recordId) return fast;
+            await slowGate;
+            return slow;
+        });
+
+        const { useProviderAccountUsageSnapshots } = await loadHook();
+        const hook = await renderHook(() =>
+            useProviderAccountUsageSnapshots([fast.recordId, slow.recordId]));
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(hook.getCurrent().snapshotsByRecordId[fast.recordId]).toEqual(fast);
+        expect(hook.getCurrent().loadingByRecordId[fast.recordId]).toBe(false);
+        expect(hook.getCurrent().snapshotsByRecordId[slow.recordId]).toBeNull();
+        expect(hook.getCurrent().loadingByRecordId[slow.recordId]).toBe(true);
+
+        releaseSlow();
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        expect(hook.getCurrent().snapshotsByRecordId[slow.recordId]).toEqual(slow);
+        await hook.unmount();
     });
 });

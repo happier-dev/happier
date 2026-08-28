@@ -7,7 +7,7 @@ import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { PathSelectionList } from '@/components/sessions/new/components/PathSelectionList';
+import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
@@ -330,7 +330,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             setFavoriteMachinesRaw(exists ? favoriteMachineIds.filter((id: string) => id !== machineId) : [machineId, ...favoriteMachineIds]);
                         }}
                     />
-                    <ItemGroup title={t('machine.launchNewSessionInDirectory')}>
+                    <ItemGroup title={t('machine.launchNewSessionInDirectory')} clipContent>
                         <PathSelectionList
                             machineHomeDir={targetMachineHomeDir}
                             initialValue={targetPath ?? ''}

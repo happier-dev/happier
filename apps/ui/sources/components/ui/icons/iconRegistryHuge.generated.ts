@@ -114,6 +114,7 @@ import { HardDriveIcon } from '@hugeicons/core-free-icons';
 import { HeadingIcon } from '@hugeicons/core-free-icons';
 import { HeartIcon } from '@hugeicons/core-free-icons';
 import { HelpCircleIcon } from '@hugeicons/core-free-icons';
+import { HierarchySquare03Icon } from '@hugeicons/core-free-icons';
 import { HistoryIcon } from '@hugeicons/core-free-icons';
 import { Home01Icon } from '@hugeicons/core-free-icons';
 import { HourglassIcon } from '@hugeicons/core-free-icons';
@@ -161,6 +162,7 @@ import { PaintBrush01Icon } from '@hugeicons/core-free-icons';
 import { PanelRightCloseIcon } from '@hugeicons/core-free-icons';
 import { PanelRightOpenIcon } from '@hugeicons/core-free-icons';
 import { PauseCircleIcon } from '@hugeicons/core-free-icons';
+import { PeerToPeer01Icon } from '@hugeicons/core-free-icons';
 import { PencilEdit01Icon } from '@hugeicons/core-free-icons';
 import { PencilIcon } from '@hugeicons/core-free-icons';
 import { PieChart01Icon } from '@hugeicons/core-free-icons';
@@ -423,6 +425,7 @@ export const HUGE_ICON_REGISTRY = {
     'rocket-launch': Rocket01Icon,
     'scissors': Scissor01Icon,
     'share': Share01Icon,
+    'share-network': PeerToPeer01Icon,
     'shield': Shield01Icon,
     'shield-check': SecurityCheckIcon,
     'shuffle': ShuffleIcon,
@@ -463,6 +466,7 @@ export const HUGE_ICON_REGISTRY = {
     'translate': TranslateIcon,
     'trash': Delete01Icon,
     'tray': InboxIcon,
+    'tree-structure': HierarchySquare03Icon,
     'upload': Upload01Icon,
     'user-circle': UserCircleIcon,
     'user-minus': UserMinus01Icon,

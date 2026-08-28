@@ -932,10 +932,12 @@ export default function MachineDetailScreen() {
                 signature: launchSignature,
                 createUserAttemptId: createUiSessionSpawnUserAttemptId,
             });
-            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
-                backendTarget: preferredBackendTarget,
-                daemonMergedProjectionInputs: daemonMergedProjection.inputs,
-            });
+            const agentTarget = preferredBackendTarget.kind === 'agent'
+                ? preferredBackendTarget
+                : resolveAgentExecutionTargetForBackendTarget({
+                    backendTarget: preferredBackendTarget,
+                    daemonMergedProjectionInputs: daemonMergedProjection.inputs,
+                });
             if (!agentTarget) {
                 spawnAttemptRef.current = null;
                 Modal.alert(t('common.error'), t('newSession.failedToStart'));

@@ -44,7 +44,9 @@ vi.mock('@/components/workspaces/files/file/FileActionToolbar', () => ({
 
 const openableContentViewerState = vi.hoisted(() => ({
     stage: vi.fn(),
+    createBinding: vi.fn(),
     stat: vi.fn(),
+    read: vi.fn(),
     replaceTab: vi.fn(),
     mutateSettings: vi.fn(),
     settings: {} as Record<string, unknown>,
@@ -63,11 +65,14 @@ vi.mock('@/components/appShell/panes/details/surfaces/pluginDetailsDestination',
 }));
 
 vi.mock('@/components/plugins/surfaces/pluginSurfaceOpenableContent', () => ({
-    createWorkspaceFileOpenableContentBinding: () => ({
-        ref: { kind: 'workspaceFile', handle: 'opaque-workspace-file-ref' },
-        stat: (options?: unknown) => openableContentViewerState.stat(options),
-        read: vi.fn(),
-    }),
+    createWorkspaceFileOpenableContentBinding: (...args: unknown[]) => {
+        openableContentViewerState.createBinding(...args);
+        return ({
+            ref: { kind: 'workspaceFile', handle: 'opaque-workspace-file-ref' },
+            stat: (options?: unknown) => openableContentViewerState.stat(options),
+            read: (options?: unknown) => openableContentViewerState.read(options),
+        });
+    },
 }));
 
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
@@ -256,6 +261,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 });
 
 beforeEach(() => {
+    refreshSpy.mockClear();
     featureState.markdownRichEditor = true;
     markdownEditModeState.markdownEditMode = 'rich';
     markdownEditModeState.richEligible = true;
@@ -266,6 +272,7 @@ beforeEach(() => {
         resource: { destination: { pluginId: 'plugin.preview', localId: 'text-viewer' } },
         tabKey: 'plugin-details:plugin.preview:text-viewer',
     });
+    openableContentViewerState.createBinding.mockReset();
     openableContentViewerState.stat.mockReset();
     openableContentViewerState.stat.mockResolvedValue({
         status: 'ready',
@@ -275,6 +282,7 @@ beforeEach(() => {
         sizeBytes: 5,
         revision: 'workspace-file:5:1',
     });
+    openableContentViewerState.read.mockReset();
     openableContentViewerState.replaceTab.mockReset();
     openableContentViewerState.mutateSettings.mockReset();
     openableContentViewerState.mutateSettings.mockResolvedValue({ status: 'applied', value: undefined });
@@ -501,6 +509,93 @@ async function mountView(filePath = 'README.md') {
 }
 
 describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
+    it('loads the built-in preview without openable-content I/O for empty candidates and preferences', async () => {
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+        const host = {
+            ...createOpenableContentViewerHost(),
+            projection: EMPTY_PLUGIN_UI_PROJECTION,
+        } satisfies WorkspaceFileOpenableContentViewerHost;
+        editorState.isEditingFile = false;
+        openableContentViewerState.settings = {
+            workspaceFileViewerPreferencesV1: { v: 1, selections: {} },
+        };
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/workspace"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
+                filePath="README.txt"
+                sessionIdForAugmentation={null}
+                openableContentViewer={host}
+            />,
+        );
+        try {
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            expect(refreshSpy).toHaveBeenCalledWith(expect.objectContaining({
+                filePath: 'README.txt',
+            }));
+            expect(screen.findByType('FileContentPanel' as never).props.fileContent).toBe('# Title\n\nbody');
+            expect(screen.findAllByType('PluginDetailsViewerChoiceChrome' as never)).toEqual([]);
+            expect(openableContentViewerState.createBinding).not.toHaveBeenCalled();
+            expect(openableContentViewerState.stat).not.toHaveBeenCalled();
+            expect(openableContentViewerState.read).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('preserves openable-content classification for a retained preference without current candidates', async () => {
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+        const host = {
+            ...createOpenableContentViewerHost(),
+            projection: EMPTY_PLUGIN_UI_PROJECTION,
+        } satisfies WorkspaceFileOpenableContentViewerHost;
+        editorState.isEditingFile = false;
+        openableContentViewerState.settings = {
+            workspaceFileViewerPreferencesV1: {
+                v: 1,
+                selections: {
+                    'mime:text/plain': {
+                        kind: 'plugin',
+                        pluginId: 'plugin.unavailable',
+                        contributionLocalId: 'text',
+                    },
+                },
+            },
+        };
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/workspace"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }}
+                filePath="README.txt"
+                sessionIdForAugmentation={null}
+                openableContentViewer={host}
+            />,
+        );
+        try {
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            expect(openableContentViewerState.createBinding).toHaveBeenCalledTimes(1);
+            expect(openableContentViewerState.stat).toHaveBeenCalledTimes(1);
+            const viewerChoice = screen.findByType('PluginDetailsViewerChoiceChrome' as never).props.model;
+            expect(viewerChoice.candidates).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'builtin', selected: true }),
+                expect.objectContaining({
+                    id: 'unavailable:plugin.unavailable:text',
+                    disabled: true,
+                }),
+            ]));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('qualifies matching and temporarily unavailable viewer choices for the fixed chooser chrome', async () => {
         const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
         const host = createOpenableContentViewerHost();

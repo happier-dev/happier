@@ -35,7 +35,7 @@ export async function resumeActionOperationHandoff(params: Readonly<{
     try {
         statusEnvelope = readRecord(await machineRpcWithServerScope<unknown, { handoffId: string }>({
             machineId: params.targetMachineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
             payload: { handoffId: params.handoffId },
         }));
     } catch (error) {
@@ -65,7 +65,7 @@ export async function resumeActionOperationHandoff(params: Readonly<{
             attemptId: string;
         }>({
             machineId: params.targetMachineId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME,
+            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3,
             payload: {
             handoffId: params.handoffId,
             jobId: status.data.jobId,

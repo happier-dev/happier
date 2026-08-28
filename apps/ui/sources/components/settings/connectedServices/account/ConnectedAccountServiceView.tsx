@@ -1172,14 +1172,18 @@ const ConnectedAccountServiceController = React.memo(
                     verificationUriComplete={attempt.verificationUriComplete}
                     userCode={attempt.userCode}
                     busy={busy}
-                    onPoll={() => runAuthentication({
-                        operation: 'pollDevice',
-                        attemptId: attempt.attemptId,
-                    })}
-                    onResume={() => runAuthentication({
-                        operation: 'resumeDevice',
-                        attemptId: attempt.attemptId,
-                    })}
+                    onPoll={async () => {
+                        await runAuthentication({
+                            operation: 'pollDevice',
+                            attemptId: attempt.attemptId,
+                        });
+                    }}
+                    onResume={async () => {
+                        await runAuthentication({
+                            operation: 'resumeDevice',
+                            attemptId: attempt.attemptId,
+                        });
+                    }}
                 />
             ) : null}
 
@@ -1406,6 +1410,26 @@ export function ConnectedAccountServiceView() {
         if (!navigation) return;
         navigation.setOptions({ headerTitle });
     }, [headerTitle, navigation]);
+
+    if (targetSelection.selectedTarget && !targetSelection.selectedTargetServerMatchesActiveAccount) {
+        return (
+            <ItemList>
+                <MachineAdministrationTargetSelector
+                    selection={targetSelection}
+                    testIDPrefix="connected-account-target"
+                />
+                <ItemGroup title={t('settings.connectedServices')}>
+                    <Item
+                        testID="connected-account-account-scope-mismatch"
+                        mode="info"
+                        title={t('connectedServices.accountScopeMismatchTitle')}
+                        subtitle={t('connectedServices.accountScopeMismatchDescription')}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
 
     return (
         <ConnectedAccountServiceController

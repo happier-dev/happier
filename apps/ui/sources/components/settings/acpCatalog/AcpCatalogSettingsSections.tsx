@@ -2,9 +2,6 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { BUILT_IN_ACP_CONFIG, getBuiltInAcpConfig, type AgentId } from '@happier-dev/agents';
-
-import { getAgentCore } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
@@ -13,8 +10,6 @@ import { deleteAcpBackendDefinitionV1 } from '@/sync/domains/acpCatalog/acpCatal
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { Icon } from '@/components/ui/icons/Icon';
-
-const BUILT_IN_GENERIC_ACP_AGENT_IDS = Object.freeze(Object.keys(BUILT_IN_ACP_CONFIG) as AgentId[]);
 
 function formatBackendSubtitle(command: string, args: readonly string[]): string {
     return [command, ...args].filter(Boolean).join(' ');
@@ -55,24 +50,6 @@ export const AcpCatalogSettingsSections = React.memo(function AcpCatalogSettings
 
     return (
         <>
-            <ItemGroup title={t('settings.acpCatalogBuiltIn')} footer={t('settings.acpCatalogBuiltInFooter')}>
-                {BUILT_IN_GENERIC_ACP_AGENT_IDS.map((agentId) => {
-                    const builtInAcp = getBuiltInAcpConfig(agentId);
-                    const core = getAgentCore(agentId);
-                    if (!builtInAcp || !core) return null;
-                    return (
-                        <Item
-                            key={agentId}
-                            testID={`settings.acpCatalog.builtIn.${agentId}`}
-                            title={t(core.displayNameKey)}
-                            subtitle={formatBackendSubtitle(builtInAcp.launcher.command, builtInAcp.launcher.args)}
-                            icon={<Icon name="lightning" size={29} color={theme.colors.accent.orange} />}
-                            showChevron={false}
-                        />
-                    );
-                })}
-            </ItemGroup>
-
             <ItemGroup
                 title={t('settings.acpCatalogBackends')}
                 footer={backends.length > 0 ? t('settings.acpCatalogBackendsFooter') : undefined}

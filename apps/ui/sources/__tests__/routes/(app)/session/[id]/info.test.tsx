@@ -1195,18 +1195,14 @@ describe('/session/[id]/info', () => {
         }));
 
         await screen.pressByTestIdAsync('session-info-session-tags-edit');
-        expect(modalPromptSpy).toHaveBeenCalledWith(
-            'sessionsList.selectionSetTagsPromptTitle',
-            'sessionsList.selectionTagsPromptMessage',
-            expect.objectContaining({ defaultValue: 'existing' }),
-        );
+        await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
         expect(setSessionTagLabelsSpy).toHaveBeenCalledWith(expect.objectContaining({
             scope: expect.objectContaining({
                 serverId: 'server-1',
                 serverUrl: 'https://server.example.test',
             }),
             sessionId: 'session-1',
-            tags: ['urgent', 'review'],
+            tags: [],
         }));
     });
 
@@ -1479,7 +1475,6 @@ describe('/session/[id]/info', () => {
                 args: [],
                 env: {},
                 auth: { support: 'unsupported' },
-                transportProfile: 'generic',
                 capabilities: {
                     supportsLoadSession: false,
                     supportsModes: 'unknown',

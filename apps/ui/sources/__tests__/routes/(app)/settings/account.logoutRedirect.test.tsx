@@ -39,6 +39,7 @@ const logoutMock = vi.hoisted(() =>
             Promise<LogoutResult>
     >(async () => ({ kind: 'completed' })),
 );
+const deleteCurrentAccountMock = vi.hoisted(() => vi.fn(async () => ({ status: 'deleted' as const })));
 
 installAccountSettingsRouteModuleMocks({
     modalModule: async () => {
@@ -96,6 +97,7 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
+vi.mock('@/sync/api/account/deleteCurrentAccount', () => ({ deleteCurrentAccount: deleteCurrentAccountMock }));
 
 vi.mock('@/components/account/ProviderIdentityItems', () => ({
     ProviderIdentityItems: () => null,
@@ -108,6 +110,7 @@ describe('Settings → Account logout redirect', () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         logoutMock.mockClear();
+        deleteCurrentAccountMock.mockClear();
         teardownStartedMock.mockClear();
         routerMockRef.current?.spies.push.mockReset();
         routerMockRef.current?.spies.back.mockReset();
@@ -220,5 +223,23 @@ describe('Settings → Account logout redirect', () => {
         await act(async () => {
             await pendingLogoutPress;
         });
+    });
+
+    it('requires typed confirmation before deletion and canonical logout cleanup', async () => {
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        logoutMock.mockImplementationOnce(async (options) => { await options?.beforeMutation?.(); teardownStartedMock(); return { kind: 'completed' }; });
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => { const url = getRequestUrl(input); if (isFeaturesRequest(url)) return { ok: true, json: async () => createAccountFeaturesResponse() }; throw new Error(`Unexpected fetch: ${url}`); }) as unknown as typeof fetch);
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderSettingsView(<AccountScreen />);
+        const modal = modalMockRef.current;
+        if (!modal) throw new Error('Expected account modal mock');
+        modal.spies.prompt.mockResolvedValueOnce('DELETE');
+        const row = screen.findRowByTitle('settingsAccount.deleteAccount');
+        expect(row?.props.testID).toBe('settings-account-delete');
+        await act(async () => { await row?.props.onPress?.(); });
+        expect(modal.spies.prompt).toHaveBeenCalledWith('settingsAccount.deleteAccountConfirmTitle', 'settingsAccount.deleteAccountConfirmBody', expect.objectContaining({ placeholder: 'DELETE' }));
+        expect(deleteCurrentAccountMock).toHaveBeenCalledWith(expect.objectContaining({ token: 't' }));
+        expect(routerMockRef.current.spies.replace).toHaveBeenCalledWith('/');
+        expect(teardownStartedMock).toHaveBeenCalledTimes(1);
     });
 });

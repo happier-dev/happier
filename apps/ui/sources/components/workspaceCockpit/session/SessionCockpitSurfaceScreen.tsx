@@ -546,11 +546,12 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
 
     if (props.surface.startsWith('plugin:')) {
         if (!pluginMobileTab) {
+            const projectionEstablishing = pluginProjection.phase === 'establishing';
             return renderSessionChrome(
                 <SessionCockpitFullscreenSurface screenTestID="session-plugin-screen-unavailable" safeAreaPadding={false}>
-                    {pluginProjection.pluginUiProjection
-                        ? <PluginReactNativeUnavailable diagnostics={['plugin_destination_unavailable']} />
-                        : <SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}
+                    {projectionEstablishing
+                        ? <SessionCockpitLoadingFallback color={theme.colors.text.secondary} />
+                        : <PluginReactNativeUnavailable diagnostics={['plugin_destination_unavailable']} />}
                 </SessionCockpitFullscreenSurface>,
             );
         }

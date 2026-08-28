@@ -14,6 +14,7 @@ import { executeSessionHandoffAction } from './executeSessionHandoffAction';
 import { subscribeSessionHandoffProgress } from './sessionHandoffProgressEvents';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
 import { randomUUID } from '@/platform/randomUUID';
+import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 
 type ExecuteAction = (
     actionId: 'session.handoff' | 'session.handoff.prepare_target.resume',
@@ -56,6 +57,7 @@ export async function runSessionHandoffUiFlow(
     args: RunSessionHandoffUiFlowArgs,
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
+        const actionRequestId = String(args.context.actionRequestId ?? '').trim() || randomUUID();
         const modalId = openSessionHandoffProgressModal();
         let activeResumeHandler: Readonly<{
             key: string;
@@ -145,17 +147,28 @@ export async function runSessionHandoffUiFlow(
                 onResume,
             });
         });
+        const unsubscribeOperation = subscribeActionOperationByRequestId({
+            requestId: actionRequestId,
+            onUpdate: (operation) => {
+                if (operation.actionId !== 'session.handoff' || operation.scope.sessionId !== args.sessionId) return;
+                Modal.update(modalId, { operation });
+            },
+        });
         let progressModalClosed = false;
         const closeProgressModal = () => {
             if (progressModalClosed) {
                 return;
             }
             unsubscribeProgress();
+            unsubscribeOperation();
             Modal.hide(modalId);
             progressModalClosed = true;
         };
         try {
-            let result = await executeSessionHandoffAction(args as any);
+            let result = await executeSessionHandoffAction({
+                ...args,
+                context: { ...args.context, actionRequestId },
+            } as any);
             if (result.ok) {
                 return result;
             }

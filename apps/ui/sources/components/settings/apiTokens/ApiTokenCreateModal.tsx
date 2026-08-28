@@ -381,6 +381,8 @@ export function ApiTokenCreateModal(props: Readonly<{
     const state = useApiTokenSettingsControllerState(props.controller);
     const copyFeedback = useTemporaryCopyFeedback(1_500);
     const [copyError, setCopyError] = React.useState(false);
+    const [copyPending, setCopyPending] = React.useState(false);
+    const copyPendingRef = React.useRef(false);
     const reveal = state.reveal;
     const reducedMotion = useReducedMotionPreference();
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -431,12 +433,20 @@ export function ApiTokenCreateModal(props: Readonly<{
     }), [footer, reveal]));
 
     const copy = React.useCallback(async () => {
-        if (!reveal) return;
-        const copied = await setClipboardStringSafe(reveal.token);
-        setCopyError(!copied);
-        if (!copied) return;
-        props.controller.acknowledgeReveal();
-        copyFeedback.markCopied('token');
+        if (!reveal || copyPendingRef.current) return;
+        copyPendingRef.current = true;
+        setCopyPending(true);
+        setCopyError(false);
+        try {
+            const copied = await setClipboardStringSafe(reveal.token);
+            setCopyError(!copied);
+            if (!copied) return;
+            props.controller.acknowledgeReveal();
+            copyFeedback.markCopied('token');
+        } finally {
+            copyPendingRef.current = false;
+            setCopyPending(false);
+        }
     }, [copyFeedback, props.controller, reveal]);
 
     return (
@@ -472,8 +482,10 @@ export function ApiTokenCreateModal(props: Readonly<{
                                     accessibilityLabel={copyFeedback.isCopied('token')
                                         ? t('settingsApiTokens.reveal.copied')
                                         : t('settingsApiTokens.reveal.copy')}
+                                    accessibilityState={{ disabled: copyPending, busy: copyPending }}
                                     accessibilityLiveRegion="polite"
                                     focusable
+                                    disabled={copyPending}
                                     onPress={copy}
                                     style={(interactionState) => {
                                         const webState = interactionState as typeof interactionState & { focused?: boolean };
@@ -520,7 +532,11 @@ export function ApiTokenCreateModal(props: Readonly<{
                         </View>
                         <View>
                             <Text style={styles.label}>{t('settingsApiTokens.create.expiry')}</Text>
-                            <View style={styles.presets} accessibilityRole="radiogroup">
+                            <View
+                                style={styles.presets}
+                                accessibilityRole="radiogroup"
+                                accessibilityLabel={t('settingsApiTokens.create.expiry')}
+                            >
                                 {EXPIRY_PRESETS.map((preset) => {
                                     const selected = state.createDraft.expiryPreset === preset;
                                     return (

@@ -92,6 +92,7 @@ export function installSessionHandoffCommonModuleMocks(
             Typography: {
                 default: () => ({}),
                 mono: () => ({}),
+                keyHint: () => ({}),
             },
         };
     });

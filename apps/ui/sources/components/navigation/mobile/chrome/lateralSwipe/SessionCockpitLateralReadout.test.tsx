@@ -15,6 +15,10 @@ import {
 
 const sessionNamesState = vi.hoisted(() => ({
     bySessionId: {} as Record<string, string>,
+    metadataBySessionId: {} as Record<string, Record<string, unknown>>,
+    // Full-record overrides for sessions whose layout fields the synthesized
+    // record cannot express (e.g. layout-1 shared metadata + owner view).
+    recordOverridesBySessionId: {} as Record<string, Record<string, unknown>>,
 }));
 
 vi.mock('react-native', async () => {
@@ -30,6 +34,11 @@ vi.mock('react-native-worklets', () => ({
 
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
+
+vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
+    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
+        React.createElement('SessionAgentCatalogIdentityIcon', props),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -50,7 +59,10 @@ vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
             sessions: Object.fromEntries(
                 Object.entries(sessionNamesState.bySessionId).map(([sessionId, name]) => [
                     sessionId,
-                    { metadata: { name } },
+                    {
+                        metadata: { name, ...sessionNamesState.metadataBySessionId[sessionId] },
+                        ...sessionNamesState.recordOverridesBySessionId[sessionId],
+                    },
                 ]),
             ),
         }),
@@ -122,6 +134,8 @@ describe('SessionCockpitLateralReadout', () => {
         standardCleanup();
         resetSessionNavigationCursorForTests();
         sessionNamesState.bySessionId = {};
+        sessionNamesState.metadataBySessionId = {};
+        sessionNamesState.recordOverridesBySessionId = {};
     });
 
     it('adds no resting pixels to the capsule', async () => {
@@ -144,6 +158,61 @@ describe('SessionCockpitLateralReadout', () => {
         expect(screen.findByTestId('session-cockpit-lateral-readout-title')?.props.children)
             .toBe('Refactor the parser');
         expect(screen.getTextContent()).toContain('3 of 3');
+    });
+
+    it('keeps an external destination machine-scoped through the catalog identity owner', async () => {
+        sessionNamesState.bySessionId = { 'session-2': 'External destination' };
+        sessionNamesState.metadataBySessionId['session-2'] = {
+            machineId: 'machine_external',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'acme.plugin/ultracode',
+                agent: {},
+            },
+        };
+        publishVisibleSessionOrder(['session-0', 'session-1', 'session-2']);
+        const { harness, screen } = await renderReadout('session-1');
+
+        act(() => {
+            steerTo(harness, 'next', -0.6);
+        });
+
+        expect(screen.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as never)?.props).toMatchObject({
+            agentId: 'acme.plugin/ultracode',
+            machineId: 'machine_external',
+            serverId: null,
+            size: 18,
+        });
+    });
+
+    it('resolves a novel layout-1 external Agent through the canonical presentation identity', async () => {
+        // Layout-1 sessions carry the open Agent identity in their shared
+        // metadata, which the strict shared envelope holds without any legacy
+        // flavor or flat vendor key. The target must read the exact qualified
+        // identity through the canonical presentation view — falling back to a
+        // default bundled Agent here would paint that Agent's brand on a
+        // session it never ran.
+        sessionNamesState.bySessionId = { 'session-2': 'Novel destination' };
+        sessionNamesState.recordOverridesBySessionId['session-2'] = {
+            metadataLayoutVersion: 1,
+            metadata: { v: 1, agentPresentation: { agentId: 'novel.plugin/novel-agent' } },
+            ownerMetadataView: { machineId: 'machine_novel' },
+        };
+        publishVisibleSessionOrder(['session-0', 'session-1', 'session-2']);
+        const { harness, screen } = await renderReadout('session-1');
+
+        act(() => {
+            steerTo(harness, 'next', -0.6);
+        });
+
+        expect(screen.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as never)?.props).toMatchObject({
+            agentId: 'novel.plugin/novel-agent',
+            machineId: 'machine_novel',
+            serverId: null,
+            size: 18,
+        });
     });
 
     it('names the previous session when the finger travels the other way', async () => {

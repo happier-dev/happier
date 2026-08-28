@@ -27,6 +27,7 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import {
     createApiTokenSettingsController,
     type ApiTokenSettingsController,
+    type ApiTokenSettingsErrorCode,
 } from './apiTokenSettingsController';
 import {
     buildApiTokenRowPresentation,
@@ -48,7 +49,8 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const API_TOKEN_EXPIRING_WINDOW_MS = 7 * DAY_MS;
 const SKELETON_TITLE = '██████████';
-const SKELETON_METADATA = '████████████████';
+const SKELETON_PREFIX = '████████';
+const SKELETON_METADATA = '████████';
 
 function resolveNextRelativeTimeChangeAt(atMs: number, nowMs: number): number | null {
     if (!Number.isFinite(atMs)) return null;
@@ -195,6 +197,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         marginTop: 12,
     },
+    emptyState: {
+        alignItems: 'center',
+        gap: 14,
+        paddingVertical: 22,
+    },
     tokenListTransition: {
         overflow: 'visible',
     },
@@ -317,7 +324,15 @@ function SkeletonRows() {
                             testID={`settings-api-tokens-skeleton-row:${index}`}
                             mode="info"
                             title={SKELETON_TITLE}
-                            subtitle={<Text style={styles.metadataLabel}>{SKELETON_METADATA}</Text>}
+                            subtitle={(
+                                <View style={styles.rowMetadata}>
+                                    <Text style={styles.prefix}>{SKELETON_PREFIX}</Text>
+                                    <Text style={styles.separator}>·</Text>
+                                    <Text style={styles.metadataLabel}>{SKELETON_METADATA}</Text>
+                                    <Text style={styles.separator}>·</Text>
+                                    <Text style={styles.metadataLabel}>{SKELETON_METADATA}</Text>
+                                </View>
+                            )}
                             icon={<Icon name="key" size={24} />}
                             showChevron={false}
                             showDivider={false}
@@ -331,7 +346,7 @@ function SkeletonRows() {
 
 function ApiTokenListRetry(props: Readonly<{
     controller: ApiTokenSettingsController;
-    error: string | null;
+    error: ApiTokenSettingsErrorCode | null;
     testID: string;
     retryTestID: string;
     disabled: boolean;
@@ -439,6 +454,9 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
             replace: (path) => router.replace(path),
         });
     }, [auth.logout, controller, router]);
+    const openCreate = React.useCallback(() => {
+        showApiTokenCreateModal(controller);
+    }, [controller]);
 
     return (
         <ItemList
@@ -456,14 +474,16 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                 <Text style={styles.heading}>{t('settingsApiTokens.title')}</Text>
                 <Text style={styles.introBody}>{t('settingsApiTokens.description')}</Text>
                 <View style={styles.headerActions}>
-                    <RoundButton
-                        size="normal"
-                        title={t('settingsApiTokens.create.button')}
-                        testID="settings-api-tokens-create"
-                        disabled={actionsPending}
-                        onPress={() => showApiTokenCreateModal(controller)}
-                    />
-                    {state.isRefreshing && state.tokens.length > 0 ? (
+                    {!showsEmptyState ? (
+                        <RoundButton
+                            size="normal"
+                            title={t('settingsApiTokens.create.button')}
+                            testID="settings-api-tokens-create"
+                            disabled={actionsPending}
+                            onPress={openCreate}
+                        />
+                    ) : null}
+                    {state.isRefreshing ? (
                         <Text accessibilityLiveRegion="polite" style={styles.introBody} testID="settings-api-tokens-refreshing">
                             {t('settingsApiTokens.refreshing')}
                         </Text>
@@ -491,11 +511,18 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                 >
                     {showsEmptyState ? (
                         <ItemGroup>
-                            <View testID="settings-api-tokens-empty" style={{ paddingVertical: 22 }}>
+                            <View testID="settings-api-tokens-empty" style={styles.emptyState}>
                                 <CenteredInfoTile
                                     icon={<Icon name="key" size={32} color={theme.colors.text.secondary} />}
                                     title={t('settingsApiTokens.emptyTitle')}
                                     description={t('settingsApiTokens.emptyBody')}
+                                />
+                                <RoundButton
+                                    size="normal"
+                                    title={t('settingsApiTokens.create.button')}
+                                    testID="settings-api-tokens-empty-create"
+                                    disabled={actionsPending}
+                                    onPress={openCreate}
                                 />
                             </View>
                         </ItemGroup>

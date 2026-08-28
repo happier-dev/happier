@@ -251,6 +251,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
      */
     const announcedStateByAgentIdentityRef = React.useRef(new Map<string, ExternalSessionsIntegrationDescriptor['state']>());
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
+    const [sectionFallbackFocused, setSectionFallbackFocused] = React.useState(false);
     const replacementActionRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
     const sectionFocusFallbackRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const pendingFocusReturnRef = React.useRef<ExternalSessionsPendingFocusReturn | null>(null);
@@ -458,6 +459,8 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
     }, [autoLinkSources, integrations, operations, pendingKeys]);
 
     const inventoryStatus = props.inventoryState?.status;
+    const inventoryComplete = props.inventoryState === undefined
+        || props.inventoryState.status === 'ready';
     const inventoryTitle = inventoryStatus === 'loading'
         ? t('externalSessions.settingsIntegrationInventoryLoadingTitle')
         : inventoryStatus === 'partial'
@@ -497,7 +500,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
         const rows: ExternalSessionsIntegrationVirtualizedRow[] = [];
         if (integrations !== null) {
             const hasInventoryContinuation = props.hasMoreInventory || props.loadingMoreInventory;
-            if (integrations.length === 0) {
+            if (integrations.length === 0 && inventoryComplete) {
                 rows.push({
                     kind: 'integrations_empty',
                     key: 'integrations-empty',
@@ -553,6 +556,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
     }, [
         autoLinkSources,
         integrations,
+        inventoryComplete,
         props.hasMoreInventory,
         props.loadingMoreInventory,
         props.supplementalRows,
@@ -802,8 +806,23 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             <View
                 ref={sectionFocusFallbackRef}
                 testID="settings-external-sessions-focus-fallback"
-                style={{ flex: 1 }}
-                {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+                accessible
+                accessibilityLabel={t('externalSessions.settingsIntegrationsGroupTitle')}
+                style={{
+                    flex: 1,
+                    ...(Platform.OS === 'web' && sectionFallbackFocused ? {
+                        outlineStyle: 'solid',
+                        outlineWidth: 2,
+                        outlineColor: theme.colors.border.focus,
+                        outlineOffset: -2,
+                    } : {}),
+                }}
+                {...(Platform.OS === 'web' ? {
+                    role: 'region',
+                    tabIndex: -1,
+                    onFocus: () => setSectionFallbackFocused(true),
+                    onBlur: () => setSectionFallbackFocused(false),
+                } : {})}
             >
                 <VirtualizedList
                     testID="settings-external-sessions-virtualized-list"
@@ -840,7 +859,20 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
         <View
             ref={sectionFocusFallbackRef}
             testID="settings-external-sessions-focus-fallback"
-            {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+            accessible
+            accessibilityLabel={t('externalSessions.settingsIntegrationsGroupTitle')}
+            style={Platform.OS === 'web' && sectionFallbackFocused ? {
+                outlineStyle: 'solid',
+                outlineWidth: 2,
+                outlineColor: theme.colors.border.focus,
+                outlineOffset: -2,
+            } : undefined}
+            {...(Platform.OS === 'web' ? {
+                role: 'region',
+                tabIndex: -1,
+                onFocus: () => setSectionFallbackFocused(true),
+                onBlur: () => setSectionFallbackFocused(false),
+            } : {})}
         >
             {props.inventoryState
                 && props.inventoryState.status !== 'idle'
@@ -884,7 +916,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                     title={t('externalSessions.settingsIntegrationsGroupTitle')}
                     footer={t('externalSessions.settingsIntegrationsFooter')}
                 >
-                    {integrations.length === 0 ? (
+                    {integrations.length === 0 && inventoryComplete ? (
                         <Item
                             testID="settings-external-sessions-integrations-unavailable"
                             mode="info"

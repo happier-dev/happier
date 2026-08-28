@@ -16,6 +16,7 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveInstallablePolicy, applyInstallablePolicyOverride } from '@happier-dev/protocol/installablesPolicy';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -47,6 +48,22 @@ export default function MachineInstallablesScreen() {
         serverId,
         enabled: Boolean(machineId && isOnline),
     });
+    const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready'
+        ? daemonMergedProjection.inputs
+        : null;
+
+    const agentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
+        enabledAgentIds: [],
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
+        mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
+    }), [
+        daemonMergedProjectionInputs?.mergedBackendProjectionById,
+        daemonMergedProjectionInputs?.mergedProviderProjectionById,
+        settings.acpCatalogSettingsV1,
+        settings.backendEnabledByTargetKey,
+    ]);
 
     const capabilitiesSnapshot = React.useMemo(() => {
         const snapshot =
@@ -62,7 +79,7 @@ export default function MachineInstallablesScreen() {
 
     const installables = React.useMemo(() => {
         const entries = getInstallablesRegistryEntries({
-            pluginProjection: daemonMergedProjection.inputs?.pluginProjectionV2 ?? undefined,
+            pluginProjection: daemonMergedProjectionInputs?.pluginProjectionV2 ?? undefined,
         });
         const results = capabilitiesSnapshot?.response.results;
         return entries.map((entry) => {
@@ -77,7 +94,7 @@ export default function MachineInstallablesScreen() {
             });
             return { entry, enabled, status, detectResult, policy };
         });
-    }, [capabilitiesSnapshot, daemonMergedProjection.inputs?.pluginProjectionV2, machineId, settings]);
+    }, [capabilitiesSnapshot, daemonMergedProjectionInputs?.pluginProjectionV2, machineId, settings]);
 
     React.useEffect(() => {
         if (!machineId) return;
@@ -126,7 +143,12 @@ export default function MachineInstallablesScreen() {
                     <DetectedClisList state={detectedCapabilities} layout="stacked" />
                 </ItemGroup>
 
-                <AgentSetupFlow machineId={machineId ?? null} serverId={serverId} />
+                <AgentSetupFlow
+                    machineId={machineId ?? null}
+                    serverId={serverId}
+                    projectionCurrent={daemonMergedProjection.phase === 'ready'}
+                    agentEntries={agentEntries}
+                />
 
                 {installables.map(({ entry, enabled, status, policy }) => {
                     if (!enabled) return null;
@@ -139,7 +161,9 @@ export default function MachineInstallablesScreen() {
                             groupTitle={entry.experimental ? t('machine.installables.experimentalGroupTitle', { title: entry.title }) : entry.title}
                             depId={entry.capabilityId}
                             depTitle={entry.title}
+                            depSubtitle={entry.subtitle}
                             depIconName={entry.iconName as any}
+                            setupUrl={entry.setupUrl}
                             depStatus={status}
                             capabilitiesStatus={isOnline ? detectedCapabilities.status : 'idle'}
                             extraItems={
@@ -171,15 +195,15 @@ export default function MachineInstallablesScreen() {
                                 </>
                             }
                             installLabels={{
-                                install: t(entry.installLabels.installKey),
-                                update: t(entry.installLabels.updateKey),
-                                reinstall: t(entry.installLabels.reinstallKey),
+                                install: entry.installLabels.install,
+                                update: entry.installLabels.update,
+                                reinstall: entry.installLabels.reinstall,
                             }}
                             installModal={{
-                                installTitle: t(entry.installModal.installTitleKey),
-                                updateTitle: t(entry.installModal.updateTitleKey),
-                                reinstallTitle: t(entry.installModal.reinstallTitleKey),
-                                description: t(entry.installModal.descriptionKey),
+                                installTitle: entry.installModal.installTitle,
+                                updateTitle: entry.installModal.updateTitle,
+                                reinstallTitle: entry.installModal.reinstallTitle,
+                                description: entry.installModal.description,
                             }}
                             refreshStatus={() => refreshDetectedCapabilities()}
                             refreshLatestVersion={isOnline

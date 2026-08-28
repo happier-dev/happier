@@ -17,6 +17,7 @@ import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleas
 import { pluginMachineMatrixTranslations } from './pluginMachineMatrixTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { automationTriggerSetTranslations } from './automationTriggerSetTranslations';
 import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 
@@ -1050,6 +1051,7 @@ export const zhHans = {
   },
 
   automations: {
+    ...automationTriggerSetTranslations['zh-Hans'],
     unsupportedReference: ({ reference }: { reference: string }) =>
         `自动化只会保存消息正文，因此 ${reference} 将不再指向你选择的对象。请从消息中删除它，或改为提及文件路径。`,
     list: {
@@ -1057,7 +1059,8 @@ export const zhHans = {
       cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `：${expression}` : ""}${timezone ? `（${timezone}）` : ""}`,
       schedule: "计划",
       event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
-      manual: "手动",
+      sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `当轮次结束时 · ${sessionId}`,
+      noAutomaticTriggers: '没有自动触发器',
       noNextRun: "没有下次运行",
       nextRun: ({ time }: { time: string }) => `下次：${time}`,
       nextRunPending: "下次运行待定",
@@ -1105,68 +1108,16 @@ export const zhHans = {
         cronSubtitle: "高级计划表达式。",
         cronHelpText: "标准 5 段 cron：分钟 小时 月日 月 星期。",
       },
-      sentence: {
-        run: "运行",
-        every: "每隔",
-        onSchedule: "按计划",
-        runEvery: "运行间隔",
-        minutes: "分钟",
-        presets: "预设",
-        intervalUnits: {
-          minutes: "分钟",
-          hours: "小时",
-          days: "天",
-        },
-        cronFieldGuide: {
-          minute: "分钟",
-          hour: "小时",
-          dayOfMonth: "日期",
-          month: "月份",
-          weekday: "星期",
-        },
-        useCron: "改用 cron 表达式",
-        useInterval: "切换到间隔",
-        addNotes: "添加备注",
-        notes: "备注",
-        localTimezone: "本地时间",
-        scheduleControlA11y: "编辑自动化计划",
-        intervalValue: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 天`;
-          if (minutes === 60) return "1 小时";
-          if (minutes % 60 === 0) return `${minutes / 60} 小时`;
-          return `${minutes} 分钟`;
-        },
-        intervalCadence: ({ minutes }: { minutes: number }) => {
-          if (minutes % (24 * 60) === 0) return `每 ${minutes / (24 * 60)} 天`;
-          if (minutes === 60) return "每小时";
-          if (minutes % 60 === 0) return `每 ${minutes / 60} 小时`;
-          return `每 ${minutes} 分钟`;
-        },
-        cronPresets: {
-          weekdays9am: "工作日 9:00",
-          hourly: "每小时",
-          monday9am: "周一 9:00",
-          dailyMidnight: "每天午夜",
-        },
-        cronCadences: {
-          weekdays9am: "工作日 9:00",
-          hourly: "每小时",
-          monday9am: "每周一 9:00",
-          dailyMidnight: "每天午夜",
-        },
-        cronCadenceExpression: ({ expression }: { expression: string }) => `按 cron 计划 ${expression}`,
-        timezone: ({ timezone }: { timezone: string }) => `时区：${timezone}`,
-      },
     },
     session: {
       emptyTitle: "暂无自动化",
-      emptyBody: "添加一个自动化，将计划消息排入此会话队列。",
+      emptyBody: "添加一个自动化，在任一触发器触发时在此会话中执行任务。",
       addAutomation: "添加自动化",
       failedToLoad: "加载自动化失败。",
     },
     screen: {
       emptyTitle: "暂无自动化",
-      emptyBody: "可在“新建会话”流程中创建，以在机器上运行计划会话。",
+      emptyBody: "从“新建会话”创建，然后添加计划、事件或精确回合触发器。",
       createAutomationA11y: "创建自动化",
     },
     settings: {
@@ -1189,7 +1140,7 @@ export const zhHans = {
       overviewGroupTitle: "概览",
       overview: {
         nameTitle: "名称",
-        scheduleTitle: "计划",
+        triggersTitle: "计划",
         statusTitle: "状态",
         nextRunTitle: "下次运行",
       },
@@ -1202,6 +1153,11 @@ export const zhHans = {
         watcherUnwatched: "未设置观察器",
         endpointTitle: "Webhook 端点",
         endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投递`,
+        transportTitle: "How events arrive",
+        transportCheckpointedPull: "Polling",
+        transportDurablePush: "Webhook",
+        disclosureCheckpointedPull: "The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.",
+        disclosureDurablePush: "Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.",
         sourceStatusUnreported: "等待首次上报",
         sourceStatusUnavailable: "来源状态不可用",
         sourceCatalogStatusUnavailable: "来源时效性不可用",
@@ -1213,9 +1169,6 @@ export const zhHans = {
       },
       actionsGroupTitle: "操作",
       runNowTitle: "立即运行",
-      runNowQueuedBadge: "已排队",
-      runNowQueuedLine: "已排队。",
-      runNowQueuedSubtitle: "已排队。分配的守护进程将在可用时执行。",
       pauseAutomation: "暂停自动化",
       resumeAutomation: "恢复自动化",
       editAutomation: "编辑自动化",
@@ -1237,12 +1190,33 @@ export const zhHans = {
       assignmentsUpdateFailed: "更新机器分配失败。",
       recentRunsTitle: "最近运行",
       loadMoreRuns: "加载更多运行",
+      trigger: {
+          identity: ({ id, revision }: { id: string; revision: number }) => `触发器 ${id} · 修订版 ${revision}`,
+          sourceSession: '来源会话',
+          sourceTurn: '确切来源轮次',
+          run: "关联运行",
+          status: {
+            waiting: "等待此轮完成",
+            paused: "已暂停",
+            triggered: "已触发",
+            running: "运行中",
+            finished: "已完成",
+            sourceFailed: "来源轮次失败",
+            sourceCancelled: "来源轮次已取消",
+            sourceUnavailable: "来源不可用",
+          },
+      },
       runMeta: {
-        originTitle: "来源",
-        origin: {
-          scheduled: "计划",
+        triggerIdentityTitle: '触发器标识',
+        triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · 修订版 ${revision}`,
+        triggerRetired: '触发器已移除',
+        triggerRetiredSubtitle: '即使此触发器已不在自动化中，本次运行仍会保留其不可变的原因。',
+        causeTitle: "来源",
+        cause: {
+          schedule: "计划",
           manual: "手动",
           pluginEvent: "事件",
+          sessionLifecycle: '会话轮次已完成',
           conversation: "对话",
         },
         state: {
@@ -1263,9 +1237,9 @@ export const zhHans = {
         admitted: ({ time }: { time: string }) => `已接纳：${time}`,
         occurrenceTitle: "事件标识",
         sourceTitle: "观察来源",
+        eventReferenceTitle: "事件引用",
         scheduled: ({ time }: { time: string }) => `计划：${time}`,
         updated: ({ time }: { time: string }) => `更新：${time}`,
-        contentRemoved: '运行内容已删除',
         error: ({ message }: { message: string }) => `错误：${message}`,
         attemptTitle: "尝试",
         attempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次尝试`,
@@ -2900,6 +2874,8 @@ export const zhHans = {
   },
 
   connectedServices: {
+    accountScopeMismatchTitle: '切换服务器帐户以继续',
+    accountScopeMismatchDescription: '此机器属于另一个服务器帐户。请切换到该服务器帐户以管理其已连接帐户。',
     fallbackName: "已连接服务",
     serviceNames: {
       claudeSubscription: "Claude 订阅",
@@ -7420,11 +7396,11 @@ export const zhHans = {
       turnDiffRecap: "本轮更改摘要",
     },
     askUserQuestion: {
-      claudeDialogNotice: {
-        header: 'Claude 对话框',
-        question: 'Claude 正在显示对话框。请打开终端查看并选择如何继续。',
-        openTerminal: '打开终端',
-        description: '在 Claude 终端中查看并回答该对话框。',
+      attachedTerminalNotice: {
+        header: '终端对话框',
+        question: '智能体正在显示对话框。请打开已连接的终端查看并选择如何继续。',
+        openTerminal: '打开已连接的终端',
+        description: '在已连接的终端中查看并回答该对话框。',
       },
       submit: "提交答案",
       multipleQuestions: ({ count }: { count: number }) => `${count} 个问题`,
@@ -9089,6 +9065,7 @@ export const zhHans = {
             sessionHandoffFeature: '启用会话接力支持后才能使用此操作。',
             notAvailableInThisApp: '此目标目前尚未在此客户端中显示。',
             requiredByAgentPolicy: '策略要求代理获得批准。此操作始终会先询问。',
+            presentUserRequired: '此操作需要你本人在 Happier 中操作。API 令牌和受信任的插件可以发现它，但无法执行。',
         },
         targets: {
             session_header: {
@@ -9152,12 +9129,12 @@ export const zhHans = {
                 subtitle: '可通过会话控制 CLI 界面使用。',
             },
             api: {
-                title: "API",
-                subtitle: "可通过外部操作 API 使用。",
+                title: "外部 API 与 SDK",
+                subtitle: "API 令牌可通过 HTTP 和 SDK 使用。",
             },
             plugin: {
                 title: "受信任的插件",
-                subtitle: "受信任插件可将其作为操作使用。",
+                subtitle: "受信任的内置和已安装插件均可使用。",
             },
             contextual_ui: {
                 title: '上下文 UI',
@@ -10909,6 +10886,16 @@ settingsSession: {
     logout: "登出",
     logoutSubtitle: "登出并清除本地数据",
     logoutConfirm: "您确定要登出吗？请确保您已备份密钥！",
+    deleteAccount: "删除账户",
+    deleteAccountSubtitle: "从此服务器永久删除该账户及其数据",
+    deleteAccountConfirmTitle: "删除此账户？",
+    deleteAccountConfirmBody: "这将永久删除此服务器上存储的账户数据，且无法撤销。请输入 DELETE 以继续。",
+    deleteAccountInvalidTitle: "确认内容不匹配",
+    deleteAccountInvalidBody: "请输入完全一致的 DELETE 以继续。",
+    deleteAccountFailedTitle: "未确认删除",
+    deleteAccountFailed: "Happier 无法确认删除结果。系统保留了你的本地登录，以便重试。",
+    deleteAccountCleanupFailedTitle: "账户已删除",
+    deleteAccountCleanupFailed: "服务器已确认删除，但此设备未能完成本地数据清理。请重新打开 Happier；如果仍显示此账户，请退出登录。",
     encryptionUpdateFailed: "更新加密设置失败",
     secretKeyMissing: "密钥不可用。请先恢复你的账户。",
     restoreRequiredTitle: "需要恢复",
@@ -11090,6 +11077,18 @@ settingsSession: {
                         "body": "你的代码、prompts 和会话内容会在设备上加密，然后才到达任何服务器。Private by design. Open by default.",
                         "alt": "隐私与自托管的抽象占位图。"
                     },
+                    "worktrees": {
+                        "title": "每个会话一个 worktree。或者不用。",
+                        "wideTitle": "每个会话一个 worktree。\n或者不用。",
+                        "body": "在专属的 Git worktree 中启动会话，让多个智能体在同一个仓库中工作而互不干扰；也可以直接在当前文件夹中开始。",
+                        "alt": "Git worktree 的抽象占位图。"
+                    },
+                    "handoff": {
+                        "title": "在设备之间迁移会话。",
+                        "wideTitle": "把运行中的会话\n迁移到另一台设备。",
+                        "body": "把正在运行的会话交给另一台电脑，从中断处继续；需要的话还能带上工作区文件。",
+                        "alt": "在设备之间迁移会话的抽象占位图。"
+                    },
                     "pets": {
                         "title": "别再一个人熬了。认识 Pets。",
                         "wideTitle": "别再一个人熬了。\n认识 Pets。",
@@ -11186,6 +11185,8 @@ settingsSession: {
       fallbackValue: '原生终端内容不可用。请使用 xterm WebView 访问无障碍终端内容。',
       focusAction: '聚焦终端',
       copySelectionAction: '复制所选内容',
+      selectAllAction: '选择全部终端输出',
+      openLinkAction: '打开所选链接',
     },
     dockMenuA11y: "停靠终端",
     largePasteTitle: "要粘贴大量终端输入吗？",

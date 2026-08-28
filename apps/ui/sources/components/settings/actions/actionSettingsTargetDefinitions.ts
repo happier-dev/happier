@@ -4,6 +4,7 @@ import {
     parseQualifiedPluginActionId,
     type ActionId,
     type ActionSettingsActionId,
+    type ActionSpec,
     type ActionSurfaces,
     type ActionUiPlacement,
     type ActionsSettingsV1,
@@ -28,6 +29,7 @@ export type ActionSettingsTargetSource = Readonly<{
     surfaces: Partial<ActionSurfaces>;
     placements: readonly ActionUiPlacement[];
     slash?: unknown;
+    requiredAuthority?: ActionSpec['requiredAuthority'];
 }>;
 
 type ActionSettingsTargetBase = Readonly<{

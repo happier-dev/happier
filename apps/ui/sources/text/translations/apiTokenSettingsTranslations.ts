@@ -1,6 +1,6 @@
 const english = {
     settingsApiTokens: {
-        title: 'API tokens',
+        title: 'API Tokens',
         entrySubtitle: 'Create and revoke tokens for integrations and automation.',
         description: 'Use API tokens to connect trusted integrations to your current Account. Tokens inherit the Action Settings policy for this Account.',
         tokens: 'Tokens',

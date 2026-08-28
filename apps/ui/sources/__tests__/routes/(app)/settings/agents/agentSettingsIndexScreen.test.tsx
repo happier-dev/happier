@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as agentCatalogProjection from '@/agents/backendCatalog/agentCatalogProjection';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { standardCleanup } from '@/dev/testkit';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
@@ -301,7 +302,12 @@ describe('PluginAgentSettingsIndexScreen', () => {
             'settingsAgents.channelPlugin',
         );
         expect(screen.findRowByTitle('agent.customAcp')).toBeFalsy();
-        expect(screen.findRowByTitle('Acme Review Provider')?.props.icon?.props?.name).toBe('code-slash-outline');
+        const projectedIcon = screen.findRowByTitle('Acme Review Provider')?.props.icon;
+        expect(projectedIcon?.type).toBe(AgentCatalogIdentityIcon);
+        expect(projectedIcon?.props.entry).toEqual(expect.objectContaining({
+            qualifiedId: 'acme.review/provider',
+            identity: { pluginId: 'acme.review', localId: 'provider' },
+        }));
 
         const acpSections = screen.findAllByType('AcpCatalogSettingsSections' as any);
         expect(acpSections).toHaveLength(1);
@@ -530,7 +536,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-2', expect.objectContaining({
             serverId: 'server-y',
         }));
-        expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy();
+        expect(screen.findRowByTitle('Acme Review Provider')).toBeFalsy();
 
         await act(async () => {
             resolveReload({
@@ -538,6 +544,9 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
             });
         });
+        await act(async () => {});
+
+        expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy();
     });
 
     it('uses the exact canonical Administration target instead of an active-server or global-machine fallback', async () => {
@@ -641,7 +650,10 @@ describe('PluginAgentSettingsIndexScreen', () => {
         const getResolvedAgentCatalogEntriesSpy = vi.spyOn(agentCatalogProjection, 'getResolvedAgentCatalogEntries');
         getResolvedAgentCatalogEntriesSpy.mockReturnValue([{
             agentId: 'acme.headless.provider',
+            qualifiedId: 'acme.headless.provider',
             identity: null,
+            installedPackage: null,
+            projectionGeneration: null,
             catalogAgentId: null,
             iconAgentId: 'claude',
             iconName: 'stack-simple',
@@ -654,6 +666,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
             descriptor: null,
             behavior: null,
             authPlugin: null,
+            cliAuthBackgroundCheckSafe: false,
+            connectedAccounts: [],
         }]);
 
         const Screen = (await import('@/app/(app)/settings/agents')).default;
@@ -668,7 +682,13 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 }),
             ]),
         }));
-        expect(screen.findRowByTitle('Acme Headless Provider')?.props.icon?.props?.name).toBe('sparkles-outline');
+        const projectedIcon = screen.findRowByTitle('Acme Headless Provider')?.props.icon;
+        expect(projectedIcon?.type).toBe(AgentCatalogIdentityIcon);
+        expect(projectedIcon?.props.entry).toEqual(expect.objectContaining({
+            qualifiedId: 'acme.headless.provider',
+            identity: null,
+            iconAgentId: 'claude',
+        }));
 
         getResolvedAgentCatalogEntriesSpy.mockRestore();
     });

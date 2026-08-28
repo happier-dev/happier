@@ -9,7 +9,12 @@ import {
     type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
+import {
+    readSessionConnectedServiceBindings,
+} from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
+import {
+    resolveQualifiedConnectedAccountServiceKey,
+} from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useAllMachines, useProfile, useSessions } from '@/sync/domains/state/storage';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
@@ -29,15 +34,21 @@ function buildRecordById<T extends Readonly<{ id: string }>>(items: ReadonlyArra
 function bindingTargetsProfile(params: Readonly<{
     binding: ConnectedServiceBindingSelectionV1 | undefined;
     services: ReadonlyArray<AccountProfileConnectedService>;
-    serviceId: ConnectedServiceId;
+    /** Canonical qualified service key of the session bindings. */
+    serviceKey: string;
+    /** Released scalar id for the V2 account lookup; null for novel external services. */
+    legacyServiceId: ConnectedServiceId | null;
     profileId: string;
 }>): boolean {
-    const { binding, services, serviceId, profileId } = params;
+    const { binding, services, serviceKey, legacyServiceId, profileId } = params;
     if (!binding || binding.source !== 'connected') return false;
     if (binding.selection !== 'group') return binding.profileId === profileId;
     if (binding.profileId === profileId) return true;
 
-    const service = services.find((candidate) => candidate.serviceId === serviceId) ?? null;
+    // The V2 account lookup still speaks scalar service ids; the conversion
+    // stays local and typed after the canonical qualified binding resolution.
+    if (!legacyServiceId) return false;
+    const service = services.find((candidate) => candidate.serviceId === legacyServiceId) ?? null;
     const group = service?.groups.find((candidate) => candidate.groupId === binding.groupId) ?? null;
     return group?.activeProfileId === profileId;
 }
@@ -57,7 +68,10 @@ export type ConnectedServiceBindingMachineTargetStatus =
     | Readonly<{ machineId: null; reason: ConnectedServiceBindingMachineTargetReason }>;
 
 function resolveConnectedServiceMachineTargetStatusForBinding(params: Readonly<{
-    serviceId: ConnectedServiceId;
+    /** Canonical qualified Connected Account service key of the session bindings. */
+    serviceKey: string;
+    /** Released scalar id for the V2 account lookup; null for novel external services. */
+    legacyServiceId: ConnectedServiceId | null;
     sessions: ReadonlyArray<Session> | null;
     machines: ReadonlyArray<Machine>;
     matches: (binding: ConnectedServiceBindingSelectionV1 | undefined) => boolean;
@@ -84,7 +98,7 @@ function resolveConnectedServiceMachineTargetStatusForBinding(params: Readonly<{
             metadata,
             agentId,
         });
-        if (!params.matches(bindings?.bindingsByServiceId[params.serviceId])) continue;
+        if (!params.matches(bindings?.bindingsByServiceId[params.serviceKey])) continue;
         hadMatchingBinding = true;
 
         const target = resolveMachineControlTargetForSessionFromState(state, session.id);
@@ -99,7 +113,8 @@ function resolveConnectedServiceMachineTargetStatusForBinding(params: Readonly<{
 }
 
 function resolveConnectedServiceMachineTargetForBinding(params: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceKey: string;
+    legacyServiceId: ConnectedServiceId | null;
     sessions: ReadonlyArray<Session> | null;
     machines: ReadonlyArray<Machine>;
     matches: (binding: ConnectedServiceBindingSelectionV1 | undefined) => boolean;
@@ -108,20 +123,30 @@ function resolveConnectedServiceMachineTargetForBinding(params: Readonly<{
 }
 
 export function resolveConnectedServiceRecoveryCreditMachineTarget(params: Readonly<{
+    /** Released V3 account-surface scalar id; translated through the provenance-named legacy ingress. */
     serviceId: ConnectedServiceId;
     profileId: string;
     sessions: ReadonlyArray<Session> | null;
     machines: ReadonlyArray<Machine>;
     connectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
 }>): string | null {
+    // Session bindings are canonical qualified; the released V3 account surface
+    // speaks scalar ids. Translate once at this named seam and fail closed for
+    // an unknown service — never index canonical bindings with a bare id.
+    const serviceKey = resolveQualifiedConnectedAccountServiceKey(params.serviceId);
+    if (!serviceKey) return null;
     return resolveConnectedServiceMachineTargetForBinding({
-        serviceId: params.serviceId,
+        serviceKey,
+        // The V2 account lookup keeps the released scalar identity of this
+        // released V3 surface fact.
+        legacyServiceId: params.serviceId,
         sessions: params.sessions,
         machines: params.machines,
         matches: (binding) => bindingTargetsProfile({
             binding,
             services: params.connectedServicesV2,
-            serviceId: params.serviceId,
+            serviceKey,
+            legacyServiceId: params.serviceId,
             profileId: params.profileId,
         }),
     });

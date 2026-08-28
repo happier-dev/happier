@@ -7,10 +7,6 @@ export const DEFAULT_HOSTED_PLUGIN_SECURITY: PluginHostedWebSecurityPolicyV1 = {
     allowedCallbackOrigins: [],
     allowedConnectOrigins: [],
     csp: {
-        scriptSrc: 'selfOnly',
-        styleSrc: 'selfOnly',
-        imgSrc: 'selfOnly',
-        fontSrc: 'selfOnly',
         connectSrc: 'selfOnly',
         allowDataUrls: false,
         allowBlobUrls: false,

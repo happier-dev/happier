@@ -1019,12 +1019,54 @@ export const en = {
         unsupportedReference: ({ reference }: { reference: string }) =>
             `Automations save the message text only, so ${reference} would no longer point to what you picked. Remove it from the message, or mention a file path instead.`,
         openA11y: 'Open automations',
+        pluralEditor: {
+            triggersTitle: 'Triggers',
+            triggersFooter: 'Each enabled trigger works independently. A match from any one of them starts this automation.',
+            emptyBody: 'No automatic triggers. You can still run this automation manually.',
+            orSemantics: 'Add any number of triggers. They work independently — when any one matches, the automation runs.',
+            enabledSubtitle: 'Pause the whole automation without changing any trigger.',
+            addTrigger: 'Add trigger',
+            addTriggerSubtitle: 'Schedule it, connect an Event, or wait for one exact turn.',
+            scheduleTitle: 'Schedule',
+            eventTitle: 'Plugin Event',
+            turnCompletedTitle: 'When this turn finishes',
+            turnCompletedSubtitle: 'Runs once after the exact selected parent turn completes.',
+            selectedSession: 'Selected session',
+            turnCompletedSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · one-time trigger ${ordinal}`,
+            scheduleInterval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) =>
+                `Every ${minutes} minute${minutes === 1 ? '' : 's'}${timezone ? ` · ${timezone}` : ''}`,
+            scheduleCron: ({ expression, timezone }: { expression: string; timezone: string | null }) =>
+                `${expression}${timezone ? ` · ${timezone}` : ''}`,
+            eventSubtitle: ({ pluginId, eventId }: { pluginId: string; eventId: string }) =>
+                `${pluginId} · ${eventId}`,
+            triggerEnabledLabel: ({ title }: { title: string }) => `Enable ${title}`,
+            editScheduleTitle: 'Edit schedule',
+            scheduleType: 'Schedule type',
+            chooseSession: 'Choose a working session',
+            eventEditorUnavailable: 'Event setup is unavailable for the current machine.',
+            removeTitle: 'Remove this trigger?',
+            removeBody: 'Future occurrences from this trigger will stop. Existing run history stays unchanged.',
+        },
+        exactTurn: {
+            actionTitle: 'When this turn finishes…',
+            createNew: 'Create a new automation',
+            createNewSubtitle: 'Start with this exact turn already selected.',
+            addToExistingSubtitle: 'Add this exact turn to an existing automation.',
+            searchPlaceholder: 'Search automations',
+            destinationA11y: 'Choose where to add this turn trigger',
+            staleTitle: 'This turn changed',
+            staleBody: 'The selected turn is no longer the active parent turn. Refresh and choose the current turn explicitly.',
+            useCurrentTurn: 'Use current turn',
+            unavailable: 'There is no active parent turn to use right now.',
+        },
         list: {
             interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `Every ${minutes}m${timezone ? ` (${timezone})` : ''}`,
             cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ''}${timezone ? ` (${timezone})` : ''}`,
             schedule: 'Schedule',
             event: ({ eventId }: { eventId: string }) => `Event: ${eventId}`,
-            manual: 'Manual',
+            sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `When a turn finishes · ${sessionId}`,
+            noAutomaticTriggers: 'No automatic triggers',
             noNextRun: 'No next run',
             nextRun: ({ time }: { time: string }) => `Next: ${time}`,
             nextRunPending: 'Next run pending',
@@ -1129,69 +1171,17 @@ export const en = {
                 maximumObservationAgePlaceholder: '30000',
                 maximumObservationAgeInvalid: 'Enter a whole number of milliseconds.',
             },
-            sentence: {
-                run: 'Run',
-                every: 'every',
-                onSchedule: 'on schedule',
-                runEvery: 'Run every',
-                minutes: 'minutes',
-                presets: 'Presets',
-                intervalUnits: {
-                    minutes: 'Minutes',
-                    hours: 'Hours',
-                    days: 'Days',
-                },
-                cronFieldGuide: {
-                    minute: 'Minute',
-                    hour: 'Hour',
-                    dayOfMonth: 'Day',
-                    month: 'Month',
-                    weekday: 'Weekday',
-                },
-                useCron: 'Use cron expression instead',
-                useInterval: 'Switch to interval',
-                addNotes: 'Add notes',
-                notes: 'NOTES',
-                localTimezone: 'local time',
-                scheduleControlA11y: 'Edit automation schedule',
-                intervalValue: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} day${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return '1 hour';
-                    if (minutes % 60 === 0) return `${minutes / 60} hours`;
-                    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-                },
-                intervalCadence: ({ minutes }: { minutes: number }) => {
-                    if (minutes % (24 * 60) === 0) return `every ${minutes / (24 * 60)} day${minutes === 24 * 60 ? '' : 's'}`;
-                    if (minutes === 60) return 'every hour';
-                    if (minutes % 60 === 0) return `every ${minutes / 60} hours`;
-                    return `every ${minutes} minute${minutes === 1 ? '' : 's'}`;
-                },
-                cronPresets: {
-                    weekdays9am: '9 AM weekdays',
-                    hourly: 'Every hour',
-                    monday9am: 'Monday 9 AM',
-                    dailyMidnight: 'Daily midnight',
-                },
-                cronCadences: {
-                    weekdays9am: 'on 9 AM weekdays',
-                    hourly: 'every hour',
-                    monday9am: 'on Monday at 9 AM',
-                    dailyMidnight: 'daily at midnight',
-                },
-                cronCadenceExpression: ({ expression }: { expression: string }) => `on cron schedule ${expression}`,
-                timezone: ({ timezone }: { timezone: string }) => `Timezone: ${timezone}`,
-            },
         },
         session: {
             emptyTitle: 'No automations',
-            emptyBody: 'Add an automation to queue scheduled messages into this session.',
+            emptyBody: 'Add an automation to run work in this session when any of its triggers fires.',
             addAutomation: 'Add automation',
             addEventAutomation: 'Add event automation',
             failedToLoad: 'Failed to load automations.',
         },
         screen: {
             emptyTitle: 'No automations yet',
-            emptyBody: 'Create one from the New Session flow to run scheduled sessions on your machines.',
+            emptyBody: 'Create one from New Session, then add schedules, Events, or exact-turn triggers.',
             createAutomationA11y: 'Create automation',
         },
         settings: {
@@ -1214,7 +1204,7 @@ export const en = {
             overviewGroupTitle: 'Overview',
             overview: {
                 nameTitle: 'Name',
-                scheduleTitle: 'Schedule',
+                triggersTitle: 'Automatic triggers',
                 statusTitle: 'Status',
                 nextRunTitle: 'Next run',
             },
@@ -1226,7 +1216,13 @@ export const en = {
                 watcherTitle: 'Observation watcher',
                 watcherUnwatched: 'Unwatched',
                 endpointTitle: 'Webhook endpoint',
+                observationPlacementTitle: 'Event observation placement',
                 endpointObservingSince: ({ time }: { time: string }) => `Receiving deliveries since ${time}`,
+                transportTitle: 'How events arrive',
+                transportCheckpointedPull: 'Polling',
+                transportDurablePush: 'Webhook',
+                disclosureCheckpointedPull: 'The source is checked from its saved checkpoint. Delayed or unavailable sources may report gaps.',
+                disclosureDurablePush: 'Webhook delivery is best effort before the provider durably commits the event. Use polling when gap detection matters.',
                 sourceStatusUnreported: 'Waiting for the first report',
                 sourceStatusUnavailable: 'Source status unavailable',
                 sourceCatalogStatusUnavailable: 'Source currentness unavailable',
@@ -1238,15 +1234,12 @@ export const en = {
             },
             actionsGroupTitle: 'Actions',
             runNowTitle: 'Run now',
-            runNowQueuedBadge: 'Queued',
-            runNowQueuedLine: 'Queued.',
-            runNowQueuedSubtitle: 'Queued. The assigned daemon will pick it up when available.',
             pauseAutomation: 'Pause automation',
             resumeAutomation: 'Resume automation',
             editAutomation: 'Edit automation',
             deleteAutomation: 'Delete automation',
             deleteConfirmTitle: 'Delete automation',
-            deleteConfirmMessage: 'This automation and its schedule will be removed.',
+            deleteConfirmMessage: 'This automation and its triggers will be removed. Existing Run history keeps its cause.',
             deleteConfirmButton: 'Delete',
             clearHistory: 'Clear run history',
             clearHistorySubtitle: 'Remove completed runs that are eligible for removal. Active runs stay available.',
@@ -1262,14 +1255,35 @@ export const en = {
             assignmentsUpdateFailed: 'Failed to update machine assignments.',
             recentRunsTitle: 'Recent runs',
             loadMoreRuns: 'Load more runs',
+            trigger: {
+                identity: ({ id, revision }: { id: string; revision: number }) => `Trigger ${id} · revision ${revision}`,
+                sourceSession: 'Source session',
+                sourceTurn: 'Exact source turn',
+                run: 'Matching run',
+                status: {
+                    waiting: 'Waiting for this turn',
+                    paused: 'Paused',
+                    triggered: 'Triggered',
+                    running: 'Running',
+                    finished: 'Finished',
+                    sourceFailed: 'Source turn failed',
+                    sourceCancelled: 'Source turn cancelled',
+                    sourceUnavailable: 'Source unavailable',
+                },
+            },
             runMeta: {
-                originTitle: 'Origin',
-                origin: {
-                    scheduled: 'Scheduled',
+                causeTitle: 'Cause',
+                cause: {
+                    schedule: 'Scheduled',
                     manual: 'Manual',
                     pluginEvent: 'Event',
+                    sessionLifecycle: 'Session turn completed',
                     conversation: 'Conversation',
                 },
+                triggerIdentityTitle: 'Trigger identity',
+                triggerIdentity: ({ id, revision }: { id: string; revision: number }) => `${id} · revision ${revision}`,
+                triggerRetired: 'Trigger retired',
+                triggerRetiredSubtitle: 'This Run keeps its immutable cause even though the trigger is no longer on the Automation.',
                 state: {
                     queued: 'Queued',
                     claimed: 'Claimed',
@@ -1288,9 +1302,9 @@ export const en = {
                 admitted: ({ time }: { time: string }) => `Admitted: ${time}`,
                 occurrenceTitle: 'Occurrence',
                 sourceTitle: 'Observation source',
+                eventReferenceTitle: 'Event reference',
                 scheduled: ({ time }: { time: string }) => `Scheduled: ${time}`,
                 updated: ({ time }: { time: string }) => `Updated: ${time}`,
-                contentRemoved: 'Run content removed',
                 error: ({ message }: { message: string }) => `Error: ${message}`,
                 attemptTitle: 'Attempt',
                 attempt: ({ attempt }: { attempt: number }) => `Attempt ${attempt}`,
@@ -2914,6 +2928,8 @@ export const en = {
 
     connectedServices: {
         fallbackName: 'Connected service',
+        accountScopeMismatchTitle: 'Switch server Accounts to continue',
+        accountScopeMismatchDescription: 'This machine belongs to another server Account. Switch to that server Account to manage its connected accounts.',
         serviceNames: {
             claudeSubscription: 'Claude subscription',
             openaiCodex: 'OpenAI Codex',
@@ -7834,11 +7850,11 @@ export const en = {
             cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
         },
         askUserQuestion: {
-            claudeDialogNotice: {
-                header: 'Claude dialog',
-                question: 'Claude is showing a dialog. Open the terminal to review it and choose how to continue.',
-                openTerminal: 'Open Claude terminal',
-                description: 'Review and answer the dialog in Claude’s terminal.',
+            attachedTerminalNotice: {
+                header: 'Terminal dialog',
+                question: 'The agent is showing a dialog. Open the attached terminal to review it and choose how to continue.',
+                openTerminal: 'Open attached terminal',
+                description: 'Review and answer the dialog in the attached terminal.',
             },
             submit: 'Submit Answer',
             multipleQuestions: ({ count }: { count: number }) => `${count} questions`,
@@ -9526,6 +9542,7 @@ export const en = {
             sessionHandoffFeature: 'Enable session handoff support to use this action.',
             notAvailableInThisApp: 'This target is not surfaced in this client yet.',
             requiredByAgentPolicy: 'Approval is required by policy for the agent. This action always asks first.',
+            presentUserRequired: 'This operation requires you to be present in Happier. API tokens and trusted plugins can discover it, but cannot run it.',
         },
         targets: {
             session_header: {
@@ -9589,12 +9606,12 @@ export const en = {
                 subtitle: 'Available through the session control CLI surface.',
             },
             api: {
-                title: 'API',
-                subtitle: 'Available through the external Action API.',
+                title: 'External API & SDK',
+                subtitle: 'Available to API tokens through HTTP and the SDK.',
             },
             plugin: {
                 title: 'Trusted plugins',
-                subtitle: 'Available to trusted plugins as an action.',
+                subtitle: 'Available to trusted built-in and installed plugins.',
             },
             contextual_ui: {
                 title: 'Contextual UI',
@@ -11602,6 +11619,16 @@ settingsSession: {
         logout: 'Logout',
         logoutSubtitle: 'Sign out and clear local data',
         logoutConfirm: 'Are you sure you want to logout? Make sure you have backed up your secret key!',
+        deleteAccount: 'Delete account',
+        deleteAccountSubtitle: 'Permanently delete this account and its data from this server',
+        deleteAccountConfirmTitle: 'Delete this account?',
+        deleteAccountConfirmBody: 'This permanently deletes the account data stored on this server and cannot be undone. Type DELETE to continue.',
+        deleteAccountInvalidTitle: 'Confirmation did not match',
+        deleteAccountInvalidBody: 'Type DELETE exactly to continue.',
+        deleteAccountFailedTitle: 'Deletion not confirmed',
+        deleteAccountFailed: 'Happier could not confirm deletion. Your local sign-in was kept so you can retry or reconnect.',
+        deleteAccountCleanupFailedTitle: 'Account deleted',
+        deleteAccountCleanupFailed: 'The server confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
         encryptionUpdateFailed: 'Failed to update encryption setting',
         secretKeyMissing: 'Secret key unavailable. Please restore your account first.',
         restoreRequiredTitle: 'Restore required',
@@ -11795,6 +11822,18 @@ settingsSession: {
                         "body": "Choose an end-to-end encrypted account when you want the relay to store only encrypted session data. Happier is open-source and self-hostable.",
                         "alt": "Abstract placeholder image for privacy and self-hosting."
                     },
+                    "worktrees": {
+                        "title": "A worktree per session. Or not.",
+                        "wideTitle": "A worktree per session.\nOr not.",
+                        "body": "Start a session in its own Git worktree so several agents can work the same repository without colliding, or start in the folder you are already in.",
+                        "alt": "Abstract placeholder image for Git worktrees."
+                    },
+                    "handoff": {
+                        "title": "Move a session between machines.",
+                        "wideTitle": "Move a running session\nto another machine.",
+                        "body": "Hand a running session to another computer and continue where it stopped, optionally bringing the working tree with it.",
+                        "alt": "Abstract placeholder image for moving a session between machines."
+                    },
                     "pets": {
                         "title": "Meet Pets.",
                         "wideTitle": "Never feel alone.\nMeet Pets.",
@@ -11973,6 +12012,8 @@ settingsSession: {
             fallbackValue: 'Native terminal content is unavailable. Use the xterm WebView fallback for accessible terminal content.',
             focusAction: 'Focus terminal',
             copySelectionAction: 'Copy selection',
+            selectAllAction: 'Select all terminal output',
+            openLinkAction: 'Open selected link',
         },
         dockMenuA11y: 'Dock terminal',
         largePasteTitle: 'Paste large terminal input?',
@@ -12615,6 +12656,11 @@ settingsSession: {
         },
         installables: {
             screenTitle: 'Installables',
+            reinstall: 'Reinstall',
+            installTitle: ({ title }: { title: string }) => `Install ${title}?`,
+            updateTitle: ({ title }: { title: string }) => `Update ${title}?`,
+            reinstallTitle: ({ title }: { title: string }) => `Reinstall ${title}?`,
+            installDescription: ({ title }: { title: string }) => `This installs ${title} on the selected machine.`,
             aboutGroupTitle: 'About',
             aboutSubtitle: 'Manage tools that Happier can install and keep up to date on this machine.',
             experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimental)`,

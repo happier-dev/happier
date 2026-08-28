@@ -24,7 +24,7 @@ import {
     useMachineAdministrationTargetSelection,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
-import { useAllMachines, useAllSessions, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessions, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
@@ -199,7 +199,8 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     const { theme } = useUnistyles();
     const machines = useAllMachines();
     const sessions = useAllSessions();
-    const accountSettings = useSettings();
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const rawSettings = useSetting('externalSessionsSettingsV1');
     const settings = readExternalSessionsSettingsV1(rawSettings) ?? {
         v: 1 as const,
@@ -244,8 +245,8 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             }
             const projection = resolveAgentCatalogProjection(agentId, {
                 enabledAgentIds,
-                backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
-                acpCatalogSettingsV1: accountSettings.acpCatalogSettingsV1,
+                backendEnabledByTargetKey,
+                acpCatalogSettingsV1,
                 mergedProviderProjectionById:
                     daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
                 mergedBackendProjectionById:
@@ -257,8 +258,8 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             }];
         });
     }, [
-        accountSettings.acpCatalogSettingsV1,
-        accountSettings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1,
+        backendEnabledByTargetKey,
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
         daemonMergedProjectionInputs?.pluginProjectionV2,

@@ -37,6 +37,7 @@ export type CustomProviderAuthoringViewModel = Readonly<{
     enableAfterSaving: boolean;
     draftRequiresApiKey: boolean;
     secretSelected: boolean;
+    savedSecretSelectionEnabled: boolean;
     manualModelsError: string | null;
     draftHasProbe: boolean;
     probeState: 'idle' | 'probing' | 'success' | 'notSupported';
@@ -193,17 +194,27 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     </View> : null}
                     <Item
                         title={t('settingsProviders.authoring.apiKey')}
-                        subtitle={model.secretSelected ? t('settingsProviders.detail.apiKeySelected') : t('settingsProviders.authoring.apiKeyDescription')}
+                        subtitle={model.secretSelected
+                            ? t('settingsProviders.detail.apiKeySelected')
+                            : model.savedSecretSelectionEnabled
+                                ? t('settingsProviders.authoring.apiKeyDescription')
+                                : t('settingsProviders.local.accountScopeMismatchDescription')}
                         icon={<Icon name="key" size={29} color={model.secondaryTextColor} />}
-                        onPress={actions.onPickSecret}
+                        disabled={!model.savedSecretSelectionEnabled}
+                        onPress={model.savedSecretSelectionEnabled ? actions.onPickSecret : undefined}
                     />
                 </> : null}
             </ItemGroup> : model.draftRequiresApiKey ? <ItemGroup title={t('settingsProviders.authoring.credentialsTitle')} footer={t('settingsProviders.authoring.credentialsFooter')}>
                 <Item
                     title={t('settingsProviders.authoring.apiKey')}
-                    subtitle={model.secretSelected ? t('settingsProviders.detail.apiKeySelected') : t('settingsProviders.authoring.apiKeyDescription')}
+                    subtitle={model.secretSelected
+                        ? t('settingsProviders.detail.apiKeySelected')
+                        : model.savedSecretSelectionEnabled
+                            ? t('settingsProviders.authoring.apiKeyDescription')
+                            : t('settingsProviders.local.accountScopeMismatchDescription')}
                     icon={<Icon name="key" size={29} color={model.secondaryTextColor} />}
-                    onPress={actions.onPickSecret}
+                    disabled={!model.savedSecretSelectionEnabled}
+                    onPress={model.savedSecretSelectionEnabled ? actions.onPickSecret : undefined}
                 />
             </ItemGroup> : null}
 
@@ -240,13 +251,24 @@ export function CustomProviderAuthoringView(props: Readonly<{
                             ? t('settingsProviders.detail.testNotSupported')
                             : t('settingsProviders.detail.testDescription')}
                     loading={model.probeState === 'probing'}
-                    onPress={actions.onTest}
+                    disabled={model.draftRequiresApiKey && !model.savedSecretSelectionEnabled}
+                    onPress={model.draftRequiresApiKey && !model.savedSecretSelectionEnabled
+                        ? undefined
+                        : actions.onTest}
                 /> : <Item mode="info" title={t('settingsProviders.detail.testNotSupported')} subtitle={t('settingsProviders.detail.testOnFirstSession')} />}
-                <Item testID="settings-provider-authoring-save" title={t('settingsProviders.authoring.save')} loading={model.savePending} onPress={actions.onSave} />
+                <Item
+                    testID="settings-provider-authoring-save"
+                    title={t('settingsProviders.authoring.save')}
+                    loading={model.savePending}
+                    disabled={model.draftRequiresApiKey && !model.savedSecretSelectionEnabled}
+                    onPress={model.draftRequiresApiKey && !model.savedSecretSelectionEnabled
+                        ? undefined
+                        : actions.onSave}
+                />
             </ItemGroup>
 
-            {model.error ? <ItemGroup><ProviderErrorItems error={model.error} retry={model.errorRetry} reviewConnection={actions.onReviewConnection} configureSecret={actions.onPickSecret} /></ItemGroup> : null}
-            {model.probeError ? <ItemGroup><ProviderErrorItems error={model.probeError} retry={async () => { actions.onTest(); }} reviewConnection={actions.onReviewConnection} configureSecret={actions.onPickSecret} /></ItemGroup> : null}
+            {model.error ? <ItemGroup><ProviderErrorItems error={model.error} retry={model.errorRetry} reviewConnection={actions.onReviewConnection} configureSecret={model.savedSecretSelectionEnabled ? actions.onPickSecret : undefined} /></ItemGroup> : null}
+            {model.probeError ? <ItemGroup><ProviderErrorItems error={model.probeError} retry={async () => { actions.onTest(); }} reviewConnection={actions.onReviewConnection} configureSecret={model.savedSecretSelectionEnabled ? actions.onPickSecret : undefined} /></ItemGroup> : null}
         </ItemList>
     );
 }

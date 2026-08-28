@@ -180,6 +180,9 @@ function withCleanEnv<T>(fn: () => T): T {
         'EX_UPDATES_NATIVE_DEBUG',
         'EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON',
         'HAPPIER_SYNC_TUNING_JSON',
+        'HAPPIER_TERMINAL_NATIVE_BUILD_EVIDENCE_ID',
+        'HAPPIER_TERMINAL_NATIVE_SOURCE_STATE_SHA256',
+        'HAPPIER_TERMINAL_NATIVE_DEPENDENCY_CLOSURE_SHA256',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -224,6 +227,30 @@ describe('app.config.js', () => {
 
         expect(exp.extra?.app?.variant).toBe('preview');
         expect(exp.extra?.app?.identityVariant).toBe('preview');
+    });
+
+    it('embeds the exact terminal native build identity only as one complete validated tuple', () => {
+        const digestA = 'a'.repeat(64);
+        const digestB = 'b'.repeat(64);
+        const exp = withCleanEnv(() => {
+            process.env.HAPPIER_TERMINAL_NATIVE_BUILD_EVIDENCE_ID = 'term-build-1234567890abcdef';
+            process.env.HAPPIER_TERMINAL_NATIVE_SOURCE_STATE_SHA256 = digestA;
+            process.env.HAPPIER_TERMINAL_NATIVE_DEPENDENCY_CLOSURE_SHA256 = digestB;
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.app?.terminalNativeEvidenceBuildIdentity).toEqual({
+            buildEvidenceId: 'term-build-1234567890abcdef',
+            sourceStateSha256: digestA,
+            dependencyClosureSha256: digestB,
+        });
+    });
+
+    it('rejects a partial terminal native evidence identity during app configuration', () => {
+        expect(() => withCleanEnv(() => {
+            process.env.HAPPIER_TERMINAL_NATIVE_BUILD_EVIDENCE_ID = 'term-build-1234567890abcdef';
+            return getPublicConfig();
+        })).toThrow(/SOURCE_STATE_SHA256/);
     });
 
     it('maps the publicdev environment to the public dev identity while keeping preview-like public behavior', () => {

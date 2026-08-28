@@ -143,4 +143,39 @@ describe('ProfileCompatibilityIcon', () => {
         const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['•']);
     });
+
+    it('never borrows a bundled carrier glyph for an external Agent target', async () => {
+        const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
+        const externalEntry: ResolvedBackendCatalogEntry = {
+            agentCatalogEntry: createResolvedAgentCatalogEntryFixture({
+                agentId: 'acme.review/agent',
+                isBuiltIn: false,
+                iconAgentId: 'codex',
+            }),
+            backendTarget: { kind: 'backend', backendId: 'acme-review' },
+            backendTargetKey: 'backend:acme-review',
+            kind: 'pluginBackend',
+            backendId: 'acme-review',
+            agentId: 'acme.review/agent',
+            catalogAgentId: null,
+            builtInAgentId: null,
+            iconAgentId: 'codex',
+            title: 'Acme Review',
+            subtitle: null,
+            cliAuthBackgroundCheckSafe: false,
+        };
+
+        const screen = await renderScreen(
+            <ProfileCompatibilityIcon
+                profile={{
+                    isBuiltIn: false,
+                    compatibility: { 'acme-review': true },
+                    compatibilityByTargetKey: {},
+                }}
+                backendEntries={[externalEntry]}
+            />,
+        );
+
+        expect(screen.findAllByType('Text').map((node: any) => node.props.children)).toEqual(['•']);
+    });
 });

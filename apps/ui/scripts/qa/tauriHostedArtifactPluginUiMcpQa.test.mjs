@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  assertHostedArtifactNativeChildProofComplete,
   assertHostedArtifactRuntimeIdentity,
   buildHostedArtifactCapabilityProbeScript,
   buildHostedArtifactIdentityProbeScript,
@@ -61,7 +60,8 @@ test('runtime identity requires exact source generation, artifact, machine, and 
   }, expected), /surface_identity_mismatch:generation/u);
 });
 
-test('capture-preparation recordings never satisfy the loaded native-child proof gate', () => {
+test('capture-preparation recordings never satisfy the loaded native-child proof gate', async () => {
+  const { assertHostedArtifactNativeChildProofComplete } = await import('./tauriHostedArtifactPluginUiMcpQa.mjs');
   const artifactRoot = '/tmp/hosted-artifact-capture';
   // Discriminating: the identical recorded state with nativeChildProofComplete
   // flipped to true must pass, so this test fails any gate that ignores the
@@ -87,7 +87,8 @@ test('capture-preparation recordings never satisfy the loaded native-child proof
   );
 });
 
-test('missing or malformed recorded proof state fails closed', () => {
+test('missing or malformed recorded proof state fails closed', async () => {
+  const { assertHostedArtifactNativeChildProofComplete } = await import('./tauriHostedArtifactPluginUiMcpQa.mjs');
   assert.throws(
     () => assertHostedArtifactNativeChildProofComplete({ artifactRoot: '/tmp/capture', proof: undefined }),
     /desktop_hosted_artifact_native_child_proof_blocked:proof_state_missing/u,

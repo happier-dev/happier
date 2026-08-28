@@ -3,6 +3,8 @@ import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import type { TranslationKeyNoParams } from '@/text';
 
+import type { ApiTokenSettingsErrorCode } from './apiTokenSettingsController';
+
 export type ApiTokenListPresentation = 'skeleton' | 'list' | 'listWithRetry' | 'empty' | 'emptyWithRetry' | 'error';
 
 export function resolveApiTokenListPresentation(state: Readonly<{
@@ -41,10 +43,10 @@ export function buildApiTokenRowPresentation(params: Readonly<{
     };
 }
 
-export function resolveApiTokenOperationErrorMessageKey(error: string | null): TranslationKeyNoParams {
+export function resolveApiTokenOperationErrorMessageKey(error: ApiTokenSettingsErrorCode | null): TranslationKeyNoParams {
     if (error === 'label_required') return 'settingsApiTokens.errors.labelRequired';
     if (error === 'present_user_required') return 'settingsApiTokens.errors.presentUserRequired';
-    if (error === 'auth_unavailable' || error === 'offline' || error === 'network_error') {
+    if (error === 'network_error') {
         return 'settingsApiTokens.errors.offline';
     }
     return 'settingsApiTokens.errors.unavailable';

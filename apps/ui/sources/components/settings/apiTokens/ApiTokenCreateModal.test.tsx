@@ -119,7 +119,7 @@ function createController(state: ApiTokenSettingsState): ApiTokenSettingsControl
         setCreateDraft: () => {},
         resetCreateDraft: () => {},
         createToken: async () => {},
-        acknowledgeReveal: () => {},
+        acknowledgeReveal: vi.fn(),
         clearReveal: () => {},
         requestRevealDismiss: async () => true,
         revokeToken: async () => true,
@@ -152,6 +152,8 @@ describe('ApiTokenCreateModal', () => {
             />,
         );
 
+        const expiryGroup = screen.findAll((node) => node.props.accessibilityRole === 'radiogroup')[0];
+        expect(expiryGroup?.props.accessibilityLabel).toBe('settingsApiTokens.create.expiry');
         expect(screen.findByTestId('settings-api-tokens-expiry-30d')?.props['aria-checked']).toBe(false);
         expect(screen.findByTestId('settings-api-tokens-expiry-90d')?.props['aria-checked']).toBe(true);
         expect(screen.findByTestId('settings-api-tokens-expiry-1y')?.props['aria-checked']).toBe(false);
@@ -315,6 +317,53 @@ describe('ApiTokenCreateModal', () => {
         expect(screen.findByTestId('settings-api-tokens-copy-feedback')).toBeNull();
         expect(screen.findByTestId('settings-api-tokens-reveal-copy')?.props.accessibilityLabel)
             .toBe('settingsApiTokens.reveal.copied');
+    });
+
+    it('projects one in-flight clipboard request as an accessible busy state', async () => {
+        const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
+        let finishCopy!: (copied: boolean) => void;
+        runtime.setClipboardStringSafe.mockImplementationOnce(async () => await new Promise<boolean>((resolve) => {
+            finishCopy = resolve;
+        }));
+        const controller = createController(createState({
+            token: 'hap_v1_11111111-1111-4111-8111-111111111111_abcdefghijklmnopqrstuvwxyz',
+            apiToken: {
+                tokenId: '11111111-1111-4111-8111-111111111111',
+                label: 'CI',
+                displayPrefix: 'hap_11111111',
+                createdAt: '2026-08-22T12:00:00.000Z',
+                lastUsedAt: null,
+                expiresAt: null,
+            },
+            acknowledged: false,
+        }));
+        const screen = await renderScreen(
+            <ApiTokenCreateModal controller={controller} onClose={vi.fn()} setChrome={vi.fn()} />,
+        );
+        let pendingCopy!: Promise<void>;
+
+        await act(async () => {
+            pendingCopy = screen.findByTestId('settings-api-tokens-reveal-copy')?.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(screen.findByTestId('settings-api-tokens-reveal-copy')?.props).toMatchObject({
+            disabled: true,
+            accessibilityState: { disabled: true, busy: true },
+        });
+        screen.findByTestId('settings-api-tokens-reveal-copy')?.props.onPress();
+        expect(runtime.setClipboardStringSafe).toHaveBeenCalledOnce();
+
+        await act(async () => {
+            finishCopy(true);
+            await pendingCopy;
+        });
+
+        expect(screen.findByTestId('settings-api-tokens-reveal-copy')?.props).toMatchObject({
+            disabled: false,
+            accessibilityState: { disabled: false, busy: false },
+        });
+        expect(controller.acknowledgeReveal).toHaveBeenCalledOnce();
     });
 
     it('uses one reduced-motion fade instead of staged reveal movement', async () => {

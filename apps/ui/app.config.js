@@ -37,6 +37,24 @@ function readBoolEnv(name, defaultValue = false) {
     return defaultValue;
 }
 
+function readTerminalNativeEvidenceBuildIdentity() {
+    const buildEvidenceId = String(process.env.HAPPIER_TERMINAL_NATIVE_BUILD_EVIDENCE_ID ?? '').trim();
+    const sourceStateSha256 = String(process.env.HAPPIER_TERMINAL_NATIVE_SOURCE_STATE_SHA256 ?? '').trim().toLowerCase();
+    const dependencyClosureSha256 = String(process.env.HAPPIER_TERMINAL_NATIVE_DEPENDENCY_CLOSURE_SHA256 ?? '').trim().toLowerCase();
+    const values = [buildEvidenceId, sourceStateSha256, dependencyClosureSha256];
+    if (values.every((value) => value.length === 0)) return null;
+    if (!/^term-build-[A-Za-z0-9_-]{16,128}$/.test(buildEvidenceId)) {
+        throw new Error('HAPPIER_TERMINAL_NATIVE_BUILD_EVIDENCE_ID must use term-build- plus 16-128 URL-safe characters');
+    }
+    if (!/^[a-f0-9]{64}$/.test(sourceStateSha256)) {
+        throw new Error('HAPPIER_TERMINAL_NATIVE_SOURCE_STATE_SHA256 must be a lowercase SHA-256 digest');
+    }
+    if (!/^[a-f0-9]{64}$/.test(dependencyClosureSha256)) {
+        throw new Error('HAPPIER_TERMINAL_NATIVE_DEPENDENCY_CLOSURE_SHA256 must be a lowercase SHA-256 digest');
+    }
+    return { buildEvidenceId, sourceStateSha256, dependencyClosureSha256 };
+}
+
 function resolveOptionalAppLocalConfigModule() {
     const explicitPath = (process.env.EXPO_APP_LOCAL_CONFIG_PATH || '').trim();
     const candidates = explicitPath ? [explicitPath] : ['./app.local.js'];
@@ -101,6 +119,7 @@ const packageJsonRuntimeVersion =
 
 const rawAppEnvironment = process.env.APP_ENV || 'development';
 const appEnvironmentConfig = getAppEnvironmentConfig(rawAppEnvironment);
+const terminalNativeEvidenceBuildIdentity = readTerminalNativeEvidenceBuildIdentity();
 
 // Android size tuning (primarily for direct-download APKs).
 // Prefer controlling these knobs from EAS build profile env so store builds (AAB) keep their defaults.
@@ -449,7 +468,10 @@ const baseExpoConfig = {
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
             require("./plugins/withReactNativeRepackRuntime.js"),
-            ...(terminalNativeRendererEnabled ? ["./plugins/withTerminalNativeBuildInputs.js"] : []),
+            ...(terminalNativeRendererEnabled ? [[
+                "./plugins/withTerminalNativeBuildInputs.js",
+                { buildIdentity: terminalNativeEvidenceBuildIdentity },
+            ]] : []),
             require("./modules/happier-hardware-keyboard-shortcuts/app.plugin.js"),
             ...(androidReleaseShrinkerPlugin ? [androidReleaseShrinkerPlugin] : []),
             [
@@ -587,6 +609,9 @@ const baseExpoConfig = {
                 happierLiveActivityApnsEnvironment: iosLiveActivityApnsEnvironment,
                 iosLiveActivityPushNotificationsEnabled: iosLiveActivitiesPushNotifications,
                 iosBackgroundWakeNotificationsEnabled: true,
+                ...(terminalNativeEvidenceBuildIdentity
+                    ? { terminalNativeEvidenceBuildIdentity }
+                    : {}),
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,

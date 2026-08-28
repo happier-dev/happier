@@ -34,6 +34,12 @@ export const STORY_DECK_ICON_REGISTRY = {
     voice: 'microphone',
     machines: 'desktop',
     surfaces: 'sliders-horizontal',
+    // These two draw HugeIcons HierarchySquare03 and PeerToPeer01. The values are
+    // Phosphor names because that is what keys this registry and what renders if
+    // the icon is ever pinned back to Phosphor; the HugeIcons binding lives in
+    // scripts/icons/mapping.hugeicons.json.
+    worktrees: 'tree-structure',
+    handoff: 'share-network',
     subscriptions: 'credit-card',
     accounts: 'person',
     customization: 'palette',

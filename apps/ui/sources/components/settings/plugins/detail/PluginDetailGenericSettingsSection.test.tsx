@@ -40,6 +40,7 @@ const scopedSettingsWriteMock = vi.hoisted(() => vi.fn());
 const scopedDaemonSecretReadMock = vi.hoisted(() => vi.fn());
 const scopedDaemonSecretWriteMock = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const emitPluginSettingChangedEventMock = vi.hoisted(() => vi.fn());
 const platformEnvironment = vi.hoisted(() => ({
     platform: 'web' as 'web' | 'ios' | 'android',
 }));
@@ -71,6 +72,10 @@ installSettingsViewCommonModuleMocks({
         return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
     },
 });
+
+vi.mock('@/track/settingsAnalytics/emitPluginSettingChangedEvent', () => ({
+    emitPluginSettingChangedEvent: (...args: unknown[]) => emitPluginSettingChangedEventMock(...args),
+}));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
@@ -262,9 +267,10 @@ function createProjection(
     generation: number,
     fields: readonly PluginProjectionEditableSettingField[] = SETTINGS_FIELDS,
     scope: 'account' | 'daemon' = 'daemon',
+    pluginId = PLUGIN_ID,
 ): PluginProjectionEntry {
     return {
-        pluginId: PLUGIN_ID,
+        pluginId,
         immutableGenerationId: `generation-${generation}`,
         title: 'Acme hooks',
         description: null,
@@ -279,7 +285,7 @@ function createProjection(
         resources: [],
         editableSettingsGroups: [{
             id: GROUP_ID,
-            pluginId: PLUGIN_ID,
+            pluginId,
             version: 1,
             title: 'Acme hook settings',
             scope: { kind: scope },
@@ -643,6 +649,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         scopedDaemonSecretReadMock.mockReset();
         scopedDaemonSecretWriteMock.mockReset();
         routerPushSpy.mockReset();
+        emitPluginSettingChangedEventMock.mockReset();
         machinePluginSettingsGetMock.mockResolvedValue(settingsResult({
             endpoint: 'https://api.example.test',
             apiToken: 'must-not-render',
@@ -2232,6 +2239,50 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe('https://old-scope-draft.test');
         expect(screen.findByTestId(ENDPOINT_SAVE_ID)?.props.disabled).toBe(true);
         expect(findSwitch(screen)?.props.value).toBe(false);
+    });
+
+    it('attributes a save to the current plugin after the mounted target is reused', async () => {
+        const replacementPluginId = 'example.replacement-settings';
+        const replacementProjection = createProjection(2, SETTINGS_FIELDS, 'daemon', replacementPluginId);
+        const { PluginDetailGenericSettingsSection, screen } = await renderSection(createProjection(1));
+
+        machinePluginSettingsGetMock.mockResolvedValue(settingsResult({
+            endpoint: 'https://replacement.example.test',
+            enabled: true,
+        }, ['apiToken'], '1', replacementPluginId));
+        machinePluginSettingsSetMock.mockResolvedValue(settingsSetResult({
+            endpoint: 'https://replacement-updated.example.test',
+            enabled: true,
+        }, ['apiToken'], '2', replacementPluginId));
+
+        await act(async () => {
+            screen.tree.update(
+                <PluginDetailGenericSettingsSection
+                    pluginId={replacementPluginId}
+                    projection={replacementProjection}
+                    machineId="machine-1"
+                    serverId="server-1"
+                    accountServerIdentityId="server-identity-1"
+                    daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
+                    daemonOperationsAvailable
+                />,
+            );
+        });
+        await flushAsync();
+
+        const replacementInputId = `settings.plugins.detail.${replacementPluginId}.settings.${GROUP_ID}.endpoint.input`;
+        const replacementSaveId = `settings.plugins.detail.${replacementPluginId}.settings.${GROUP_ID}.endpoint.save`;
+        act(() => {
+            screen.changeTextByTestId(replacementInputId, 'https://replacement-updated.example.test');
+        });
+        await screen.pressByTestIdAsync(replacementSaveId);
+        await flushAsync();
+
+        expect(emitPluginSettingChangedEventMock).toHaveBeenCalledWith(expect.objectContaining({
+            pluginId: replacementPluginId,
+            scope: 'daemon',
+        }));
     });
 
     it('keeps a replaced-source draft visible but inert after refresh failure until the replacement source edits it', async () => {

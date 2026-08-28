@@ -118,6 +118,19 @@ describe('createApiTokenSettingsController', () => {
         });
     });
 
+    it('normalizes unsupported executor failures instead of inventing UI states', async () => {
+        const harness = createHarness([
+            { ok: false, errorCode: 'account_mismatch', error: 'account_mismatch' },
+        ]);
+
+        await harness.controller.refresh();
+
+        expect(harness.controller.getState()).toMatchObject({
+            phase: 'error',
+            listError: 'unavailable',
+        });
+    });
+
     it('preserves the active operation projection when another request is attempted while it is busy', async () => {
         let finishRevoke!: (value: ActionExecuteResult) => void;
         const pendingRevoke = new Promise<ActionExecuteResult>((resolve) => { finishRevoke = resolve; });
@@ -233,6 +246,42 @@ describe('createApiTokenSettingsController', () => {
         await expect(harness.controller.requestRevealDismiss(confirm, 'shared')).resolves.toBe(true);
         expect(confirm).toHaveBeenCalledTimes(2);
         expect(harness.controller.getState().reveal).toBeNull();
+    });
+
+    it('clears a cancelled create draft even when no secret has been revealed', () => {
+        const harness = createHarness([]);
+        harness.controller.setCreateDraft({ label: TOKEN_A.label, expiryPreset: '30d' });
+
+        harness.controller.clearReveal();
+
+        expect(harness.controller.getState()).toMatchObject({
+            createDraft: { label: '', expiryPreset: '90d' },
+            createError: null,
+            reveal: null,
+        });
+    });
+
+    it('keeps a token visible after revoke fails and removes it only after confirmed success', async () => {
+        const harness = createHarness([
+            ok({ tokens: [TOKEN_A] }),
+            ok({ revoked: false }),
+            ok({ revoked: true }),
+        ]);
+        await harness.controller.refresh();
+
+        await expect(harness.controller.revokeToken(TOKEN_A.tokenId)).resolves.toBe(false);
+        expect(harness.controller.getState()).toMatchObject({
+            tokens: [TOKEN_A],
+            operation: null,
+            operationError: 'not_revoked',
+        });
+
+        await expect(harness.controller.revokeToken(TOKEN_A.tokenId)).resolves.toBe(true);
+        expect(harness.controller.getState()).toMatchObject({
+            tokens: [],
+            operationError: null,
+            operationNotice: 'revoked',
+        });
     });
 
     it('revokes one token, revokes all tokens, and signs out sessions with separate Action semantics', async () => {

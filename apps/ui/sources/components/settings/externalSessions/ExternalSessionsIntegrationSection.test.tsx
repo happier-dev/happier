@@ -629,6 +629,42 @@ describe('ExternalSessionsIntegrationSection', () => {
         })).toHaveLength(0);
     });
 
+    it.each(['idle', 'loading', 'partial', 'error'] as const)(
+        'does not present a definitive empty inventory while the authoritative inventory is %s',
+        async (status) => {
+            const {
+                ExternalSessionsIntegrationSection,
+            } = await import('./ExternalSessionsIntegrationSection');
+
+            for (const virtualized of [false, true]) {
+                const screen = await renderSettingsView(
+                    <ExternalSessionsIntegrationSection
+                        integrations={[]}
+                        autoLinkSources={[]}
+                        machineId="machine-1"
+                        agent={null}
+                        inventoryState={{ status, diagnosticCodes: ['inventory_incomplete'] }}
+                        onRetryInventory={async () => {}}
+                        virtualized={virtualized}
+                    />,
+                );
+
+                if (virtualized) {
+                    const list = screen.findByTestId('settings-external-sessions-virtualized-list');
+                    expect(list?.props.data).not.toEqual(expect.arrayContaining([
+                        expect.objectContaining({ kind: 'integrations_empty' }),
+                    ]));
+                } else {
+                    expect(Boolean(screen.findRow('settings-external-sessions-inventory-status')))
+                        .toBe(status !== 'idle');
+                    expect(screen.findRow(
+                        'settings-external-sessions-integrations-unavailable',
+                    )).toBeNull();
+                }
+            }
+        },
+    );
+
     it('surfaces incomplete inventory diagnostics with retry while preserving state-valid row actions', async () => {
         const {
             ExternalSessionsIntegrationSection,

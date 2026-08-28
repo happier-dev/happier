@@ -4,6 +4,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { projectHistoricalBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
+import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit';
 
 import {
     isProfileCompatibleWithResolvedBackendEntry,
@@ -14,6 +15,7 @@ import {
 import { buildLegacyProfileSave } from './legacy/buildLegacyProfileSave';
 
 const pluginBackendEntry: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'acme.review.provider' }),
     backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
     backendTargetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' }),
     kind: 'pluginBackend',
@@ -24,8 +26,10 @@ const pluginBackendEntry: ResolvedBackendCatalogEntry = {
     iconAgentId: 'claude',
     title: 'Acme Review Backend',
     subtitle: 'Plugin-backed review engine',
+    cliAuthBackgroundCheckSafe: false,
 };
 const ohMyPiEntry: ResolvedBackendCatalogEntry = {
+    agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'ohMyPi' }),
     backendTarget: { kind: 'backend', backendId: 'ohMyPi', sourceKind: 'built_in' },
     backendTargetKey: 'agent:happier.agent.ohmypi/ohmypi',
     kind: 'builtInAgent',
@@ -36,6 +40,7 @@ const ohMyPiEntry: ResolvedBackendCatalogEntry = {
     iconAgentId: 'ohMyPi',
     title: 'Oh My Pi',
     subtitle: 'Oh My Pi',
+    cliAuthBackgroundCheckSafe: false,
 };
 
 describe('profileBackendEntryStorage', () => {

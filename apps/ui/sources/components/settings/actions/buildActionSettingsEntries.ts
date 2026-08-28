@@ -152,6 +152,15 @@ function getUiClientTargetAvailabilityReasonKey(targetId: ActionSettingsTargetId
         : 'settingsActions.reasons.notAvailableInThisApp';
 }
 
+function getAutomationAuthorityReasonKey(
+    source: ActionSettingsTargetSource,
+    targetId: ActionSettingsTargetId,
+): ActionSettingsReasonKey | null {
+    return source.requiredAuthority === 'present_user' && (targetId === 'api' || targetId === 'plugin')
+        ? 'settingsActions.reasons.presentUserRequired'
+        : null;
+}
+
 function getTargetAvailabilityReasonKey(params: Readonly<{
     actionId: ActionId;
     targetId: ActionSettingsTargetId;
@@ -198,6 +207,9 @@ function buildTargetEntries(params: Readonly<{
             })
             : null;
         const reasonKey = actionLevelReasonKey
+            ?? (params.descriptor.source
+                ? getAutomationAuthorityReasonKey(params.descriptor.source, definition.id)
+                : null)
             ?? getUiClientTargetAvailabilityReasonKey(definition.id)
             ?? targetLevelReasonKey
             ?? undefined;

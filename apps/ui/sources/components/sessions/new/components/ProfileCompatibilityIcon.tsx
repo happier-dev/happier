@@ -56,7 +56,9 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
         const items: Array<{ key: string; glyph: string; factor: number }> = [];
         for (const entry of backendEntries) {
             if (!isProfileCompatibleWithBackendTarget(profile, entry.backendTarget)) continue;
-            const displayAgentId = entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId;
+            const displayAgentId = entry.agentCatalogEntry.isBuiltIn
+                ? (entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId)
+                : null;
             if (!displayAgentId || isLegacyCompatAgentType(displayAgentId)) {
                 items.push({
                     key: entry.backendTargetKey,

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { getRandomBytes } from 'expo-crypto';
 import {
+    arePluginMachineExecutionOriginsEqual,
+    arePluginMachineMaterializationRefsEqual,
     PluginWebhookDeliveryMovePendingResultV1Schema,
     PluginWebhookEndpointCredentialConfigureResultV1Schema,
     PluginWebhookEndpointCredentialFinishRotationResultV1Schema,
@@ -26,6 +28,7 @@ import {
     type PluginMachineReleaseClassificationV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { useActivePluginAccountAvailabilityReleaseClassifier } from '@/sync/domains/plugins/availability/projection';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 
 type AccountStatus = Awaited<ReturnType<PluginWebhookAdministrationHttpClient['readStatus']>>;
@@ -165,9 +168,7 @@ const WebhookEndpointSection = React.memo(function WebhookEndpointSection(props:
         }
         const target = fresh.origin.materializationRef;
         if (
-            target.machineId === endpoint.targetMaterialization.machineId
-            && target.materializationId === endpoint.targetMaterialization.materializationId
-            && target.pluginId === endpoint.targetMaterialization.pluginId
+            arePluginMachineMaterializationRefsEqual(target, endpoint.targetMaterialization)
         ) return;
         setBusyAction('retarget');
         const operation = `retarget:${endpoint.revision}:${target.machineId}:${target.materializationId}`;
@@ -298,9 +299,7 @@ const WebhookEndpointSection = React.memo(function WebhookEndpointSection(props:
         ? selection.state.origin.materializationRef
         : null;
     const selectedTargetIsCurrent = selectedTarget !== null
-        && selectedTarget.machineId === endpoint.targetMaterialization.machineId
-        && selectedTarget.materializationId === endpoint.targetMaterialization.materializationId
-        && selectedTarget.pluginId === endpoint.targetMaterialization.pluginId;
+        && arePluginMachineMaterializationRefsEqual(selectedTarget, endpoint.targetMaterialization);
     const selectableOrigins = selection.candidates.filter((candidate) => (
         candidate.validation.kind === 'admitted'
         && candidate.releaseContent === 'matched'
@@ -329,9 +328,8 @@ const WebhookEndpointSection = React.memo(function WebhookEndpointSection(props:
             />
             {selectableOrigins.length > 1 ? selectableOrigins.map((candidate) => {
                 const origin = composePluginMachineExecutionOriginV1(candidate.materialization);
-                const selected = selection.selectedOrigin?.serverIdentityId === origin.serverIdentityId
-                    && selection.selectedOrigin.materializationRef.machineId === origin.materializationRef.machineId
-                    && selection.selectedOrigin.materializationRef.materializationId === origin.materializationRef.materializationId;
+                const selected = selection.selectedOrigin !== null
+                    && arePluginMachineExecutionOriginsEqual(selection.selectedOrigin, origin);
                 return (
                     <Item
                         key={`${origin.serverIdentityId}:${origin.materializationRef.machineId}:${origin.materializationRef.materializationId}`}
@@ -509,9 +507,10 @@ const WebhookDeadLetterSection = React.memo(function WebhookDeadLetterSection(pr
 export const PluginWebhookAdministrationScreen = React.memo(function PluginWebhookAdministrationScreen(props: Readonly<{
     client?: PluginWebhookAdministrationHttpClient;
 }>) {
+    const executeAction = React.useMemo(() => createFrontDoorUiActionExecutor(), []);
     const client = React.useMemo(
-        () => props.client ?? createPluginWebhookAdministrationHttpClient(),
-        [props.client],
+        () => props.client ?? createPluginWebhookAdministrationHttpClient({ executeAction }),
+        [executeAction, props.client],
     );
     // The administration API this screen reads is behind the same server
     // feature as public ingress, so an unavailable server has nothing to

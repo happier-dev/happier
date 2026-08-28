@@ -40,16 +40,18 @@ export type InstallableRegistryEntry = Readonly<{
     enabledWhen: (settings: KnownSettings) => boolean;
     capabilityId: Extract<CapabilityId, `dep.${string}`>;
     title: string;
+    subtitle: string | null;
     iconName: string;
+    setupUrl: string | null;
     groupTitleKey: TranslationKey;
     supportsManagedOverrideInstall: boolean;
     defaultPolicy: InstallableDefaultPolicy;
-    installLabels: { installKey: TranslationKey; updateKey: TranslationKey; reinstallKey: TranslationKey };
+    installLabels: { install: string; update: string; reinstall: string };
     installModal: {
-        installTitleKey: TranslationKey;
-        updateTitleKey: TranslationKey;
-        reinstallTitleKey: TranslationKey;
-        descriptionKey: TranslationKey;
+        installTitle: string;
+        updateTitle: string;
+        reinstallTitle: string;
+        description: string;
     };
     getStatus: (results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined) => InstallableDepDataLike | null;
     getDetectResult: (results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined) => CapabilityDetectResult | null;
@@ -141,19 +143,22 @@ function buildGenericInstallableUi(
     return {
         enabledWhen: () => true,
         title: projected.display.name,
-        iconName: 'terminal',
+        subtitle: projected.display.subtitle ?? null,
+        iconName: projected.ui?.iconName ?? 'terminal',
+        setupUrl: projected.ui?.setupUrl ?? null,
         groupTitleKey: 'machine.tools.installablesTitle',
         supportsManagedOverrideInstall: false,
         installLabels: {
-            installKey: 'common.install',
-            updateKey: 'common.update',
-            reinstallKey: 'newSession.codexAcpBanner.reinstall',
+            install: t('common.install'),
+            update: t('common.update'),
+            reinstall: t('machine.installables.reinstall'),
         },
         installModal: {
-            installTitleKey: 'newSession.codexAcpInstallModal.installTitle',
-            updateTitleKey: 'newSession.codexAcpInstallModal.updateTitle',
-            reinstallTitleKey: 'newSession.codexAcpInstallModal.reinstallTitle',
-            descriptionKey: 'newSession.codexAcpInstallModal.description',
+            installTitle: t('machine.installables.installTitle', { title: projected.display.name }),
+            updateTitle: t('machine.installables.updateTitle', { title: projected.display.name }),
+            reinstallTitle: t('machine.installables.reinstallTitle', { title: projected.display.name }),
+            description: projected.description
+                ?? t('machine.installables.installDescription', { title: projected.display.name }),
         },
         getStatus: (results) => getInstallableDepData(capabilityId, results),
         getDetectResult: (results) => getInstallableDetectResult(capabilityId, results),
@@ -214,6 +219,10 @@ function readPluginProjectionInstallables(
         const display = readRecord(entry.display);
         const name = display ? readString(display.name) : null;
         const subtitle = display ? readString(display.subtitle) : null;
+        const description = readString(entry.description);
+        const ui = readRecord(entry.ui);
+        const setupUrl = ui ? readString(ui.setupUrl) : null;
+        const iconName = ui ? readString(ui.iconName) : null;
         const defaultPolicy = readRecord(entry.defaultPolicy);
         const autoInstallWhenNeeded = defaultPolicy?.autoInstallWhenNeeded;
         const autoUpdateMode = readString(defaultPolicy?.autoUpdateMode);
@@ -231,6 +240,13 @@ function readPluginProjectionInstallables(
                 name,
                 ...(subtitle ? { subtitle } : {}),
             },
+            ...(description ? { description } : {}),
+            ...(setupUrl || iconName ? {
+                ui: {
+                    ...(setupUrl ? { setupUrl } : {}),
+                    ...(iconName ? { iconName } : {}),
+                },
+            } : {}),
             defaultPolicy: {
                 autoInstallWhenNeeded,
                 autoUpdateMode,
@@ -247,19 +263,21 @@ export function getInstallablesRegistryEntries(
         [INSTALLABLE_KEYS.CODEX_ACP]: {
             enabledWhen: () => true,
             title: t('deps.installable.codexAcp.title'),
+            subtitle: null,
             iconName: 'arrows-left-right',
+            setupUrl: null,
             groupTitleKey: 'newSession.codexAcpBanner.title',
             supportsManagedOverrideInstall: false,
             installLabels: {
-                installKey: 'newSession.codexAcpBanner.install',
-                updateKey: 'newSession.codexAcpBanner.update',
-                reinstallKey: 'newSession.codexAcpBanner.reinstall',
+                install: t('newSession.codexAcpBanner.install'),
+                update: t('newSession.codexAcpBanner.update'),
+                reinstall: t('newSession.codexAcpBanner.reinstall'),
             },
             installModal: {
-                installTitleKey: 'newSession.codexAcpInstallModal.installTitle',
-                updateTitleKey: 'newSession.codexAcpInstallModal.updateTitle',
-                reinstallTitleKey: 'newSession.codexAcpInstallModal.reinstallTitle',
-                descriptionKey: 'newSession.codexAcpInstallModal.description',
+                installTitle: t('newSession.codexAcpInstallModal.installTitle'),
+                updateTitle: t('newSession.codexAcpInstallModal.updateTitle'),
+                reinstallTitle: t('newSession.codexAcpInstallModal.reinstallTitle'),
+                description: t('newSession.codexAcpInstallModal.description'),
             },
             getStatus: (results) => getCodexAcpDepData(results),
             getDetectResult: (results) => getCodexAcpDetectResult(results),
@@ -274,19 +292,21 @@ export function getInstallablesRegistryEntries(
         [INSTALLABLE_KEYS.GH]: {
             enabledWhen: () => true,
             title: t('deps.installable.gh.title'),
+            subtitle: null,
             iconName: 'github-logo',
+            setupUrl: null,
             groupTitleKey: 'newSession.ghCliBanner.title',
             supportsManagedOverrideInstall: true,
             installLabels: {
-                installKey: 'newSession.ghCliBanner.install',
-                updateKey: 'newSession.ghCliBanner.update',
-                reinstallKey: 'newSession.ghCliBanner.reinstall',
+                install: t('newSession.ghCliBanner.install'),
+                update: t('newSession.ghCliBanner.update'),
+                reinstall: t('newSession.ghCliBanner.reinstall'),
             },
             installModal: {
-                installTitleKey: 'newSession.ghCliInstallModal.installTitle',
-                updateTitleKey: 'newSession.ghCliInstallModal.updateTitle',
-                reinstallTitleKey: 'newSession.ghCliInstallModal.reinstallTitle',
-                descriptionKey: 'newSession.ghCliInstallModal.description',
+                installTitle: t('newSession.ghCliInstallModal.installTitle'),
+                updateTitle: t('newSession.ghCliInstallModal.updateTitle'),
+                reinstallTitle: t('newSession.ghCliInstallModal.reinstallTitle'),
+                description: t('newSession.ghCliInstallModal.description'),
             },
             getStatus: (results) => getInstallableDepData(GH_DEP_ID, results),
             getDetectResult: (results) => getInstallableDetectResult(GH_DEP_ID, results),

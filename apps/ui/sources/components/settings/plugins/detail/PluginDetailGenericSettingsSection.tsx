@@ -1110,7 +1110,13 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                 field: params.field,
             });
         });
-    }, [props.daemonServerIdentityId, props.isDaemonTargetCurrent, props.target]);
+    }, [
+        props.daemonServerIdentityId,
+        props.isDaemonTargetCurrent,
+        props.pluginId,
+        props.scope.kind,
+        props.target,
+    ]);
     const hasHydratedCurrentScope = scopedOperationsAvailable && props.target !== null && (
         adapterFields.length === 0 || scopedSettings.state.ready
     );

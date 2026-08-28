@@ -7,6 +7,11 @@ import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import {
+    getResolvedAgentCatalogEntries,
+    type ResolvedAgentCatalogEntry,
+} from '@/agents/backendCatalog/agentCatalogProjection';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
+import {
     AgentsLogoMultiSelect,
     type AgentsLogoMultiSelectEntry,
 } from '@/components/onboarding/steps/AgentsLogoMultiSelect';
@@ -46,25 +51,11 @@ function supportsDirectAgentSetup(agentId: AgentId | null | undefined): agentId 
 }
 
 const DEFAULT_AGENT_IDS = AGENT_IDS.filter((agentId) => supportsDirectAgentSetup(agentId));
-const DEFAULT_AGENT_ENTRIES = DEFAULT_AGENT_IDS.map((agentId) => {
-    const core = getAgentCore(agentId);
-    return {
-        agentId,
-        catalogAgentId: agentId,
-        title: t(core.displayNameKey),
-        iconAgentId: agentId,
-        iconName: core.ui.agentPickerIconName,
-    } as const;
-});
+const DEFAULT_AGENT_ENTRIES = getResolvedAgentCatalogEntries({
+    enabledAgentIds: DEFAULT_AGENT_IDS,
+}).filter((entry) => supportsDirectAgentSetup(entry.catalogAgentId));
 
-export type AgentSetupEntry = Readonly<{
-    agentId: string;
-    catalogAgentId?: AgentId | null;
-    title: string;
-    iconAgentId?: AgentId | null;
-    iconName: string;
-    subtitle?: string | null;
-}>;
+export type AgentSetupEntry = ResolvedAgentCatalogEntry;
 
 function uniqueAgentSetupEntries(entries: readonly AgentSetupEntry[]): AgentSetupEntry[] {
     const entriesById = new Map<string, AgentSetupEntry>();
@@ -77,12 +68,25 @@ function uniqueAgentSetupEntries(entries: readonly AgentSetupEntry[]): AgentSetu
     return [...entriesById.values()];
 }
 
-function buildSelectableProviderEntries(entries: readonly AgentSetupEntry[]): AgentsLogoMultiSelectEntry[] {
+function buildSelectableProviderEntries(entries: readonly AgentSetupEntry[], scope: Readonly<{
+    machineId: string | null;
+    serverId: string | null;
+    current: boolean;
+    color: string;
+}>): AgentsLogoMultiSelectEntry[] {
     return entries.map((entry) => ({
         agentId: entry.agentId,
-        iconAgentId: entry.iconAgentId ?? null,
         setupAgentId: entry.catalogAgentId ?? null,
-        iconName: entry.iconName,
+        icon: (
+            <AgentCatalogIdentityIcon
+                entry={entry}
+                machineId={scope.machineId}
+                serverId={scope.serverId}
+                current={scope.current}
+                color={scope.color}
+                size={22}
+            />
+        ),
     }));
 }
 
@@ -98,6 +102,7 @@ function uniqueSetupProviderIds(entries: readonly AgentSetupEntry[]): AgentId[] 
 
 const AgentSetupFlowWizardWebHandoff = React.memo(function AgentSetupFlowWizardWebHandoff(props: Readonly<{
     agentEntries: readonly AgentSetupEntry[];
+    projectionCurrent: boolean;
 }>) {
     const { theme } = useUnistyles();
     const agentEntries = React.useMemo(() => props.agentEntries, [props.agentEntries]);
@@ -146,7 +151,12 @@ const AgentSetupFlowWizardWebHandoff = React.memo(function AgentSetupFlowWizardW
             <View style={{ gap: 12, alignItems: 'center' }}>
                 <AgentsLogoMultiSelect
                     testID="provider-setup-wizard-select"
-                    agentEntries={buildSelectableProviderEntries(agentEntries)}
+                    agentEntries={buildSelectableProviderEntries(agentEntries, {
+                        machineId: null,
+                        serverId: null,
+                        current: props.projectionCurrent,
+                        color: theme.colors.text.secondary,
+                    })}
                     selectedAgentIds={selectedAgentIds}
                     onToggleAgent={toggleAgent}
                 />
@@ -214,6 +224,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
     agentEntries?: readonly AgentSetupEntry[];
     machineId?: string | null;
     serverId?: string | null;
+    projectionCurrent?: boolean;
     presentation?: 'settings' | 'wizard';
     onWizardPrimaryChange?: ((state: Readonly<{ label: string; disabled: boolean; onPress: () => void | Promise<void> }> | null) => void) | null;
     onRequestAdvance?: (() => void) | null;
@@ -224,25 +235,24 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
         () => {
             const sourceEntries = props.agentEntries?.length
                 ? props.agentEntries
-                : (props.agentIds?.length ? props.agentIds : DEFAULT_AGENT_IDS).flatMap((agentId) => {
-                    // The bundled setup wizard walks bundled CLI recipes; an Agent
-                    // without one is set up by its own plugin, not by this flow.
-                    const core = getAgentCore(agentId);
-                    if (!core) return [];
-                    return [{
-                        agentId,
-                        catalogAgentId: agentId,
-                        title: t(core.displayNameKey),
-                        iconAgentId: agentId,
-                        iconName: core.ui.agentPickerIconName,
-                    } satisfies AgentSetupEntry];
-                });
+                : props.agentIds?.length
+                    ? (() => {
+                        const requestedAgentIds = new Set<AgentId>(props.agentIds);
+                        return getResolvedAgentCatalogEntries({ enabledAgentIds: props.agentIds })
+                            .filter((entry) => entry.catalogAgentId !== null && requestedAgentIds.has(entry.catalogAgentId));
+                    })()
+                    : DEFAULT_AGENT_ENTRIES;
             return uniqueAgentSetupEntries(sourceEntries);
         },
         [props.agentEntries, props.agentIds],
     );
     if (!supportsDesktopControls && presentation === 'wizard') {
-        return <AgentSetupFlowWizardWebHandoff agentEntries={agentEntries.length > 0 ? agentEntries : DEFAULT_AGENT_ENTRIES} />;
+        return (
+            <AgentSetupFlowWizardWebHandoff
+                agentEntries={agentEntries.length > 0 ? agentEntries : DEFAULT_AGENT_ENTRIES}
+                projectionCurrent={props.projectionCurrent === true}
+            />
+        );
     }
 
     const { theme } = useUnistyles();
@@ -438,7 +448,12 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                 <View style={{ gap: 12, alignItems: 'center' }}>
                     <AgentsLogoMultiSelect
                         testID="provider-setup-wizard-select"
-                        agentEntries={buildSelectableProviderEntries(agentEntries)}
+                        agentEntries={buildSelectableProviderEntries(agentEntries, {
+                            machineId,
+                            serverId,
+                            current: props.projectionCurrent === true,
+                            color: theme.colors.text.secondary,
+                        })}
                         selectedAgentIds={selectedAgentIds}
                         onToggleAgent={toggleAgent}
                     />
@@ -461,7 +476,6 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         const selected = selectedAgentIds.includes(entry.agentId);
                         const stepState = resolveProviderStepState({ agentId: entry.agentId, queueState });
                         const installStatus = entry.catalogAgentId ? installQueue.resolveStatus(entry.catalogAgentId).status : 'idle';
-                        const iconName = getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
                         const canRetryInstall = installQueue.state.hasStarted && !installQueue.state.isRunning && installStatus === 'failed';
                         return (
                             <Item
@@ -472,7 +486,16 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 selected={selected}
                                 showChevron={false}
                                 disabled={installQueue.state.hasStarted ? (installQueue.state.isRunning || !canRetryInstall) : Boolean(queueState)}
-                                icon={<Icon name={iconName as any} size={24} color={theme.colors.text.secondary} />}
+                                icon={(
+                                    <AgentCatalogIdentityIcon
+                                        entry={entry}
+                                        machineId={machineId}
+                                        serverId={serverId}
+                                        current={props.projectionCurrent === true}
+                                        color={theme.colors.text.secondary}
+                                        size={24}
+                                    />
+                                )}
                                 rightElement={
                                     installQueue.state.hasStarted
                                         ? installStatus === 'installing'
@@ -519,8 +542,6 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
             {activeProviderId && activeEntry ? (
                 <>
                     {(() => {
-                        const activeIconName = getAgentCore(activeEntry.iconAgentId ?? '')?.ui.agentPickerIconName
-                            ?? activeEntry.iconName;
                         return (
                             <>
                     {!isWizardPresentation ? (
@@ -529,7 +550,16 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 testID={`provider-setup-active-${activeProviderId}`}
                                 title={activeEntry.title}
                                 subtitle={t('settingsAgents.setup.activeDescription')}
-                                icon={<Icon name={activeIconName as any} size={24} color={theme.colors.accent.blue} />}
+                                icon={(
+                                    <AgentCatalogIdentityIcon
+                                        entry={activeEntry}
+                                        machineId={machineId}
+                                        serverId={serverId}
+                                        current={props.projectionCurrent === true}
+                                        color={theme.colors.accent.blue}
+                                        size={24}
+                                    />
+                                )}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -540,7 +570,14 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                             testID={`provider-setup-active-${activeProviderId}`}
                             style={{ width: '100%', flexDirection: 'row', alignItems: 'center', gap: 10 }}
                         >
-                            <Icon name={activeIconName as any} size={24} color={theme.colors.accent.blue} />
+                            <AgentCatalogIdentityIcon
+                                entry={activeEntry}
+                                machineId={machineId}
+                                serverId={serverId}
+                                current={props.projectionCurrent === true}
+                                color={theme.colors.accent.blue}
+                                size={24}
+                            />
                             <View style={{ flex: 1, gap: 2 }}>
                                 <Text>{activeEntry.title}</Text>
                                 <Text style={{ color: theme.colors.text.secondary }}>
@@ -643,10 +680,16 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         if (!selected) return null;
 
                         const status = entry.catalogAgentId ? installQueue.resolveStatus(entry.catalogAgentId).status : 'idle';
-                        const iconName = getAgentCore(entry.iconAgentId ?? '')?.ui.agentPickerIconName ?? entry.iconName;
                         return (
                             <View key={entry.agentId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <Icon name={iconName as any} size={20} color={theme.colors.text.secondary} />
+                                <AgentCatalogIdentityIcon
+                                    entry={entry}
+                                    machineId={machineId}
+                                    serverId={serverId}
+                                    current={props.projectionCurrent === true}
+                                    color={theme.colors.text.secondary}
+                                    size={20}
+                                />
                                 <View style={{ flex: 1, gap: 2 }}>
                                     <Text>{entry.title}</Text>
                                     <Text style={{ color: theme.colors.text.secondary }}>

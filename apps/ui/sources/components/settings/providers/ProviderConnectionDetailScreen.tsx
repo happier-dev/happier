@@ -49,8 +49,6 @@ import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConn
 import { useProviderConnectionMachineViews } from '@/providers/hooks/useProviderConnectionMachineViews';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { probeProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -104,7 +102,13 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const providerTarget = useProviderSettingsTarget();
-    const { machineId, machineRows, resolveCurrentTarget, serverId } = providerTarget;
+    const {
+        machineId,
+        machineRows,
+        resolveCurrentTarget,
+        selectedTargetServerMatchesActiveAccount,
+        serverId,
+    } = providerTarget;
     // Only machines the canonical presence owner classifies online can return
     // daemon facts; a read to any other candidate cannot be serviced.
     const readableMachineRows = React.useMemo(
@@ -157,20 +161,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         connection?.managedLocalOption?.targetMachineId === machineId
             ? connection.managedLocalOption
             : null;
-    // Connected Accounts, their labels, and the qualified-account transport are
-    // all read from the ACTIVE server's Account. A Provider target on another
-    // server profile belongs to a different Account, so its bindings must not
-    // be labelled from — or written with — this Account's references.
-    // The two ids are different forms of the same fact: the Administration
-    // resolver returns the device-local `profile.id`, while the active snapshot
-    // reports the profile's scope id (`serverIdentityId ?? id`). Comparing the
-    // raw strings would report every identity-bearing active server as foreign,
-    // so the shared profile-registry comparator decides equivalence.
-    const activeServer = useActiveServerSnapshot();
-    const activeServerId = String(activeServer.serverId ?? '').trim();
-    const connectedAccountScopeMatchesTarget = serverId !== null
-        && activeServerId.length > 0
-        && areServerProfileIdentifiersEquivalent(serverId, activeServerId);
+    const connectedAccountScopeMatchesTarget = selectedTargetServerMatchesActiveAccount;
+    React.useEffect(() => {
+        if (!connectedAccountScopeMatchesTarget) discardManagedPurposeDraft();
+    }, [connectedAccountScopeMatchesTarget, discardManagedPurposeDraft]);
     const probeObservationIdentity = connection?.probeObservationIdentity ?? null;
     // A null identity cannot establish semantic equivalence. Treat the connection
     // snapshot as an opaque fail-closed sentinel instead of reconstructing daemon facts.
@@ -256,6 +250,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }, [machineId, probeScope, props.connectionId, query.refresh, resolveCurrentTarget]);
 
     const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string) => {
+        if (!selectedTargetServerMatchesActiveAccount) return;
         Modal.show({
             component: SavedSecretPickerModal,
             props: {
@@ -271,7 +266,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             chrome: { kind: 'card', title: t('settingsProviders.detail.pickSecretTitle'), dimensions: { size: 'lg' } },
             closeOnBackdrop: true,
         });
-    }, [invalidateProbe, mutation, props.connectionId]);
+    }, [invalidateProbe, mutation, props.connectionId, selectedTargetServerMatchesActiveAccount]);
 
     const duplicate = React.useCallback(async (mode: 'sameSource' | 'asCustom') => {
         if (!machineId || !connection) return;
@@ -713,7 +708,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             onPress={beginManagedPurposeConfiguration}
                         />
                     ) : null}
-                    {managedLocalOption && managedPurposeDraft ? (
+                    {managedLocalOption && connectedAccountScopeMatchesTarget && managedPurposeDraft ? (
                         <>
                             {managedLocalOption.connectedAccountPurposes.map((declaration) => (
                                 <ConnectedAccountPurposeTargetChooser
@@ -875,15 +870,31 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             {connection.credential ? (
                 <ItemGroup title={t('settingsProviders.detail.apiKeyTitle')} footer={t('settingsProviders.detail.apiKeyFooter')}>
                     <Item
+                        testID="provider-connection-account-api-key"
                         title={t('settingsProviders.detail.accountApiKey')}
-                        subtitle={connection.credential.accountBound ? t('settingsProviders.detail.apiKeyConfigured') : t('settingsProviders.detail.apiKeyMissing')}
+                        subtitle={!selectedTargetServerMatchesActiveAccount
+                            ? t('settingsProviders.local.accountScopeMismatchDescription')
+                            : connection.credential.accountBound
+                                ? t('settingsProviders.detail.apiKeyConfigured')
+                                : t('settingsProviders.detail.apiKeyMissing')}
                         icon={<Icon name="key" size={29} color={theme.colors.text.secondary} />}
-                        onPress={() => bindSecret('account', machineId)}
+                        disabled={!selectedTargetServerMatchesActiveAccount}
+                        onPress={selectedTargetServerMatchesActiveAccount
+                            ? () => bindSecret('account', machineId)
+                            : undefined}
                     />
                     <Item
+                        testID="provider-connection-machine-api-key"
                         title={t('settingsProviders.detail.machineApiKey')}
-                        subtitle={connection.credential.boundMachineIds.includes(machineId) ? t('settingsProviders.detail.apiKeyConfigured') : t('settingsProviders.detail.useAccountApiKey')}
-                        onPress={() => bindSecret('machine', machineId)}
+                        subtitle={!selectedTargetServerMatchesActiveAccount
+                            ? t('settingsProviders.local.accountScopeMismatchDescription')
+                            : connection.credential.boundMachineIds.includes(machineId)
+                                ? t('settingsProviders.detail.apiKeyConfigured')
+                                : t('settingsProviders.detail.useAccountApiKey')}
+                        disabled={!selectedTargetServerMatchesActiveAccount}
+                        onPress={selectedTargetServerMatchesActiveAccount
+                            ? () => bindSecret('machine', machineId)
+                            : undefined}
                     />
                     {connection.sourceStatus === 'available' && connection.credential.keyUrl ? (
                         <ProviderExternalLinkItem kind="getApiKey" url={connection.credential.keyUrl} />

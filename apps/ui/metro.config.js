@@ -372,7 +372,7 @@ const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifac
 // packer's exact startsWith semantics at its crawl boundary so in-progress and rollback trees
 // never compete with the canonical workspace `src/**` and `dist/**` trees.
 const packTransientPublicationBlockList =
-  /[\\/](?:\.tmp\.|\.backup\.|\.restore\.|\.dist\.build\.|\.dist\.hstack-stage-|dist\.staging\.|dist\.probe\.)[^\\/]*(?:[\\/]|$)/;
+  /[\\/](?:\.tmp\.|\.backup\.|\.restore\.|\.dist\.build\.|\.dist\.hstack-stage-|dist\.staging\.|dist\.probe\.|dist\.__finalize_backup__\.)[^\\/]*(?:[\\/]|$)/;
 // The CLI's isolated runtime-snapshot staging area can retain multi-gigabyte native artifacts.
 // It is not a Metro input, but `apps/cli` is an Expo workspace watch root in stack runs.
 const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:[\\/]|$)/;

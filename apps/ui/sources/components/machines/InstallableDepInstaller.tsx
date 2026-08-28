@@ -11,6 +11,7 @@ import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpda
 import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 type InstallableDepData = {
     installed: boolean;
@@ -36,7 +37,9 @@ export type InstallableDepInstallerProps = {
     groupTitle: string;
     depId: Extract<CapabilityId, `dep.${string}`>;
     depTitle: string;
+    depSubtitle?: string | null;
     depIconName: IconName;
+    setupUrl?: string | null;
     depStatus: InstallableDepData | null;
     capabilitiesStatus: 'idle' | 'loading' | 'loaded' | 'error' | 'not-supported';
     extraItems?: React.ReactNode;
@@ -80,6 +83,9 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
         ? (updateAvailable ? props.installLabels.update : props.installLabels.reinstall)
         : props.installLabels.install;
     const installActionDisabled = isInstalling || props.capabilitiesStatus !== 'loaded';
+    const presentedSubtitle = props.depSubtitle
+        ? `${props.depSubtitle} • ${subtitle}`
+        : subtitle;
 
     const runInstall = async () => {
         const isInstalled = props.depStatus?.installed === true;
@@ -114,11 +120,20 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
         <ItemGroup title={props.groupTitle}>
             <Item
                 title={props.depTitle}
-                subtitle={subtitle}
+                subtitle={presentedSubtitle}
                 icon={<Icon name={props.depIconName} size={20} color={theme.colors.text.secondary} />}
                 showChevron={false}
                 onPress={() => props.refreshLatestVersion?.()}
             />
+
+            {props.setupUrl ? (
+                <Item
+                    title={t('common.open')}
+                    subtitle={props.setupUrl}
+                    icon={<Icon name="arrow-square-out" size={20} color={theme.colors.text.secondary} />}
+                    onPress={() => void openExternalUrl(props.setupUrl!)}
+                />
+            ) : null}
 
             {props.extraItems}
 

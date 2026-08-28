@@ -61,6 +61,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
     }>[];
     endpointValues: Readonly<Record<string, string>>;
     secretSelected: boolean;
+    savedSecretSelectionEnabled: boolean;
     preview: DaemonProviderContributionAuthoringPreviewV1 | null;
     previewLoading: boolean;
     enableAfterSaving: boolean;
@@ -100,11 +101,14 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                         title={t('settingsProviders.authoring.apiKey')}
                         subtitle={props.secretSelected
                             ? t('settingsProviders.detail.apiKeySelected')
+                            : !props.savedSecretSelectionEnabled
+                                ? t('settingsProviders.local.accountScopeMismatchDescription')
                             : props.previewCredential.required
                                 ? t('settingsProviders.authoring.apiKeyDescription')
                                 : t('settingsProviders.authoring.apiKeyOptionalDescription')}
                         icon={<Icon name="key" size={29} color={props.secondaryTextColor} />}
-                        onPress={props.onPickSecret}
+                        disabled={!props.savedSecretSelectionEnabled}
+                        onPress={props.savedSecretSelectionEnabled ? props.onPickSecret : undefined}
                     />
                 ) : null}
                 {props.keyUrl ? (
@@ -181,6 +185,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                     testID="settings-provider-authoring-connect"
                     title={t('settingsProviders.authoring.connect')}
                     loading={props.savePending || props.previewLoading}
+                    disabled={Boolean(props.previewCredential?.required && !props.savedSecretSelectionEnabled)}
                     onPress={props.preview?.status === 'resolved' && !props.previewLoading ? props.onSave : undefined}
                 />
             </ItemGroup>

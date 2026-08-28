@@ -16,16 +16,26 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 
 export type ApiTokenExpiryPreset = '30d' | '90d' | '1y' | 'none';
 
+export type ApiTokenSettingsErrorCode =
+    | 'account_unavailable'
+    | 'auth_unavailable'
+    | 'invalid_response'
+    | 'label_required'
+    | 'network_error'
+    | 'not_revoked'
+    | 'present_user_required'
+    | 'unavailable';
+
 export type ApiTokenSettingsExecute = ReturnType<typeof createFrontDoorActionExecute>;
 
 export type ApiTokenSettingsState = Readonly<{
     phase: 'idle' | 'loading' | 'ready' | 'error';
     tokens: readonly AccountApiTokenSummaryV1[];
     isRefreshing: boolean;
-    listError: string | null;
+    listError: ApiTokenSettingsErrorCode | null;
     createDraft: Readonly<{ label: string; expiryPreset: ApiTokenExpiryPreset }>;
     createPending: boolean;
-    createError: string | null;
+    createError: ApiTokenSettingsErrorCode | null;
     reveal: Readonly<{
         token: string;
         apiToken: AccountApiTokenSummaryV1;
@@ -33,7 +43,7 @@ export type ApiTokenSettingsState = Readonly<{
     }> | null;
     operation: 'revoke' | 'revokeAll' | 'signOutEverywhere' | null;
     operationTokenId: string | null;
-    operationError: string | null;
+    operationError: ApiTokenSettingsErrorCode | null;
     operationNotice: 'revoked' | 'revokedAll' | 'signedOutEverywhere' | null;
 }>;
 
@@ -86,10 +96,26 @@ const defaultDependencies: ApiTokenSettingsControllerDependencies = Object.freez
     now: () => Date.now(),
 });
 
-function resolveActionError(result: ActionExecuteResult): string {
+function normalizeActionErrorCode(errorCode: unknown): ApiTokenSettingsErrorCode {
+    const code = typeof errorCode === 'string' ? errorCode.trim() : '';
+    switch (code) {
+        case 'account_unavailable':
+        case 'auth_unavailable':
+        case 'invalid_response':
+        case 'label_required':
+        case 'network_error':
+        case 'not_revoked':
+        case 'present_user_required':
+        case 'unavailable':
+            return code;
+        default:
+            return 'unavailable';
+    }
+}
+
+function resolveActionError(result: ActionExecuteResult): ApiTokenSettingsErrorCode {
     if (result.ok) return 'invalid_response';
-    const code = String(result.errorCode ?? '').trim();
-    return code || 'unavailable';
+    return normalizeActionErrorCode(result.errorCode);
 }
 
 function resolveExpiresAt(preset: ApiTokenExpiryPreset, now: number): string | null {
@@ -145,8 +171,8 @@ export function createApiTokenSettingsController(
             | 'account.sessions.signOutEverywhere';
         input: unknown;
         parse(result: ActionExecuteResult): T | null;
-    }>): Promise<Readonly<{ value: T | null; error: string | null }>> => {
-        if (retired || activeRequest) return { value: null, error: 'busy' };
+    }>): Promise<Readonly<{ value: T | null; error: ApiTokenSettingsErrorCode | 'scope_retired' | null }>> => {
+        if (retired) return { value: null, error: 'scope_retired' };
         const lifetime = captureLifetime();
         if (!lifetime) return { value: null, error: 'account_unavailable' };
         const controller = new AbortController();
@@ -170,7 +196,7 @@ export function createApiTokenSettingsController(
             }
             return {
                 value: null,
-                error: error instanceof Error && error.message ? error.message : 'unavailable',
+                error: normalizeActionErrorCode(error instanceof Error ? error.message : null),
             };
         } finally {
             if (activeRequest === controller) activeRequest = null;
@@ -268,7 +294,7 @@ export function createApiTokenSettingsController(
             publish({ ...state, reveal: { ...state.reveal, acknowledged: true } });
         },
         clearReveal() {
-            if (!state.reveal) return;
+            if (!state.reveal && state.createDraft === DEFAULT_DRAFT && state.createError === null) return;
             publish({ ...state, reveal: null, createDraft: DEFAULT_DRAFT, createError: null });
         },
         async requestRevealDismiss(confirm) {

@@ -3,14 +3,18 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
-import { AGENTS_CORE } from '@happier-dev/agents';
 import type {
     AccountProfile,
-    ConnectedServiceId,
 } from '@happier-dev/protocol';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Canonical qualified Connected Account service keys.
+const CLAUDE_SERVICE_KEY = 'happier.agent.claude/anthropic';
+const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
+const ENCODED_CLAUDE_SERVICE_KEY = encodeURIComponent(CLAUDE_SERVICE_KEY);
+const ENCODED_CODEX_SERVICE_KEY = encodeURIComponent(CODEX_SERVICE_KEY);
 
 type CapturedDefaultAuthModalProps = Readonly<{
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
@@ -61,24 +65,59 @@ type SelectionListProps = Readonly<{
     };
 }>;
 
-type ConnectedServiceProfile = AccountProfile['connectedServicesV2'][number]['profiles'][number];
+type ConnectedAccountV4 = AccountProfile['connectedAccountsV4'][number];
 
-function connectedProfile(params: Readonly<{
-    profileId: string;
-    kind: ConnectedServiceProfile['kind'];
-    providerEmail?: string | null;
-}>): ConnectedServiceProfile {
+function v4Account(params: Readonly<{
+    pluginId: string;
+    localId: string;
+    accountId: string;
+    email?: string;
+    displayName?: string;
+    kind?: 'oauth' | 'token';
+}>): ConnectedAccountV4 {
     return {
-        profileId: params.profileId,
+        revisionSemantics: 'legacy_unfenced',
+        ref: {
+            service: { pluginId: params.pluginId, localId: params.localId },
+            accountId: params.accountId,
+        },
         status: 'connected',
-        kind: params.kind,
-        providerEmail: params.providerEmail ?? null,
-        providerAccountId: null,
+        authenticationModeId: null,
+        configurationReady: true,
+        configurationRevision: null,
+        kind: params.kind ?? null,
         expiresAt: null,
         lastUsedAt: null,
-        health: null,
-    };
+        providerIdentity: params.email ? { email: params.email } : {},
+        ...(params.displayName ? { displayName: params.displayName } : {}),
+    } as ConnectedAccountV4;
 }
+
+const CLAUDE_V4_ACCOUNT = v4Account({
+    pluginId: 'happier.agent.claude',
+    localId: 'anthropic',
+    accountId: 'work',
+    email: 'work@example.com',
+    displayName: 'Work',
+    kind: 'token',
+});
+
+const CODEX_V4_GROUP: AccountProfile['connectedAccountGroupsV4'][number] = {
+    v: 1,
+    ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'primary' },
+    incarnation: 'primary:1',
+    displayName: 'Primary pool',
+    policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true } },
+    activeConnectedAccountId: 'fresh',
+    generation: 0,
+    runtimeStateRevision: 1,
+    state: { status: 'ready' },
+    createdAt: 0,
+    updatedAt: 0,
+    members: [
+        { v: 1, connectedAccountId: 'fresh', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+    ],
+} as AccountProfile['connectedAccountGroupsV4'][number];
 
 function findSelectionListProps(tree: renderer.ReactTestRenderer): SelectionListProps {
     return tree.root.findByProps({
@@ -148,15 +187,13 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
-                accountProfileConnectedServicesV2={[{
-                    serviceId: 'anthropic' as ConnectedServiceId,
-                    profiles: [connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' })],
-                    groups: [],
-                }]}
                 settings={{
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
@@ -184,7 +221,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         expect(trigger.subtitle).toBe('connectedServices.defaultAuth.rowDetail');
     });
 
-    it('opens the canonical searchable SelectionList via Modal.show and writes the per-agent default binding', async () => {
+    it('writes the per-agent default binding under the canonical qualified key', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
         const setDefaultAuthSettings = vi.fn();
 
@@ -192,19 +229,13 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
-                accountProfileConnectedServicesV2={[
-                    {
-                        serviceId: 'anthropic' as ConnectedServiceId,
-                        profiles: [
-                            connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' }),
-                        ],
-                        groups: [],
-                    },
-                ]}
                 settings={{
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
@@ -217,11 +248,11 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         expect(modalShowMock).not.toHaveBeenCalled();
 
         const modalTree = await openPickerModal(tree, 'claude');
-        expect(modalShowMock).toHaveBeenCalledTimes(1);
-        expect(findSelectionListProps(modalTree).selectedOptionId).toBe('connected-service:anthropic:native');
+        expect(findSelectionListProps(modalTree).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:native`);
 
         await act(async () => {
-            findSelectionOption(modalTree, 'connected-service:anthropic:profile:work').onSelect();
+            findSelectionOption(modalTree, `connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`).onSelect();
         });
 
         expect(setDefaultAuthSettings).toHaveBeenCalledWith({
@@ -230,75 +261,62 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 claude: {
                     v: 1,
                     bindingsByServiceId: {
-                        anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                        [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                     },
                 },
             },
         });
     });
 
-    it('closes the picker before navigating to connected-service settings', async () => {
+    it('translates released bundled scalar declarations through the generated built-in mapping', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const onOpenConnectedServicesSettings = vi.fn();
+        const setDefaultAuthSettings = vi.fn();
 
         const { tree } = await renderScreen(
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic'] } }}
+                // No machine projection passed: the released bundled scalar
+                // declaration is the only source and must land qualified.
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
-                accountProfileConnectedServicesV2={[]}
                 settings={{
                     connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
-                setDefaultAuthSettings={vi.fn()}
-                onOpenConnectedServicesSettings={onOpenConnectedServicesSettings}
+                setDefaultAuthSettings={setDefaultAuthSettings}
+                onOpenConnectedServicesSettings={vi.fn()}
             />,
         );
 
+        const modalTree = await openPickerModal(tree, 'claude');
         await act(async () => {
-            findDefaultAuthTrigger(tree, 'claude').onPress();
-        });
-        const config = getShownModalConfig(0);
-        const onClose = vi.fn();
-        const Content = config.component as React.ComponentType<Record<string, unknown>>;
-        const modalTree = (await renderScreen(
-            <Content {...config.props} onClose={onClose} />,
-        )).tree;
-
-        await act(async () => {
-            findSelectionOption(modalTree, 'connected-service:anthropic:connect').onSelect();
+            findSelectionOption(modalTree, `connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`).onSelect();
         });
 
-        expect(onClose).toHaveBeenCalledOnce();
-        expect(onOpenConnectedServicesSettings).toHaveBeenCalledWith('anthropic');
-        expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(
-            onOpenConnectedServicesSettings.mock.invocationCallOrder[0]!,
-        );
+        const written = setDefaultAuthSettings.mock.calls[0]?.[0] as {
+            bindingsByAgentId: Record<string, { bindingsByServiceId: Record<string, unknown> }>;
+        };
+        expect(Object.keys(written.bindingsByAgentId.claude.bindingsByServiceId)).toEqual([CLAUDE_SERVICE_KEY]);
     });
 
-    it('reflects the persisted binding as the selected option in the picker list', async () => {
+    it('reflects the persisted qualified binding as the selected option in the picker list', async () => {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
 
         const { tree } = await renderScreen(
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
+                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
-                accountProfileConnectedServicesV2={[
-                    {
-                        serviceId: 'anthropic' as ConnectedServiceId,
-                        profiles: [
-                            connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' }),
-                        ],
-                        groups: [],
-                    },
-                ]}
                 settings={{
-                    connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -306,7 +324,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                             claude: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                                 },
                             },
                         },
@@ -318,7 +336,8 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         );
 
         const modalTree = await openPickerModal(tree, 'claude');
-        expect(findSelectionListProps(modalTree).selectedOptionId).toBe('connected-service:anthropic:profile:work');
+        expect(findSelectionListProps(modalTree).selectedOptionId)
+            .toBe(`connected-service:${ENCODED_CLAUDE_SERVICE_KEY}:profile:work`);
         expect(modalUpdateMock).not.toHaveBeenCalled();
     });
 
@@ -330,21 +349,17 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
+                connectedAccountsV4={[v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'fresh',
+                    kind: 'oauth',
+                    displayName: 'Fresh',
+                })]}
+                connectedAccountGroupsV4={[CODEX_V4_GROUP]}
                 accountGroupsEnabled={true}
-                accountProfileConnectedServicesV2={[
-                    {
-                        serviceId: 'openai-codex' as ConnectedServiceId,
-                        profiles: [connectedProfile({ profileId: 'fresh', kind: 'oauth' })],
-                        groups: [{
-                            groupId: 'primary',
-                            displayName: 'Primary pool',
-                            activeProfileId: 'fresh',
-                            generation: 0,
-                            memberProfileIds: ['fresh'],
-                        }],
-                    },
-                ]}
                 settings={{
                     connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
@@ -357,7 +372,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
 
         const modalTree = await openPickerModal(tree, 'codex');
         await act(async () => {
-            findSelectionOption(modalTree, 'connected-service:openai-codex:group:primary').onSelect();
+            findSelectionOption(modalTree, `connected-service:${ENCODED_CODEX_SERVICE_KEY}:group:primary`).onSelect();
         });
 
         expect(setDefaultAuthSettings).toHaveBeenCalledWith({
@@ -366,11 +381,52 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 codex: {
                     v: 1,
                     bindingsByServiceId: {
-                        'openai-codex': { source: 'connected', selection: 'group', groupId: 'primary' },
+                        [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'primary' },
                     },
                 },
             },
         });
+    });
+
+    it('offers the ready autoSwitch pool of a stored member profile as a pool-adoption suggestion', async () => {
+        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
+
+        const { tree } = await renderScreen(
+            <ConnectedServicesDefaultAuthRow
+                agentId="codex"
+                agentTitle="Codex"
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
+                connectedAccountsV4={[v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'fresh',
+                    kind: 'oauth',
+                    displayName: 'Fresh',
+                })]}
+                connectedAccountGroupsV4={[CODEX_V4_GROUP]}
+                accountGroupsEnabled={true}
+                settings={{
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesDefaultAuthByAgentIdV1: {
+                        v: 1,
+                        bindingsByAgentId: {
+                            codex: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'fresh' },
+                                },
+                            },
+                        },
+                    },
+                }}
+                setDefaultAuthSettings={vi.fn()}
+                onOpenConnectedServicesSettings={vi.fn()}
+            />,
+        );
+
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
     });
 
     it('renders the effective fallback warning for stale group defaults on the trigger', async () => {
@@ -380,25 +436,27 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
+                agentCore={{ connectedServices: null }}
+                connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
+                connectedAccountsV4={[v4Account({
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'work',
+                    kind: 'oauth',
+                    displayName: 'Work',
+                })]}
+                connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={true}
-                accountProfileConnectedServicesV2={[
-                    {
-                        serviceId: 'openai-codex' as ConnectedServiceId,
-                        profiles: [connectedProfile({ profileId: 'work', kind: 'oauth' })],
-                        groups: [],
-                    },
-                ]}
                 settings={{
                     connectedServicesProfileLabelByKey: {},
-                    connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
+                    connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
                         bindingsByAgentId: {
                             codex: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'group',
                                         groupId: 'missing-group',
@@ -415,114 +473,5 @@ describe('ConnectedServicesDefaultAuthRow', () => {
 
         const trigger = findDefaultAuthTrigger(tree, 'codex');
         expect(trigger.subtitle).toBe('connectedServices.defaultAuth.warning.connected_group_unavailable');
-    });
-
-    it('offers Claude subscription OAuth, setup-token, and Anthropic API key as selectable options for OpenCode', async () => {
-        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const setDefaultAuthSettings = vi.fn();
-
-        const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
-                agentId="opencode"
-                agentTitle="OpenCode"
-                agentCore={{ connectedServices: AGENTS_CORE.opencode.connectedServices }}
-                accountGroupsEnabled={false}
-                accountProfileConnectedServicesV2={[
-                    {
-                        serviceId: 'claude-subscription' as ConnectedServiceId,
-                        profiles: [
-                            connectedProfile({ profileId: 'claude-oauth', kind: 'oauth', providerEmail: 'oauth@example.com' }),
-                            connectedProfile({ profileId: 'claude-setup', kind: 'token', providerEmail: 'setup@example.com' }),
-                        ],
-                        groups: [],
-                    },
-                    {
-                        serviceId: 'anthropic' as ConnectedServiceId,
-                        profiles: [
-                            connectedProfile({ profileId: 'api', kind: 'token', providerEmail: 'api@example.com' }),
-                        ],
-                        groups: [],
-                    },
-                ]}
-                settings={{
-                    connectedServicesProfileLabelByKey: {},
-                    connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
-                }}
-                setDefaultAuthSettings={setDefaultAuthSettings}
-                onOpenConnectedServicesSettings={vi.fn()}
-            />,
-        );
-
-        const modalTree = await openPickerModal(tree, 'opencode');
-        const optionIds = findSelectionListProps(modalTree).rootStep.sections
-            .flatMap((section) => section.options.map((option) => option.id));
-
-        // All three Anthropic auth options surface as real selectable connected profiles:
-        // browser-login OAuth + setup-token (claude-subscription) and Console API key (anthropic).
-        expect(optionIds).toContain('connected-service:claude-subscription:profile:claude-oauth');
-        expect(optionIds).toContain('connected-service:claude-subscription:profile:claude-setup');
-        expect(optionIds).toContain('connected-service:anthropic:profile:api');
-
-        await act(async () => {
-            findSelectionOption(modalTree, 'connected-service:claude-subscription:profile:claude-oauth').onSelect();
-        });
-
-        expect(setDefaultAuthSettings).toHaveBeenCalledWith({
-            v: 1,
-            bindingsByAgentId: {
-                opencode: {
-                    v: 1,
-                    bindingsByServiceId: {
-                        'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude-oauth' },
-                    },
-                },
-            },
-        });
-    });
-
-    it('does not infer a pool-adoption suggestion from the current V2 group projection', async () => {
-        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
-        const { tree } = await renderScreen(
-            <ConnectedServicesDefaultAuthRow
-                agentId="codex"
-                agentTitle="Codex"
-                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
-                accountGroupsEnabled={true}
-                accountProfileConnectedServicesV2={[{
-                    serviceId: 'openai-codex' as ConnectedServiceId,
-                    profiles: [
-                        connectedProfile({ profileId: 'work', kind: 'oauth' }),
-                        connectedProfile({ profileId: 'backup', kind: 'oauth' }),
-                    ],
-                    groups: [{
-                        groupId: 'primary',
-                        displayName: 'Primary pool',
-                        activeProfileId: 'work',
-                        generation: 0,
-                        memberProfileIds: ['work', 'backup'],
-                    }],
-                }]}
-                settings={{
-                    connectedServicesProfileLabelByKey: {},
-                    connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            codex: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-                                },
-                            },
-                        },
-                    },
-                }}
-                setDefaultAuthSettings={vi.fn()}
-                onOpenConnectedServicesSettings={vi.fn()}
-            />,
-        );
-
-        expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
     });
 });

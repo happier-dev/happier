@@ -40,5 +40,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // ordinary production builds because it seeds local demo data.
     if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'stage-dperf') return true;
 
+    // Loaded native terminal acceptance must work from a clean embedded QA build. The screen is
+    // still dev-only and exposes deterministic local bytes, not credentials or PTY controls.
+    if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'terminal-qa') return true;
+
     return false;
 }
