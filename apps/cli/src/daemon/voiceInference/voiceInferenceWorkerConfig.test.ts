@@ -73,6 +73,10 @@ describe('forked worker IPC safety knobs', () => {
   const MAX_FRAME_KEY = 'HAPPIER_VOICE_INFERENCE_WORKER_MAX_FRAME_BYTES';
 
   it('defaults each knob to the centralized IPC defaults', () => {
+    expect(VOICE_INFERENCE_WORKER_IPC_DEFAULTS).toMatchObject({
+      requestTimeoutMs: 30_000,
+      warmPrimeRequestTimeoutMs: 600_000,
+    });
     withEnv(REQUEST_TIMEOUT_KEY, undefined, () => {
       expect(resolveVoiceInferenceWorkerRequestTimeoutMs()).toBe(
         VOICE_INFERENCE_WORKER_IPC_DEFAULTS.requestTimeoutMs,

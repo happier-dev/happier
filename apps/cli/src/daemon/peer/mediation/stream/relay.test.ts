@@ -8,6 +8,14 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { MachineLiveStreamCaptureAdapter } from './captureAdapter';
+import { createMachineLiveStreamCaptureRegistry } from './captureRegistry';
+import { createMachineLiveStreamRelayTerminator } from './relay';
+
+// Keep the existing test bodies concise while avoiding repeated dynamic
+// imports. Under shared executor load those imports can each consume a test's
+// complete timeout before any behavior is exercised.
+const registryMod = Object.freeze({ createMachineLiveStreamCaptureRegistry });
+const relayMod = Object.freeze({ createMachineLiveStreamRelayTerminator });
 
 function keyframe(sequence = 1): MachineLiveStreamFrameV1 {
     return {
@@ -80,13 +88,6 @@ function startRequestWithViewerSocket(viewerSocketId: string): MachineLiveStream
 
 describe('createMachineLiveStreamRelayTerminator', () => {
     it('echoes the signed start viewerSocketId onto the start and frame envelopes for per-tab delivery', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const adapter: MachineLiveStreamCaptureAdapter = {
             start: async (input) => {
@@ -131,11 +132,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('omits viewerSocketId on the legacy machine→machine path (no viewer target in the start)', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const registry = registryMod.createMachineLiveStreamCaptureRegistry();
         registry.register({
@@ -174,13 +170,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('starts a server-relayed capture source and emits start and frame envelopes', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const adapter: MachineLiveStreamCaptureAdapter = {
             start: async (input) => {
@@ -228,13 +217,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('fails closed when the requested stream family has no registered capture source', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const terminator = relayMod.createMachineLiveStreamRelayTerminator({
             machineId: 'machine_source',
             registry: registryMod.createMachineLiveStreamCaptureRegistry(),
@@ -249,13 +231,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('does not emit relay start or frames when capture startup fails', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const registry = registryMod.createMachineLiveStreamCaptureRegistry();
         registry.register({
@@ -294,13 +269,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('rejects duplicate active stream starts without replacing the existing capture session', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         let stopCount = 0;
         let startCount = 0;
         const adapter: MachineLiveStreamCaptureAdapter = {
@@ -346,13 +314,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('rejects typed input sideband control without an active lease before capture dispatch', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const appliedControls: unknown[] = [];
         const adapter = {
             start: async () => ({
@@ -416,13 +377,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('dispatches typed input sideband control to the active capture session with a matching active lease', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const appliedControls: unknown[] = [];
         const adapter = {
             start: async () => ({
@@ -493,13 +447,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('allows non-input sideband control without an active lease', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const appliedControls: unknown[] = [];
         const adapter = {
             start: async () => ({
@@ -557,13 +504,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('closes the active capture session when a viewer stop control reaches the terminator', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const stop = vi.fn(async () => undefined);
         const registry = registryMod.createMachineLiveStreamCaptureRegistry();
         registry.register({
@@ -621,13 +561,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('bounds frame envelopes produced before capture startup resolves', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const base = startRequest();
         const manyFrameStartRequest: MachineLiveStreamStartRequestV1 = {
@@ -691,13 +624,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('emits redacted observability lifecycle events for accepted live-stream relays', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
         const observabilityEvents: unknown[] = [];
         const adapter: MachineLiveStreamCaptureAdapter = {
@@ -757,13 +683,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('reports a clean end-of-stream paused receipt as flow.closed, not flow.errored', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         let emitFatalReceipt: (receipt: MachineLiveStreamReceiptV1) => void = () => {
             throw new Error('receipt emitter was not initialized');
         };
@@ -866,13 +785,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('reports a capture cap breach receipt as flow.errored with its distinct reason code', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         let emitTerminalReceipt: (receipt: MachineLiveStreamReceiptV1) => void = () => {
             throw new Error('receipt emitter was not initialized');
         };
@@ -937,13 +849,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('reports an upstream source-abort receipt as flow.aborted with its distinct reason code', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         let emitTerminalReceipt: (receipt: MachineLiveStreamReceiptV1) => void = () => {
             throw new Error('receipt emitter was not initialized');
         };
@@ -1008,13 +913,6 @@ describe('createMachineLiveStreamRelayTerminator', () => {
     });
 
     it('emits flow.started before flow.ready on an accepted live-stream relay', async () => {
-        const registryMod = await import('./captureRegistry').catch((error: unknown) => ({ importError: error }));
-        const relayMod = await import('./relay').catch((error: unknown) => ({ importError: error }));
-
-        expect(registryMod).toHaveProperty('createMachineLiveStreamCaptureRegistry');
-        expect(relayMod).toHaveProperty('createMachineLiveStreamRelayTerminator');
-        if (!('createMachineLiveStreamCaptureRegistry' in registryMod) || !('createMachineLiveStreamRelayTerminator' in relayMod)) return;
-
         const observabilityEvents: Array<{ kind?: unknown }> = [];
         const adapter: MachineLiveStreamCaptureAdapter = {
             start: async (input) => {

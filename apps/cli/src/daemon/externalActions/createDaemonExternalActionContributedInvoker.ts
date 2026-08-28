@@ -1,10 +1,8 @@
 import {
   buildQualifiedPluginContributionKey,
   type TargetActionApprovalRequestV1,
-  type ActionDefinitionV1,
 } from '@happier-dev/protocol';
 import {
-  formatQualifiedPluginActionId,
   parseQualifiedPluginActionId,
   type ActionExecuteResult,
   type ActionExecutorDeps,
@@ -16,6 +14,10 @@ import { logger } from '@/ui/logger';
 import {
   executeContributedAction,
 } from '@/plugins/runtime/invocation/actions/executeContributedAction';
+import {
+  createCommittedContributedActionDefinitionLister,
+  createCommittedContributedActionInvoker,
+} from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { targetActionApprovalMatchesCurrentIntent } from '@/session/actions/approvals/targetActionCurrentIntent';
 import {
@@ -26,15 +28,35 @@ import type {
   TargetActionCurrentIntentRequest,
   TargetActionCurrentIntentResult,
 } from '@/plugins/runtime/invocation/actionExecutor';
-import type {
-  ResolvedActionContribution,
-  ResolvedActionDefinition,
-} from '@/plugins/projection/registry/types';
 
 type TargetActionApprovalStore = Pick<
   ReturnType<typeof createCliApprovalsArtifactStore>,
   'targetActionApprovalsGet' | 'targetActionApprovalsUpdate'
 >;
+
+type InFlightApprovalReplay = Readonly<{
+  decision: 'approve' | 'reject';
+  promise: Promise<ActionExecuteResult | null>;
+}>;
+
+function awaitReplayWithCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
 function buildTargetActionApprovalDecisionResult(
   request: TargetActionApprovalRequestV1,
@@ -57,39 +79,6 @@ function targetActionReplayFailure(
 }
 
 /**
- * The committed daemon registry is the only contributor-definition source.
- * Project it explicitly at this public Action catalog boundary so registry
- * implementation fields and undefined runtime slots never become API data.
- */
-function projectDaemonExternalActionContributedDefinition(
-  definition: ResolvedActionDefinition,
-  identity: NonNullable<ResolvedActionContribution['identity']>,
-): ActionDefinitionV1 {
-  return Object.freeze({
-    kindVersion: definition.kindVersion,
-    id: formatQualifiedPluginActionId(identity),
-    title: definition.title,
-    description: definition.description,
-    safety: definition.safety,
-    placements: definition.placements,
-    slash: definition.slash,
-    bindings: definition.bindings,
-    examples: definition.examples,
-    surfaces: definition.surfaces,
-    inputHints: definition.inputHints,
-    inputSchema: definition.inputSchema,
-    ...(definition.approval === undefined ? {} : { approval: definition.approval }),
-    ...(definition.toolExposure === undefined ? {} : { toolExposure: definition.toolExposure }),
-    ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
-    ...(definition.execution === undefined ? {} : { execution: definition.execution }),
-    ...(definition.sideEffectClass === undefined
-      ? {}
-      : { sideEffectClass: definition.sideEffectClass }),
-    ...(definition.operation === undefined ? {} : { operation: definition.operation }),
-  });
-}
-
-/**
  * Adapts the public host Action `action.invoke` to the one committed-runtime
  * contributed-Action dispatcher. This adapter translates the public typed
  * contribution identity to the registry's canonical internal key; API caller
@@ -105,64 +94,14 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
   const acquireRuntimeRegistryLease = input.acquireRuntimeRegistryLease
     ?? acquireAuthoritativePluginRuntimeRegistryLease;
 
-  return async ({ action, input: actionInput, context, signal }) => {
-    const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
-    invocationSignal.throwIfAborted();
-    const lease = await acquireRuntimeRegistryLease({
+  return createCommittedContributedActionInvoker({
+    fixedInvocationSurface: 'api',
+    captureApprovalReplayPlacement: true,
+    acquireRuntimeRegistryLease: () => acquireRuntimeRegistryLease({
       happyHomeDir: configuration.happyHomeDir,
-    });
-    try {
-      invocationSignal.throwIfAborted();
-      const attempt = await executeContributedAction({
-        runtimeRegistry: lease.registry,
-        actionId: buildQualifiedPluginContributionKey(action),
-        input: actionInput,
-        // API deferral is only valid when the canonical target dispatcher has
-        // host-stamped the exact daemon that must receive the later decision.
-        // This is deliberately not the public execution-origin result contract:
-        // a direct successful Action must not be post-vetoed by an origin
-        // change after its target handler has already effected.
-        captureApprovalReplayPlacement: true,
-        ...(input.requestCurrentIntent
-          ? { requestCurrentIntent: input.requestCurrentIntent }
-          : {}),
-        context: {
-          surface: 'api',
-          invocationSurface: 'api',
-          ...(typeof context.defaultSessionId === 'string'
-            ? { defaultSessionId: context.defaultSessionId }
-            : {}),
-          signal: invocationSignal,
-        },
-      });
-      if (attempt.matched) {
-        if (attempt.result.ok && attempt.result.deferredApprovalArtifactId !== undefined) {
-          return {
-            ok: true,
-            result: {
-              kind: 'approval_request_created',
-              artifactId: attempt.result.deferredApprovalArtifactId,
-              actionId: 'action.invoke',
-            },
-          };
-        }
-        if (attempt.result.ok) {
-          // The placement is host-private durable approval evidence. It must
-          // not become a public Action result on the non-deferred path.
-          const { executionOrigin: _executionOrigin, ...result } = attempt.result;
-          return result;
-        }
-        return attempt.result;
-      }
-      return {
-        ok: false,
-        errorCode: 'contributed_action_unavailable',
-        error: 'contributed_action_unavailable',
-      };
-    } finally {
-      await lease.release();
-    }
-  };
+    }),
+    ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
+  });
 }
 
 /**
@@ -182,7 +121,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
   const targetActionApprovals = input.targetActionApprovals
     ?? createCliApprovalsArtifactStore({ credentials: input.credentials });
   const now = input.now ?? Date.now;
-  const inFlightReplays = new Map<string, Promise<ActionExecuteResult | null>>();
+  const inFlightReplays = new Map<string, InFlightApprovalReplay>();
 
   const replayArtifact = async ({
     artifactId,
@@ -352,17 +291,32 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
     if (!artifactId) return null;
     signal?.throwIfAborted();
 
-    const inFlightReplay = inFlightReplays.get(artifactId);
-    if (inFlightReplay) return await inFlightReplay;
-
-    const replay = Promise.resolve().then(() => replayArtifact({ artifactId, decision, signal }));
-    inFlightReplays.set(artifactId, replay);
-    try {
-      return await replay;
-    } finally {
-      if (inFlightReplays.get(artifactId) === replay) {
-        inFlightReplays.delete(artifactId);
+    while (true) {
+      const inFlight = inFlightReplays.get(artifactId);
+      if (inFlight) {
+        if (inFlight.decision === decision) {
+          return await awaitReplayWithCallerSignal(inFlight.promise, signal);
+        }
+        // Preserve one execution for the Artifact, then evaluate this caller's
+        // different decision against the retained terminal state instead of
+        // aliasing it to the first caller's result.
+        await awaitReplayWithCallerSignal(inFlight.promise, signal);
+        continue;
       }
+
+      let replay!: Promise<ActionExecuteResult | null>;
+      replay = Promise.resolve()
+        // Once a decision begins, an individual HTTP caller only owns waiting
+        // for its result. It cannot cancel the shared accepted mutation for
+        // another caller.
+        .then(() => replayArtifact({ artifactId, decision }))
+        .finally(() => {
+          if (inFlightReplays.get(artifactId)?.promise === replay) {
+            inFlightReplays.delete(artifactId);
+          }
+        });
+      inFlightReplays.set(artifactId, { decision, promise: replay });
+      return await awaitReplayWithCallerSignal(replay, signal);
     }
   };
 }
@@ -379,26 +333,13 @@ export function createDaemonExternalActionContributedDefinitionLister(input: Rea
   const tryAcquireRuntimeRegistryLease = input.tryAcquireRuntimeRegistryLease
     ?? tryAcquireAuthoritativePluginRuntimeRegistryLease;
 
-  return () => {
-    const lease = tryAcquireRuntimeRegistryLease({
+  return createCommittedContributedActionDefinitionLister({
+    tryAcquireRuntimeRegistryLease: () => tryAcquireRuntimeRegistryLease({
       happyHomeDir: configuration.happyHomeDir,
-    });
-    if (!lease) return [];
-    try {
-      return Object.freeze(lease.registry.contributes.actions.flatMap((action) => {
-        const identity = action.identity;
-        // Discovery must use the same settings/invocation identity as the
-        // committed Action runtime. A legacy or malformed registry row without
-        // that identity cannot be safely projected into the public catalog.
-        if (!identity || identity.localId !== action.definition.id) return [];
-        return [projectDaemonExternalActionContributedDefinition(action.definition, identity)];
-      }));
-    } finally {
-      void lease.release().catch(() => {
-        logger.debug('[ExternalAction] Contributed Action discovery registry lease release failed (non-fatal)', {
-          error: 'external_action_catalog_registry_lease_release_failed',
-        });
-      });
-    }
-  };
+    }),
+    onLeaseReleaseError: () => logger.debug(
+      '[ExternalAction] Contributed Action discovery registry lease release failed (non-fatal)',
+      { error: 'external_action_catalog_registry_lease_release_failed' },
+    ),
+  });
 }

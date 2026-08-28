@@ -1322,6 +1322,7 @@ describe('forked voice inference runtime client', () => {
       },
       random: () => 0,
       requestTimeoutMs: 1_000,
+      warmPrimeRequestTimeoutMs: 1_000,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },
@@ -1334,6 +1335,13 @@ describe('forked voice inference runtime client', () => {
     try {
       await invokeWarmOrPrime(client, 'warm');
       const timedOut = invokeWarmOrPrime(client, 'prime').catch((error: unknown) => error);
+      // Let the async channel admission put the request on the wire before advancing its
+      // operation-specific deadline. Advancing fake time before `send()` would move the clock
+      // first and arm the timeout at the new instant.
+      for (let index = 0; index < 8 && firstPrimeRequestId === null; index += 1) {
+        await Promise.resolve();
+      }
+      expect(firstPrimeRequestId).not.toBeNull();
       await vi.advanceTimersByTimeAsync(1_000);
 
       await expect(timedOut).resolves.toMatchObject({ code: 'runtime_timeout' });
@@ -1349,6 +1357,7 @@ describe('forked voice inference runtime client', () => {
 
       const successor = invokeWarmOrPrime(client, 'prime');
       firstFake.crash();
+      await vi.advanceTimersByTimeAsync(1);
       await expect(successor).resolves.toBeUndefined();
       expect(spawnCount).toBe(2);
     } finally {

@@ -147,12 +147,14 @@ function projectAutomationRunStateChangedHostEvent(
     {
       runId: body.data.runId,
       automationId: body.data.automationId,
-      originKind: body.data.originKind,
+      runCause: body.data.runCause,
       previousState: body.data.previousState,
       currentState: body.data.currentState,
       transitionedAt: body.data.transitionedAt,
       claimedByMachineId: body.data.claimedByMachineId,
-      ...(body.data.cause === undefined ? {} : { cause: body.data.cause }),
+      ...(body.data.transitionCause === undefined
+        ? {}
+        : { transitionCause: body.data.transitionCause }),
     },
   );
   const registryLease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -1188,13 +1190,20 @@ export async function bootstrapMachineSyncRuntime(
           ? { readActiveControlLease: liveStreamOptions.readActiveControlLease }
           : {}),
       });
+      const stopPriorPeerMediationRuntime = stopPeerMediationLoopbackServer;
+      stopPeerMediationLoopbackServer = async () => {
+        await Promise.all([
+          stopPriorPeerMediationRuntime(),
+          liveStreamRelayTerminator.dispose(),
+        ]);
+      };
       // SIM-P0-1: the viewer cannot start a server-relayed stream on its own socket, so the UI
       // delivers the server-minted, signed startRequest over machine RPC; the terminator starts
       // capture and echoes the start on this machine-scoped socket for server-side verification.
       connectedApiMachine.registerLiveStreamRelayRoutes({
         start: (startRequest) => liveStreamRelayTerminator.start(startRequest),
       });
-      cleanupMachineLiveStreamRelay = connectedApiMachine.onMachineLiveStreamRelayEnvelope((payload) => {
+      const cleanupMachineLiveStreamRelaySubscription = connectedApiMachine.onMachineLiveStreamRelayEnvelope((payload) => {
         // Starts arrive exclusively over the machine RPC above (SIM-P0-1). The server never
         // forwards `start` envelopes into machine rooms, so no start branch exists here.
         if (payload.message.kind !== 'control' && payload.message.kind !== 'sideband_control') return;
@@ -1205,6 +1214,16 @@ export async function bootstrapMachineSyncRuntime(
           streamId: payload.message.control.streamId,
         });
       });
+      let didCleanupMachineLiveStreamRelay = false;
+      cleanupMachineLiveStreamRelay = () => {
+        if (didCleanupMachineLiveStreamRelay) return;
+        didCleanupMachineLiveStreamRelay = true;
+        cleanupMachineLiveStreamRelaySubscription();
+        void liveStreamRelayTerminator.dispose().catch((error) => {
+          logger.warn('[DAEMON RUN] Failed to dispose live-stream relay captures', error);
+        });
+        cleanupMachineLiveStreamRelay = null;
+      };
     }
 
     if (storedCredentials) {

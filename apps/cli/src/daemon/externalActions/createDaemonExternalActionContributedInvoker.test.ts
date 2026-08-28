@@ -1175,16 +1175,24 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         now: () => 2,
       });
 
-      const first = replay({ artifactId: 'approval-api-concurrent-1', decision: 'approve' });
+      const firstController = new AbortController();
+      const first = replay({
+        artifactId: 'approval-api-concurrent-1',
+        decision: 'approve',
+        signal: firstController.signal,
+      });
       await firstActionInvocation;
       const second = replay({ artifactId: 'approval-api-concurrent-1', decision: 'approve' });
+      const cancelledReason = new DOMException('Stopped waiting', 'AbortError');
+      firstController.abort(cancelledReason);
+      await expect(first).rejects.toBe(cancelledReason);
       await new Promise<void>((resolve) => { setImmediate(resolve); });
 
       expect(actionInvocations).toBe(1);
 
       releaseActionInvocation();
-      const [firstResult, secondResult] = await Promise.all([first, second]);
-      expect(firstResult).toMatchObject({
+      const secondResult = await second;
+      expect(secondResult).toMatchObject({
         ok: true,
         result: {
           ok: true,
@@ -1192,12 +1200,107 @@ describe('createDaemonExternalActionContributedInvoker', () => {
           execution: { ok: true },
         },
       });
-      expect(secondResult).toEqual(firstResult);
       expect(actionInvocations).toBe(1);
       expect(persisted).toMatchObject({
         status: 'executed',
         decision: { kind: 'approve' },
         execution: { ok: true },
+      });
+    } finally {
+      releaseActionInvocation();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
+  it('evaluates a conflicting concurrent rejection after the in-flight approval settles', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'acme.external/actions/inspect': {
+          approvalRequiredSurfaces: ['api'],
+        },
+      },
+    });
+    let releaseActionInvocation: () => void = () => {};
+    try {
+      let actionInvocations = 0;
+      let actionInvocationStarted!: () => void;
+      const actionStarted = new Promise<void>((resolve) => {
+        actionInvocationStarted = resolve;
+      });
+      const actionRelease = new Promise<void>((resolve) => {
+        releaseActionInvocation = resolve;
+      });
+      const runtime = createExternalActionRuntime('global', 'acme.external', async () => {
+        actionInvocations += 1;
+        actionInvocationStarted();
+        await actionRelease;
+      });
+      const lease: PluginRuntimeRegistryLease = {
+        registry: runtime,
+        source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
+        release: async () => {},
+      };
+      let persisted: TargetActionApprovalRequestV1 | null = null;
+      const targetActionApprovals = {
+        targetActionApprovalsGet: async () => persisted,
+        targetActionApprovalsUpdate: async (args: Readonly<{
+          artifactId: string;
+          request: TargetActionApprovalRequestV1;
+        }>) => {
+          persisted = args.request;
+          return { ok: true as const };
+        },
+      };
+      const defer = createDaemonExternalActionContributedInvoker({
+        acquireRuntimeRegistryLease: async () => lease,
+        requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+          now: () => 1,
+          create: async (request) => {
+            persisted = request;
+            return { artifactId: 'approval-api-conflict-1' };
+          },
+          read: async () => persisted,
+        }),
+      });
+      await defer({
+        action: { pluginId: 'acme.external', localId: 'inspect' },
+        input: {},
+        context: {
+          surface: 'api',
+          authority: 'account_automation',
+          actionCaller: { kind: 'host' },
+        },
+        signal: new AbortController().signal,
+      });
+      const replay = createDaemonExternalActionContributedApprovalReplay({
+        credentials: { token: 'daemon-token', encryption: null } as never,
+        acquireRuntimeRegistryLease: async () => lease,
+        targetActionApprovals,
+        now: () => 2,
+      });
+
+      const approve = replay({ artifactId: 'approval-api-conflict-1', decision: 'approve' });
+      await actionStarted;
+      const reject = replay({ artifactId: 'approval-api-conflict-1', decision: 'reject' });
+      releaseActionInvocation();
+
+      await expect(approve).resolves.toMatchObject({
+        ok: true,
+        result: { ok: true, status: 'executed' },
+      });
+      await expect(reject).resolves.toEqual({
+        ok: false,
+        errorCode: 'approval_not_open',
+        error: 'approval_not_open',
+      });
+      expect(actionInvocations).toBe(1);
+      expect(persisted).toMatchObject({
+        status: 'executed',
+        decision: { kind: 'approve' },
       });
     } finally {
       releaseActionInvocation();

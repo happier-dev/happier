@@ -25,6 +25,7 @@ import type {
 } from '@/subprocess/supervision/types';
 
 import {
+  VOICE_INFERENCE_WORKER_IPC_DEFAULTS,
   resolveVoiceInferenceWorkerMaxFrameBytes,
   resolveVoiceInferenceWorkerRequestTimeoutMs,
 } from '../voiceInferenceWorkerConfig';
@@ -115,11 +116,13 @@ export type CreateForkedVoiceInferenceRuntimeClientParams = Readonly<{
   random?: () => number;
   loggerDebug?: (message: string, payload?: unknown) => void;
   /**
-   * Per-request deadline. A wedged-but-alive child rejects the request with `runtime_timeout`
-   * and the channel is terminated so the supervisor respawns. Defaults to the centralized config
-   * knob; `0` disables.
+   * Ordinary inference-request deadline. A wedged-but-alive child rejects the request with
+   * `runtime_timeout` and the channel is terminated so the supervisor respawns. Defaults to the
+   * centralized config knob; `0` disables ordinary-request deadlines.
    */
   requestTimeoutMs?: number;
+  /** Warm/prime deadline. Defaults to the measured supported cold-start budget. */
+  warmPrimeRequestTimeoutMs?: number;
   /** Per-IPC-frame byte ceiling. Defaults to the config knob (M2). */
   maxFrameBytes?: number;
 }>;
@@ -129,6 +132,8 @@ export function createForkedVoiceInferenceRuntimeClient(
 ): ForkedVoiceInferenceRuntimeClient {
   const policy = params.policy ?? DEFAULT_WORKER_POLICY;
   const requestTimeoutMs = params.requestTimeoutMs ?? resolveVoiceInferenceWorkerRequestTimeoutMs();
+  const warmPrimeRequestTimeoutMs = params.warmPrimeRequestTimeoutMs
+    ?? VOICE_INFERENCE_WORKER_IPC_DEFAULTS.warmPrimeRequestTimeoutMs;
   const maxFrameBytes = params.maxFrameBytes ?? resolveVoiceInferenceWorkerMaxFrameBytes();
 
   let stopped = false;
@@ -324,6 +329,8 @@ export function createForkedVoiceInferenceRuntimeClient(
        * must settle without waiting for the native call to return.
        */
       terminateChannelOnAbort?: boolean;
+      /** Override only this operation's deadline without changing ordinary inference requests. */
+      timeoutMs?: number;
     }>,
   ): Promise<TResult> {
     if (options?.signal?.aborted) {
@@ -366,10 +373,11 @@ export function createForkedVoiceInferenceRuntimeClient(
 
       const armDeadline = () => {
         clearDeadline();
-        if (requestTimeoutMs <= 0) {
+        const effectiveTimeoutMs = options?.timeoutMs ?? requestTimeoutMs;
+        if (effectiveTimeoutMs <= 0) {
           return;
         }
-        deadlineTimer = setTimeout(onDeadline, requestTimeoutMs);
+        deadlineTimer = setTimeout(onDeadline, effectiveTimeoutMs);
         deadlineTimer.unref?.();
       };
 
@@ -474,6 +482,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         // Native model construction can synchronously occupy the child just like synthesis/STT.
         // Cancellation must retire only this exact child so a late warm cannot publish readiness.
         terminateChannelOnAbort: true,
+        timeoutMs: warmPrimeRequestTimeoutMs,
       },
     );
     throwIfAborted(input.signal);
@@ -495,6 +504,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         signal: input.signal,
         // Priming is also native work and therefore cannot rely on a cooperative abort frame.
         terminateChannelOnAbort: true,
+        timeoutMs: warmPrimeRequestTimeoutMs,
       },
     );
     throwIfAborted(input.signal);

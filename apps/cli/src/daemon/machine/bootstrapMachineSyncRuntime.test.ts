@@ -440,7 +440,15 @@ describe('bootstrapMachineSyncRuntime', () => {
                 t: 'automation-run-state-changed',
                 runId: 'run-1',
                 automationId: 'automation-1',
-                originKind: 'scheduled',
+                runCause: {
+                    kind: 'trigger',
+                    triggerId: 'trigger-schedule-1',
+                    triggerRevision: 1,
+                    triggerKind: 'schedule',
+                    occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                    occurredAt: 1,
+                    evidence: { scheduledFor: 1 },
+                },
                 previousState: null,
                 currentState: 'queued',
                 transitionedAt: 1,
@@ -471,12 +479,20 @@ describe('bootstrapMachineSyncRuntime', () => {
                 t: 'automation-run-state-changed',
                 runId: 'run-1',
                 automationId: 'automation-1',
-                originKind: 'scheduled',
+                runCause: {
+                    kind: 'trigger',
+                    triggerId: 'trigger-schedule-1',
+                    triggerRevision: 1,
+                    triggerKind: 'schedule',
+                    occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                    occurredAt: 2,
+                    evidence: { scheduledFor: 2 },
+                },
                 previousState: 'running',
                 currentState: 'outcome_uncertain',
                 transitionedAt: 2,
                 claimedByMachineId: 'machine-1',
-                cause: 'cancelledAfterDispatchPermitted',
+                transitionCause: 'cancelledAfterDispatchPermitted',
             },
         } as const;
         receiveUpdate(causedLifecycleUpdate);
@@ -487,12 +503,20 @@ describe('bootstrapMachineSyncRuntime', () => {
             payload: {
                 runId: 'run-1',
                 automationId: 'automation-1',
-                originKind: 'scheduled',
+                runCause: {
+                    kind: 'trigger',
+                    triggerId: 'trigger-schedule-1',
+                    triggerRevision: 1,
+                    triggerKind: 'schedule',
+                    occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                    occurredAt: 2,
+                    evidence: { scheduledFor: 2 },
+                },
                 previousState: 'running',
                 currentState: 'outcome_uncertain',
                 transitionedAt: 2,
                 claimedByMachineId: 'machine-1',
-                cause: 'cancelledAfterDispatchPermitted',
+                transitionCause: 'cancelledAfterDispatchPermitted',
             },
         });
         await vi.waitFor(() => expect(releaseWithBroker).toHaveBeenCalledOnce());
@@ -1643,6 +1667,7 @@ describe('bootstrapMachineSyncRuntime', () => {
 	        expect(appliedSidebandControls).toEqual([
 	            expect.objectContaining({ kind: 'tap', eventId: 'tap_1' }),
         ]);
+
     });
 
     it('binds server-relayed TCP tunnel envelopes to the daemon relay terminator', async () => {

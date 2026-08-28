@@ -140,6 +140,7 @@ describe('foreground Pi plugin prerequisite composition', () => {
     const common = {
       happyHomeDir: '/tmp/happier-foreground-pi',
       pluginRuntimeRegistry,
+      resolvedAgentId: 'pi',
       directory: 'C:\\workspace',
       backendTarget: {
         kind: 'backend' as const,

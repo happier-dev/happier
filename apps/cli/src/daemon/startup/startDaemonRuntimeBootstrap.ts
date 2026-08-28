@@ -90,11 +90,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
-import { getConnectedServiceRecoveryCapabilities } from '../connectedServices/catalogHooks';
-import type {
-  CatalogAgentId,
-  ConnectedServiceRuntimeAuthApplyCapability,
-} from '@/agent/catalog/types';
+import type { CatalogAgentId } from '@/agent/catalog/types';
 
 import type { DaemonLocallyPersistedState, StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
@@ -214,13 +210,6 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   }>;
   consumeCommittedAuthGroupGeneration?: ConsumeCommittedAuthGroupGeneration;
   connectedServicePredictiveSwitchGuard?: ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['predictiveSwitchGuard'];
-  connectedServiceRuntimeAuthApplyCapabilityResolver?: (input: Readonly<{
-    sessionId: string;
-    agentId?: string | null;
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    reason: 'same_provider_account_exhausted';
-  }>) => ConnectedServiceRuntimeAuthApplyCapability | Promise<ConnectedServiceRuntimeAuthApplyCapability>;
   /**
    * K2: the single runtime quota-snapshot store, owned by startDaemonSessionControlRuntime.
    * The quotas coordinator must record into the SAME store the proactive pre-turn coordinator
@@ -706,6 +695,7 @@ export async function startDaemonRuntimeBootstrap(
               updateGroupRuntimeState: async ({
                 service,
                 groupId,
+                expectedGeneration,
                 expectedIncarnation,
                 expectedRuntimeStateRevision,
                 runtimeState,
@@ -714,6 +704,7 @@ export async function startDaemonRuntimeBootstrap(
                 patch: {
                   service,
                   groupId,
+                  expectedGeneration,
                   expectedIncarnation,
                   expectedRuntimeStateRevision,
                   runtimeState,
@@ -759,14 +750,14 @@ export async function startDaemonRuntimeBootstrap(
       authGroupSwitchCoordinator: params.connectedServiceAuthGroupPreTurnSwitchCoordinator,
       consumeCommittedAuthGroupGeneration: params.consumeCommittedAuthGroupGeneration ?? null,
       predictiveSwitchGuard: params.connectedServicePredictiveSwitchGuard ?? null,
-      runtimeAuthApplyCapabilityResolver: params.connectedServiceRuntimeAuthApplyCapabilityResolver ?? null,
       sameAccountFanoutStrategyResolver: async ({ agentId }) => {
         const catalogAgentId = typeof agentId === 'string' && agentId.trim()
           ? agentId.trim() as CatalogAgentId
           : null;
-        if (!catalogAgentId) return 'none';
-        const capabilities = await getConnectedServiceRecoveryCapabilities(catalogAgentId).catch(() => null);
-        return capabilities?.sameAccountFanoutStrategy ?? 'none';
+        // The host already requires an exact runtime/persisted account-identity
+        // proof before fanout. That proof, not an Agent-authored strategy flag,
+        // is the authority for applying same-account quota state.
+        return catalogAgentId ? 'provider_account_id' : 'none';
       },
       readRuntimeAccountIdentityForFanout: createConnectedServiceRuntimeIdentityFanoutReader({
         credentials: params.credentials,

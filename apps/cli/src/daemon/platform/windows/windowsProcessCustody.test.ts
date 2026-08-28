@@ -27,6 +27,23 @@ describe('Windows process launch custody', () => {
     expect(terminate).toHaveBeenCalledWith({ pid: 4_242, force: true });
   });
 
+  it('retains custody when taskkill loses the exact root before tree disposition', async () => {
+    const cancel = createExactWindowsProcessCancellation({
+      pid: 4_242,
+      processStartTimeMs: 1_000,
+      readProcessIdentityByPidFn: vi.fn(async () => ({
+        processStartTimeMs: 1_000,
+      })),
+      terminateProcessTreeFn: vi.fn(async () => 'root_not_found' as const),
+      isPidAliveFn: () => false,
+    });
+
+    await expect(cancel()).resolves.toEqual({
+      status: 'incomplete',
+      reason: 'terminal_host_disposition_failed',
+    });
+  });
+
   it('does NOT report stopped for an access-denied process when using the default liveness probe', async () => {
     // The bare-`catch` regression, exercised through the REAL default rather than an injected
     // stub: `isPidAliveFn` is deliberately not passed. A process the daemon may not signal is

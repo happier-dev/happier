@@ -2,7 +2,16 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  execFileWithDeadline: vi.fn(async () => ({ stdout: '', stderr: '' })),
+}));
+
+vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
+  execFileWithDeadline: mocks.execFileWithDeadline,
+}));
 
 import { buildCgroupSelfMigratingHappyCliLaunchSpec } from './buildCgroupSelfMigratingHappyCliLaunchSpec';
 
@@ -13,6 +22,11 @@ describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
     if (!sandboxDir) return;
     await rm(sandboxDir, { recursive: true, force: true });
     sandboxDir = null;
+  });
+
+  afterEach(() => {
+    mocks.execFileWithDeadline.mockReset();
+    mocks.execFileWithDeadline.mockResolvedValue({ stdout: '', stderr: '' });
   });
 
   it('targets a sibling scope outside app.slice when the daemon runs as a user service', async () => {
@@ -77,5 +91,101 @@ describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
     expect(result?.env).toMatchObject({
       HAPPIER_TEST_ADMITTED_CLOSURE: '0123456789abcdef',
     });
+  });
+
+  it('uses the provisioned critical user slice as the canonical session launch owner', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'linux',
+    });
+    mocks.execFileWithDeadline.mockResolvedValue({
+      stdout: 'LoadState=loaded\nMemoryLow=4294967296\n',
+      stderr: '',
+    });
+
+    try {
+      const result = await buildCgroupSelfMigratingHappyCliLaunchSpec({
+        args: ['codex', '--happy-starting-mode', 'remote'],
+        daemonPid: 333,
+        procfsRootDir: '/proc-that-is-not-used-when-systemd-is-ready',
+        environment: {
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+        },
+      });
+
+      expect(result?.filePath).toBe('systemd-run');
+      expect(result?.args).toEqual(expect.arrayContaining([
+        '--user',
+        '--scope',
+        '--slice=happier-critical.slice',
+        '--',
+        'codex',
+      ]));
+      expect(result?.args.join(' ')).not.toMatch(/MemoryMax|MemoryHigh|MemoryLimit|OOM/u);
+      expect(result?.env?.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBe('');
+      expect(mocks.execFileWithDeadline).toHaveBeenCalledWith(
+        'systemctl',
+        [
+          '--user',
+          'show',
+          'happier-critical.slice',
+          '--property=LoadState',
+          '--property=MemoryLow',
+        ],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+          }),
+        }),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform,
+      });
+    }
+  });
+
+  it('keeps the legacy self-migrating scope when the provisioned user slice is unavailable', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'linux',
+    });
+    sandboxDir = await mkdtemp(join(tmpdir(), 'happier-cgroup-launch-spec-fallback-'));
+    const procfsRootDir = join(sandboxDir, 'proc');
+    const daemonProcDir = join(procfsRootDir, '444');
+    await mkdir(daemonProcDir, { recursive: true });
+    await writeFile(
+      join(daemonProcDir, 'cgroup'),
+      '0::/user.slice/user-501.slice/user@501.service/app.slice/happier-daemon.default.service\n',
+      'utf8',
+    );
+    mocks.execFileWithDeadline.mockResolvedValue({
+      stdout: 'LoadState=loaded\nMemoryLow=0\n',
+      stderr: '',
+    });
+
+    try {
+      const result = await buildCgroupSelfMigratingHappyCliLaunchSpec({
+        args: ['codex'],
+        daemonPid: 444,
+        procfsRootDir,
+        environment: {
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+        },
+      });
+
+      expect(result?.filePath).toBe('/bin/sh');
+      expect(result?.env?.HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR).toBe(
+        '/sys/fs/cgroup/user.slice/user-501.slice/user@501.service',
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform,
+      });
+    }
   });
 });

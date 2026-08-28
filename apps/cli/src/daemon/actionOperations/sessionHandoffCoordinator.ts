@@ -121,6 +121,42 @@ function publishPhase(
   publishOwnerUpdate({ progress: { phase, label } });
 }
 
+function publishTargetStatusProgress(
+  publishOwnerUpdate: CoordinatorInput['publishOwnerUpdate'],
+  value: unknown,
+): boolean {
+  const parsed = SessionHandoffStatusSchema.safeParse(asRecord(value)?.status ?? value);
+  if (!parsed.success || !parsed.data.progress) return false;
+  const progress = parsed.data.progress;
+  const labels: Readonly<Record<typeof progress.checkpoint, string>> = {
+    scan_source: 'Scanning source workspace',
+    plan: 'Planning workspace transfer',
+    transfer_blobs: 'Transferring workspace',
+    stage_target: 'Staging target workspace',
+    apply: 'Applying workspace changes',
+    import_session: 'Importing session state',
+    finalize: 'Finalizing handoff',
+  };
+  const label = labels[progress.checkpoint];
+  if (
+    progress.checkpoint === 'transfer_blobs'
+    && typeof progress.planned.totalBytes === 'number'
+    && progress.planned.totalBytes > 0
+    && typeof progress.transferred.bytes === 'number'
+  ) {
+    const relativePath = progress.current?.relativePath?.trim();
+    publishOwnerUpdate({ progress: {
+      phase: 'workspace_transfer_blobs',
+      current: Math.min(progress.transferred.bytes, progress.planned.totalBytes),
+      total: progress.planned.totalBytes,
+      label: relativePath ? `${label} · ${relativePath}` : label,
+    } });
+    return true;
+  }
+  publishPhase(publishOwnerUpdate, `workspace_${progress.checkpoint}`, label);
+  return true;
+}
+
 async function abortBoth(
   input: CoordinatorInput,
   sourceMachineId: string,
@@ -163,6 +199,7 @@ export async function coordinateTrackedSessionHandoff(
   if (!source.ok) return source;
   cancellationSourceMachineId = source.sourceMachineId;
 
+  publishPhase(input.publishOwnerUpdate, 'packaging_session_state', 'Preparing session state');
   const startedAction = await input.start();
   if (!startedAction.ok) return startedAction;
   const startedFailure = readFailure(startedAction.result, 'session_handoff_start_failed');
@@ -199,6 +236,7 @@ export async function coordinateTrackedSessionHandoff(
     ...(started.data.handoffMetadataV2 ? { handoffMetadataV2: started.data.handoffMetadataV2 } : {}),
     ...(input.input.workspaceTransfer ? { workspaceTransfer: input.input.workspaceTransfer } : {}),
   }, input.signal);
+  publishTargetStatusProgress(input.publishOwnerUpdate, preparedRaw);
   const prepareFailure = readFailure(preparedRaw, 'session_handoff_prepare_failed');
   if (prepareFailure && !isPrepareObservationPending(prepareFailure.errorCode)) {
     await abortBoth(input, source.sourceMachineId, handoffId, prepareFailure.errorCode);
@@ -238,11 +276,13 @@ export async function coordinateTrackedSessionHandoff(
       await abortBoth(input, source.sourceMachineId, handoffId, terminalFailure.errorCode);
       return terminalFailure;
     }
-    input.publishOwnerUpdate({
-      progress: targetStatus.status.status === 'awaiting_user_resume'
-        ? { phase: 'awaiting_user_resume', label: 'Waiting for Resume' }
-        : { phase: 'preparing_target', label: targetStatus.status.phase },
-    });
+    if (!publishTargetStatusProgress(input.publishOwnerUpdate, targetStatus.status)) {
+      input.publishOwnerUpdate({
+        progress: targetStatus.status.status === 'awaiting_user_resume'
+          ? { phase: 'awaiting_user_resume', label: 'Waiting for Resume' }
+          : { phase: 'preparing_target', label: targetStatus.status.phase },
+      });
+    }
     await wait(input.signal);
   }
   if (!prepared.success || !prepared.data.resume || !prepared.data.remoteSessionId || !prepared.data.directSource) {

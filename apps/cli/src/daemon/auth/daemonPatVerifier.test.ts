@@ -41,6 +41,93 @@ describe("createDaemonPatVerifier", () => {
         expect(calls).toEqual([PAT]);
     });
 
+    it("coalesces concurrent misses for the same complete PAT", async () => {
+        let calls = 0;
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            introspect: async () => {
+                calls += 1;
+                await released;
+                return verifiedPat();
+            },
+        });
+
+        const first = verifyPat(PAT);
+        const second = verifyPat(PAT);
+        release();
+
+        await expect(Promise.all([first, second])).resolves.toEqual([verifiedPat(), verifiedPat()]);
+        expect(calls).toBe(1);
+    });
+
+    it("bounds distinct pending misses and recovers capacity after they settle", async () => {
+        const releases = new Map<string, () => void>();
+        const calls: string[] = [];
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            maxEntries: 2,
+            introspect: async (token) => {
+                calls.push(token);
+                if (token.endsWith("third")) return verifiedPat({ credentialId: "credential-third" });
+                await new Promise<void>((resolve) => {
+                    releases.set(token, resolve);
+                });
+                return verifiedPat({ credentialId: `credential-${calls.indexOf(token) + 1}` });
+            },
+        });
+        const firstToken = `${PAT}-first`;
+        const secondToken = `${PAT}-second`;
+        const thirdToken = `${PAT}-third`;
+
+        const first = verifyPat(firstToken);
+        const second = verifyPat(secondToken);
+        await Promise.resolve();
+
+        await expect(verifyPat(thirdToken)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
+        expect(calls).toEqual([firstToken, secondToken]);
+
+        releases.get(firstToken)?.();
+        releases.get(secondToken)?.();
+        await Promise.all([first, second]);
+
+        await expect(verifyPat(thirdToken)).resolves.toEqual(
+            verifiedPat({ credentialId: "credential-third" }),
+        );
+        expect(calls).toEqual([firstToken, secondToken, thirdToken]);
+    });
+
+    it("keeps caller cancellation local while a shared verification remains in flight", async () => {
+        let calls = 0;
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            introspect: async (_token, signal) => {
+                calls += 1;
+                expect(signal).toBeUndefined();
+                await released;
+                return verifiedPat();
+            },
+        });
+        const controller = new AbortController();
+        const cancelled = new DOMException("Stopped", "AbortError");
+
+        const retained = verifyPat(PAT);
+        const cancelledCaller = verifyPat(PAT, controller.signal);
+        controller.abort(cancelled);
+        await expect(cancelledCaller).rejects.toBe(cancelled);
+        release();
+
+        await expect(retained).resolves.toEqual(verifiedPat());
+        expect(calls).toBe(1);
+    });
+
     it("expires the maximum TTL exactly at 60 seconds and refreshes instead of extending stale authority", async () => {
         let now = 0;
         let calls = 0;

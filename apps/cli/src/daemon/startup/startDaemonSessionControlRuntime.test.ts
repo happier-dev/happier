@@ -117,7 +117,6 @@ import type { ExternalSessionHostOperationOwner } from '@/session/external/hostO
 import * as sessionRunnerRespawnModule from '../processSupervision/sessionRunnerRespawn';
 import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
-import { materializeConnectedServicesForSpawn } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
@@ -354,14 +353,6 @@ it('commits the accepted hot-apply target before stale bootstrap state can super
     const authorization = await authorizeConnectedServiceRuntimeAuthFailureSource({
         getChildren: () => [tracked],
         sessionId,
-        runtimeAuthApplyCapability: {
-            directLiveHotAuth: {
-                supportsInTurnApply: true,
-                requiresExactRuntimeIdentity: true,
-                refreshSelectionResync: 'not_applicable',
-                authMode: { kind: 'managed_provider_session' },
-            },
-        },
         classification: {
             kind: 'usage_limit',
             serviceId: 'openai-codex',
@@ -2569,6 +2560,17 @@ describe('startDaemonSessionControlRuntime', () => {
                 headerNames: ['authorization', 'chatgpt-account-id'],
             },
         } as const;
+        // Retained G launched the child with account-id projection. Current H
+        // deliberately no longer declares it, so successful recovery proves
+        // the subject is reconstructed from G while the live Account policy
+        // below still selects the current `primary` profile.
+        const currentHUse = {
+            purpose,
+            materialization: {
+                ...use.materialization,
+                headerNames: ['authorization'],
+            },
+        } as const;
         const piPurpose = {
             consumer: {
                 pluginId: 'happier.agent.pi',
@@ -2586,45 +2588,16 @@ describe('startDaemonSessionControlRuntime', () => {
         } as const;
         const piMaterializationId =
             'csm_pi_request_auth_reattach';
-        const piCredential =
-            buildConnectedServiceCredentialRecord({
-                now: 1_000,
-                serviceId: 'openai-codex',
-                profileId: 'primary',
-                kind: 'oauth',
-                expiresAt: null,
-                oauth: {
-                    accessToken: 'pi-old-daemon-access-token',
-                    refreshToken: 'pi-refresh-token',
-                    idToken: 'pi-id-token',
-                    scope: null,
-                    tokenType: null,
-                    providerAccountId: 'account-primary',
-                    providerEmail: null,
-                },
-            });
-        const piMaterialization =
-            await materializeConnectedServicesForSpawn({
+        const piMaterializedRootDir =
+            resolveConnectedServiceMaterializedRootDir({
+                baseDir: materializationBaseDir,
                 agentId: 'pi',
                 materializationKey: piMaterializationId,
-                activeServerDir: materializationBaseDir,
-                baseDir: materializationBaseDir,
-                recordsByServiceId: new Map([
-                    ['openai-codex', piCredential],
-                ]),
-                connectedAccountMaterializationAuthority: {
-                    kind: 'qualified',
-                    purposeBindings: [piBinding],
-                    requestAuthPurposeBindings: [piBinding],
-                },
             });
-        expect(piMaterialization).not.toBeNull();
-        const piCapabilityPath =
-            piMaterialization!.env[
-                CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV
-            ]!;
-        const piMaterializedRootDir =
-            resolve(piCapabilityPath, '..', '..');
+        await mkdir(piMaterializedRootDir, {
+            recursive: true,
+            mode: 0o700,
+        });
         const oldRegistry =
             createConnectedAccountRequestAuthSubjectRegistry();
         const oldDescriptor = await oldRegistry.activate({
@@ -2676,6 +2649,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 oldPiDescriptor.path,
             )
         )?.capability;
+        const piCapabilityPath = oldPiDescriptor.path;
         expect(oldRegistry.authenticate(oldPiCapability))
             .not.toBeNull();
         const unprovableMaterializationId =
@@ -2882,9 +2856,10 @@ describe('startDaemonSessionControlRuntime', () => {
                                 },
                                 catalogEntry: {
                                     connectedAccountRequestAuthUses: [{
-                                        purpose: use.purpose.purpose,
+                                        purpose:
+                                            currentHUse.purpose.purpose,
                                         materialization:
-                                            use.materialization,
+                                            currentHUse.materialization,
                                     }],
                                 },
                             }],
@@ -2933,6 +2908,93 @@ describe('startDaemonSessionControlRuntime', () => {
                             },
                         },
                     },
+                    acquireRetainedRunnerAgentPurposeContributions:
+                        vi.fn(async ({
+                            binding: retainedBinding,
+                            pluginHardRevocationRevision,
+                        }) => {
+                            const expectedBinding =
+                                retainedBinding.agentId === 'pi'
+                                    ? retainedPiBindingG
+                                    : retainedOpencodeBindingG;
+                            if (
+                                pluginHardRevocationRevision !== 0
+                                || JSON.stringify(retainedBinding)
+                                    !== JSON.stringify(expectedBinding)
+                            ) return null;
+                            return {
+                                contributes: {
+                                    agentDefinitionsById: new Map([
+                                        ['opencode', {
+                                            identity: purpose.consumer,
+                                            richDefinition: {
+                                                definition: {
+                                                    connectedAccounts: [{
+                                                        purpose:
+                                                            purpose.purpose,
+                                                        service:
+                                                            binding.target.account.service,
+                                                        materializationKinds:
+                                                            ['httpHeaders'],
+                                                    }],
+                                                },
+                                            },
+                                            catalogEntry: {
+                                                connectedAccountRequestAuthUses: [{
+                                                    purpose:
+                                                        use.purpose.purpose,
+                                                    materialization:
+                                                        use.materialization,
+                                                }],
+                                            },
+                                        }],
+                                        ['pi', {
+                                            identity: piPurpose.consumer,
+                                            richDefinition: {
+                                                definition: {
+                                                    connectedAccounts: [{
+                                                        purpose:
+                                                            piPurpose.purpose,
+                                                        service:
+                                                            piBinding.target.account.service,
+                                                        materializationKinds:
+                                                            ['httpHeaders'],
+                                                    }],
+                                                },
+                                            },
+                                            catalogEntry: {
+                                                connectedAccountRequestAuthUses: [{
+                                                    purpose:
+                                                        piUse.purpose.purpose,
+                                                    materialization:
+                                                        piUse.materialization,
+                                                }],
+                                            },
+                                        }],
+                                    ]),
+                                    catalogEntriesById: {
+                                        opencode: {
+                                            connectedServiceIds: [
+                                                'openai-codex',
+                                                'openai',
+                                                'claude-subscription',
+                                                'anthropic',
+                                            ],
+                                        },
+                                        pi: {
+                                            connectedServiceIds: [
+                                                'openai-codex',
+                                                'openai',
+                                                'claude-subscription',
+                                                'anthropic',
+                                            ],
+                                        },
+                                    },
+                                },
+                                isCurrent: () => true,
+                                release: vi.fn(async () => {}),
+                            };
+                        }),
                 },
                 source: 'active',
                 release: vi.fn(async () => {}),
@@ -2997,6 +3059,40 @@ describe('startDaemonSessionControlRuntime', () => {
         const reattachedProcessCommandHash = createHash('sha256')
             .update(reattachedProcessCommand)
             .digest('hex');
+        const retainedOpencodeBindingG =
+            createAgentSessionRunnerFactoryBinding({
+                v: 1,
+                pluginId: purpose.consumer.pluginId,
+                pluginVersion: '1.0.0',
+                agentId: 'opencode',
+                localAgentId: purpose.consumer.localId,
+                immutableGenerationId: 'generation-request-auth-g',
+                locator: {
+                    module: './agent/runtime.mjs',
+                    export: 'createRuntime',
+                    runtimeApiVersion: 1,
+                },
+                normalizedModulePath:
+                    '/immutable/generation-g/opencode/runtime.mjs',
+                loadMode: 'immutable-js',
+            });
+        const retainedPiBindingG =
+            createAgentSessionRunnerFactoryBinding({
+                v: 1,
+                pluginId: piPurpose.consumer.pluginId,
+                pluginVersion: '1.0.0',
+                agentId: 'pi',
+                localAgentId: piPurpose.consumer.localId,
+                immutableGenerationId: 'generation-pi-request-auth-g',
+                locator: {
+                    module: './agent/runtime.mjs',
+                    export: 'createRuntime',
+                    runtimeApiVersion: 1,
+                },
+                normalizedModulePath:
+                    '/immutable/generation-g/pi/runtime.mjs',
+                loadMode: 'immutable-js',
+            });
         let resolveReusedPidIdentity!: (
             value: Readonly<{
                 pid: number;
@@ -3130,7 +3226,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     source: 'first_spawn',
                 },
                 environmentVariables: {
-                    ...piMaterialization!.env,
+                    [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]:
+                        piCapabilityPath,
                 },
             },
         };
@@ -3387,6 +3484,65 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
 
+        const publishRetainedAuthority = async (
+            candidate: TrackedSession,
+            retainedAgent:
+                | typeof retainedOpencodeBindingG
+                | typeof retainedPiBindingG,
+        ) => {
+            const authorityPath =
+                await createAgentRuntimeDaemonServiceAuthorityPath({
+                    happyHomeDir: configuration.happyHomeDir,
+                    publicReleaseRing: configuration.publicReleaseRing,
+                });
+            const authority =
+                await publishAgentRuntimeDaemonServiceAuthority({
+                    happyHomeDir: configuration.happyHomeDir,
+                    publicReleaseRing: configuration.publicReleaseRing,
+                    path: authorityPath,
+                    sessionId: candidate.happySessionId!,
+                    runner: {
+                        pid: candidate.sessionRunnerPid ?? candidate.pid,
+                        processStartTimeMs:
+                            candidate.processStartTimeMs!,
+                        processCommandHash:
+                            candidate.processCommandHash!,
+                        snapshotIdentity:
+                            `snapshot:${candidate.happySessionId}`,
+                    },
+                    retainedAgent,
+                    httpPort: 43210,
+                    expectedPluginHardRevocationRevision: 0,
+                    readPluginHardRevocationRevision:
+                        async () => 0,
+                });
+            candidate.agentRuntimeDaemonServiceAuthorityFilePath =
+                authority.path;
+            candidate.agentRuntimeDaemonServiceCapabilityHash =
+                authority.capabilityDigest;
+            candidate.runnerAgentImmutableGenerationId =
+                retainedAgent.immutableGenerationId;
+        };
+        for (const candidate of [
+            tracked,
+            reusedTracked,
+            changedIdentityTracked,
+            scopeChangedTracked,
+            cutoverTracked,
+            idlePromptCutoverTracked,
+            absentMarkerCutoverTracked,
+            failedRespawnCutoverTracked,
+            racingTurnCutoverTracked,
+            windowsCutoverTracked,
+            coldResumeCutoverTracked,
+        ]) {
+            await publishRetainedAuthority(
+                candidate,
+                retainedOpencodeBindingG,
+            );
+        }
+        await publishRetainedAuthority(piTracked, retainedPiBindingG);
+
         const pidToTrackedSession =
             new Map<number, TrackedSession>([
                 [tracked.pid, tracked],
@@ -3551,6 +3707,23 @@ describe('startDaemonSessionControlRuntime', () => {
             const controlInput = vi
                 .mocked(startDaemonControlServer)
                 .mock.calls.at(-1)?.[0];
+            const registryLease = await vi
+                .mocked(acquireAuthoritativePluginRuntimeRegistryLeaseMock)
+                .mock.results.at(-1)?.value;
+            const acquireRetainedPurposeContributions = vi.mocked(
+                registryLease?.registry
+                    .acquireRetainedRunnerAgentPurposeContributions!,
+            );
+            expect(acquireRetainedPurposeContributions)
+                .toHaveBeenCalledWith({
+                    binding: retainedOpencodeBindingG,
+                    pluginHardRevocationRevision: 0,
+                });
+            expect(acquireRetainedPurposeContributions)
+                .toHaveBeenCalledWith({
+                    binding: retainedPiBindingG,
+                    pluginHardRevocationRevision: 0,
+                });
             // Persisted marker absence is ambiguous: daemon A may have crashed
             // after Provider work began but before recording task_started. Only
             // the runner-local lifecycle witness may prove a safe boundary.
@@ -4167,6 +4340,11 @@ describe('startDaemonSessionControlRuntime', () => {
                     credentialRevision,
                 },
             });
+            // Current H only declares `authorization`; the account-id header
+            // therefore discriminates the retained-G request-auth use. The
+            // current Account selection still narrows it to `primary` above.
+            expect(currentHUse.materialization.headerNames)
+                .toEqual(['authorization']);
             expect(replacementRequestAuthLease)
                 .not.toHaveProperty('legacyServiceKeyedCompatibility');
             expect(fetchAccountProfile.mock.calls.length)
@@ -17718,11 +17896,6 @@ describe('startDaemonSessionControlRuntime', () => {
         const runtimeHandlerInput = runtimeHandlerCall?.[0] as {
             resolveInactiveSession?: (input: { sessionId: string }) => Promise<unknown>;
             sourceAuthorization?: unknown;
-            runtimeAuthApplyCapability?: {
-                directLiveHotAuth?: {
-                    requiresExactRuntimeIdentity?: boolean;
-                } | 'unsupported';
-            };
         } | undefined;
         expect(runtimeHandlerInput?.sourceAuthorization).toBeUndefined();
         expect(runtimeHandlerInput?.resolveInactiveSession).toEqual(expect.any(Function));
@@ -17776,11 +17949,6 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).toHaveBeenLastCalledWith(
             expect.objectContaining({
                 sourceAuthorization,
-                runtimeAuthApplyCapability: expect.objectContaining({
-                    directLiveHotAuth: expect.objectContaining({
-                        requiresExactRuntimeIdentity: true,
-                    }),
-                }),
             }),
         );
         expect(

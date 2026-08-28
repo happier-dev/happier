@@ -167,7 +167,12 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
       const preserveInstalledIdentity =
         previousModel.version !== null
         && previousModel.manifestHash !== null;
-      const reportProgress = async (progress: InferenceInstallProgress): Promise<void> => {
+      let acceptingInstallerProgress = true;
+      let progressWriteTail = Promise.resolve();
+      let progressWriteFailed = false;
+      let progressWriteError: unknown;
+
+      const persistProgress = (progress: InferenceInstallProgress): Promise<void> => {
         const publicProgress = progress.message
           ? {
               ...progress,
@@ -175,33 +180,63 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
                 ? sanitizeInferenceInstallDiagnostic(progress.message)
                 : null,
             }
-          : progress;
-        await writeModel({
-          modelId,
-          state: publicProgress.phase === 'error' ? 'error' : publicProgress.phase === 'complete' ? 'installed' : 'installing',
-          version:
-            publicProgress.phase === 'complete' || !preserveInstalledIdentity
-              ? version
-              : previousModel.version,
-          manifestHash:
-            publicProgress.phase === 'complete' || !preserveInstalledIdentity
-              ? manifestHash
-              : previousModel.manifestHash,
-          kind: kind ?? previousModel.kind,
-          model: model ?? previousModel.model,
-          updatedAtMs: now(),
-          progress: publicProgress,
-          lastError: publicProgress.phase === 'error' ? publicProgress.message ?? null : null,
+            : progress;
+        progressWriteTail = progressWriteTail.then(async () => {
+          try {
+            await writeModel({
+              modelId,
+              state: publicProgress.phase === 'error' ? 'error' : publicProgress.phase === 'complete' ? 'installed' : 'installing',
+              version:
+                publicProgress.phase === 'complete' || !preserveInstalledIdentity
+                  ? version
+                  : previousModel.version,
+              manifestHash:
+                publicProgress.phase === 'complete' || !preserveInstalledIdentity
+                  ? manifestHash
+                  : previousModel.manifestHash,
+              kind: kind ?? previousModel.kind,
+              model: model ?? previousModel.model,
+              updatedAtMs: now(),
+              progress: publicProgress,
+              lastError: publicProgress.phase === 'error' ? publicProgress.message ?? null : null,
+            });
+            await onProgress?.(publicProgress);
+          } catch (error) {
+            if (!progressWriteFailed) {
+              progressWriteFailed = true;
+              progressWriteError = error;
+            }
+          }
         });
-        await onProgress?.(publicProgress);
+        return progressWriteTail;
+      };
+
+      const throwIfProgressWriteFailed = (): void => {
+        if (progressWriteFailed) {
+          throw progressWriteError;
+        }
+      };
+
+      const reportProgress = async (progress: InferenceInstallProgress): Promise<void> => {
+        if (!acceptingInstallerProgress) {
+          return;
+        }
+        await persistProgress(progress);
       };
 
       await reportProgress({ phase: 'queued', progress: 0 });
+      throwIfProgressWriteFailed();
       try {
         await performInstall(reportProgress);
-        await reportProgress({ phase: 'complete', progress: 1 });
+        await progressWriteTail;
+        throwIfProgressWriteFailed();
+        acceptingInstallerProgress = false;
+        await persistProgress({ phase: 'complete', progress: 1 });
+        throwIfProgressWriteFailed();
       } catch (error) {
-        await reportProgress({
+        acceptingInstallerProgress = false;
+        const progressWriteErrorBeforeTerminal = progressWriteError;
+        await persistProgress({
           phase: 'error',
           progress: 1,
           // Installer/runtime failures can contain provider prose, local paths, or
@@ -209,6 +244,9 @@ export function createInferenceInstallBookkeeping(params: Readonly<{
           // but persist and project only the bounded host-owned public taxonomy.
           message: error instanceof Error ? error.message : INFERENCE_INSTALL_FAILED_DIAGNOSTIC,
         });
+        if (progressWriteError !== progressWriteErrorBeforeTerminal) {
+          throw progressWriteError;
+        }
         throw error;
       }
     },

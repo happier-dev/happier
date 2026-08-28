@@ -493,6 +493,45 @@ export async function readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker(
   }
 }
 
+/** Revalidates retained Agent G and adopted managed Provider P hard-revocation facts. */
+export async function isAgentRuntimeDaemonServiceAuthorityHardRevocationCurrent(
+  input: Readonly<{
+    happyHomeDir: string;
+    authority: AgentRuntimeDaemonServiceAuthorityDocumentV2;
+    adoptedManagedProviderAuthority?: Readonly<{
+      pluginId: string;
+      hardRevocationRevisionAtAdmission: number;
+    }> | null;
+    readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>;
+  }>,
+): Promise<boolean> {
+  const readRevision = input.readPluginHardRevocationRevision
+    ?? (async (pluginId: string) => await readCurrentPluginHardRevocationRevision({
+      paths: resolvePluginStorePaths({ happyHomeDir: input.happyHomeDir }),
+      pluginId,
+    }));
+  const expected = [
+    {
+      pluginId: input.authority.retainedAgent.pluginId,
+      revision: input.authority.pluginHardRevocationRevision,
+    },
+    ...(input.adoptedManagedProviderAuthority
+      ? [{
+        pluginId: input.adoptedManagedProviderAuthority.pluginId,
+        revision: input.adoptedManagedProviderAuthority.hardRevocationRevisionAtAdmission,
+      }]
+      : []),
+  ];
+  try {
+    for (const authority of expected) {
+      if (await readRevision(authority.pluginId) !== authority.revision) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function removeAgentRuntimeDaemonServiceAuthorityIfOwned(
   input: AgentRuntimeDaemonServiceAuthorityPathInput & Readonly<{
     path: string;

@@ -10,6 +10,7 @@ import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/term
 import {
   BackendTargetRefSchema,
   BackendTargetRefV2Schema,
+  AgentExecutionTargetV1Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
   PluginContributionIdentityV1Schema,
   openAccountScopedBlobCiphertext,
@@ -26,6 +27,7 @@ import {
   type BackendTargetRefV1,
   type BackendTargetRefV2,
   type BackendTargetRefV2Input,
+  type AgentExecutionTargetV1,
 } from '@happier-dev/protocol';
 import * as z from 'zod';
 import {
@@ -214,28 +216,27 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   }
 
   const candidate = value as Record<string, unknown>;
+  const parsedAgentTarget = AgentExecutionTargetV1Schema.safeParse(candidate.agentTarget);
   const parsedAgentIdentity = PluginContributionIdentityV1Schema.safeParse(candidate.agentIdentity);
-  const agentIdentityTarget = parsedAgentIdentity.success
-    ? readBackendTargetRefV2({
-        kind: 'agent',
-        identity: parsedAgentIdentity.data,
-      })
+  // Earlier draft persistence wrote the qualified identity without its
+  // `kind: agent` envelope. Import that exact shape without resolving it to a
+  // host routing id; only the live registry owns that projection.
+  const legacyAgentIdentityTarget: AgentExecutionTargetV1 | null = parsedAgentIdentity.success
+    ? { kind: 'agent', identity: parsedAgentIdentity.data }
     : null;
-  if (candidate.agentIdentity !== undefined && !agentIdentityTarget) {
+  if (candidate.agentIdentity !== undefined && !legacyAgentIdentityTarget) {
     return undefined;
   }
+  if (
+    parsedAgentTarget.success
+    && legacyAgentIdentityTarget
+    && buildBackendTargetKeyV2(parsedAgentTarget.data) !== buildBackendTargetKeyV2(legacyAgentIdentityTarget)
+  ) return undefined;
+  const agentTarget = parsedAgentTarget.success ? parsedAgentTarget.data : legacyAgentIdentityTarget;
   const legacyBackendTargetRefs = resolveConcreteCompatBackendTargetRefs(
     candidate.backendTarget as never,
   );
-  const agentIdentityTargetRefs = agentIdentityTarget
-    ? resolveConcreteCompatBackendTargetRefs(agentIdentityTarget)
-    : null;
-  if (agentIdentityTargetRefs && legacyBackendTargetRefs
-    && buildBackendTargetKeyV2(agentIdentityTargetRefs.backendTargetV2)
-      !== buildBackendTargetKeyV2(legacyBackendTargetRefs.backendTargetV2)) {
-    return undefined;
-  }
-  const normalizedBackendTargetRefs = agentIdentityTargetRefs ?? legacyBackendTargetRefs;
+  const normalizedBackendTargetRefs = legacyBackendTargetRefs;
   const normalizedBackendTargetV2Shadow = resolveConcreteBackendTargetRefV2(
     candidate.backendTargetV2 as never,
   );
@@ -245,17 +246,27 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   const persistedBackendTarget = candidate.version === 1
     ? normalizedBackendTargetRefs?.backendTarget
     : normalizedBackendTargetV2;
-  const {
-    runtimeDescriptorV1,
-    codexBackendMode: canonicalCodexBackendMode,
-  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-    codexBackendMode: candidate.codexBackendMode,
-    experimentalCodexAcp: candidate.experimentalCodexAcp,
-    runtimeDescriptorV1: candidate.runtimeDescriptorV1,
-    legacyAgentRuntimeDescriptorV1: candidate.agentRuntimeDescriptorV1,
-  });
-  const resolvedCanonicalCodexBackendMode = canonicalCodexBackendMode
-    ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined);
+  // Released `cli-v0.2.1` persisted respawn ingress. Collapse its Codex flags
+  // and descriptor alias into runtimeDescriptorV1. Remove after stored V1
+  // takeover/rollback from those releases is no longer supported.
+  const runtimeSelection = (() => {
+    try {
+      return readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+        agentId: normalizedBackendTargetV2?.sourceKind === 'built_in'
+          ? normalizedBackendTargetV2.backendId
+          : undefined,
+        codexBackendMode: candidate.codexBackendMode
+          ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined),
+        experimentalCodexAcp: candidate.experimentalCodexAcp,
+        runtimeDescriptorV1: candidate.runtimeDescriptorV1,
+        legacyAgentRuntimeDescriptorV1: candidate.agentRuntimeDescriptorV1,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  if (!runtimeSelection) return undefined;
+  const { runtimeDescriptorV1 } = runtimeSelection;
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(candidate.environmentVariables);
   const hasCanonicalModelSelection = candidate.modelSelection !== undefined;
   const parsedSelection = SessionModelSelectionV1Schema.safeParse(candidate.modelSelection);
@@ -280,14 +291,14 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   const legacyModelId = normalizeOptionalString(candidate.modelId);
   const modelSelection = normalizedParsedSelection
     ? normalizedParsedSelection
-    : !hasCanonicalModelSelection && legacyModelId && normalizedBackendTargetV2
+    : !hasCanonicalModelSelection && legacyModelId && (agentTarget || normalizedBackendTargetV2)
       ? SessionModelSelectionV1Schema.parse({
         v: 1,
         updatedAt: typeof candidate.modelUpdatedAt === 'number' && Number.isFinite(candidate.modelUpdatedAt)
           ? candidate.modelUpdatedAt
           : 0,
         ref: {
-          agentTargetKey: buildBackendTargetKeyV2(normalizedBackendTargetV2),
+          agentTargetKey: buildBackendTargetKeyV2(agentTarget ?? normalizedBackendTargetV2!),
           providerConnectionId: null,
           modelId: legacyModelId,
         },
@@ -297,16 +308,17 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
     experimentalCodexAcp: _legacyExperimentalCodexAcp,
     experimentalCodexResume: _legacyExperimentalCodexResume,
     agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1,
+    codexBackendMode: _legacyCodexBackendMode,
     agentIdentity: _persistedAgentIdentity,
     ...rest
   } = candidate;
 
   return {
     ...rest,
+    ...(agentTarget ? { agentTarget } : {}),
     ...(persistedBackendTarget ? { backendTarget: persistedBackendTarget } : {}),
     ...(normalizedBackendTargetV2Shadow ? { backendTargetV2: normalizedBackendTargetV2Shadow } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-    ...(resolvedCanonicalCodexBackendMode ? { codexBackendMode: resolvedCanonicalCodexBackendMode } : {}),
     ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
     ...(modelSelection ? { modelSelection } : {}),
   };
@@ -317,6 +329,7 @@ export const SessionRunnerRespawnDescriptorSchema = z
   .object({
     version: z.union([z.literal(1), z.literal(2)]),
     directory: z.string(),
+    agentTarget: AgentExecutionTargetV1Schema.optional(),
     backendTarget: z.union([BackendTargetRefSchema, BackendTargetRefV2Schema]).optional(),
     backendTargetV2: BackendTargetRefV2Schema.optional(),
     resume: z.string().optional(),
@@ -344,7 +357,6 @@ export const SessionRunnerRespawnDescriptorSchema = z
     connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
     mcpSelection: SessionMcpSelectionV1Schema.optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
   .passthrough().superRefine((value, ctx) => {
     const backendTargetRefs = value.backendTarget
@@ -379,12 +391,16 @@ export const SessionRunnerRespawnDescriptorSchema = z
     const semanticBackendTargetRefs = value.version === 1 && backendTargetV2ShadowRefs
       ? backendTargetV2ShadowRefs
       : backendTargetRefs;
-    if (value.modelSelection && (!semanticBackendTargetRefs
-      || value.modelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(semanticBackendTargetRefs.backendTargetV2))) {
+    const semanticTargetKey = value.agentTarget
+      ? buildBackendTargetKeyV2(value.agentTarget)
+      : semanticBackendTargetRefs
+        ? buildBackendTargetKeyV2(semanticBackendTargetRefs.backendTargetV2)
+        : null;
+    if (value.modelSelection && value.modelSelection.ref.agentTargetKey !== semanticTargetKey) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['modelSelection', 'ref', 'agentTargetKey'],
-        message: 'Model selection agent target must match backendTarget',
+        message: 'Model selection agent target must match the persisted Session target',
       });
     }
     const providerConnectionId = value.modelSelection?.ref.providerConnectionId ?? null;
@@ -415,6 +431,21 @@ export const SessionRunnerRespawnDescriptorSchema = z
           code: z.ZodIssueCode.custom,
           path: ['providerBindingMetadataV1', 'connectionId'],
           message: 'Provider binding continuity must match the selected Provider connection',
+        });
+      } else if (!value.providerBindingMetadataV1.model) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['providerBindingMetadataV1', 'model'],
+          message: 'Provider binding continuity requires the retained active model',
+        });
+      } else if (
+        value.providerBindingMetadataV1.model.id
+          !== value.modelSelection?.ref.modelId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['providerBindingMetadataV1', 'model', 'id'],
+          message: 'Provider binding model must match the selected active model',
         });
       }
     } else if (providerConnectionId) {
@@ -512,13 +543,6 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     : null;
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(spawnOptions.environmentVariables);
   const persistedEnvironmentVariables = pickPersistedEnvironmentVariables(spawnOptions.environmentVariables);
-  const {
-    codexBackendMode: canonicalCodexBackendMode,
-  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-    codexBackendMode: spawnOptions.codexBackendMode,
-    experimentalCodexAcp: spawnOptions.experimentalCodexAcp,
-    runtimeDescriptorV1: spawnOptions.runtimeDescriptorV1,
-  });
   const runtimeDescriptorV1 = readSpawnRuntimeDescriptorV1(spawnOptions);
   const selectedProviderConnectionId = spawnOptions.modelSelection?.ref.providerConnectionId ?? null;
   const backendTarget = selectedProviderConnectionId
@@ -531,7 +555,14 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     || (!spawnOptions.providerBindingMetadataV1 && selectedProviderConnectionId)
     || (spawnOptions.providerBindingMetadataV1
       && selectedProviderConnectionId
-      && spawnOptions.providerBindingMetadataV1.connectionId !== selectedProviderConnectionId)) {
+      && (
+        spawnOptions.providerBindingMetadataV1.connectionId !== selectedProviderConnectionId
+        || !spawnOptions.providerBindingMetadataV1.model
+        || (
+          spawnOptions.providerBindingMetadataV1.model.id
+            !== spawnOptions.modelSelection?.ref.modelId
+        )
+      ))) {
     return null;
   }
   const sealedEnvironmentVariables = sealRespawnEnvironmentVariables({
@@ -544,6 +575,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   const descriptor: SessionRunnerRespawnDescriptor = {
     version: selectedProviderConnectionId ? 2 : 1,
     directory,
+    ...(spawnOptions.agentTarget ? { agentTarget: spawnOptions.agentTarget } : {}),
     ...(backendTarget ? { backendTarget } : {}),
     ...(backendTargetV2Shadow ? { backendTargetV2: backendTargetV2Shadow } : {}),
     ...(resume ? { resume } : {}),
@@ -580,7 +612,6 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
       : {}),
     ...(spawnOptions.mcpSelection ? { mcpSelection: spawnOptions.mcpSelection } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
 
   const parsed = SessionRunnerRespawnDescriptorV1Schema.safeParse(descriptor);
@@ -594,12 +625,6 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
   }>,
 ): SpawnSessionOptions {
-  const {
-    codexBackendMode: canonicalCodexBackendMode,
-  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
-    codexBackendMode: descriptor.codexBackendMode,
-    runtimeDescriptorV1: descriptor.runtimeDescriptorV1,
-  });
   const openedEnvironmentVariables = descriptor.sealedEnvironmentVariables
     ? openRespawnEnvironmentVariables({
         sealedEnvironmentVariables: descriptor.sealedEnvironmentVariables,
@@ -617,6 +642,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
 
   return {
     directory: descriptor.directory,
+    ...(descriptor.agentTarget ? { agentTarget: descriptor.agentTarget } : {}),
     ...(backendTarget ? { backendTarget } : {}),
     ...(typeof descriptor.resume === 'string' ? { resume: descriptor.resume } : {}),
     ...(typeof descriptor.existingSessionId === 'string' ? { existingSessionId: descriptor.existingSessionId } : {}),
@@ -643,7 +669,6 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
       : {}),
     ...(descriptor.mcpSelection ? { mcpSelection: descriptor.mcpSelection } : {}),
     ...(descriptor.runtimeDescriptorV1 ? { runtimeDescriptorV1: descriptor.runtimeDescriptorV1 } : {}),
-    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
     approvedNewDirectoryCreation: true,
   };
 }

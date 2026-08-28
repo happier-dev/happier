@@ -247,6 +247,28 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     };
   };
 
+  const waitForPendingBinding = async (
+    pending: PendingBindingState,
+    signal?: AbortSignal,
+  ): Promise<BindingState> => {
+    if (!signal) return await pending.completion;
+    if (signal.aborted) {
+      throw followUnavailable('plugin_operation_aborted');
+    }
+    let onAbort: (() => void) | null = null;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(
+        followUnavailable('plugin_operation_aborted'),
+      );
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([pending.completion, aborted]);
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  };
+
   const detachWaiter = (state: FollowState): FollowWaiter | null => {
     const waiter = state.waiter;
     if (!waiter) return null;
@@ -386,6 +408,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
     runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
     retainedAgent: AgentSessionRunnerBindingV1,
     witness?: AgentRuntimeDaemonServiceTurnWitnessV1,
+    signal?: AbortSignal,
   ): Promise<BindingState> => {
     for (;;) {
       const authorized = await authorizeBinding(
@@ -408,9 +431,26 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
       const existing = bindings.get(sessionId);
       if (existing) {
         if (isPendingBinding(existing)) {
+          if (!hasExactBinding(
+            existing,
+            sessionId,
+            runner,
+            retainedAgent,
+          )) {
+            // Authorization above established that this different retained
+            // generation may own the Session now. Fence the unresolved
+            // predecessor at the one binding slot; its late resolution checks
+            // this slot before binding and is therefore discarded.
+            if (bindings.get(existing.key) === existing) {
+              bindings.delete(existing.key);
+              existing.reject(unavailable());
+            }
+            continue;
+          }
           try {
-            await existing.completion;
-          } catch {
+            await waitForPendingBinding(existing, signal);
+          } catch (error) {
+            if (signal?.aborted) throw error;
             // Re-authorize and either reuse the installed winner or create a
             // replacement. A failed candidate is never a reusable owner.
           }
@@ -486,7 +526,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
           pending.reject(error);
         }
       })();
-      return await pending.completion;
+      return await waitForPendingBinding(pending, signal);
     }
   };
 
@@ -590,6 +630,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
       runner,
       retainedAgent,
       operation.witness,
+      signal,
     );
     if (!isCurrentBinding(binding)) throw unavailable();
     const key = followKey(sessionId, operation.followId);
@@ -699,6 +740,9 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
           direction: request.direction,
           maxBytes: request.maxBytes,
           maxItems: request.maxItems,
+          ...(request.deadlineAtMs === undefined
+            ? {}
+            : { deadlineAtMs: request.deadlineAtMs }),
           ...(request.cursor ? { cursor: request.cursor } : {}),
         }, request.signal);
       },
@@ -718,6 +762,9 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
           cursor: request.cursor,
           maxBytes: request.maxBytes,
           maxItems: request.maxItems,
+          ...(request.deadlineAtMs === undefined
+            ? {}
+            : { deadlineAtMs: request.deadlineAtMs }),
         }, request.signal);
       },
     });
@@ -770,6 +817,12 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
                 ...(operation.cursor
                   ? { cursor: operation.cursor }
                   : {}),
+                ...(operation.initialReplay
+                  ? { initialReplay: true }
+                  : {}),
+                ...(operation.admissionDeadlineAtMs === undefined
+                  ? {}
+                  : { admissionDeadlineAtMs: operation.admissionDeadlineAtMs }),
                 ...(signal ? { signal } : {}),
               },
               listener,
@@ -783,6 +836,12 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
                 ...(operation.cursor
                   ? { cursor: operation.cursor }
                   : {}),
+                ...(operation.initialReplay
+                  ? { initialReplay: true }
+                  : {}),
+                ...(operation.admissionDeadlineAtMs === undefined
+                  ? {}
+                  : { admissionDeadlineAtMs: operation.admissionDeadlineAtMs }),
                 ...(signal ? { signal } : {}),
               },
               listener,
@@ -861,6 +920,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
               runner,
               retainedAgent,
               operation.witness,
+              signal,
             );
             if (binding !== state.binding || !isCurrentBinding(binding)) {
               throw unavailable();

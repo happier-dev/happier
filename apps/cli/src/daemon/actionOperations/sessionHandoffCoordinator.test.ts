@@ -94,6 +94,7 @@ describe('tracked session handoff coordinator', () => {
       .map(([update]) => update.progress?.phase)
       .filter(Boolean);
     expect(phases).toEqual([
+      'packaging_session_state',
       'preparing_target',
       'resuming_target',
       'confirming_target',
@@ -135,6 +136,42 @@ describe('tracked session handoff coordinator', () => {
     expect(result.ok).toBe(true);
     expect(deps.getPreparedTargetResult).toHaveBeenCalledTimes(2);
     expect(deps.wait).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects authoritative workspace byte transfer into the parent action operation', async () => {
+    const transferStatus = {
+      ...status('staging_target'),
+      progress: {
+        updatedAtMs: 123,
+        checkpoint: 'transfer_blobs' as const,
+        planned: { totalFiles: 4, totalBytes: 4096 },
+        transferred: { files: 2, bytes: 1024, blobs: 1 },
+        current: { relativePath: 'src/index.ts' },
+        resumable: true,
+      },
+    };
+    const { deps } = createDeps({
+      prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: transferStatus })),
+      getPreparedTargetResult: vi.fn()
+        .mockResolvedValueOnce({ ok: false, errorCode: 'not_found' })
+        .mockResolvedValueOnce(prepared),
+      getTargetStatus: vi.fn(async () => ({ handoffId: 'handoff-1', transitionRevision: 1, status: transferStatus })),
+    });
+
+    await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine' },
+      signal: new AbortController().signal,
+      ...deps,
+    });
+
+    expect(deps.publishOwnerUpdate).toHaveBeenCalledWith({
+      progress: {
+        current: 1024,
+        total: 4096,
+        phase: 'workspace_transfer_blobs',
+        label: 'Transferring workspace · src/index.ts',
+      },
+    });
   });
 
   it('waits for explicit user Resume and continues the parent sequence exactly once after recovery', async () => {

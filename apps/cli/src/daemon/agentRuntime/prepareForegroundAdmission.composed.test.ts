@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const boundaries = vi.hoisted(() => ({
@@ -191,6 +192,8 @@ import {
   createConnectedAccountRequestAuthService,
   type ConnectedAccountRequestAuthSubject,
 } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
+import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 const contributionKey = 'acme.gateway/gateway';
@@ -816,6 +819,9 @@ describe('foreground admission composed real Provider authorization seam', () =>
       httpPort: 40123,
       foregroundSatisfiedProfileSecretRequirementNames: [],
     });
+    if (!claimed.ok) {
+      throw new Error(JSON.stringify(claimed.error));
+    }
     expect(claimed.ok).toBe(true);
     expect(activateSessionPurposeBindings).toHaveBeenCalledWith(
       expect.objectContaining({ bindings: [] }),
@@ -1096,6 +1102,130 @@ describe('foreground admission composed real Provider authorization seam', () =>
     expect(boundaries.connectedServiceCleanupOnFailure).not.toHaveBeenCalled();
   });
 
+  it('reuses a legacy materializer-owned native home without duplicate projection or cleanup custody', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-legacy-native-home-'));
+    try {
+      boundaries.connectedServiceChildEnvironmentMode = 'authEnv';
+      const lease = boundaries.lease as PluginRuntimeRegistryLease;
+      const registry = lease.registry;
+      boundaries.lease = {
+        ...lease,
+        registry: {
+          ...registry,
+          contributes: {
+            ...registry.contributes,
+            catalogEntriesById: {
+              ...registry.contributes.catalogEntriesById,
+              codex: {
+                ...registry.contributes.catalogEntriesById.codex,
+                getConnectedServiceStateSharingDescriptor: async () => ({
+                  providerId: 'codex',
+                  providerSupportStatus: 'supported',
+                  config: { supported: true, modes: ['copied'], entries: [] },
+                  state: {
+                    supported: true,
+                    modes: ['isolated'],
+                    entries: [],
+                    symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
+                  },
+                  authIsolation: {
+                    mode: 'materialized_home',
+                    secretEntries: ['auth.json'],
+                  },
+                  nativeHome: {
+                    environmentKey: 'CODEX_HOME',
+                    defaultRelativePath: '.codex',
+                  },
+                } as const),
+              },
+            },
+          },
+        },
+      } satisfies PluginRuntimeRegistryLease;
+      const purpose = {
+        consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        purpose: 'primary',
+      } as const;
+      const binding = {
+        purpose,
+        target: {
+          kind: 'account' as const,
+          account: {
+            service: {
+              pluginId: 'happier.agent.codex',
+              localId: 'openai-codex',
+            },
+            accountId: 'legacy-account',
+          },
+        },
+      };
+      const admitted = await prepareForegroundAgentRuntimeAdmission(request({
+        profileId: undefined,
+        accountSettingsScopeKey: undefined,
+        accountSettingsVersion: undefined,
+        selection: undefined,
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'legacy-account',
+            },
+          },
+        },
+      }), {
+        activateSessionPurposeBindings: () => ({
+          subjectId: 'session:legacy-root',
+          isCurrent: () => true,
+          resolvePurposeBinding: () => binding,
+          listPurposeBindings: () => [binding],
+          dispose() {},
+        }),
+        resolveConnectedServiceAuthForSpawn: async () => ({
+          env: {
+            [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: root,
+            CODEX_HOME: root,
+          },
+          cleanupOnFailure: boundaries.connectedServiceCleanupOnFailure,
+          cleanupOnExit: boundaries.connectedServiceCleanupOnExit,
+          connectedServicesBindings: {
+            v: 1,
+            bindingsByServiceId: {
+              'openai-codex': {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'legacy-account',
+              },
+            },
+          },
+          qualifiedPurposeBindingSnapshot: {
+            purposes: [purpose],
+            bindings: [binding],
+          },
+        }),
+        resolveDaemonSpawnHooks: async () => null,
+      });
+      expect(admitted.ok).toBe(true);
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      const claimed = await admitted.prepared.claim({
+        canonicalSessionId: 'canonical-legacy-root',
+        httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+      });
+      expect(claimed).toMatchObject({
+        ok: true,
+        environment: { CODEX_HOME: root },
+      });
+      await admitted.prepared.cleanup();
+      await expect(stat(root)).resolves.toMatchObject({ mode: expect.any(Number) });
+      expect(boundaries.connectedServiceCleanupOnExit).toHaveBeenCalledTimes(1);
+      expect(boundaries.connectedServiceCleanupOnFailure).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     {
       label: 'a novel service',
@@ -1206,8 +1336,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
     };
     const requestAuthRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
     const requestAuthStore: ConnectedAccountPurposeBindingStore = {
-      read: async () => ({ v: 1, bindings: [] }),
-      update: async (mutate) => mutate({ v: 1, bindings: [] }),
+      read: async () => ({ v: 1, bindings: [expectedExternalBinding] }),
+      update: async (mutate) => mutate({ v: 1, bindings: [expectedExternalBinding] }),
       subscribe: () => ({ dispose() {} }),
     };
     const qualifiedPurposeOwner = createConnectedAccountPurposeBindingOwner({
@@ -1245,6 +1375,14 @@ describe('foreground admission composed real Provider authorization seam', () =>
       (input: Parameters<typeof qualifiedPurposeOwner.activateSessionPurposeBindings>[0]) =>
         qualifiedPurposeOwner.activateSessionPurposeBindings(input),
     );
+    const qualifiedLease = boundaries.lease as PluginRuntimeRegistryLease;
+    boundaries.lease = {
+      ...qualifiedLease,
+      registry: {
+        ...qualifiedLease.registry,
+        resolveConnectedAccountPurposeBindingOwner: () => qualifiedPurposeOwner,
+      },
+    } satisfies PluginRuntimeRegistryLease;
     const requestAuthDescriptor = {
       path: '/unused/test-descriptor-path',
       materializationId: 'session-1',
@@ -1284,6 +1422,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
     const connectedServicesMaterializationBaseDir = join(
       configuration.happyHomeDir,
       'external-qualified-request-auth',
+      `${externalService.pluginId}-${externalService.localId}`
+        .replace(/[^a-zA-Z0-9._-]/g, '_'),
     );
     const resolveExternalAgentSessionPurposeBindingSnapshot = vi.fn(async () => ({
       purposes: [expectedExternalBinding.purpose],
@@ -1340,13 +1480,6 @@ describe('foreground admission composed real Provider authorization seam', () =>
         HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH:
           expect.stringContaining('qualified-request-auth'),
       },
-      sessionConnectedAccounts: [{
-        purpose: 'primary',
-        account: {
-          service: externalService,
-          accountId: 'external-account',
-        },
-      }],
     });
     expect(JSON.stringify(claimed)).not.toContain(requestAuthRevision);
     expect(activateSessionPurposeBindings).toHaveBeenCalledWith({
@@ -1395,6 +1528,280 @@ describe('foreground admission composed real Provider authorization seam', () =>
       subject: requestAuthSubject,
       purpose: expectedExternalBinding.purpose,
     })).rejects.toMatchObject({ code: 'request_auth_not_active' });
+  });
+
+  it('materializes exact-account opaque credentials into an isolated native home and removes it without touching the persistent home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-foreground-native-home-'));
+    const sourceRoot = join(root, 'persistent-home');
+    const ambientSourceRoot = join(root, 'ambient-home');
+    const materializationRoot = join(root, 'materialized');
+    const previousCodexHome = process.env.CODEX_HOME;
+    const persistentAuth = new Uint8Array([11, 22, 33, 44]);
+    const selectedAuth = new Uint8Array([0, 255, 17, 99]);
+    await mkdir(sourceRoot, { recursive: true });
+    await mkdir(ambientSourceRoot, { recursive: true });
+    await writeFile(join(sourceRoot, 'auth.json'), persistentAuth);
+    await writeFile(join(sourceRoot, 'config.toml'), 'profile-source\n');
+    await writeFile(join(ambientSourceRoot, 'config.toml'), 'ambient-source\n');
+    process.env.CODEX_HOME = ambientSourceRoot;
+    publishSettings({ version: 1 });
+    try {
+      const externalAgentId = 'acme-native-home-agent';
+      const externalPluginId = 'acme.native-home';
+      const externalService = {
+        pluginId: 'happier.agent.codex',
+        localId: 'openai-codex',
+      } as const;
+      boundaries.bridgeAgentId = externalAgentId;
+      boundaries.bridgePluginId = externalPluginId;
+      const lease = boundaries.lease as PluginRuntimeRegistryLease;
+      const registry = lease.registry;
+      const codexContribution = registry.contributes.agentDefinitionsById.get('codex');
+      const codexRuntime = registry.agentRuntimesByAgentId.get('codex');
+      if (!codexContribution?.richDefinition || !codexRuntime) {
+        throw new Error('Expected canonical Agent fixtures');
+      }
+      const purpose = {
+        consumer: { pluginId: externalPluginId, localId: externalAgentId },
+        purpose: 'primary',
+      } as const;
+      const account = {
+        service: externalService,
+        accountId: 'selected-account',
+      } as const;
+      const binding = {
+        purpose,
+        target: { kind: 'account' as const, account },
+      };
+      const replacementBinding = {
+        purpose,
+        target: {
+          kind: 'account' as const,
+          account: { service: externalService, accountId: 'replacement-account' },
+        },
+      };
+      const agentDefinitionsById = new Map(registry.contributes.agentDefinitionsById);
+      agentDefinitionsById.set(externalAgentId, {
+        ...codexContribution,
+        id: externalAgentId,
+        pluginId: externalPluginId,
+        identity: { pluginId: externalPluginId, localId: externalAgentId },
+        richDefinition: {
+          ...codexContribution.richDefinition,
+          definition: {
+            ...codexContribution.richDefinition.definition,
+            connectedAccounts: [{
+              purpose: 'primary',
+              service: externalService,
+              required: false,
+              materializationKinds: ['files'],
+            }],
+          },
+        },
+      });
+      const agentRuntimesByAgentId = new Map(registry.agentRuntimesByAgentId);
+      agentRuntimesByAgentId.set(externalAgentId, {
+        ...codexRuntime,
+        pluginId: externalPluginId,
+        agentId: externalAgentId,
+      });
+      let durableBinding: typeof binding | typeof replacementBinding = binding;
+      let replaceDuringMaterialization = false;
+      const storeListeners = new Set<() => void>();
+      const purposeStore: ConnectedAccountPurposeBindingStore = {
+        read: async () => ({ v: 1, bindings: [durableBinding] }),
+        update: async (mutate) => {
+          const next = mutate({ v: 1, bindings: [durableBinding] });
+          durableBinding = next.bindings[0] as typeof durableBinding;
+          for (const listener of storeListeners) listener();
+          return next;
+        },
+        subscribe: (listener) => {
+          storeListeners.add(listener);
+          return {
+            dispose: () => {
+              storeListeners.delete(listener);
+            },
+          };
+        },
+      };
+      const materializedAccounts: string[] = [];
+      const purposeOwner = createConnectedAccountPurposeBindingOwner({
+        store: purposeStore,
+        selectTarget: async () => binding.target,
+        resolveTarget: async (target) => target.kind === 'account'
+          ? { displayName: target.account.accountId, account: target.account }
+          : null,
+        materializeAccount: async ({ account: selected, request }) => {
+          materializedAccounts.push(selected.accountId);
+          expect(request).toEqual({ kind: 'files', fileIds: ['auth.json'] });
+          if (replaceDuringMaterialization) {
+            durableBinding = replacementBinding;
+            for (const listener of storeListeners) listener();
+          }
+          return { kind: 'files', files: { 'auth.json': selectedAuth } };
+        },
+        async projectTargetAccounts() {
+          throw new Error('listing is outside native-home launch');
+        },
+        async assertTargetAccountMaterializable() {
+          throw new Error('listed materialization is outside native-home launch');
+        },
+      });
+      boundaries.lease = {
+        ...lease,
+        registry: {
+          ...registry,
+          contributes: {
+            ...registry.contributes,
+            agentDefinitionsById,
+            catalogEntriesById: {
+              ...registry.contributes.catalogEntriesById,
+              [externalAgentId]: {
+                id: externalAgentId,
+                cliSubcommand: externalAgentId,
+                vendorResumeSupport: 'unsupported',
+                getConnectedServiceStateSharingDescriptor: async () => ({
+                  providerId: externalAgentId,
+                  providerSupportStatus: 'supported',
+                  config: {
+                    supported: true,
+                    modes: ['copied'],
+                    entries: [{ path: 'config.toml', mode: 'force_copied' }],
+                  },
+                  state: {
+                    supported: true,
+                    modes: ['isolated'],
+                    entries: [],
+                    symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
+                  },
+                  authIsolation: {
+                    mode: 'materialized_home',
+                    secretEntries: ['auth.json'],
+                  },
+                  nativeHome: {
+                    environmentKey: 'CODEX_HOME',
+                    defaultRelativePath: '.codex',
+                  },
+                } as const),
+              },
+            },
+          },
+          agentRuntimesByAgentId,
+          resolveConnectedAccountPurposeBindingOwner: () => purposeOwner,
+        },
+      } satisfies PluginRuntimeRegistryLease;
+      const admitted = await prepareForegroundAgentRuntimeAdmission(request({
+        agentId: externalAgentId,
+        backendTarget: { kind: 'backend', backendId: externalAgentId },
+        selection: undefined,
+        connectedServices: undefined,
+      }), {
+        activateSessionPurposeBindings: (input) =>
+          purposeOwner.activateSessionPurposeBindings(input),
+        resolveExternalAgentSessionPurposeBindingSnapshot: async () => ({
+          purposes: [purpose],
+          bindings: [binding],
+        }),
+        connectedServicesMaterializationBaseDir: materializationRoot,
+      });
+      expect(admitted.ok).toBe(true);
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      const claimed = await admitted.prepared.claim({
+        canonicalSessionId: 'canonical-native-home',
+        httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+        nativeHomeSourceEnvironmentValue: sourceRoot,
+      });
+      expect(claimed.ok).toBe(true);
+      if (!claimed.ok) throw new Error(claimed.error.code);
+      const targetRoot = claimed.environment.CODEX_HOME;
+      expect(targetRoot).toBeTruthy();
+      await expect(readFile(join(targetRoot!, 'auth.json')))
+        .resolves.toEqual(Buffer.from(selectedAuth));
+      await expect(readFile(join(targetRoot!, 'config.toml'), 'utf8'))
+        .resolves.toBe('profile-source\n');
+      await expect(readFile(join(sourceRoot, 'auth.json')))
+        .resolves.toEqual(Buffer.from(persistentAuth));
+      expect(materializedAccounts).toEqual(['selected-account']);
+
+      await admitted.prepared.cleanup();
+      await expect(stat(targetRoot!)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(sourceRoot, 'auth.json')))
+        .resolves.toEqual(Buffer.from(persistentAuth));
+
+      durableBinding = binding;
+      replaceDuringMaterialization = true;
+      const invalidated = await prepareForegroundAgentRuntimeAdmission(request({
+        attemptId: 'attempt-native-home-invalidated',
+        agentId: externalAgentId,
+        backendTarget: { kind: 'backend', backendId: externalAgentId },
+        selection: undefined,
+        connectedServices: undefined,
+      }), {
+        activateSessionPurposeBindings: (input) =>
+          purposeOwner.activateSessionPurposeBindings(input),
+        resolveExternalAgentSessionPurposeBindingSnapshot: async () => ({
+          purposes: [purpose],
+          bindings: [binding],
+        }),
+        connectedServicesMaterializationBaseDir: materializationRoot,
+      });
+      expect(invalidated.ok).toBe(true);
+      if (!invalidated.ok) throw new Error(invalidated.error.code);
+      await expect(invalidated.prepared.claim({
+        canonicalSessionId: 'canonical-native-home-invalidated',
+        httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+      })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'provider_agent_runtime_unsupported' },
+      });
+      await invalidated.prepared.cleanup();
+      const invalidatedTargetRoot = resolveConnectedServiceMaterializedRootDir({
+        baseDir: materializationRoot,
+        agentId: externalAgentId,
+        materializationKey: 'session-1',
+      });
+      await expect(stat(invalidatedTargetRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(sourceRoot, 'auth.json')))
+        .resolves.toEqual(Buffer.from(persistentAuth));
+
+      replaceDuringMaterialization = false;
+      durableBinding = binding;
+      const nativeUnbound = await prepareForegroundAgentRuntimeAdmission(request({
+        attemptId: 'attempt-native-home-unbound',
+        agentId: externalAgentId,
+        backendTarget: { kind: 'backend', backendId: externalAgentId },
+        selection: undefined,
+        connectedServices: undefined,
+      }), {
+        activateSessionPurposeBindings: (input) =>
+          purposeOwner.activateSessionPurposeBindings(input),
+        resolveExternalAgentSessionPurposeBindingSnapshot: async () => ({
+          purposes: [purpose],
+          bindings: [],
+        }),
+        connectedServicesMaterializationBaseDir: materializationRoot,
+      });
+      expect(nativeUnbound.ok).toBe(true);
+      if (!nativeUnbound.ok) throw new Error(nativeUnbound.error.code);
+      const nativeUnboundClaim = await nativeUnbound.prepared.claim({
+        canonicalSessionId: 'canonical-native-home-unbound',
+        httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+      });
+      expect(nativeUnboundClaim.ok).toBe(true);
+      if (!nativeUnboundClaim.ok) throw new Error(nativeUnboundClaim.error.code);
+      expect(nativeUnboundClaim.environment).not.toHaveProperty('CODEX_HOME');
+      await nativeUnbound.prepared.cleanup();
+      await expect(readFile(join(sourceRoot, 'auth.json')))
+        .resolves.toEqual(Buffer.from(persistentAuth));
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('admits an external catalog Agent through its declared legacy Connected Service and invokes its daemon spawn hooks', async () => {
@@ -1538,12 +1945,13 @@ describe('foreground admission composed real Provider authorization seam', () =>
   });
 
   it('releases prepared Connected Account materialization through failure cleanup when claim currentness fails', async () => {
+    const purposeBindingLeaseDispose = vi.fn();
     const activateSessionPurposeBindings = vi.fn(() => ({
       subjectId: 'session:must-not-activate',
       isCurrent: () => true,
       resolvePurposeBinding: () => null,
       listPurposeBindings: () => [],
-      dispose: vi.fn(),
+      dispose: purposeBindingLeaseDispose,
     }));
     const admitted = await prepareForegroundAgentRuntimeAdmission(request({
       profileId: undefined,
@@ -1600,10 +2008,11 @@ describe('foreground admission composed real Provider authorization seam', () =>
       error: { code: 'provider_agent_runtime_unsupported' },
     });
 
-    expect(activateSessionPurposeBindings).not.toHaveBeenCalled();
+    expect(activateSessionPurposeBindings).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnExit).not.toHaveBeenCalled();
     await admitted.prepared.cleanup();
+    expect(purposeBindingLeaseDispose).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnFailure).toHaveBeenCalledTimes(1);
     expect(boundaries.connectedServiceCleanupOnExit).not.toHaveBeenCalled();
   });

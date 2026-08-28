@@ -23,9 +23,21 @@ import {
   type ActionExecuteResult,
 } from '@happier-dev/protocol/actions';
 
+import { handleActionsCommand } from '@/cli/commands/actions';
+import {
+  createPluginInvocationActionsService,
+} from '@/plugins/runtime/invocation/services/actions';
+import {
+  createPluginActionCallerMaterializationFixture,
+} from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import type { DaemonPatVerifier } from '../auth/daemonPatVerifier';
 import type { ExternalActionExecutor, ResolveExternalActionTarget } from './executeExternalAction';
 import { registerDaemonExternalActionRoute } from './registerDaemonExternalActionRoute';
+
+type CanonicalActionExecutor = Pick<
+  ReturnType<typeof import('@happier-dev/protocol/actions').createActionExecutor>,
+  'execute'
+>;
 
 function verifier(): DaemonPatVerifier {
   return vi.fn(async () => ({
@@ -174,6 +186,114 @@ describe('registerDaemonExternalActionRoute', () => {
     } finally {
       await app.close();
     }
+  });
+
+  it('routes the CLI, plugin ActionsService, and HTTP ingress through one injected canonical executor', async () => {
+    const result = { v: 1 as const, ok: true as const, hits: [] };
+    const execute = vi.fn<CanonicalActionExecutor['execute']>(async () => ({
+      ok: true,
+      result,
+    }));
+    const canonicalExecutor: CanonicalActionExecutor = { execute };
+    const actionInput = {
+      machineId: 'machine-local',
+      query: {
+        v: 1 as const,
+        query: 'executor convergence',
+        scope: { type: 'global' as const },
+        mode: 'hints' as const,
+      },
+    };
+
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(((
+      _chunk: unknown,
+      ...args: unknown[]
+    ) => {
+      const callback = args.find((value): value is () => void => typeof value === 'function');
+      callback?.();
+      return true;
+    }) as typeof process.stdout.write);
+    try {
+      await handleActionsCommand([
+        'invoke',
+        'memory.search',
+        '--input-json',
+        JSON.stringify(actionInput),
+        '--json',
+      ], {
+        readCredentialsFn: async () => ({
+          token: 'pat-secret',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        }),
+        createExecutorFn: () => canonicalExecutor,
+      });
+    } finally {
+      stdout.mockRestore();
+    }
+
+    const materialization = createPluginActionCallerMaterializationFixture('acme.convergence');
+    const pluginActions = createPluginInvocationActionsService({
+      seed: {
+        plugin: { id: 'acme.convergence', version: '1.0.0' },
+        resolveCurrentPluginMaterializationRef: materialization.resolveCurrentPluginMaterializationRef,
+        generation: 'generation-1',
+        surface: 'background',
+        signal: new AbortController().signal,
+        isGenerationCurrent: () => true,
+      },
+      actionExecutor: canonicalExecutor,
+      invokeContributedAction: vi.fn(),
+    });
+    await pluginActions.execute('memory.search', actionInput);
+
+    const app = await createApp({ executor: canonicalExecutor });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/actions/memory.search',
+        headers: { authorization: 'Bearer pat-secret' },
+        payload: { v: 1, input: actionInput },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        actionId: 'memory.search',
+        execution: { ok: true, result },
+      });
+    } finally {
+      await app.close();
+    }
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls.map(([actionId, input, context]) => ({
+      actionId,
+      input,
+      surface: context?.surface,
+      authority: context?.authority,
+      caller: context?.actionCaller,
+    }))).toEqual([
+      {
+        actionId: 'memory.search',
+        input: actionInput,
+        surface: 'api',
+        authority: undefined,
+        caller: undefined,
+      },
+      {
+        actionId: 'memory.search',
+        input: actionInput,
+        surface: 'plugin',
+        authority: 'account_automation',
+        caller: expect.objectContaining({ kind: 'plugin', pluginId: 'acme.convergence' }),
+      },
+      {
+        actionId: 'memory.search',
+        input: actionInput,
+        surface: 'api',
+        authority: 'account_automation',
+        caller: { kind: 'host' },
+      },
+    ]);
   });
 
   it('returns typed invalid_action_output rather than a recursive JSON response failure', async () => {
@@ -340,6 +460,38 @@ describe('registerDaemonExternalActionRoute', () => {
         url: '/v1/actions/session.spawn_new',
         headers: { authorization: 'Bearer pat-secret' },
         payload: { v: 1, input: {}, authority: 'present_user' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: 'invalid_request', code: 'invalid_envelope' });
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a custom-parser non-finite input before daemon-local execution', async () => {
+    const execute = vi.fn();
+    const app = fastify({ bodyLimit: 8 * 1024 * 1024 });
+    app.removeContentTypeParser('application/json');
+    app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, _body, done) => {
+      done(null, { v: 1, input: Number.NaN });
+    });
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: 'machine-local',
+      currentServerId: 'server-local',
+      verifyPat: verifier(),
+      executor: { execute },
+      resolveTarget: resolveTarget(),
+    });
+    await app.ready();
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/actions/session.spawn_new',
+        headers: { authorization: 'Bearer pat-secret' },
+        payload: '{}',
       });
 
       expect(response.statusCode).toBe(400);

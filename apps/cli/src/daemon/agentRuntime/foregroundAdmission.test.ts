@@ -250,7 +250,10 @@ describe('foreground Agent runtime admission', () => {
     const owner = createForegroundAgentRuntimeAdmissionOwner({
       prepare: async () => ({
         ok: true,
-        prepared: createPrepared(cleanup, retirement, claim),
+        prepared: {
+          ...createPrepared(cleanup, retirement, claim),
+          nativeHomeSourceEnvironmentKey: 'CODEX_HOME',
+        },
       }),
     });
 
@@ -259,6 +262,7 @@ describe('foreground Agent runtime admission', () => {
       ok: true,
       launchPolicy: {
         reservedEnvironmentVariableNames: ['OPENAI_API_KEY'],
+        nativeHomeSourceEnvironmentKey: 'CODEX_HOME',
       },
     });
     expect(admitted).not.toHaveProperty('environment');
@@ -271,12 +275,18 @@ describe('foreground Agent runtime admission', () => {
       ...claimRequest(),
       attemptId: 'attempt-other',
     })).rejects.toThrow('unavailable');
-    await expect(owner.claimEnvironment(claimRequest())).resolves.toEqual({
+    await expect(owner.claimEnvironment({
+      ...claimRequest(),
+      nativeHomeSourceEnvironmentValue: '/configured/codex-home',
+    })).resolves.toEqual({
       ok: true,
       environment: { PROVIDER_SECRET: 'secret-value' },
       unsetEnvironmentVariableNames: ['NATIVE_AUTH'],
       sensitiveEnvironmentVariableNames: [],
     });
+    expect(claim).toHaveBeenCalledWith(expect.objectContaining({
+      nativeHomeSourceEnvironmentValue: '/configured/codex-home',
+    }));
     await expect(owner.claimEnvironment(claimRequest())).rejects.toThrow(
       'unavailable',
     );

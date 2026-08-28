@@ -76,6 +76,7 @@ export const ForegroundAgentRuntimeAdmissionResponseV1Schema =
         reservedEnvironmentVariableNames: z.array(BoundedIdSchema).max(256),
         profileSecretRequirementNamesMissingBinding:
           z.array(BoundedIdSchema).max(256),
+        nativeHomeSourceEnvironmentKey: BoundedIdSchema.optional(),
       }).strict(),
     }).strict(),
     z.object({
@@ -99,6 +100,8 @@ export const ForegroundAgentRuntimeClaimRequestV1Schema = z.object({
   capability: z.string().min(1).max(4_096),
   foregroundSatisfiedProfileSecretRequirementNames:
     z.array(BoundedIdSchema).max(256),
+  nativeHomeSourceEnvironmentValue:
+    z.string().max(32_768).nullable().optional(),
 }).strict();
 
 export type ForegroundAgentRuntimeClaimRequestV1 =

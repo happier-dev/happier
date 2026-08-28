@@ -299,6 +299,23 @@ describe('hosted-web static asset server', () => {
         })).rejects.toThrow(/loopback/u);
     });
 
+    it('uses the Protocol loopback grammar for bracketed and mapped IPv6 bind hosts', async () => {
+        await expect(startHostedWebStaticAssetServer({
+            ...serverInput(),
+            host: '[::ffff:192.168.1.1]',
+            verifyArtifact: () => ({ ok: true as const }),
+        })).rejects.toThrow(/loopback/u);
+
+        // Admission happens before the OS bind. A mapped loopback spelling is
+        // accepted by policy even on hosts whose Node runtime cannot bind that
+        // bracketed URL spelling directly.
+        await expect(startHostedWebStaticAssetServer({
+            ...serverInput(),
+            host: '[::ffff:127.0.0.1]',
+            verifyArtifact: () => ({ ok: false as const, reasonCode: 'stop_before_bind' }),
+        })).rejects.toThrow(/stop_before_bind/u);
+    });
+
     it('fails closed before binding when artifact verification throws', async () => {
         await expect(startHostedWebStaticAssetServer({
             ...serverInput(),

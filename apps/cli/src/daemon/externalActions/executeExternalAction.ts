@@ -13,12 +13,16 @@ import {
 
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
 
-export type ExternalActionPrincipal = Readonly<{
-  accountId: string;
-  principalId: string;
-  credentialId: string;
-  authority: 'account_automation';
-}>;
+export type ExternalActionPrincipal =
+  | Readonly<{
+      accountId: string;
+      principalId: string;
+      credentialId: string;
+      authority: 'account_automation';
+    }>
+  | Readonly<{
+      authority: 'present_user';
+    }>;
 
 export type ExternalActionExecutor = Readonly<{
   execute: (
@@ -116,11 +120,15 @@ export async function executeExternalAction(input: Readonly<{
     surface: 'api',
     authority: input.principal.authority,
     actionCaller: { kind: 'host' },
-    externalActionCredential: {
-      accountId: input.principal.accountId,
-      principalId: input.principal.principalId,
-      credentialId: input.principal.credentialId,
-    },
+    ...(input.principal.authority === 'account_automation'
+      ? {
+          externalActionCredential: {
+            accountId: input.principal.accountId,
+            principalId: input.principal.principalId,
+            credentialId: input.principal.credentialId,
+          },
+        }
+      : {}),
     externalActionTarget: target,
     ...(input.currentServerId !== undefined ? { serverId: input.currentServerId } : {}),
     ...reconciliation.context,

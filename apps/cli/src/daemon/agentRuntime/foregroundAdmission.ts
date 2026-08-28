@@ -26,12 +26,14 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
   authorization: ForegroundAgentRuntimeBootstrapAuthorization;
   reservedEnvironmentVariableNames: readonly string[];
   profileSecretRequirementNamesMissingBinding: readonly string[];
+  nativeHomeSourceEnvironmentKey?: string;
   retirementSignal: AbortSignal;
   isCurrent(): boolean;
   claim(input: Readonly<{
     canonicalSessionId: string;
     httpPort: number;
     foregroundSatisfiedProfileSecretRequirementNames: readonly string[];
+    nativeHomeSourceEnvironmentValue?: string | null;
   }>): Promise<
     | Readonly<{
         ok: true;
@@ -65,6 +67,7 @@ type Admission = {
   runtimeSessionId: string | null;
   reservedEnvironmentVariableNames: readonly string[];
   profileSecretRequirementNamesMissingBinding: readonly string[];
+  nativeHomeSourceEnvironmentKey?: string;
   retirementSignal: AbortSignal;
   isCurrent(): boolean;
   claim: PreparedForegroundAgentRuntimeAdmission['claim'];
@@ -251,6 +254,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           profileSecretRequirementNamesMissingBinding: Object.freeze([
             ...prepared.profileSecretRequirementNamesMissingBinding,
           ]),
+          ...(prepared.nativeHomeSourceEnvironmentKey
+            ? {
+                nativeHomeSourceEnvironmentKey:
+                  prepared.nativeHomeSourceEnvironmentKey,
+              }
+            : {}),
           retirementSignal: prepared.retirementSignal,
           isCurrent: prepared.isCurrent,
           claim: prepared.claim,
@@ -303,6 +312,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
               [...admission.reservedEnvironmentVariableNames],
             profileSecretRequirementNamesMissingBinding:
               [...admission.profileSecretRequirementNamesMissingBinding],
+            ...(admission.nativeHomeSourceEnvironmentKey
+              ? {
+                  nativeHomeSourceEnvironmentKey:
+                    admission.nativeHomeSourceEnvironmentKey,
+                }
+              : {}),
           },
         };
       } finally {
@@ -334,6 +349,10 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         })
         || admission.claimState !== 'available'
         || (
+          admission.nativeHomeSourceEnvironmentKey !== undefined
+          && claimRequest.nativeHomeSourceEnvironmentValue === undefined
+        )
+        || (
           existingCanonicalAttemptId !== undefined
           && existingCanonicalAttemptId !== claimRequest.attemptId
         )
@@ -357,6 +376,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           foregroundSatisfiedProfileSecretRequirementNames:
             claimRequest
               .foregroundSatisfiedProfileSecretRequirementNames,
+          ...(claimRequest.nativeHomeSourceEnvironmentValue === undefined
+            ? {}
+            : {
+                nativeHomeSourceEnvironmentValue:
+                  claimRequest.nativeHomeSourceEnvironmentValue,
+              }),
         });
         admission.claimPromise = claimPromise;
         const claimed = await claimPromise;

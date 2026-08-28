@@ -9,6 +9,9 @@ const resolveDaemonLaunchSpecMock = vi.fn(async (..._args: any[]) => ({
   filePath: '/usr/bin/node',
   args: ['--no-warnings', '--no-deprecation', '/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync'],
 }));
+const systemdScopeMocks = vi.hoisted(() => ({
+  execFileWithDeadline: vi.fn(async () => ({ stdout: '', stderr: '' })),
+}));
 
 vi.mock('child_process', () => ({
   spawn: (...args: any[]) => spawnMock(...args),
@@ -16,6 +19,11 @@ vi.mock('child_process', () => ({
 
 vi.mock('./resolveDaemonLaunchSpec', () => ({
   resolveDaemonLaunchSpec: (...args: any[]) => resolveDaemonLaunchSpecMock(...args),
+}));
+
+vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
+  execFileWithDeadline: systemdScopeMocks.execFileWithDeadline,
 }));
 
 describe('spawnDetachedDaemonStartSync', () => {
@@ -26,6 +34,8 @@ describe('spawnDetachedDaemonStartSync', () => {
     envScope.restore();
     spawnMock.mockClear();
     resolveDaemonLaunchSpecMock.mockClear();
+    systemdScopeMocks.execFileWithDeadline.mockReset();
+    systemdScopeMocks.execFileWithDeadline.mockResolvedValue({ stdout: '', stderr: '' });
     vi.resetModules();
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
@@ -62,6 +72,61 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(resolveDaemonLaunchSpecMock).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
       successorEnv,
+    );
+  });
+
+  it('launches a future Linux daemon in the provisioned critical user slice', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+    const daemonEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+    };
+    systemdScopeMocks.execFileWithDeadline.mockResolvedValue({
+      stdout: 'LoadState=loaded\nMemoryLow=4294967296\n',
+      stderr: '',
+    });
+
+    const mod = await import('./spawnDetachedDaemonStartSync');
+    await mod.spawnDetachedDaemonStartSync({ env: daemonEnv });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [command, args, options] = spawnMock.mock.calls[0] as any[];
+    expect(command).toBe('systemd-run');
+    expect(args).toEqual([
+      '--user',
+      '--scope',
+      '--quiet',
+      '--slice=happier-critical.slice',
+      '--',
+      '/usr/bin/node',
+      '--no-warnings',
+      '--no-deprecation',
+      '/opt/happier/package-dist/index.mjs',
+      'daemon',
+      'start-sync',
+    ]);
+    expect(args.join(' ')).not.toMatch(/happier-jobs|--nice|MemoryMax|MemoryHigh|MemoryLimit/u);
+    expect(options).toEqual(expect.objectContaining({
+      detached: true,
+      stdio: 'ignore',
+      env: expect.objectContaining({
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+      }),
+    }));
+    expect(systemdScopeMocks.execFileWithDeadline).toHaveBeenCalledWith(
+      'systemctl',
+      [
+        '--user',
+        'show',
+        'happier-critical.slice',
+        '--property=LoadState',
+        '--property=MemoryLow',
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+        }),
+      }),
     );
   });
 

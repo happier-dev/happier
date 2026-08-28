@@ -27,6 +27,7 @@ import {
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
     ConnectedServiceBindingsV1Schema,
+    ConnectedAccountServiceKeySchema,
     ConnectedServiceIdSchema,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CONCURRENCY,
     DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS,
@@ -36,11 +37,13 @@ import {
     parseBooleanEnv,
     projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
     readConnectedServiceMaterializationIdentityV1FromMetadata,
+    readBuiltInLegacyConnectedAccountServiceKeyIngress,
     resolveConnectedServicesProviderStateSharingPolicyV1,
     writeProviderAccountUsageRecordIdToMetadata,
     writeConnectedServiceMaterializationIdentityV1ToMetadata,
     assessProviderEndpoint,
     type AccountSettings,
+    type ConnectedAccountServiceKey,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceCredentialRevisionV1,
     type ConnectedServiceExecutionAuthorityV1,
@@ -54,6 +57,7 @@ import {
     type ProviderAccountUsageRecordId,
     type ProviderRuntimeBindingBasisV1,
     type RequestAuthFailureOutcomeV1,
+    type RuntimeDescriptorV1,
     type SessionContinuationResumePromptModeV1,
     type SessionRunnerRestartDisabledReason,
 } from '@happier-dev/protocol';
@@ -91,19 +95,18 @@ import {
     readDeclaredCatalogConnectedServiceIds,
 } from '@/agent/catalog/registry';
 import {
-    resolveConnectedServiceCandidatePersistedSessionFile,
-    getConnectedServiceRecoveryCapabilities,
     getConnectedServiceRuntimeAuthAdapter,
+    getConnectedServiceStateSharingDescriptor,
     resolveLegacyConnectedServiceRuntimeAuthFailureSourceRevisionThroughCatalog,
     resolveConnectedServiceGenerationApplicationScope,
     resolveConnectedServiceMaterializedHomeRoot,
-    resolveConnectedServiceRuntimeAuthApplyCapability,
     resolveConnectedServiceSwitchContinuity,
 } from '@/daemon/connectedServices/catalogHooks';
+import { resolveConnectedServiceTargetMaterializedRoot } from '@/daemon/connectedServices/materialize/resolveConnectedServiceTargetMaterializedRoot';
+import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedServices/runtimeAuth/createRuntimeAuthNativeHome';
 import type {
     CatalogAgentId,
     ConnectedServiceDaemonAuthBridgeRefresh,
-    ConnectedServiceRuntimeAuthApplyCapability,
     ConnectedServiceSwitchEffectiveBinding,
 } from '@/agent/catalog/types';
 import {
@@ -186,7 +189,10 @@ import { isExecutionRunConnectedServiceGenerationCurrent } from '../connectedSer
 import { rehydrateLiveExecutionRunTargets } from '../connectedServices/runs/rehydrateExecutionRunTargets';
 import { createAdoptedExecutionRunRootCleanup } from '../connectedServices/runs/createAdoptedExecutionRunRootCleanup';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
-import { listExecutionRunMarkersForRehydration } from '../executionRunRegistry';
+import {
+    clearExecutionRunConnectedServicesCleanupReceipt,
+    listExecutionRunMarkersForRehydration,
+} from '../executionRunRegistry';
 import {
     createComposedSimulatorPreviewAdapter,
 } from '../devices/simulator/adapter';
@@ -395,6 +401,9 @@ import {
     observeManagedServiceProcessStartIdentity,
     type ManagedServiceDurabilityOwner,
 } from '@/plugins/runtime/invocation/services/managedServiceDurability';
+import type {
+    ManagedServiceSessionBaseUrlResolver,
+} from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import {
     executeRunnerManagedServiceEndpointProjectionBridgeOperation,
 } from '@/plugins/runtime/invocation/services/runnerManagedServiceEndpointProjectionBridge';
@@ -512,7 +521,9 @@ import {
     resolveFirstPartyConnectedAccountServiceId,
 } from '../connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import {
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey,
     resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
+    resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
     QualifiedConnectedAccountEstablishedRuntimeOwner,
@@ -540,8 +551,6 @@ import {
     type ConnectedServiceAuthGroupGenerationApplyFailure,
     type ConnectedServiceAuthGroupGenerationApplyResult,
 } from '../connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { resolvePredictiveSoftSwitchCapability } from '../connectedServices/accountGroups/switching/resolvePredictiveSoftSwitchCapability';
-import { evaluatePredictiveSoftSwitchLiveSessionRequirement } from '../connectedServices/accountGroups/switching/predictiveSoftSwitchPolicy';
 import { createProviderAccountUsagePersistenceScheduler } from '../connectedServices/accountUsage/persistence';
 import {
     recordProviderAccountUsageAdoptionForSession,
@@ -681,7 +690,6 @@ import {
     readConnectedServiceMaterializationIdentityFromSpawnOptions,
     generateConnectedServiceMaterializationIdentityV1,
 } from '../connectedServices/materialization/identity';
-import { resolveConnectedServiceGroupHomeDir } from '../connectedServices/homes/resolveConnectedServiceHomeDir';
 import { disposeSessionHookArtifactsForSession } from '@/plugins/runtime/hooks/session/service';
 import { disposeTerminalAttachmentInfoForSession } from '@/terminal/attachment/terminalAttachmentInfo';
 import {
@@ -1077,46 +1085,6 @@ function resolveOwnedRetainedDevRequestAuthCapabilityPaths(input: Readonly<{
     return [...paths];
 }
 
-function pathEqualsOrIsInside(parentPath: string, childPath: string): boolean {
-    const parent = resolve(parentPath);
-    const child = resolve(childPath);
-    if (parent === child) return true;
-    const pathFromParent = relative(parent, child);
-    return Boolean(pathFromParent)
-        && !pathFromParent.startsWith('..')
-        && !isAbsolute(pathFromParent);
-}
-
-function trackedSessionUsesRequestedSharedGroupAuthSurface(input: Readonly<{
-    tracked: TrackedSession | null;
-    activeServerDir: string;
-    agentId: CatalogAgentId;
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    activeProfileId: string;
-}>): boolean {
-    const env = input.tracked?.spawnOptions?.environmentVariables ?? {};
-    const selection = readConnectedServiceChildSelectionsFromEnv(env)?.get(input.serviceId) ?? null;
-    if (
-        selection?.kind !== 'group'
-        || selection.groupId !== input.groupId
-        || selection.activeProfileId !== input.activeProfileId
-    ) {
-        return false;
-    }
-
-    const expectedGroupHome = resolveConnectedServiceGroupHomeDir({
-        activeServerDir: input.activeServerDir,
-        serviceId: input.serviceId,
-        groupId: input.groupId,
-        agentId: input.agentId,
-    });
-    return Object.values(env).some((value) => {
-        const pathValue = normalizeOptionalString(value);
-        return pathValue ? pathEqualsOrIsInside(expectedGroupHome, pathValue) : false;
-    });
-}
-
 function buildTrackedExistingSessionResumeSeed(input: Readonly<{
     tracked: TemporaryThrottleResumeSource;
     sessionId: string;
@@ -1441,12 +1409,12 @@ export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<
         && typeof input.result.serviceId === 'string'
         && typeof input.result.groupId === 'string'
     ) {
-        const serviceId = ConnectedServiceIdSchema.safeParse(input.result.serviceId);
+        const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.result.serviceId);
         const groupId = input.result.groupId.trim();
-        if (serviceId.success && groupId) {
+        if (serviceId && groupId) {
             currentTargetSettled = await input.reconcileCurrentRuntimeAuthTarget({
                 sessionId: input.sessionId,
-                serviceId: serviceId.data,
+                serviceId,
                 groupId,
             });
         }
@@ -1463,7 +1431,7 @@ export async function continueAfterSupersededRuntimeAuthFailure(input: Readonly<
 
 export async function settleSupersedingRuntimeAuthGenerationForSource(input: Readonly<{
     recovery: unknown;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     sessionId: string;
     fromProfileId: string | null;
@@ -1701,6 +1669,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(input: Read
     targetMaterializedRoot?: string | null;
     targetMaterializedEnv?: Readonly<Record<string, string>> | null;
     cwd?: string | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     candidatePersistedSessionFile?: string | null;
 }>) {
     const connectedServiceMaterializationIdentityV1 = input.connectedServiceMaterializationIdentityV1
@@ -1741,6 +1710,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(input: Read
             materializationIdentity: connectedServiceMaterializationIdentityV1 ?? null,
             vendorResumeId: vendorResumeId || null,
             cwd: input.cwd ?? null,
+            runtimeDescriptorV1: input.runtimeDescriptorV1 ?? null,
             candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
         });
     }
@@ -1873,8 +1843,6 @@ async function resolveInactiveConnectedServiceSessionContext(input: Readonly<{
         currentMachineId: input.currentMachineId,
         candidatePath: metadata.path,
     });
-    const candidatePersistedSessionFile =
-        resolveConnectedServiceCandidatePersistedSessionFile(agentId, metadata) ?? '';
     return {
         agentId,
         connectedServices: readConnectedServiceBindingsOrEmpty(metadata.connectedServices),
@@ -1883,7 +1851,6 @@ async function resolveInactiveConnectedServiceSessionContext(input: Readonly<{
             : {}),
         ...(vendorResumeId ? { vendorResumeId } : {}),
         ...(cwd ? { cwd } : {}),
-        ...(candidatePersistedSessionFile ? { candidatePersistedSessionFile } : {}),
     };
 }
 
@@ -1909,6 +1876,7 @@ async function applyAlreadyRunningExistingSessionRuntimeSnapshot(input: Readonly
             existingSessionId: input.sessionId,
         };
         const runtimeSnapshot = resolveSessionRuntimeSnapshot({
+            resolutionMode: 'retained_live_process',
             incomingOptions,
             persistedMetadata: metadata,
             persistedVendorResumeId,
@@ -2049,6 +2017,9 @@ export async function startDaemonSessionControlRuntime(
             host: ReturnType<
                 typeof createDaemonManagedServiceEndpointReadOwner
             >['bindHost'],
+        ) => void;
+        onManagedServiceSessionBaseUrlResolverReady?: (
+            resolver: ManagedServiceSessionBaseUrlResolver,
         ) => void;
         onBrowserDiagnosticsRoutesReady?: (routes: BrowserDiagnosticsRoutes) => void;
         onBrowserRecordingRoutesReady?: (routes: BrowserRecordingRoutes) => void;
@@ -2198,13 +2169,6 @@ export async function startDaemonSessionControlRuntime(
         }>>;
     }>;
     connectedServicePredictiveSwitchGuard: ReturnType<typeof createConnectedServicePredictiveSwitchGuard>;
-    connectedServiceRuntimeAuthApplyCapabilityResolver: (input: Readonly<{
-        sessionId: string;
-        agentId?: string | null;
-        serviceId?: ConnectedServiceId;
-        groupId?: string;
-        reason?: 'same_provider_account_exhausted';
-    }>) => Promise<ConnectedServiceRuntimeAuthApplyCapability>;
     consumeCommittedAuthGroupGeneration: (
         input: Parameters<ConnectedServiceAuthGroupGenerationConsumer['consume']>[0],
     ) => ReturnType<ConnectedServiceAuthGroupGenerationConsumer['consume']>;
@@ -2445,8 +2409,8 @@ export async function startDaemonSessionControlRuntime(
                 && record.type !== 'connected_service_auth_group_switch'
             )
         ) return;
-        const serviceIdParsed = ConnectedServiceIdSchema.safeParse(record.serviceId);
-        if (!serviceIdParsed.success) return;
+        const serviceIdParsed = readBuiltInLegacyConnectedAccountServiceKeyIngress(record.serviceId);
+        if (!serviceIdParsed) return;
         const reason = normalizeOptionalString(record.reason) || input.reasonFallback || 'unknown';
         const fromProfileId = normalizeOptionalString(record.fromProfileId) || null;
         const toProfileId = normalizeOptionalString(record.toProfileId) || null;
@@ -2508,7 +2472,7 @@ export async function startDaemonSessionControlRuntime(
             memberState: { credentialHealthStatus: 'refresh_failed_retryable' as const },
         };
     const readQualifiedConnectedServiceAuthGroup = async (input: Readonly<{
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string;
         signal?: AbortSignal;
     }>) => {
@@ -2516,7 +2480,7 @@ export async function startDaemonSessionControlRuntime(
             return null;
         }
         const service =
-            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+            resolveQualifiedConnectedAccountServiceForIngressServiceId(
                 input.serviceId,
             );
         if (!service) return null;
@@ -2624,7 +2588,7 @@ export async function startDaemonSessionControlRuntime(
         return targets;
     };
     const validateConnectedServiceGroupMutationCurrentness = async (input: Readonly<{
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string;
         profileId: string;
         generation: number;
@@ -2637,12 +2601,19 @@ export async function startDaemonSessionControlRuntime(
         if (!currentGroup?.activeConnectedAccountId) {
             return { current: false as const, reason: 'shared_generation_application_superseded' };
         }
-        const currentResolutions = await resolveConnectedServiceCredentialResolutions({
-            credentials: params.credentials,
-            api: params.api,
-            bindings: [{ serviceId: input.serviceId, profileId: currentGroup.activeConnectedAccountId }],
-        }).catch(() => null);
-        const currentResolution = currentResolutions?.get(input.serviceId) ?? null;
+        // Released V2/V3 sealed-credential reads remain scalar-keyed on the server wire;
+        // first-party services translate at this named ingress. External qualified services
+        // verify currentness through the V4 group owner above alone.
+        const scalarCredentialServiceId =
+            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId);
+        const currentResolutions = scalarCredentialServiceId
+            ? await resolveConnectedServiceCredentialResolutions({
+                credentials: params.credentials,
+                api: params.api,
+                bindings: [{ serviceId: scalarCredentialServiceId, profileId: currentGroup.activeConnectedAccountId }],
+            }).catch(() => null)
+            : null;
+        const currentResolution = currentResolutions?.get(scalarCredentialServiceId ?? '') ?? null;
         const authoritativeTarget = currentResolution
             ? {
                 profileId: currentGroup.activeConnectedAccountId,
@@ -3316,10 +3287,9 @@ export async function startDaemonSessionControlRuntime(
                 await acquireAuthoritativePluginRuntimeRegistryLease({
                     happyHomeDir: configuration.happyHomeDir,
                 });
-            const contributions =
-                runtimeRegistryLease.registry.contributes;
             for (const tracked of reattached) {
-                const expectedPid = tracked.pid;
+                const trackedMapPid = tracked.pid;
+                const expectedPid = tracked.sessionRunnerPid ?? tracked.pid;
                 const sessionId =
                     normalizeOptionalString(tracked.happySessionId);
                 const agentId =
@@ -3334,6 +3304,8 @@ export async function startDaemonSessionControlRuntime(
                     );
                 const expectedProcessStartTimeMs =
                     tracked.processStartTimeMs;
+                const authorityPath =
+                    tracked.agentRuntimeDaemonServiceAuthorityFilePath;
                 const parsedBindings =
                     ConnectedServiceBindingsV1Schema.safeParse(
                         tracked.spawnOptions?.connectedServices,
@@ -3355,6 +3327,7 @@ export async function startDaemonSessionControlRuntime(
                     || !materializationIdentity
                     || !parsedBindings.success
                     || !expectedProcessCommandHash
+                    || !authorityPath
                     || typeof expectedProcessStartTimeMs !== 'number'
                     || !Number.isFinite(expectedProcessStartTimeMs)
                 ) {
@@ -3364,6 +3337,55 @@ export async function startDaemonSessionControlRuntime(
                     continue;
                 }
 
+                const retainedAuthority =
+                    await readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({
+                        happyHomeDir: configuration.happyHomeDir,
+                        publicReleaseRing:
+                            configuration.publicReleaseRing,
+                        path: authorityPath,
+                        sessionId,
+                        runner: {
+                            pid: expectedPid,
+                            processStartTimeMs: expectedProcessStartTimeMs,
+                            processCommandHash: expectedProcessCommandHash,
+                        },
+                    });
+                const acquireRetainedPurposeContributions =
+                    runtimeRegistryLease.registry
+                        .acquireRetainedRunnerAgentPurposeContributions;
+                if (
+                    !retainedAuthority
+                    || retainedAuthority.retainedAgent.agentId !== agentId
+                    || tracked.runnerAgentImmutableGenerationId
+                        !== retainedAuthority.retainedAgent
+                            .immutableGenerationId
+                    || !acquireRetainedPurposeContributions
+                ) {
+                    unavailable(
+                        'retained_agent_request_auth_declaration_unavailable',
+                    );
+                    continue;
+                }
+                const retainedPurposeContributions = await (async () => {
+                    try {
+                        return await acquireRetainedPurposeContributions({
+                            binding: retainedAuthority.retainedAgent,
+                            pluginHardRevocationRevision:
+                                retainedAuthority.pluginHardRevocationRevision,
+                        });
+                    } catch {
+                        return null;
+                    }
+                })();
+                if (!retainedPurposeContributions) {
+                    unavailable(
+                        'retained_agent_request_auth_declaration_unavailable',
+                    );
+                    continue;
+                }
+                const contributions =
+                    retainedPurposeContributions.contributes;
+
                 const purposeSnapshot =
                     resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                         agentId,
@@ -3371,6 +3393,7 @@ export async function startDaemonSessionControlRuntime(
                         contributions,
                     });
                 if (!purposeSnapshot?.requestAuthUses?.length) {
+                    await retainedPurposeContributions.release();
                     continue;
                 }
                 const requestAuthPurposeBindings =
@@ -3378,6 +3401,7 @@ export async function startDaemonSessionControlRuntime(
                         purposeSnapshot,
                     );
                 if (requestAuthPurposeBindings.length === 0) {
+                    await retainedPurposeContributions.release();
                     continue;
                 }
 
@@ -3406,10 +3430,12 @@ export async function startDaemonSessionControlRuntime(
                             }),
                     });
                 if (sourceCutover.status === 'unavailable') {
+                    await retainedPurposeContributions.release();
                     unavailable(sourceCutover.reason);
                     continue;
                 }
                 if (sourceCutover.status === 'required') {
+                    await retainedPurposeContributions.release();
                     const resolveCurrentCapabilityPath = (
                         candidate: TrackedSession,
                     ): string | null => {
@@ -3453,6 +3479,7 @@ export async function startDaemonSessionControlRuntime(
                     || previousCapability.materializationId
                         !== materializationIdentity.id
                 ) {
+                    await retainedPurposeContributions.release();
                     unavailable(
                         'request_auth_capability_recovery_facts_unavailable',
                     );
@@ -3470,6 +3497,7 @@ export async function startDaemonSessionControlRuntime(
                             bindings: purposeSnapshot.bindings,
                         });
                 } catch {
+                    await retainedPurposeContributions.release();
                     unavailable(
                         'session_purpose_binding_activation_failed',
                     );
@@ -3491,7 +3519,7 @@ export async function startDaemonSessionControlRuntime(
                         registerRedaction: redactionLease.add,
                     });
                 const previousAttachCleanup =
-                    params.sessionAttachCleanupByPid.get(expectedPid)
+                    params.sessionAttachCleanupByPid.get(trackedMapPid)
                     ?? null;
                 let capability:
                     ConnectedAccountRequestAuthCapabilityDescriptor
@@ -3528,6 +3556,7 @@ export async function startDaemonSessionControlRuntime(
                         lifecycleCleanupStarted = true;
                         lifecycleCleanupPromise ??= (async () => {
                             await retireRecoveredAuthority();
+                            await retainedPurposeContributions.release();
                             await previousAttachCleanup?.();
                         })();
                         await lifecycleCleanupPromise;
@@ -3537,7 +3566,7 @@ export async function startDaemonSessionControlRuntime(
                 // replacement capability is published. PID promotion transfers
                 // this same composed cleanup entry with the tracked session.
                 params.sessionAttachCleanupByPid.set(
-                    expectedPid,
+                    trackedMapPid,
                     lifecycleCleanup,
                 );
                 try {
@@ -3571,12 +3600,14 @@ export async function startDaemonSessionControlRuntime(
                                                 .subjectScopeDigest
                                         || !isExactProcessCurrent
                                         || lifecycleCleanupStarted
-                                        || tracked.pid !== expectedPid
+                                        || tracked.pid !== trackedMapPid
+                                        || (tracked.sessionRunnerPid ?? tracked.pid)
+                                            !== expectedPid
                                         || params.pidToTrackedSession.get(
-                                            expectedPid,
+                                            trackedMapPid,
                                         ) !== tracked
                                         || params.sessionAttachCleanupByPid.get(
-                                            expectedPid,
+                                            trackedMapPid,
                                         ) !== lifecycleCleanup
                                         || tracked.processCommandHash
                                             !== expectedProcessCommandHash
@@ -3594,14 +3625,17 @@ export async function startDaemonSessionControlRuntime(
                     const currentPid = tracked.pid;
                     if (
                         lifecycleCleanupStarted
-                        || currentPid !== expectedPid
-                        || params.pidToTrackedSession.get(expectedPid)
+                        || currentPid !== trackedMapPid
+                        || (tracked.sessionRunnerPid ?? tracked.pid)
+                            !== expectedPid
+                        || params.pidToTrackedSession.get(trackedMapPid)
                             !== tracked
                         || params.sessionAttachCleanupByPid.get(
-                            expectedPid,
+                            trackedMapPid,
                         ) !== lifecycleCleanup
                     ) {
                         await retireRecoveredAuthority();
+                        await retainedPurposeContributions.release();
                         if (
                             !lifecycleCleanupStarted
                             && params.sessionAttachCleanupByPid.get(
@@ -3625,6 +3659,8 @@ export async function startDaemonSessionControlRuntime(
                     }
                 } catch {
                     await retireRecoveredAuthority()
+                        .catch(() => undefined);
+                    await retainedPurposeContributions.release()
                         .catch(() => undefined);
                     const currentPid = tracked.pid;
                     if (
@@ -4023,6 +4059,12 @@ export async function startDaemonSessionControlRuntime(
                             ? {
                                 activateSessionPurposeBindings:
                                     params.activateSessionPurposeBindings,
+                            }
+                            : {}),
+                        ...(params.activatePurposeBindings
+                            ? {
+                                activatePurposeBindings:
+                                    params.activatePurposeBindings,
                             }
                             : {}),
                     }),
@@ -4508,80 +4550,26 @@ export async function startDaemonSessionControlRuntime(
             ? input.agentId.trim()
             : resolveTrackedSessionCatalogAgentId(tracked);
         if (!resolvedAgentId) return 'unsupported';
-        const declaredCapabilities = await getConnectedServiceRecoveryCapabilities(resolvedAgentId as CatalogAgentId)
-            .catch(() => null);
-        return await resolvePredictiveSoftSwitchCapability({
-            declaredCapabilities,
-            inferFromRuntimeAuthAdapter: async () => {
-                const adapter = await getConnectedServiceRuntimeAuthAdapter(resolvedAgentId as CatalogAgentId);
-                if (!adapter) return 'unsupported';
-                const materialization = await adapter.materializeActiveProfile({
-                    target: { agentId: resolvedAgentId },
-                    selection: {
-                        serviceId: input.serviceId,
-                        groupId: input.groupId,
-                        activeProfileId: input.activeProfileId,
-                        profileId: input.activeProfileId,
-                    },
-                });
-                return materialization?.supported === true ? 'supported' : 'unsupported';
-            },
-        }).then((mode) => {
-            if (
-                mode !== 'supported'
-                && input.reason === 'soft_threshold'
-                && declaredCapabilities?.sameAccountFanoutStrategy === 'shared_group_auth_surface'
-                && trackedSessionUsesRequestedSharedGroupAuthSurface({
-                    tracked,
-                    activeServerDir: configuration.activeServerDir,
-                    agentId: resolvedAgentId as CatalogAgentId,
+        try {
+            const adapter = await getConnectedServiceRuntimeAuthAdapter(
+                resolvedAgentId as CatalogAgentId,
+            );
+            if (!adapter) return 'unsupported';
+            const materialization = await adapter.materializeActiveProfile({
+                target: { agentId: resolvedAgentId },
+                selection: {
                     serviceId: input.serviceId,
                     groupId: input.groupId,
                     activeProfileId: input.activeProfileId,
-                })
-            ) {
-                return 'supported';
-            }
-            if (mode !== 'supported') return mode;
-            const liveRequirement = declaredCapabilities?.predictiveSoftSwitch.liveSessionRequirement ?? null;
-            if (!liveRequirement) return mode;
-            const decision = evaluatePredictiveSoftSwitchLiveSessionRequirement({
-                reason: input.reason,
-                requirement: liveRequirement,
-                activeServerDir: configuration.activeServerDir,
-                agentId: resolvedAgentId as CatalogAgentId,
-                serviceId: input.serviceId,
-                groupId: input.groupId,
-                activeProfileId: input.activeProfileId,
-                env: tracked?.spawnOptions?.environmentVariables ?? {},
+                    profileId: input.activeProfileId,
+                },
             });
-            return decision.status === 'allow' ? 'supported' : 'unsupported';
-        });
-    };
-    const resolveRuntimeAuthApplyCapabilityForInput = async (input: Readonly<{
-        sessionId: string;
-        agentId?: string | null;
-    }>): Promise<ConnectedServiceRuntimeAuthApplyCapability> => {
-        const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), input.sessionId);
-        const explicitAgentId = typeof input.agentId === 'string' && input.agentId.trim()
-            ? input.agentId.trim()
-            : null;
-        const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
-        const inactiveContext = explicitAgentId || trackedAgentId
-            ? null
-            : await resolveInactiveConnectedServiceSessionContext({
-                token: params.credentials.token,
-                credentials: params.credentials,
-                sessionId: input.sessionId,
-                currentMachineId: params.machineId,
-            });
-        const resolvedAgentId = typeof input.agentId === 'string' && input.agentId.trim()
-            ? input.agentId.trim()
-            : trackedAgentId ?? inactiveContext?.agentId;
-        if (!resolvedAgentId) return { directLiveHotAuth: 'unsupported' };
-        return await resolveConnectedServiceRuntimeAuthApplyCapability(
-            async () => await getConnectedServiceRecoveryCapabilities(resolvedAgentId as CatalogAgentId),
-        );
+            return materialization?.supported === true
+                ? 'supported'
+                : 'unsupported';
+        } catch {
+            return 'unsupported';
+        }
     };
     const requestConnectedServiceRestartWithDeferral = async (input: Readonly<{
         sessionId: string;
@@ -4607,9 +4595,9 @@ export async function startDaemonSessionControlRuntime(
             pidToTrackedSession: params.pidToTrackedSession,
             canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
             requestSignal: async (signalInput) => {
-                // K5:gated_restart this raw SIGTERM IS the gated restart primitive's signal. It
+                // This raw SIGTERM is the gated restart primitive's signal. It
                 // only fires inside the planned restart helper after the deferral policy allows it,
-                // and the respawn re-verifies resume reachability (K1).
+                // and the respawn re-verifies resume reachability.
                 return await requestConnectedServiceSessionRestartSignal({
                     pid: signalInput.tracked.pid,
                     delayMs: input.restartSignalDelayMs,
@@ -4679,7 +4667,7 @@ export async function startDaemonSessionControlRuntime(
                         ) ?? true
                     )),
                 requestSignal: async (signalInput) => {
-                    // K5:gated_restart session-runner version refresh uses the shared forced-respawn
+                    // Session-runner version refresh uses the shared forced-respawn
                     // signal primitive without a durable connected-service intent or startup re-drive.
                     return await requestConnectedServiceSessionRestartSignal({
                         pid: signalInput.tracked.pid,
@@ -4815,7 +4803,7 @@ export async function startDaemonSessionControlRuntime(
         dryRun?: boolean;
     }>) => async (restartInput: Readonly<{
         sessionId?: string;
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string | null;
         activeProfileId: string | null;
         generation: number | null;
@@ -4858,8 +4846,8 @@ export async function startDaemonSessionControlRuntime(
                 250,
                 { min: 0, max: 5_000 },
             );
-            // K5:gated_restart the FSM's restart-resume fallback when hot-apply is
-            // ineligible; gated through deferral + spawn-time reachability (K1).
+            // The FSM's restart-resume fallback when hot-apply is ineligible is
+            // gated through deferral and spawn-time reachability.
             await requestConnectedServiceRestartWithDeferral({
                 sessionId: builderInput.sessionId,
                 tracked,
@@ -4932,7 +4920,7 @@ export async function startDaemonSessionControlRuntime(
             return await signalRestartWithoutConfirmedApply();
         }
         const runtimeAuthApplyReason = normalizeRuntimeAuthApplyReason(builderInput.restartReason);
-        // K5:fsm_switch reactive + proactive-quota auth-generation apply routes through
+        // Reactive and proactive-quota auth-generation apply routes through
         // the FSM (hot-apply-in-place when eligible, else gated restart-resume with
         // reachability + deferral + mid-turn re-continue exactly once).
         const result = await applyConnectedServiceAuthGenerationToTrackedSession({
@@ -4996,6 +4984,7 @@ export async function startDaemonSessionControlRuntime(
                     targetMaterializedRoot: continuityContext.targetMaterializedRoot,
                     targetMaterializedEnv: continuityContext.targetMaterializedEnv,
                     cwd: continuityContext.cwd,
+                    runtimeDescriptorV1: continuityContext.runtimeDescriptorV1,
                     candidatePersistedSessionFile: continuityContext.candidatePersistedSessionFile,
                     ...(runtimeAuthSelection === undefined ? {} : { runtimeAuthSelection }),
                 });
@@ -5125,13 +5114,13 @@ export async function startDaemonSessionControlRuntime(
     };
 
     /**
-     * The released session-control surface still accepts scalar service ids. Keep that
-     * compatibility seam at the edge while routing every group decision through the
-     * qualified V4 coordinator. An unsupported or unmapped scalar has no group authority.
+     * Accepts canonical qualified service keys; released scalar ids normalize through the
+     * sole legacy ingress normalizer at the edge. Every group decision routes through the
+     * qualified V4 coordinator; an unmapped identity has no group authority.
      */
     const createSessionQualifiedAuthGroupSwitchCoordinator = (input: Readonly<{
         sessionId: string;
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         reason: string;
         allowRestart?: boolean;
         executionAuthority?: ConnectedServiceGenerationExecutionAuthority;
@@ -5140,7 +5129,7 @@ export async function startDaemonSessionControlRuntime(
             return null;
         }
         const qualifiedService =
-            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+            resolveQualifiedConnectedAccountServiceForIngressServiceId(
                 input.serviceId,
             );
         if (!qualifiedService) return null;
@@ -5151,8 +5140,8 @@ export async function startDaemonSessionControlRuntime(
             leases: qualifiedConnectedAccountAuthGroupSwitchLeases,
             prepareCandidateForSwitch:
                 prepareQualifiedAuthGroupCandidateForSwitch,
-            // Session application remains the bounded scalar compatibility seam; the
-            // qualified coordinator owns loading, selection, CAS, and generation truth.
+            // Session application carries the canonical qualified service key; first-party
+            // scalars persist only inside the bounded V2/V3 compatibility seams.
             applyGeneration: async (generation) => await buildConnectedServiceAuthApplicationSession({
                 sessionId: input.sessionId,
                 restartReason: input.reason,
@@ -5177,11 +5166,11 @@ export async function startDaemonSessionControlRuntime(
             const tracked = Array.from(params.pidToTrackedSession.values())
                 .find((child) => child.happySessionId === sessionId) ?? null;
             if (!tracked) return { status: 'session_not_found' };
-            const parsedServiceId = ConnectedServiceIdSchema.safeParse(input.serviceId);
-            const proactiveCoordinator = parsedServiceId.success
+            const parsedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
+            const proactiveCoordinator = parsedServiceId
                 ? createSessionQualifiedAuthGroupSwitchCoordinator({
                 sessionId,
-                serviceId: parsedServiceId.data,
+                serviceId: parsedServiceId,
                 reason: input.reason,
             })
                 : null;
@@ -5192,8 +5181,8 @@ export async function startDaemonSessionControlRuntime(
                 };
             }
             const qualifiedService =
-                resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
-                    parsedServiceId.data,
+                resolveQualifiedConnectedAccountServiceForIngressServiceId(
+                    parsedServiceId,
                 );
             if (!qualifiedService) {
                 return {
@@ -5238,11 +5227,11 @@ export async function startDaemonSessionControlRuntime(
                     errorCode: 'session_not_found',
                 };
             }
-            const parsedServiceId = ConnectedServiceIdSchema.safeParse(input.serviceId);
-            const recipientCoordinator = parsedServiceId.success
+            const parsedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
+            const recipientCoordinator = parsedServiceId
                 ? createSessionQualifiedAuthGroupSwitchCoordinator({
                     sessionId,
-                    serviceId: parsedServiceId.data,
+                    serviceId: parsedServiceId,
                     reason: input.reason,
                     allowRestart: input.allowRestart,
                     ...(input.executionAuthority
@@ -5250,7 +5239,7 @@ export async function startDaemonSessionControlRuntime(
                         : {}),
                 })
                 : null;
-            if (!recipientCoordinator || !parsedServiceId.success) {
+            if (!recipientCoordinator || !parsedServiceId) {
                 return {
                     status: 'generation_apply_failed',
                     generation: input.generation,
@@ -5258,8 +5247,8 @@ export async function startDaemonSessionControlRuntime(
                 };
             }
             const qualifiedService =
-                resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
-                    parsedServiceId.data,
+                resolveQualifiedConnectedAccountServiceForIngressServiceId(
+                    parsedServiceId,
                 );
             if (!qualifiedService) {
                 return {
@@ -5370,10 +5359,10 @@ export async function startDaemonSessionControlRuntime(
             routedThroughGatedPrimitive: true,
         });
         try {
-            // K5:gated_restart refresh/reconnect restart deferred until turn boundary,
+            // Refresh/reconnect restart is deferred until the turn boundary and
             // reachability re-verified at respawn (no raw mid-turn SIGTERM). Propagate whether a
             // signal was actually emitted so the refresh handler reserves the pid only when it was —
-            // a superseded/cancelled deferral must not leak a reservation (F4).
+            // a superseded/cancelled deferral must not leak a reservation.
             return await requestConnectedServiceRestartWithDeferral({
                 sessionId,
                 tracked,
@@ -8182,12 +8171,19 @@ export async function startDaemonSessionControlRuntime(
                 };
             },
             resolveCurrentCredential: async (serviceId, profileId) => {
+                // Released V2/V3 sealed-credential reads remain scalar-keyed on the server
+                // wire; first-party services translate at this named ingress. External
+                // qualified services have no scalar credential identity here and report
+                // typed unavailability instead of a guessed lookup.
+                const credentialIngressServiceId =
+                    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId)
+                    ?? serviceId;
                 const resolutions = await resolveConnectedServiceCredentialResolutions({
                     credentials: params.credentials,
                     api: params.api,
-                    bindings: [{ serviceId, profileId }],
+                    bindings: [{ serviceId: credentialIngressServiceId, profileId }],
                 });
-                const resolution = resolutions?.get(serviceId) ?? null;
+                const resolution = resolutions?.get(credentialIngressServiceId) ?? null;
                 return resolution?.revisionSemantics === 'revisioned'
                     ? resolution
                     : null;
@@ -8204,21 +8200,31 @@ export async function startDaemonSessionControlRuntime(
     const resolveProviderQualifiedRuntimeAuthFailureSourceForSession: NonNullable<
         Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveProviderQualifiedRuntimeAuthFailureSource']
     > = async ({ classification }) => {
-        const serviceId = ConnectedServiceIdSchema.safeParse(classification.serviceId);
         const groupId = typeof classification.groupId === 'string' ? classification.groupId.trim() : '';
-        if (!serviceId.success || !groupId) return classification;
+        if (!groupId || typeof classification.serviceId !== 'string') return classification;
+        // The V4 group owner accepts canonical qualified service refs directly.
+        if (!(await readQualifiedConnectedServiceAuthGroup({ serviceId: classification.serviceId, groupId }))) {
+            return classification;
+        }
+        // Released V2/V3 sealed-credential reads remain scalar-keyed on the server wire;
+        // first-party services translate at this named ingress. External qualified services
+        // have no scalar credential identity and resolve provider accounts through the V4
+        // group owner only.
+        const scalarCredentialServiceId =
+            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(classification.serviceId);
         return await resolveRuntimeAuthFailureSourceProfile({
             classification,
             getGroupMembers: async () => (await readQualifiedConnectedServiceAuthGroup({
-                serviceId: serviceId.data,
+                serviceId: classification.serviceId,
                 groupId,
             }))?.members.map((member) => ({ profileId: member.connectedAccountId })) ?? null,
             resolveProviderAccountId: async (profileId) => {
+                if (!scalarCredentialServiceId) return null;
                 const resolution = await resolveConnectedServiceCredentialResolutions({
                     credentials: params.credentials,
                     api: params.api,
-                    bindings: [{ serviceId: serviceId.data, profileId }],
-                }).then((byServiceId) => byServiceId.get(serviceId.data) ?? null);
+                    bindings: [{ serviceId: scalarCredentialServiceId, profileId }],
+                }).then((byServiceId) => byServiceId.get(scalarCredentialServiceId) ?? null);
                 return resolution
                     ? readConnectedServiceCredentialProviderAccountId(resolution.record)
                     : null;
@@ -8228,14 +8234,15 @@ export async function startDaemonSessionControlRuntime(
     const resolveRegisteredRuntimeAuthFailureSourceForSession: NonNullable<
         Parameters<typeof authorizeConnectedServiceRuntimeAuthFailureSource>[0]['resolveRegisteredRuntimeAuthFailureSource']
     > = async ({ sessionId: liveSessionId, tracked, classification: liveClassification }) => {
-        const serviceId = ConnectedServiceIdSchema.safeParse(liveClassification.serviceId);
-        if (!serviceId.success) return null;
+        // The runtime registry binds sessions by canonical qualified service key.
+        const serviceId = liveClassification.serviceId;
+        if (typeof serviceId !== 'string' || !serviceId) return null;
         const target = connectedServiceRuntimeRegistry.getBySessionId(liveSessionId);
         if (!target || target.pid !== tracked.pid || target.sessionId !== liveSessionId) return null;
-        const binding = target.activeBindings.find((candidate) => candidate.serviceId === serviceId.data);
+        const binding = target.activeBindings.find((candidate) => candidate.serviceId === serviceId);
         if (!binding) return null;
         return {
-            serviceId: binding.serviceId,
+            serviceId,
             groupId: binding.groupId,
             profileId: binding.profileId,
             generation: binding.groupGeneration,
@@ -8281,13 +8288,19 @@ export async function startDaemonSessionControlRuntime(
         const runtimeAuthV4Support =
             params.resolveQualifiedConnectedAccountV4Support?.()
             ?? 'absent';
-        const legacyRuntimeAuthService = ConnectedServiceIdSchema.safeParse(
-            input.classification.serviceId,
-        );
-        const qualifiedRuntimeAuthService =
-            resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(
+        // The classification carries the canonical qualified service key (sanitize is the
+        // sole ingress and normalizes released bundled scalar ids). The reverse scalar
+        // mapping stays only for the bounded V2/V3 compatibility seams below.
+        const runtimeAuthServiceKey = typeof input.classification.serviceId === 'string'
+            ? readBuiltInLegacyConnectedAccountServiceKeyIngress(input.classification.serviceId)
+            : null;
+        const legacyRuntimeAuthService =
+            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
                 input.classification.serviceId,
             );
+        const qualifiedRuntimeAuthService = runtimeAuthServiceKey
+            ? resolveQualifiedConnectedAccountServiceForIngressServiceId(runtimeAuthServiceKey)
+            : null;
         const runtimeAuthGroupQuotaFreshnessMs = resolvePositiveIntEnv(
             params.processEnv.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
             5 * 60_000,
@@ -8309,10 +8322,10 @@ export async function startDaemonSessionControlRuntime(
         > | null = (
             runtimeAuthV4Support === 'advertised'
             && qualifiedRuntimeAuthService
-            && legacyRuntimeAuthService.success
+            && runtimeAuthServiceKey
         )
             ? (() => {
-                const legacyServiceId = legacyRuntimeAuthService.data;
+                const serviceKey = runtimeAuthServiceKey;
                 const qualifiedService = qualifiedRuntimeAuthService;
                 const qualifiedCoordinator =
                     createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
@@ -8323,21 +8336,21 @@ export async function startDaemonSessionControlRuntime(
                         prepareCandidateForSwitch:
                             prepareQualifiedAuthGroupCandidateForSwitch,
                         // The V4 coordinator owns group truth and mutation. Runtime application
-                        // remains the bounded scalar-session compatibility seam until runners
-                        // carry qualified binding identities.
+                        // carries the canonical qualified service key; first-party scalars
+                        // persist only inside the bounded V2/V3 compatibility seams.
                         applyGeneration: async (generation) => await buildRuntimeAuthApplication({
                             commitAccountSwitchEvents: true,
                         })({
                             ...generation,
-                            serviceId: legacyServiceId,
+                            serviceId: serviceKey,
                         }),
                     });
                 return {
                     switchAfterClassifiedFailure: async (switchInput) => {
                         // Source authorization can replace a stale report with the exact
                         // runtime binding. Do not let an already-selected V4 coordinator
-                        // operate on a different scalar compatibility identity.
-                        if (switchInput.serviceId !== legacyServiceId) {
+                        // operate on a different service identity.
+                        if (switchInput.serviceId !== serviceKey) {
                             throw new Error(
                                 'qualified_connected_account_runtime_auth_service_mismatch',
                             );
@@ -8352,27 +8365,24 @@ export async function startDaemonSessionControlRuntime(
             })()
             : null;
         const switchCoordinator = qualifiedRuntimeAuthSwitchCoordinator;
-        const runtimeAuthCapabilityAgentId = input.sourceAuthorization?.status === 'authorized'
-            ? input.sourceAuthorization.tracked
-                ? resolveTrackedSessionCatalogAgentId(input.sourceAuthorization.tracked)
-                : input.sourceAuthorization.inactive?.agentId
-            : trackedRecoverySession
-                ? resolveTrackedSessionCatalogAgentId(trackedRecoverySession)
-                : inactiveRecoverySession?.agentId;
-        const runtimeAuthApplyCapability = await resolveRuntimeAuthApplyCapabilityForInput({
-            sessionId: input.sessionId,
-            ...(runtimeAuthCapabilityAgentId ? { agentId: runtimeAuthCapabilityAgentId } : {}),
-        });
+        if (!runtimeAuthServiceKey) {
+            // Sanitize owns classification ingress; an unparseable key here means a caller
+            // bypassed it. Fail the recovery visibly instead of guessing an identity.
+            return {
+                status: 'recovery_handler_failed' as const,
+                reason: 'runtime_auth_service_key_unparseable',
+            };
+        }
         const continueAfterRuntimeAuthSwitch = createConnectedServiceContinuationHandler({
             credentials: params.credentials,
             interruptedOriginId,
             resumePromptMode: await resolveContinuationResumePromptMode({
-                serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
+                serviceId: runtimeAuthServiceKey,
                 groupId: input.classification.groupId,
                 explicit: input.resumePromptMode,
                 loadGroupPolicy: input.classification.groupId
                     ? async () => (await readQualifiedConnectedServiceAuthGroup({
-                        serviceId: ConnectedServiceIdSchema.parse(input.classification.serviceId),
+                        serviceId: runtimeAuthServiceKey,
                         groupId: input.classification.groupId!,
                     }))?.policy ?? null
                     : undefined,
@@ -8422,7 +8432,6 @@ export async function startDaemonSessionControlRuntime(
             ...(input.recoveryInvocationSource ? { recoveryInvocationSource: input.recoveryInvocationSource } : {}),
             classification: input.classification,
             ...(input.sourceAuthorization ? { sourceAuthorization: input.sourceAuthorization } : {}),
-            runtimeAuthApplyCapability,
             refreshConnectedServiceCredentialForRuntimeAuthFailure: async (refreshInput) => {
                 const refreshCoordinator = params.getConnectedServiceRefreshCoordinator();
                 if (!refreshCoordinator) {
@@ -8497,18 +8506,18 @@ export async function startDaemonSessionControlRuntime(
             && input.classification.groupId
             && input.classification.profileId
         ) {
-            const serviceId = ConnectedServiceIdSchema.safeParse(input.classification.serviceId);
+            const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.classification.serviceId);
             const quotaCoordinator = params.getConnectedServiceQuotasCoordinator();
-            if (serviceId.success && quotaCoordinator) {
+            if (serviceId && quotaCoordinator) {
                 const committedGeneration = resolveCommittedGenerationFromRuntimeAuthRecovery({
-                    serviceId: serviceId.data,
+                    serviceId,
                     groupId: input.classification.groupId,
                     recovery: result,
                 });
                 try {
                     await quotaCoordinator.recordRuntimeUsageLimitExhaustionAndFanout({
                         sourceSessionId: input.sessionId,
-                        serviceId: serviceId.data,
+                        serviceId,
                         groupId: input.classification.groupId,
                         exhaustedProfileId: input.classification.profileId,
                         sourceProviderAccountId: input.classification.sourceProviderAccountId ?? null,
@@ -8594,8 +8603,6 @@ export async function startDaemonSessionControlRuntime(
         readTurnState: (sessionId) => connectedServiceTurnDeferralQueue.getTurnLifecycleState(sessionId),
         resolvePredictiveSoftSwitchMode: async (input) =>
             await resolvePredictiveSoftSwitchModeForInput(input),
-        runtimeAuthApplyCapabilityResolver: async (input) =>
-            await resolveRuntimeAuthApplyCapabilityForInput(input),
     });
     // Single async server-features fetch source shared by the local-services inventory gate and
     // the browser daemon feature gate (OWNER-GATE). One fetch source, two consumers — no second
@@ -9456,6 +9463,8 @@ export async function startDaemonSessionControlRuntime(
             requireConnectedAccountRequestAuthHttpPort,
         createRedactionLease: () =>
             createProviderRedactionLease({ values: [] }),
+        clearTerminalCleanupReceipt:
+            clearExecutionRunConnectedServicesCleanupReceipt,
     });
     releaseExecutionRunAuthorityForRunnerExit =
         executionRunConnectedServicesBridge.releaseForRunnerExit;
@@ -9557,11 +9566,12 @@ export async function startDaemonSessionControlRuntime(
         if (input.tracked) {
             return input.tracked.spawnOptions?.environmentVariables ?? {};
         }
-        const capabilities = await getConnectedServiceRecoveryCapabilities(input.ownerId).catch(() => null);
-        const requirement = capabilities?.predictiveSoftSwitch.liveSessionRequirement;
+        const descriptor = await getConnectedServiceStateSharingDescriptor(
+            input.ownerId,
+        ).catch(() => null);
         if (
-            requirement?.kind !== 'shared_group_auth_surface'
-            || !requirement.serviceIds.includes(input.target.serviceId)
+            descriptor?.providerSupportStatus !== 'supported'
+            || !descriptor.nativeHome
         ) {
             return null;
         }
@@ -9579,7 +9589,9 @@ export async function startDaemonSessionControlRuntime(
                 policy: null,
             },
         });
-        return materializedRoot ? { [requirement.authEnvKey]: materializedRoot } : null;
+        return materializedRoot
+            ? { [descriptor.nativeHome.environmentKey]: materializedRoot }
+            : null;
     };
     const createDurableGenerationConsumer = (options?: Readonly<{
         allowProviderInputAdmissionWrites?: boolean;
@@ -9938,6 +9950,23 @@ export async function startDaemonSessionControlRuntime(
             if (!targetMaterializedEnv || !adapter?.hotApply) {
                 return { reconciliationDisposition: 'failed', errorCode: 'shared_generation_application_unavailable' };
             }
+            const targetMaterializedRoot = resolveConnectedServiceTargetMaterializedRoot({
+                agentId: ownerId,
+                targetMaterializedEnv,
+            });
+            const nativeHome = targetMaterializedRoot
+                ? await createConnectedServiceRuntimeAuthNativeHome({
+                    agentId: ownerId,
+                    root: targetMaterializedRoot,
+                })
+                : null;
+            const supersedingTargetObservation: {
+                authoritativeTarget?: Readonly<{
+                    profileId: string;
+                    generation: number;
+                    credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+                }>;
+            } = {};
             const applied = await adapter.hotApply({
                 target: { agentId: ownerId },
                 selection: {
@@ -9947,32 +9976,37 @@ export async function startDaemonSessionControlRuntime(
                     profileId: target.profileId,
                     groupGeneration: target.generation,
                     credentialRevision: target.credentialRevision,
-                    record: resolution.record,
-                    targetMaterializedEnv,
                 },
+                credential: resolution.record,
+                ...(nativeHome ? { nativeHome } : {}),
                 targetMaterializedEnv,
-                validateCurrentBeforeMutation: async () => await validateConnectedServiceGroupMutationCurrentness({
-                    serviceId: target.serviceId,
-                    groupId: target.groupId,
-                    profileId: target.profileId,
-                    generation: target.generation,
-                    credentialRevision: target.credentialRevision,
-                }),
+                validateCurrentBeforeMutation: async () => {
+                    const currentness = await validateConnectedServiceGroupMutationCurrentness({
+                        serviceId: target.serviceId,
+                        groupId: target.groupId,
+                        profileId: target.profileId,
+                        generation: target.generation,
+                        credentialRevision: target.credentialRevision,
+                    });
+                    if (currentness.current === false && currentness.authoritativeTarget) {
+                        supersedingTargetObservation.authoritativeTarget = currentness.authoritativeTarget;
+                    }
+                    return currentness;
+                },
             }).catch(() => null);
             if (!applied?.applied) {
+                const authoritativeTarget = supersedingTargetObservation.authoritativeTarget;
                 if (
                     applied?.status === 'superseded_after_apply'
-                    && typeof applied.activeProfileId === 'string'
-                    && typeof applied.generation === 'number'
-                    && (typeof applied.credentialRevision === 'string' || applied.credentialRevision === null)
+                    && authoritativeTarget
                 ) {
                     return mapCommittedGenerationApplyResult({
                         committedGeneration,
                         result: {
                             status: 'superseded_after_apply',
-                            activeProfileId: applied.activeProfileId,
-                            generation: applied.generation,
-                            credentialRevision: applied.credentialRevision,
+                            activeProfileId: authoritativeTarget.profileId,
+                            generation: authoritativeTarget.generation,
+                            credentialRevision: authoritativeTarget.credentialRevision,
                             errorCode: typeof applied.reason === 'string' ? applied.reason : null,
                         },
                     });
@@ -10590,6 +10624,16 @@ export async function startDaemonSessionControlRuntime(
         managedServiceEndpointReadOwner
             .bindHost,
     );
+    params.onManagedServiceSessionBaseUrlResolverReady?.(async (input) => {
+        const projection = await managedServiceDurabilityOwner!
+            .resolveEndpointProjection({
+                pluginId: input.pluginId,
+                sessionId: input.sessionId,
+                contributionId: input.contributionId,
+                selector: { kind: 'currentSessionManagedSpawn' },
+            });
+        return projection?.endpoint.baseUrl ?? null;
+    });
     const resolveTrackedRunnerRuntimeCurrentness = async (
         tracked: TrackedSession | null | undefined,
     ) => await resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
@@ -10734,6 +10778,7 @@ export async function startDaemonSessionControlRuntime(
                     const apiMachineForSessions = params.getApiMachineForSessions();
                     const executor = createCliActionExecutorFromCredentials({
                         credentials: params.credentials,
+                        pluginActionExecutionOwner: 'current_process',
                         ...(params.runtimeActionExecute
                             ? { runtimeActionExecute: params.runtimeActionExecute }
                             : {}),
@@ -12239,7 +12284,7 @@ export async function startDaemonSessionControlRuntime(
                 };
             }
 
-            // K5:fsm_switch manual auth switch routes through the FSM (reachability
+            // Manual auth switch routes through the FSM (reachability
             // gate at respawn, binding persistence, hot-apply-in-place when eligible).
             const result = await switchSessionConnectedServiceAuth({
                 core: connectedServiceSessionAuthSwitchCore,
@@ -12300,6 +12345,7 @@ export async function startDaemonSessionControlRuntime(
                         targetMaterializedRoot: continuityContext.targetMaterializedRoot,
                         targetMaterializedEnv: continuityContext.targetMaterializedEnv,
                         cwd: continuityContext.cwd,
+                        runtimeDescriptorV1: continuityContext.runtimeDescriptorV1,
                         candidatePersistedSessionFile: continuityContext.candidatePersistedSessionFile,
                         ...(runtimeAuthSelection === undefined ? {} : { runtimeAuthSelection }),
                     });
@@ -12327,8 +12373,8 @@ export async function startDaemonSessionControlRuntime(
                         250,
                         { min: 0, max: 5_000 },
                     );
-                    // K5:gated_restart manual restart-resume fallback (hot-apply ineligible);
-                    // gated through deferral + spawn-time reachability (K1).
+                    // Manual restart-resume fallback (hot-apply ineligible) is gated
+                    // through deferral and spawn-time reachability.
                     await requestConnectedServiceRestartWithDeferral({
                         sessionId: input.sessionId,
                         tracked,
@@ -12497,14 +12543,18 @@ export async function startDaemonSessionControlRuntime(
                 resolveProviderQualifiedRuntimeAuthFailureSource: resolveProviderQualifiedRuntimeAuthFailureSourceForSession,
                 sessionId,
                 classification,
-                runtimeAuthApplyCapability: await resolveRuntimeAuthApplyCapabilityForInput({ sessionId }),
             }),
-        resolveConnectedServiceRuntimeAuthResumePromptMode: async ({ classification, explicit }) =>
-            await resolveContinuationResumePromptMode({
-                serviceId: ConnectedServiceIdSchema.parse(classification.serviceId),
+        resolveConnectedServiceRuntimeAuthResumePromptMode: async ({ classification, explicit }) => {
+            // Scheduler intents are sanitized at load, so the key is canonical here; a
+            // stale unparseable key degrades to the caller's explicit/standard prompt mode.
+            const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(classification.serviceId);
+            if (!serviceKey) return explicit ?? 'standard';
+            return await resolveContinuationResumePromptMode({
+                serviceId: serviceKey,
                 groupId: classification.groupId,
                 explicit,
-            }),
+            });
+        },
         runtimeAuthRecoveryScheduler,
         handleConnectedServiceTurnLifecycle: async (input) => {
             const lifecycleObservedAtMs = Date.now();
@@ -12722,11 +12772,16 @@ export async function startDaemonSessionControlRuntime(
                             : null;
                     },
                     resolveProviderAccountId: async (profileId) => {
+                        const legacyServiceId =
+                            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+                                groupSource.serviceId,
+                            );
+                        if (!legacyServiceId) return null;
                         const resolution = await resolveConnectedServiceCredentialResolutions({
                             credentials: params.credentials,
                             api: params.api,
-                            bindings: [{ serviceId: groupSource.serviceId, profileId }],
-                        }).then((byServiceId) => byServiceId.get(groupSource.serviceId) ?? null);
+                            bindings: [{ serviceId: legacyServiceId, profileId }],
+                        }).then((byServiceId) => byServiceId.get(legacyServiceId) ?? null);
                         return resolution
                             ? readConnectedServiceCredentialProviderAccountId(resolution.record)
                             : null;
@@ -12739,15 +12794,21 @@ export async function startDaemonSessionControlRuntime(
                     || input.credentialFingerprint !== undefined
                 );
             const sourceForCredential = shouldResolveSourceCredential ? claimedSource : null;
+            const sourceCredentialLegacyServiceId = sourceForCredential
+                ? resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+                    sourceForCredential.serviceId,
+                )
+                : null;
             const sourceCredentialResolution = sourceForCredential
+                && sourceCredentialLegacyServiceId
                 ? await resolveConnectedServiceCredentialResolutions({
                     credentials: params.credentials,
                     api: params.api,
                     bindings: [{
-                        serviceId: sourceForCredential.serviceId,
+                        serviceId: sourceCredentialLegacyServiceId,
                         profileId: sourceForCredential.profileId,
                     }],
-                }).then((byServiceId) => byServiceId.get(sourceForCredential.serviceId) ?? null)
+                }).then((byServiceId) => byServiceId.get(sourceCredentialLegacyServiceId) ?? null)
                 : null;
             const sourceCredentialRecord = sourceCredentialResolution?.revisionSemantics === 'revisioned'
                 ? sourceCredentialResolution.record
@@ -12768,10 +12829,15 @@ export async function startDaemonSessionControlRuntime(
                 ...(claimedSource ? { observation: { sources: [claimedSource] as const } } : {}),
                 credentialFingerprint,
                 verifyCredentialFingerprint: async (candidate) => {
-                    const serviceId = ConnectedServiceIdSchema.safeParse(candidate.serviceId);
+                    const serviceId = ConnectedAccountServiceKeySchema.safeParse(
+                        readBuiltInLegacyConnectedAccountServiceKeyIngress(candidate.serviceId),
+                    );
+                    const claimedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(
+                        claimedSource?.serviceId,
+                    );
                     if (!serviceId.success) return false;
                     if (
-                        claimedSource?.serviceId !== serviceId.data
+                        claimedServiceId !== serviceId.data
                         || claimedSource.profileId !== candidate.profileId
                         || sourceCredentialResolution?.revisionSemantics !== 'revisioned'
                     ) {
@@ -12822,7 +12888,7 @@ export async function startDaemonSessionControlRuntime(
                 let quotaProof: Readonly<{
                     sessionId: string;
                     proofKind: 'quota_probe_fresh';
-                    serviceId: ConnectedServiceId;
+                    serviceId: ConnectedAccountServiceKey;
                     profileId: string;
                     groupId: string | null;
                     groupGeneration: number | null;
@@ -12836,14 +12902,24 @@ export async function startDaemonSessionControlRuntime(
                     && input.snapshot.accountSubject.kind === 'providerSubject'
                 ) {
                     const source = qualifiedUsageSource;
-                    const serviceId = ConnectedServiceIdSchema.safeParse(source.serviceId);
+                    const serviceId = ConnectedAccountServiceKeySchema.safeParse(
+                        readBuiltInLegacyConnectedAccountServiceKeyIngress(source.serviceId),
+                    );
+                    const legacyServiceId = serviceId.success
+                        ? resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId.data)
+                        : null;
+                    const claimedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(
+                        claimedSource?.serviceId,
+                    );
                     const coordinator = params.getConnectedServiceQuotasCoordinator();
-                    const projected = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
-                        snapshot: input.snapshot,
-                        source,
-                    });
+                    const projected = legacyServiceId
+                        ? projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+                            snapshot: input.snapshot,
+                            source: { ...source, serviceId: legacyServiceId },
+                        })
+                        : null;
                     const credentialResolution = serviceId.success
-                        && claimedSource?.serviceId === serviceId.data
+                        && claimedServiceId === serviceId.data
                         && claimedSource.profileId === source.profileId
                         ? sourceCredentialResolution
                         : null;
@@ -12855,6 +12931,7 @@ export async function startDaemonSessionControlRuntime(
                         && computeConnectedServiceAccessTokenFingerprint(credential.oauth.accessToken) === credentialFingerprint;
                     if (
                         serviceId.success
+                        && legacyServiceId
                         && coordinator
                         && projected
                         && credentialResolution
@@ -12868,10 +12945,10 @@ export async function startDaemonSessionControlRuntime(
                             ? source.groupGeneration ?? null
                             : null;
                         const proof = coordinator.resolveQuotaProbeFreshProof({
-                            serviceId: serviceId.data,
+                            serviceId: legacyServiceId,
                             profileId: source.profileId,
                             expectedAppliedIdentity: {
-                                serviceId: serviceId.data,
+                                serviceId: legacyServiceId,
                                 profileId: source.profileId,
                                 groupId,
                                 groupGeneration,
@@ -12879,7 +12956,7 @@ export async function startDaemonSessionControlRuntime(
                                 materialFingerprint: computeConnectedServiceAccessTokenFingerprint(credential.oauth.accessToken),
                             },
                             snapshotAppliedIdentity: {
-                                serviceId: serviceId.data,
+                                serviceId: legacyServiceId,
                                 profileId: source.profileId,
                                 groupId,
                                 groupGeneration,
@@ -13019,6 +13096,10 @@ export async function startDaemonSessionControlRuntime(
     await rehydrateLiveExecutionRunTargets({
         markers: listExecutionRunMarkersForRehydration,
         adopt: executionRunConnectedServicesBridge.adoptLiveMaterialization,
+        cleanupTerminal:
+            executionRunConnectedServicesBridge.cleanupTerminalMaterialization,
+        clearTerminalCleanupReceipt:
+            clearExecutionRunConnectedServicesCleanupReceipt,
         proveRunnerLive: async (marker) => {
             if (marker.happySessionId === null) return false;
             const tracked = params.pidToTrackedSession.get(marker.pid);
@@ -13132,7 +13213,6 @@ export async function startDaemonSessionControlRuntime(
         // coordinator via startDaemonRuntimeBootstrap — replaces the old raw-signal coordinator).
         connectedServiceAuthGroupPreTurnSwitchCoordinator,
         connectedServicePredictiveSwitchGuard,
-        connectedServiceRuntimeAuthApplyCapabilityResolver: resolveRuntimeAuthApplyCapabilityForInput,
         consumeCommittedAuthGroupGeneration,
         // Gated application fallback restart adapter (turn-deferral + reachability).
         requestConnectedServiceRefreshRestartSignal,

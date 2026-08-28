@@ -275,6 +275,49 @@ describe('runner Agent daemon-owned facet service', () => {
     expect(fixture.bindPrivateExternalSession).not.toHaveBeenCalled();
   });
 
+  it('lets an aborted caller stop waiting without cancelling the shared cold binding', async () => {
+    const contributionEntered = createDeferred();
+    const releaseContribution = createDeferred();
+    const fixture = await setup({
+      resolveRetainedExternalSessionAgentContribution: async () => {
+        contributionEntered.resolve();
+        await releaseContribution.promise;
+        return null;
+      },
+    });
+    const caller = new AbortController();
+    const opening = fixture.service.dispatch({
+      ...direct,
+      signal: caller.signal,
+      operation: {
+        kind: 'external_session.follow.open',
+        requestId: 'aborted-cold-open',
+        followId: 'aborted-cold-open',
+        target: { kind: 'externalSession', ref, source },
+      },
+    });
+    await contributionEntered.promise;
+    caller.abort();
+
+    await expect(opening).rejects.toThrow('plugin_operation_aborted');
+    expect(fixture.bindPrivateExternalSession).not.toHaveBeenCalled();
+
+    releaseContribution.resolve();
+    await expect(fixture.service.dispatch({
+      ...direct,
+      operation: {
+        kind: 'external_session.follow.open',
+        requestId: 'joined-cold-open',
+        followId: 'joined-cold-open',
+        target: { kind: 'externalSession', ref, source },
+      },
+    })).resolves.toMatchObject({
+      kind: 'external_session.follow.open',
+      followId: 'joined-cold-open',
+    });
+    expect(fixture.bindPrivateExternalSession).toHaveBeenCalledTimes(1);
+  });
+
   it('retires the exact losing private candidate once before a concurrent successor binding becomes reachable', async () => {
     const successor = {
       ...retainedAgent,
@@ -282,6 +325,7 @@ describe('runner Agent daemon-owned facet service', () => {
     };
     const contributionEntered = createDeferred();
     const releaseContribution = createDeferred();
+    let resolutions = 0;
     const fixture = await setup({
       authorizeCurrent: async (input) =>
         input.sessionId === sessionId
@@ -291,8 +335,11 @@ describe('runner Agent daemon-owned facet service', () => {
           || input.retainedAgent === successor
         ),
       resolveRetainedExternalSessionAgentContribution: async () => {
-        contributionEntered.resolve();
-        await releaseContribution.promise;
+        resolutions += 1;
+        if (resolutions === 1) {
+          contributionEntered.resolve();
+          await releaseContribution.promise;
+        }
         return null;
       },
     });
@@ -319,20 +366,26 @@ describe('runner Agent daemon-owned facet service', () => {
         target: { kind: 'externalSession', ref, source },
       },
     });
-    releaseContribution.resolve();
-
-    await first.catch(() => undefined);
     await expect(second).resolves.toMatchObject({
       kind: 'external_session.follow.open',
       followId: 'candidate-b',
     });
-    expect(fixture.boundPortRetirements).toHaveLength(2);
-    expect(fixture.boundPortRetirements[0]).toHaveBeenCalledTimes(1);
-    expect(fixture.boundPortRetirements[1]).not.toHaveBeenCalled();
+    await expect(first).rejects.toThrow(
+      'agent_runtime_daemon_service_generation_not_current',
+    );
+    expect(fixture.bindPrivateExternalSession).toHaveBeenCalledTimes(1);
+    expect(fixture.boundPortRetirements).toHaveLength(1);
+    expect(fixture.boundPortRetirements[0]).not.toHaveBeenCalled();
+
+    // A late result from the fenced predecessor must not install a second
+    // binding or displace the authorized successor.
+    releaseContribution.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fixture.bindPrivateExternalSession).toHaveBeenCalledTimes(1);
 
     await fixture.service.dispose();
     expect(fixture.boundPortRetirements[0]).toHaveBeenCalledTimes(1);
-    expect(fixture.boundPortRetirements[1]).toHaveBeenCalledTimes(1);
   });
 
   it('keeps one acknowledged follow event in daemon custody and closes explicitly', async () => {
@@ -488,6 +541,7 @@ describe('runner Agent daemon-owned facet service', () => {
 
   it('aborts and removes a follow while its provider request is pending', async () => {
     const fixture = await setup();
+    const admissionDeadlineAtMs = Date.now() + 30_000;
     let first = true;
     let providerRejected = false;
     fixture.executeFollow.mockImplementation(
@@ -507,6 +561,7 @@ describe('runner Agent daemon-owned facet service', () => {
             direction: 'older',
             maxBytes: 524_288,
             maxItems: 1,
+            deadlineAtMs: request.options.admissionDeadlineAtMs,
             signal: request.options.signal,
           });
           throw new Error('pending provider request unexpectedly resolved');
@@ -525,12 +580,21 @@ describe('runner Agent daemon-owned facet service', () => {
         requestId: 'abort-open',
         followId: 'abort-follow',
         target: { kind: 'externalSession', ref, source },
+        initialReplay: true,
+        admissionDeadlineAtMs,
       },
     });
     expect(pending).toMatchObject({
       kind: 'external_session.follow.provider_request',
       followId: 'abort-follow',
+      request: { deadlineAtMs: admissionDeadlineAtMs },
     });
+    expect(fixture.executeFollow).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({
+        initialReplay: true,
+        admissionDeadlineAtMs,
+      }),
+    }));
     controller.abort(new Error('caller aborted follow'));
     await vi.waitFor(() => expect(providerRejected).toBe(true));
 

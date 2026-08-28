@@ -201,7 +201,11 @@ function createParams() {
       directory: '/tmp/project',
       sessionId: 'session-1',
       resume: 'vendor-session-1',
-      experimentalCodexAcp: true,
+      runtimeDescriptorV1: {
+        v: 1 as const,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     },
     credentials: {
       token: 'token-1',
@@ -231,11 +235,11 @@ function createParams() {
 function createRegistryWithBackendOwners(ownersByBackendId: Record<string, string>) {
   return {
     agentDefinitionsById: new Map(
-      Object.entries(ownersByBackendId).map(([agentId, pluginId]) => [
-        agentId,
-        {
+      Object.entries(ownersByBackendId).map(([agentId, pluginId]) => {
+        const localAgentId = agentId === 'ohMyPi' ? 'ohmypi' : agentId;
+        return [agentId, {
           id: agentId,
-          identity: { pluginId, localId: agentId },
+          identity: { pluginId, localId: localAgentId },
           provenance: 'first_party' as const,
           source: { kind: 'bundled' as const },
           pluginId,
@@ -243,7 +247,7 @@ function createRegistryWithBackendOwners(ownersByBackendId: Record<string, strin
           richDefinition: {
             provenance: 'first_party' as const,
             definition: {
-              id: agentId,
+              id: localAgentId,
               title: { key: `agents.${agentId}.title`, fallback: agentId },
               runtime: { kind: 'custom' as const },
               primary: 'sessions' as const,
@@ -256,8 +260,8 @@ function createRegistryWithBackendOwners(ownersByBackendId: Record<string, strin
               },
             },
           },
-        },
-      ]),
+        }];
+      }),
     ),
     agentRuntimeDefinitionsById: new Map(
       Object.entries(ownersByBackendId).map(([backendId, pluginId]) => [
@@ -269,6 +273,39 @@ function createRegistryWithBackendOwners(ownersByBackendId: Record<string, strin
         },
       ]),
     ),
+  };
+}
+
+function createAdmittedRuntimeRegistry(
+  ownersByBackendId: Record<string, string>,
+  contributes = createRegistryWithBackendOwners(ownersByBackendId),
+) {
+  return {
+    contributes,
+    agentRuntimesByAgentId: new Map(
+      Object.entries(ownersByBackendId).map(([agentId, pluginId]) => [agentId, {
+        pluginId,
+        pluginVersion: '1.0.0',
+        agentId,
+        localAgentId: agentId === 'ohMyPi' ? 'ohmypi' : agentId,
+        generation: `${agentId}-generation`,
+        immutableGenerationId: `${agentId}-immutable-generation`,
+        hasPrimaryRuntime: true as const,
+        retirementSignal: new AbortController().signal,
+        isCurrent: () => true,
+        createAgentRuntimeSurfaceInvocationContext: vi.fn(async () => ({} as never)),
+        createRuntime: vi.fn(async () => {
+          throw new Error('Unexpected Agent runtime creation in spawn fixture');
+        }),
+      }]),
+    ),
+    runtimeCapabilitiesByPluginId: new Map(
+      Object.values(ownersByBackendId).map((pluginId) => [
+        pluginId,
+        new Set(['agents' as const, 'sessionHooks' as const]),
+      ]),
+    ),
+    activateContributionsOnDemand: vi.fn(async () => []),
   };
 }
 
@@ -453,10 +490,7 @@ async function configureProviderBoundExistingSessionSpawn(input: Readonly<{
   });
   hoisted.ensureSessionDirectory.mockResolvedValueOnce({ ok: true, directoryCreated: false });
   hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-    registry: {
-      contributes: createRegistryWithBackendOwners({ codex: 'happier.agent.codex' }),
-      agentRuntimesByAgentId: new Map(),
-    },
+    registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }),
     source: 'active',
     release: releaseRuntimeRegistryLease,
   });
@@ -612,25 +646,10 @@ describe('executeSpawnSessionRequest', () => {
       const owners = {
         codex: 'happier.agent.codex',
         claude: 'happier.agent.claude',
+        ohMyPi: 'happier.agent.ohmypi',
       };
       return {
-        registry: {
-          contributes: createRegistryWithBackendOwners(owners),
-          agentRuntimesByAgentId: new Map(
-            Object.entries(owners).map(([agentId, pluginId]) => [agentId, {
-              pluginId,
-              pluginVersion: '1.0.0',
-              agentId,
-              generation: `${agentId}-generation`,
-              immutableGenerationId: `${agentId}-immutable-generation`,
-              hasPrimaryRuntime: true,
-            }]),
-          ),
-          runtimeCapabilitiesByPluginId: new Map(
-            Object.values(owners).map((pluginId) => [pluginId, new Set(['agents', 'sessionHooks'])]),
-          ),
-          activateContributionsOnDemand: async () => [],
-        },
+        registry: createAdmittedRuntimeRegistry(owners),
         source: 'active',
         release: vi.fn(async () => {}),
       };
@@ -913,20 +932,23 @@ describe('executeSpawnSessionRequest', () => {
       },
     });
     const release = vi.fn(async () => undefined);
-    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: { agentDefinitionsById: new Map([['codex', { definition: {
-          id: 'codex', kindVersion: 1,
-          providerRequirements: {
-            acceptsProtocols: ['openai-responses'],
-            required: { streaming: true, toolRoundTrips: true },
-            credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
-            authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['THIRD_PARTY_AUTH'] },
-            materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
-          },
-        } }]]) },
-        agentRuntimesByAgentId: new Map(),
+    const contributes = createRegistryWithBackendOwners({ codex: 'happier.agent.codex' });
+    const codexContribution = contributes.agentDefinitionsById.get('codex')!;
+    contributes.agentDefinitionsById.set('codex', {
+      ...codexContribution,
+      definition: {
+        ...codexContribution.definition,
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['THIRD_PARTY_AUTH'] },
+          materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
       },
+    } as never);
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }, contributes),
       source: 'active',
       release,
     });
@@ -969,20 +991,23 @@ describe('executeSpawnSessionRequest', () => {
       },
     });
     const release = vi.fn(async () => { events.push('release'); });
-    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: { agentDefinitionsById: new Map([['codex', { definition: {
-          id: 'codex', kindVersion: 1,
-          providerRequirements: {
-            acceptsProtocols: ['openai-responses'],
-            required: { streaming: true, toolRoundTrips: true },
-            credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
-            authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['THIRD_PARTY_AUTH'] },
-            materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
-          },
-        } }]]) },
-        agentRuntimesByAgentId: new Map(),
+    const contributes = createRegistryWithBackendOwners({ codex: 'happier.agent.codex' });
+    const codexContribution = contributes.agentDefinitionsById.get('codex')!;
+    contributes.agentDefinitionsById.set('codex', {
+      ...codexContribution,
+      definition: {
+        ...codexContribution.definition,
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['THIRD_PARTY_AUTH'] },
+          materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
       },
+    } as never);
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }, contributes),
       source: 'active',
       release,
     });
@@ -1038,7 +1063,13 @@ describe('executeSpawnSessionRequest', () => {
     const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
     const result = await executeSpawnSessionRequest({
       ...createParams(),
-      options: { ...createParams().options, resume: '', profileId: 'deepseek', environmentVariables: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' } },
+      options: {
+        ...createParams().options,
+        resume: '',
+        runtimeDescriptorV1: undefined,
+        profileId: 'deepseek',
+        environmentVariables: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' },
+      },
     });
     expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_ENVIRONMENT_VARIABLES });
     expect(resolveSpawnChildEnvironment).not.toHaveBeenCalled();
@@ -1066,41 +1097,43 @@ describe('executeSpawnSessionRequest', () => {
         }],
       },
     });
-    const acceptedLease = {
-      registry: {
-        contributes: { agentDefinitionsById: new Map([['codex', {
-          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-          definition: {
-            id: 'codex', kindVersion: 1,
-            providerRequirements: {
-              acceptsProtocols: ['openai-responses'], required: { streaming: true, toolRoundTrips: true },
-              credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
-              authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['PROVIDER_KEY'] },
-              materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
-            },
-          },
-          richDefinition: {
-            definition: {
-              connectedAccounts: [{
-                purpose: 'generation-b-anthropic-request',
-                service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-                materializationKinds: ['httpHeaders'],
-              }],
-            },
-          },
-          catalogEntry: {
-            connectedAccountRequestAuthUses: [{
-              purpose: 'generation-b-anthropic-request',
-              materialization: {
-                kind: 'httpHeaders',
-                origin: 'https://api.anthropic.com',
-                headerNames: ['authorization'],
-              },
-            }],
-          },
-        }]]) },
-        agentRuntimesByAgentId: new Map(),
+    const contributes = createRegistryWithBackendOwners({ codex: 'happier.agent.codex' });
+    const codexContribution = contributes.agentDefinitionsById.get('codex')!;
+    contributes.agentDefinitionsById.set('codex', {
+      ...codexContribution,
+      definition: {
+        ...codexContribution.definition,
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'], required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['PROVIDER_KEY'] },
+          materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
       },
+      richDefinition: {
+        ...codexContribution.richDefinition,
+        definition: {
+          ...codexContribution.richDefinition.definition,
+          connectedAccounts: [{
+            purpose: 'generation-b-anthropic-request',
+            service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+            materializationKinds: ['httpHeaders'],
+          }],
+        },
+      },
+      catalogEntry: {
+        connectedAccountRequestAuthUses: [{
+          purpose: 'generation-b-anthropic-request',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }],
+      },
+    } as never);
+    const acceptedLease = {
+      registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }, contributes),
       source: 'active' as const,
       release: vi.fn(async () => undefined),
     };
@@ -1978,10 +2011,7 @@ describe('executeSpawnSessionRequest', () => {
     });
     const release = vi.fn(async () => undefined);
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: createRegistryWithBackendOwners({ codex: 'happier.agent.codex' }),
-        agentRuntimesByAgentId: new Map(),
-      },
+      registry: createAdmittedRuntimeRegistry({ codex: 'happier.agent.codex' }),
       source: 'active',
       release,
     });
@@ -2220,6 +2250,7 @@ describe('executeSpawnSessionRequest', () => {
       options: {
         ...createParams().options,
         resume: undefined,
+        runtimeDescriptorV1: undefined,
       },
       processEnv: {},
     });
@@ -2407,12 +2438,9 @@ describe('executeSpawnSessionRequest', () => {
       async () => ({ ok: true, directoryCreated: false }),
     );
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: createRegistryWithBackendOwners({
-          opencode: 'happier.agent.opencode',
-        }),
-        agentRuntimesByAgentId: new Map(),
-      },
+      registry: createAdmittedRuntimeRegistry({
+        opencode: 'happier.agent.opencode',
+      }),
       source: 'active',
       release: vi.fn(async () => undefined),
     });
@@ -2435,6 +2463,14 @@ describe('executeSpawnSessionRequest', () => {
 
     const result = await executeSpawnSessionRequest({
       ...createParams(),
+      options: {
+        ...createParams().options,
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'opencode',
+          agent: {},
+        },
+      },
       processEnv: {},
     });
 
@@ -2465,12 +2501,9 @@ describe('executeSpawnSessionRequest', () => {
     );
     const releaseRuntimeRegistryLease = vi.fn(async () => {});
     hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
-      registry: {
-        contributes: createRegistryWithBackendOwners({
-          'review-bot': 'active.plugin.review-bot',
-        }),
-        agentRuntimesByAgentId: new Map(),
-      },
+      registry: createAdmittedRuntimeRegistry({
+        'review-bot': 'active.plugin.review-bot',
+      }),
       source: 'active',
       release: releaseRuntimeRegistryLease,
     });
@@ -3507,14 +3540,13 @@ describe('executeSpawnSessionRequest', () => {
     }));
   });
 
-  it('canonicalizes legacy runtime descriptors before vendor resume support reads spawn runtime selection', async () => {
+  it('passes the canonical runtime descriptor to vendor resume support', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({
       id: 'codex',
       vendorResumeSupport: 'experimental',
     });
     hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams) => {
       expect(params).toEqual({
-        agentRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -3524,7 +3556,8 @@ describe('executeSpawnSessionRequest', () => {
           },
         },
       });
-      return params.agentRuntimeSelection?.codexBackendMode === 'appServer';
+      return (params.runtimeDescriptorV1?.agent as { backendMode?: unknown } | undefined)
+        ?.backendMode === 'appServer';
     });
 
     const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
@@ -3534,7 +3567,6 @@ describe('executeSpawnSessionRequest', () => {
       ...baseParams,
       options: {
         ...baseParams.options,
-        experimentalCodexAcp: undefined,
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -3547,7 +3579,6 @@ describe('executeSpawnSessionRequest', () => {
     });
 
     expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith({
-      agentRuntimeSelection: { codexBackendMode: 'appServer' },
       runtimeDescriptorV1: expect.objectContaining({
         agent: expect.objectContaining({ backendMode: 'appServer' }),
       }),
@@ -3560,13 +3591,14 @@ describe('executeSpawnSessionRequest', () => {
     );
   });
 
-  it('delegates legacy codex resume compat through canonical spawn runtime selection without daemon hooks', async () => {
+  it('delegates Codex resume through canonical spawn runtime selection without daemon hooks', async () => {
     hoisted.requireCatalogEntry.mockReturnValue({
       id: 'codex',
       vendorResumeSupport: 'experimental',
     });
     hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams) => (
-      params.agentRuntimeSelection?.codexBackendMode === 'appServer'
+      (params.runtimeDescriptorV1?.agent as { backendMode?: unknown } | undefined)
+        ?.backendMode === 'appServer'
     ));
 
     const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
@@ -3576,12 +3608,20 @@ describe('executeSpawnSessionRequest', () => {
       ...baseParams,
       options: {
         ...baseParams.options,
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer' },
+        },
       },
     });
 
     expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith({
-      agentRuntimeSelection: { codexBackendMode: 'appServer' },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
     });
     expect(result).not.toEqual(
       expect.objectContaining({
@@ -3672,7 +3712,7 @@ describe('executeSpawnSessionRequest', () => {
       ...baseParams,
       options: {
         ...baseParams.options,
-        experimentalCodexAcp: undefined,
+        runtimeDescriptorV1: undefined,
       },
     });
 

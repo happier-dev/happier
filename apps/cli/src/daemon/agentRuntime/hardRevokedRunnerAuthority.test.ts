@@ -452,10 +452,10 @@ describe('hard-revoked Runner Agent authority', () => {
         }
     });
 
-    it('commits an immediate hard currentness failure before restored immutable bytes can revive the old exact retained authority', async () => {
+    it('keeps a retained leaf load failure unavailable without hard-revoking an otherwise current generation', async () => {
         const happyHomeDir = await mkdtemp(`${tmpdir()}/happier-integrity-restore-runner-`);
         try {
-            const { binding, prepared, manifest } =
+            const { binding, prepared } =
                 await prepareAttestedRunnerBinding(happyHomeDir);
             const command =
                 '/immutable/runtime/versions/1.2.3/bin/happier fixture --existing-session session-integrity';
@@ -473,6 +473,10 @@ describe('hard-revoked Runner Agent authority', () => {
                 processStartTimeMs: 32_345,
                 processCommand: command,
                 agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
+                runnerAgentBootstrapIdentity: {
+                    agentId: 'fixture',
+                    backendId: 'fixture',
+                },
                 spawnOptions: {
                     directory: '/repo',
                     backendTarget: {
@@ -519,14 +523,7 @@ describe('hard-revoked Runner Agent authority', () => {
                 'plugin.json',
             );
             await writeFile(immutableManifestPath, '{}', 'utf8');
-            const hardRevokeIntegrityFailure = vi.fn(async () => {
-                generationIntegrityCurrent = false;
-                await writeFile(
-                    immutableManifestPath,
-                    JSON.stringify(manifest),
-                    'utf8',
-                );
-            });
+            const hardRevokeIntegrityFailure = vi.fn(async () => undefined);
             const resolveReattachedRetainedAgent = vi.fn(
                 async () => {
                     throw new Error(
@@ -552,13 +549,8 @@ describe('hard-revoked Runner Agent authority', () => {
                     hardRevokeIntegrityFailure,
             });
 
-            await expect(refresh()).rejects.toThrow(/hard-revoked/i);
-            expect(hardRevokeIntegrityFailure).toHaveBeenCalledWith({
-                pluginId: binding.pluginId,
-                immutableGenerationId: binding.immutableGenerationId,
-            });
-            await expect(refresh()).rejects.toThrow(/hard-revoked/i);
-            expect(hardRevokeIntegrityFailure).toHaveBeenCalledTimes(2);
+            await expect(refresh()).rejects.toThrow(/unavailable/i);
+            expect(hardRevokeIntegrityFailure).not.toHaveBeenCalled();
             expect(resolveReattachedRetainedAgent).not.toHaveBeenCalled();
         } finally {
             await rm(happyHomeDir, { recursive: true, force: true });

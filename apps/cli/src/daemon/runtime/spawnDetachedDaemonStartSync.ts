@@ -4,6 +4,10 @@ import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/release
 import { configuration } from '@/configuration';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 import {
+  buildSystemdUserScopedLaunchSpec,
+  isSystemdUserResourceGovernorReady,
+} from '@/daemon/platform/linux/systemdUserResourceGovernor';
+import {
   parsePowerShellStartProcessPid,
 } from '@/daemon/platform/windows/visibleConsoleSpawn';
 import { resolveDaemonLaunchSpec } from './resolveDaemonLaunchSpec';
@@ -133,7 +137,16 @@ export async function spawnDetachedDaemonStartSync(
     });
   }
 
-  return spawn(launchSpec.filePath, launchSpec.args, {
+  const scopedLaunchSpec = await isSystemdUserResourceGovernorReady({ environment: env })
+    ? buildSystemdUserScopedLaunchSpec({
+      launchSpec: {
+        filePath: launchSpec.filePath,
+        args: launchSpec.args,
+      },
+    })
+    : launchSpec;
+
+  return spawn(scopedLaunchSpec.filePath, scopedLaunchSpec.args, {
     ...spawnOptions,
     env,
     detached: true,

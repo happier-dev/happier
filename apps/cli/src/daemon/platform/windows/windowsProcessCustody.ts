@@ -1,7 +1,10 @@
 import { win32 as windowsPath } from 'node:path';
 
 import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
-import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
+import {
+  taskkillWindowsProcessTree,
+  type TaskkillWindowsProcessTreeDisposition,
+} from '@/subprocess/supervision/taskkillWindowsProcessTree';
 
 import { readProcessIdentityByPid } from '../../processIdentity';
 import { hashProcessCommand } from '../../sessionRegistry';
@@ -41,7 +44,10 @@ export type WindowsProcessCustodyDependencies = Readonly<{
     ReadonlyMap<number, WindowsProcessInventoryFact>
   >;
   readProcessIdentityByPidFn?: ReadExactWindowsProcessIdentity;
-  terminateProcessTreeFn?: typeof taskkillWindowsProcessTree;
+  terminateProcessTreeFn?: (input: Readonly<{
+    pid: number;
+    force: boolean;
+  }>) => Promise<TaskkillWindowsProcessTreeDisposition | void>;
   isPidAliveFn?: (pid: number) => boolean;
   nowFn?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
@@ -119,7 +125,10 @@ export function createExactWindowsProcessCancellation(
     processStartTimeMs: number | null;
     processCommandHash?: string;
     readProcessIdentityByPidFn?: ReadExactWindowsProcessIdentity;
-    terminateProcessTreeFn?: typeof taskkillWindowsProcessTree;
+    terminateProcessTreeFn?: (input: Readonly<{
+      pid: number;
+      force: boolean;
+    }>) => Promise<TaskkillWindowsProcessTreeDisposition | void>;
     isPidAliveFn?: (pid: number) => boolean;
   }>,
 ): CancelStartupLaunch {
@@ -167,10 +176,16 @@ export function createExactWindowsProcessCancellation(
         };
       }
       try {
-        await terminateProcessTree({
+        const disposition = await terminateProcessTree({
           pid: params.pid,
           force: true,
         });
+        if (disposition === 'root_not_found') {
+          return {
+            status: 'incomplete' as const,
+            reason: 'terminal_host_disposition_failed' as const,
+          };
+        }
       } catch {
         return {
           status: 'incomplete' as const,

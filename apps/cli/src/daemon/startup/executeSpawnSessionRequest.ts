@@ -115,6 +115,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     connectedAccountRequestAuthHttpPort?: number;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     activateSessionPurposeBindings?: ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
+    activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     resolveSessionSyncPendingInputServerContractResult?: () =>
         SessionSyncPendingInputServerContractResult | null;
 }>;
@@ -353,6 +354,9 @@ export async function executeSpawnSessionRequest(
                 processEnv: params.processEnv ?? process.env,
                 connectedServicesMaterializationBaseDir: params.connectedServicesMaterializationBaseDir,
                 pluginContributions: appliedPluginRuntimeLease.registry.contributes,
+                ...(params.activatePurposeBindings
+                    ? { activatePurposeBindings: params.activatePurposeBindings }
+                    : {}),
                 serverContract:
                     params
                         .resolveSessionSyncPendingInputServerContractResult?.()
@@ -364,6 +368,12 @@ export async function executeSpawnSessionRequest(
                 return await refuseSpawn(connectedServices.result);
             }
             const connectedServiceAuth = connectedServices.auth;
+            if (connectedServiceAuth?.materializationPurposeLease) {
+                launchResourceScope.register({
+                    onFailure: () => connectedServiceAuth.materializationPurposeLease?.dispose(),
+                    onExit: () => connectedServiceAuth.materializationPurposeLease?.dispose(),
+                });
+            }
             const connectedServiceMaterializationIdentity = connectedServices.materializationIdentity;
             const effectiveOptionsForSpawn = connectedServices.options;
             const effectiveConnectedServicesBindings = connectedServices.effectiveBindings;
@@ -452,6 +462,7 @@ export async function executeSpawnSessionRequest(
                         onFailure: () => activatedLease.dispose(),
                         onExit: () => activatedLease.dispose(),
                     });
+                    await connectedServiceAuth?.materializationPurposeLease?.dispose();
                 } catch {
                     return {
                         ok: false,
@@ -566,6 +577,7 @@ export async function executeSpawnSessionRequest(
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
                 options: effectiveOptionsForSpawn,
+                resolvedAgentId: catalogAgentId,
                 effectiveModelSelection: modelSelection,
                 terminal: options.terminal,
                 profileEnvironmentVariables: environmentVariablesValidation.env,

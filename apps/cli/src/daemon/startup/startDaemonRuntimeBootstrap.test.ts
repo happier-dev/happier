@@ -481,7 +481,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
-    const connectedServiceRuntimeAuthApplyCapabilityResolver = vi.fn(async () => ({ directLiveHotAuth: 'unsupported' as const }));
     const providerAccountUsageStore = createProviderAccountUsageStore();
 
     const input = {
@@ -518,7 +517,6 @@ describe('startDaemonRuntimeBootstrap', () => {
         applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
-      connectedServiceRuntimeAuthApplyCapabilityResolver,
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore,
       connectedServiceQuotaFetcherDescriptors: [{
@@ -539,9 +537,6 @@ describe('startDaemonRuntimeBootstrap', () => {
     expect((result.connectedServiceQuotasCoordinator as unknown as {
       readRuntimeAccountIdentityForFanout?: unknown;
     }).readRuntimeAccountIdentityForFanout).toEqual(expect.any(Function));
-    expect((result.connectedServiceQuotasCoordinator as unknown as {
-      runtimeAuthApplyCapabilityResolver?: unknown;
-    }).runtimeAuthApplyCapabilityResolver).toBe(connectedServiceRuntimeAuthApplyCapabilityResolver);
     expect((result.connectedServiceQuotasCoordinator as unknown as {
       accountUsageStore?: unknown;
     }).accountUsageStore).toBe(providerAccountUsageStore);

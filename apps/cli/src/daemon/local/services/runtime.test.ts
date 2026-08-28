@@ -517,10 +517,6 @@ describe('createLocalServicesDaemonRuntime', () => {
                 allowedCallbackOrigins: [],
                 allowedConnectOrigins: [],
                 csp: {
-                    scriptSrc: 'selfOnly',
-                    styleSrc: 'selfOnly',
-                    imgSrc: 'selfOnly',
-                    fontSrc: 'selfOnly',
                     connectSrc: 'selfOnly',
                     allowDataUrls: false,
                     allowBlobUrls: false,

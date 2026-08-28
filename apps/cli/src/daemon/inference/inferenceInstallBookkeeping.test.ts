@@ -2,11 +2,111 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createInferenceInstallBookkeeping } from './inferenceInstallBookkeeping';
+import { createInferenceInstallBookkeeping, type InferenceInstallProgress } from './inferenceInstallBookkeeping';
 
 describe('inferenceInstallBookkeeping', () => {
+  it('serializes fire-and-forget progress before terminal completion and ignores post-terminal progress', async () => {
+    let persistedContents = '';
+    let releaseDownloadingWrite!: () => void;
+    const downloadingWriteGate = new Promise<void>((resolve) => {
+      releaseDownloadingWrite = resolve;
+    });
+    const persistedPhases: string[] = [];
+    const captured = {
+      reportProgress: null as ((progress: InferenceInstallProgress) => Promise<void>) | null,
+    };
+    const bookkeeping = createInferenceInstallBookkeeping({
+      stateFilePath: '/virtual/installs.json',
+      readStateFile: async () => {
+        throw new Error('not_found');
+      },
+      ensureParentDir: async () => {},
+      writeStateFile: async (_filePath, contents) => {
+        const parsed = JSON.parse(contents) as { modelsById: Record<string, { progress: { phase: string } }> };
+        const phase = parsed.modelsById['kokoro-82m']?.progress.phase;
+        persistedPhases.push(phase);
+        if (phase === 'downloading') {
+          await downloadingWriteGate;
+        }
+        persistedContents = contents;
+      },
+    });
+
+    let installSettled = false;
+    const installPromise = bookkeeping.install({
+      modelId: 'kokoro-82m',
+      version: '1',
+      manifestHash: 'a'.repeat(64),
+      performInstall: async (reportProgress) => {
+        captured.reportProgress = reportProgress;
+        void reportProgress({ phase: 'downloading', progress: 0.5 });
+      },
+    }).finally(() => {
+      installSettled = true;
+    });
+
+    await vi.waitFor(() => expect(persistedPhases).toEqual(['queued', 'downloading']));
+    expect(installSettled).toBe(false);
+    releaseDownloadingWrite();
+    await installPromise;
+
+    expect(persistedPhases).toEqual(['queued', 'downloading', 'complete']);
+    expect(JSON.parse(persistedContents)).toMatchObject({
+      modelsById: {
+        'kokoro-82m': {
+          state: 'installed',
+          progress: { phase: 'complete' },
+        },
+      },
+    });
+
+    await captured.reportProgress?.({ phase: 'downloading', progress: 0.9 });
+    expect(persistedPhases).toEqual(['queued', 'downloading', 'complete']);
+    await expect(bookkeeping.status('kokoro-82m')).resolves.toMatchObject({
+      state: 'installed',
+      progress: { phase: 'complete' },
+    });
+  });
+
+  it('surfaces a fire-and-forget progress persistence failure and persists terminal error state', async () => {
+    let failedDownloadingWrite = false;
+    const persistedPhases: string[] = [];
+    const bookkeeping = createInferenceInstallBookkeeping({
+      stateFilePath: '/virtual/installs.json',
+      readStateFile: async () => {
+        throw new Error('not_found');
+      },
+      ensureParentDir: async () => {},
+      writeStateFile: async (_filePath, contents) => {
+        const parsed = JSON.parse(contents) as { modelsById: Record<string, { progress: { phase: string } }> };
+        const phase = parsed.modelsById['kokoro-82m']?.progress.phase;
+        persistedPhases.push(phase);
+        if (phase === 'downloading' && !failedDownloadingWrite) {
+          failedDownloadingWrite = true;
+          throw new Error('progress_persistence_failed');
+        }
+      },
+    });
+
+    await expect(bookkeeping.install({
+      modelId: 'kokoro-82m',
+      version: '1',
+      manifestHash: 'a'.repeat(64),
+      performInstall: async (reportProgress) => {
+        void reportProgress({ phase: 'downloading', progress: 0.5 });
+      },
+    })).rejects.toThrow('progress_persistence_failed');
+
+    expect(persistedPhases).toEqual(['queued', 'downloading', 'error']);
+    await expect(bookkeeping.status('kokoro-82m')).resolves.toMatchObject({
+      state: 'error',
+      progress: { phase: 'error' },
+      lastError: 'inference_install_failed',
+    });
+  });
+
   it('persists installed model state and progress snapshots', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-inference-install-bookkeeping-'));
     const privateProgress = 'downloading /Users/alice/private/model.bin?token=sk-private';

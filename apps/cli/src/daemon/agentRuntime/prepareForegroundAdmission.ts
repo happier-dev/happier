@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   resolveConnectedAccountRequestAuthCapabilityPath,
@@ -9,7 +11,9 @@ import {
   createProviderErrorV1,
   qualifiedPurposeKey,
   registerSensitiveDiagnosticValues,
+  sameQualifiedConnectedAccountRef,
   type ProviderErrorV1,
+  type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
@@ -82,6 +86,17 @@ import { ensurePrivateConnectedServiceMaterializedRoot } from '@/daemon/connecte
 import { normalizeMaterializationKeyForPath } from '@/daemon/connectedServices/materialize/normalizeMaterializationKeyForPath';
 import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/materialization/materializer';
 import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
+import {
+  HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
+} from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import {
+  applyConnectedServiceStateSharingDescriptor,
+  resolveConnectedServiceNativeHomeRoot,
+} from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
+import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/registry/engineRegistry/stateSharingPolicy';
+import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
+import { materializeConnectedServiceNativeHomeCredentials } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
+import { materializeQualifiedConnectedAccountLaunchUses } from '@/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
 
 import type {
   ForegroundAgentRuntimeAdmissionOwnerRequestV1,
@@ -177,6 +192,7 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
 export async function resolveForegroundFinalPluginPrerequisites(params: Readonly<{
   happyHomeDir: string;
   pluginRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+  resolvedAgentId: string;
   directory: string;
   backendTarget: ForegroundAgentRuntimeAdmissionOwnerRequestV1['backendTarget'];
   environment: Readonly<Record<string, string>>;
@@ -184,6 +200,7 @@ export async function resolveForegroundFinalPluginPrerequisites(params: Readonly
   return await resolveSpawnChildEnvironment({
     happyHomeDir: params.happyHomeDir,
     pluginRuntimeRegistry: params.pluginRuntimeRegistry,
+    resolvedAgentId: params.resolvedAgentId,
     options: {
       directory: params.directory,
       backendTarget: params.backendTarget,
@@ -299,6 +316,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
       const result = await resolveSpawnChildEnvironment({
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
+        resolvedAgentId: request.agentId,
         options: {
           directory: request.directory,
           backendTarget: request.backendTarget,
@@ -386,6 +404,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
   }> | null = null;
   let sessionPurposeBindingLease:
     ConnectedAccountSessionPurposeBindingLease | null = null;
+  let connectedAccountLaunchCurrent = true;
+  let connectedAccountLaunchCommitted = false;
   const connectedServiceLaunchScope = createProviderLaunchResourceScope({
     onCleanupError: (message) => {
       logger.warn(
@@ -601,8 +621,18 @@ export async function prepareForegroundAgentRuntimeAdmission(
       sessionPurposeBindingSnapshot = Object.freeze({
         purposes: externalSnapshot.purposes,
         bindings: externalSnapshot.bindings,
+        authorizedPurposes:
+          externalPurposeDeclarations.authorizedPurposes,
+        fileMaterializationPurposes:
+          externalPurposeDeclarations.fileMaterializationPurposes,
         ...(externalPurposeDeclarations.requestAuthUses
           ? { requestAuthUses: externalPurposeDeclarations.requestAuthUses }
+          : {}),
+        ...(externalPurposeDeclarations.fileEnvironmentUses
+          ? { fileEnvironmentUses: externalPurposeDeclarations.fileEnvironmentUses }
+          : {}),
+        ...(externalPurposeDeclarations.environmentUses
+          ? { environmentUses: externalPurposeDeclarations.environmentUses }
           : {}),
       });
     }
@@ -656,6 +686,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       const childEnvironment = await resolveSpawnChildEnvironment({
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
+        resolvedAgentId: request.agentId,
         options: {
           directory: request.directory,
           backendTarget: request.backendTarget,
@@ -819,6 +850,11 @@ export async function prepareForegroundAgentRuntimeAdmission(
         },
       ));
     }
+    const stateSharingCatalogEntry = lease.registry.acquireAgentCatalogEntry
+      ? await lease.registry.acquireAgentCatalogEntry(request.agentId)
+      : lease.registry.contributes.catalogEntriesById[request.agentId] ?? null;
+    const stateSharingDescriptor = await stateSharingCatalogEntry
+      ?.getConnectedServiceStateSharingDescriptor?.();
 
     transferred = true;
     return {
@@ -835,12 +871,22 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   initialExactProfileSnapshot.settingsSnapshot.settings,
               })
             : Object.freeze([]),
+        ...(stateSharingDescriptor?.providerSupportStatus === 'supported'
+          && stateSharingDescriptor.nativeHome
+          ? {
+              nativeHomeSourceEnvironmentKey:
+                stateSharingDescriptor.nativeHome.environmentKey,
+            }
+          : {}),
         retirementSignal: registration.retirementSignal,
-        isCurrent: registration.isCurrent,
+        isCurrent: () => (
+          registration.isCurrent() && connectedAccountLaunchCurrent
+        ),
         claim: async ({
           canonicalSessionId,
           httpPort,
           foregroundSatisfiedProfileSecretRequirementNames,
+          nativeHomeSourceEnvironmentValue,
         }) => {
           let connectedServiceClaimSucceeded = false;
           try {
@@ -896,6 +942,357 @@ export async function prepareForegroundAgentRuntimeAdmission(
               ]);
             }
 
+            if (sessionPurposeBindingSnapshot) {
+              sessionPurposeBindingLease =
+                dependencies.activateSessionPurposeBindings!({
+                  sessionId: canonicalSessionId,
+                  purposes: sessionPurposeBindingSnapshot.purposes,
+                  bindings: sessionPurposeBindingSnapshot.bindings,
+                });
+            }
+            const expectedConnectedAccountByPurposeKey =
+              new Map<string, QualifiedConnectedAccountRef>();
+            const connectedAccountsOwner =
+              lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+            const assertExpectedConnectedAccountsCurrent = async (): Promise<void> => {
+              if (!connectedAccountLaunchCurrent) {
+                throw new Error(
+                  'Foreground Connected Account binding changed during preparation',
+                );
+              }
+              if (
+                !sessionPurposeBindingSnapshot?.authorizedPurposes?.length
+                || expectedConnectedAccountByPurposeKey.size === 0
+              ) return;
+              if (!connectedAccountsOwner) {
+                throw new Error(
+                  'Foreground Connected Account invalidation authority is unavailable',
+                );
+              }
+              for (const authorized of sessionPurposeBindingSnapshot.authorizedPurposes) {
+                const expectedAccount = expectedConnectedAccountByPurposeKey.get(
+                  qualifiedPurposeKey(authorized.purpose),
+                );
+                if (!expectedAccount) continue;
+                const currentBinding = await connectedAccountsOwner.getBinding({
+                  purpose: authorized.purpose,
+                  serviceRefs: authorized.serviceRefs,
+                  signal: registration.retirementSignal,
+                });
+                if (
+                  !currentBinding
+                  || !sameQualifiedConnectedAccountRef(
+                    expectedAccount,
+                    currentBinding.account,
+                  )
+                ) {
+                  throw new Error(
+                    'Foreground Connected Account binding changed during preparation',
+                  );
+                }
+              }
+            };
+            if (
+              sessionPurposeBindingLease
+              && sessionPurposeBindingSnapshot?.authorizedPurposes?.length
+            ) {
+              for (const authorized of sessionPurposeBindingSnapshot.authorizedPurposes) {
+                if (!sessionPurposeBindingLease.resolvePurposeBinding(authorized.purpose)) continue;
+                if (!connectedAccountsOwner) {
+                  throw new Error(
+                    'Foreground Connected Account invalidation authority is unavailable',
+                  );
+                }
+                const [exactBinding, currentBinding] = await Promise.all([
+                  connectedAccountsOwner.getBinding({
+                    purpose: authorized.purpose,
+                    serviceRefs: authorized.serviceRefs,
+                    exactPurposeBindingSubjectId:
+                      sessionPurposeBindingLease.subjectId,
+                    sessionId: canonicalSessionId,
+                    signal: registration.retirementSignal,
+                  }),
+                  connectedAccountsOwner.getBinding({
+                    purpose: authorized.purpose,
+                    serviceRefs: authorized.serviceRefs,
+                    signal: registration.retirementSignal,
+                  }),
+                ]);
+                if (
+                  !exactBinding
+                  || !currentBinding
+                  || !sameQualifiedConnectedAccountRef(
+                    exactBinding.account,
+                    currentBinding.account,
+                  )
+                ) {
+                  throw new Error(
+                    'Foreground Connected Account binding changed before materialization',
+                  );
+                }
+                expectedConnectedAccountByPurposeKey.set(
+                  qualifiedPurposeKey(authorized.purpose),
+                  Object.freeze({
+                    service: Object.freeze({ ...exactBinding.account.service }),
+                    accountId: exactBinding.account.accountId,
+                  }),
+                );
+              }
+            }
+            if (
+              sessionPurposeBindingLease
+              && sessionPurposeBindingSnapshot?.authorizedPurposes?.length
+            ) {
+              for (const authorized of sessionPurposeBindingSnapshot.authorizedPurposes) {
+                if (!sessionPurposeBindingLease.resolvePurposeBinding(authorized.purpose)) continue;
+                if (!connectedAccountsOwner) {
+                  throw new Error(
+                    'Foreground Connected Account invalidation authority is unavailable',
+                  );
+                }
+                const subscription = connectedAccountsOwner.watch({
+                  purpose: authorized.purpose,
+                  serviceRefs: authorized.serviceRefs,
+                  exactPurposeBindingSubjectId:
+                    sessionPurposeBindingLease.subjectId,
+                  sessionId: canonicalSessionId,
+                  async listener() {
+                    connectedAccountLaunchCurrent = false;
+                    if (connectedAccountLaunchCommitted) {
+                      void connectedServiceLaunchScope.retire().catch((error) => {
+                        logger.warn(
+                          '[foreground admission] Connected Account invalidation cleanup failed',
+                          { error: connectedServiceLaunchScope.sanitize(error) },
+                        );
+                      });
+                    }
+                  },
+                });
+                connectedServiceLaunchScope.register({
+                  onFailure: () => subscription.dispose(),
+                  onExit: () => subscription.dispose(),
+                });
+                ownsConnectedServiceLaunchScope = true;
+              }
+            }
+            if (
+              sessionPurposeBindingSnapshot
+              && sessionPurposeBindingLease
+              && (
+                (sessionPurposeBindingSnapshot.environmentUses?.length ?? 0) > 0
+                || (sessionPurposeBindingSnapshot.fileEnvironmentUses?.length ?? 0) > 0
+              )
+            ) {
+              if (!connectedAccountsOwner) {
+                throw new Error(
+                  'Foreground Connected Account launch authority is unavailable',
+                );
+              }
+              const launchEnvironment =
+                await materializeQualifiedConnectedAccountLaunchUses({
+                  connectedAccountsOwner,
+                  credentialFileOwner:
+                    lease.registry.resolveManagedServiceCredentialFileOwner?.(),
+                  snapshot: sessionPurposeBindingSnapshot,
+                  exactPurposeBindingSubjectId:
+                    sessionPurposeBindingLease.subjectId,
+                  sessionId: canonicalSessionId,
+                  signal: registration.retirementSignal,
+                  isPurposeBound: (purpose) => (
+                    sessionPurposeBindingLease?.resolvePurposeBinding(purpose) !== null
+                  ),
+                  expectedAccountsByPurposeKey:
+                    expectedConnectedAccountByPurposeKey,
+                  credentialFileScope: Object.freeze({
+                    generation: registration.generation,
+                    pluginId: registration.pluginId,
+                    contributionQualifiedId:
+                      `${registration.pluginId}/agents/${registration.localAgentId}`,
+                    sessionId: canonicalSessionId,
+                  }),
+                  retainCredentialFileCleanup(cleanup) {
+                    connectedServiceLaunchScope.register({
+                      onFailure: () => cleanup.dispose(),
+                      onExit: () => cleanup.dispose(),
+                    });
+                  },
+                });
+              if (Object.keys(launchEnvironment).length > 0) {
+                const redaction = registerSensitiveDiagnosticValues(
+                  Object.values(launchEnvironment),
+                );
+                connectedServiceLaunchScope.register({
+                  onFailure: () => redaction.close(),
+                  onExit: () => redaction.close(),
+                });
+                connectedServiceEnvironment = Object.freeze({
+                  ...connectedServiceEnvironment,
+                  ...launchEnvironment,
+                });
+                sensitiveEnvironmentVariableNames = Object.freeze([
+                  ...new Set([
+                    ...sensitiveEnvironmentVariableNames,
+                    ...Object.keys(launchEnvironment),
+                  ]),
+                ]);
+                ownsConnectedServiceLaunchScope = true;
+              }
+            }
+            const existingMaterializedRoot =
+              connectedServiceEnvironment[
+                HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY
+              ];
+            const boundNativeHomeFilePurposes = sessionPurposeBindingLease
+              ? (sessionPurposeBindingSnapshot?.fileMaterializationPurposes ?? [])
+                  .filter((scope) => (
+                    sessionPurposeBindingLease?.resolvePurposeBinding(scope.purpose) !== null
+                  ))
+              : [];
+            if (
+              stateSharingDescriptor?.providerSupportStatus === 'supported'
+              && stateSharingDescriptor.nativeHome
+              && (
+                Boolean(existingMaterializedRoot)
+                || boundNativeHomeFilePurposes.length > 0
+                || Boolean(activeProviderLaunch)
+              )
+            ) {
+              if (
+                !existingMaterializedRoot
+                && !dependencies.connectedServicesMaterializationBaseDir
+              ) {
+                throw new Error(
+                  'Foreground Connected Account state-sharing root authority is unavailable',
+                );
+              }
+              const targetRoot = existingMaterializedRoot
+                ?? resolveConnectedServiceMaterializedRootDir({
+                  baseDir: dependencies.connectedServicesMaterializationBaseDir!,
+                  agentId: request.agentId,
+                  materializationKey: request.sessionId,
+                });
+              await ensurePrivateConnectedServiceMaterializedRoot(targetRoot);
+              if (!existingMaterializedRoot) {
+                connectedServiceLaunchScope.register(async () => {
+                  await rm(targetRoot, { recursive: true, force: true });
+                });
+              }
+              let stateSharingEnvironment: Readonly<Record<string, string>> =
+                Object.freeze({});
+              if (!existingMaterializedRoot) {
+                const policy = resolveNativeAgentSessionStateSharingPolicy(
+                  request.agentId,
+                );
+                const nativeSourceEnvironment = Object.fromEntries(
+                  Object.entries({
+                    ...process.env,
+                    ...savedProfileEnvironment,
+                    ...(typeof nativeHomeSourceEnvironmentValue !== 'string'
+                      ? {}
+                      : {
+                          [stateSharingDescriptor.nativeHome.environmentKey]:
+                            nativeHomeSourceEnvironmentValue,
+                        }),
+                  }).filter((entry): entry is [string, string] => (
+                    typeof entry[1] === 'string'
+                  )),
+                );
+                if (nativeHomeSourceEnvironmentValue === null) {
+                  delete nativeSourceEnvironment[
+                    stateSharingDescriptor.nativeHome.environmentKey
+                  ];
+                }
+                Object.freeze(nativeSourceEnvironment);
+                stateSharingEnvironment = (
+                  await applyConnectedServiceStateSharingDescriptor({
+                    descriptor: stateSharingDescriptor,
+                    nativeSourceContext: {
+                      sourceRoot: resolveConnectedServiceNativeHomeRoot({
+                        nativeHome: stateSharingDescriptor.nativeHome,
+                        sourceEnvironment: nativeSourceEnvironment,
+                        homeDir: homedir(),
+                      }),
+                      sourceEnv: nativeSourceEnvironment,
+                    },
+                    target: {
+                      targetMaterializedRoot: targetRoot,
+                      targetMaterializedEnv: {},
+                    },
+                    configMode: policy.configMode,
+                    requestedStateMode: policy.stateMode,
+                    effectiveStateMode: policy.stateMode,
+                    cwd: request.directory,
+                    providerLabel: request.agentId,
+                  })
+                ).envOverrides;
+              }
+              connectedServiceEnvironment = Object.freeze({
+                ...connectedServiceEnvironment,
+                ...stateSharingEnvironment,
+                [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: targetRoot,
+                [stateSharingDescriptor.nativeHome.environmentKey]: targetRoot,
+              });
+              const boundFilePurposes = existingMaterializedRoot
+                ? []
+                : boundNativeHomeFilePurposes;
+              if (boundFilePurposes.length > 0) {
+                const connectedAccountsOwner =
+                  lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+                if (!sessionPurposeBindingLease || !connectedAccountsOwner) {
+                  throw new Error(
+                    'Foreground Connected Account native-home credential authority is unavailable',
+                  );
+                }
+                const files = Object.create(null) as Record<string, Uint8Array>;
+                for (const scope of boundFilePurposes) {
+                  const expectedAccount = expectedConnectedAccountByPurposeKey.get(
+                    qualifiedPurposeKey(scope.purpose),
+                  );
+                  if (!expectedAccount) {
+                    throw new Error(
+                      'Foreground Connected Account expected account is unavailable',
+                    );
+                  }
+                  const materialization = await connectedAccountsOwner.materialize({
+                    purpose: scope.purpose,
+                    serviceRefs: scope.serviceRefs,
+                    exactPurposeBindingSubjectId: sessionPurposeBindingLease.subjectId,
+                    sessionId: canonicalSessionId,
+                    expectedAccount,
+                    request: Object.freeze({
+                      kind: 'files' as const,
+                      fileIds: Object.freeze([
+                        ...stateSharingDescriptor.authIsolation.secretEntries,
+                      ]),
+                    }),
+                    signal: registration.retirementSignal,
+                  });
+                  if (materialization.kind !== 'files') {
+                    throw new Error(
+                      'Connected Account native-home credential returned the wrong materialization kind',
+                    );
+                  }
+                  for (const [fileId, contents] of Object.entries(materialization.files)) {
+                    if (Object.prototype.hasOwnProperty.call(files, fileId)) {
+                      throw new Error(
+                        `Connected Account native-home credential '${fileId}' has multiple owners`,
+                      );
+                    }
+                    files[fileId] = contents;
+                  }
+                }
+                if (Object.keys(files).length > 0) {
+                  await materializeConnectedServiceNativeHomeCredentials({
+                    targetRoot,
+                    declaredSecretEntries:
+                      stateSharingDescriptor.authIsolation.secretEntries,
+                    files: Object.freeze(files),
+                  });
+                }
+              }
+              ownsConnectedServiceLaunchScope = true;
+            }
+
             const mergedEnvironment = mergeForegroundAdmissionEnvironment({
               profile: savedProfileEnvironment,
               connectedService: connectedServiceEnvironment,
@@ -907,6 +1304,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
             const finalSpawnEnvironment = await resolveForegroundFinalPluginPrerequisites({
               happyHomeDir: configuration.happyHomeDir,
               pluginRuntimeRegistry: lease.registry,
+              resolvedAgentId: request.agentId,
               directory: request.directory,
               backendTarget: request.backendTarget,
               environment: {
@@ -958,6 +1356,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               || snapshot?.status !== 'known'
               || registration.retirementSignal.aborted
               || !registration.isCurrent()
+              || !connectedAccountLaunchCurrent
               || registration.pluginId
                 !== bridge.authorization.descriptor.pluginId
               || registration.generation
@@ -974,14 +1373,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 hashProcessCommand(currentIdentity.command),
               snapshotIdentity: snapshot.comparableId,
             });
-            if (sessionPurposeBindingSnapshot) {
-              sessionPurposeBindingLease =
-                dependencies.activateSessionPurposeBindings!({
-                  sessionId: canonicalSessionId,
-                  purposes: sessionPurposeBindingSnapshot.purposes,
-                  bindings: sessionPurposeBindingSnapshot.bindings,
-                });
-            }
             if (requestAuthMaterializedRoot) {
               const requestAuthUses =
                 sessionPurposeBindingSnapshot?.requestAuthUses;
@@ -1079,9 +1470,17 @@ export async function prepareForegroundAgentRuntimeAdmission(
               );
             }
             publishedAuthority = authority;
+            await assertExpectedConnectedAccountsCurrent();
             if (ownsConnectedServiceLaunchScope) {
               connectedServiceCleanupOnExit =
                 connectedServiceLaunchScope.transfer();
+            }
+            connectedAccountLaunchCommitted = true;
+            if (!connectedAccountLaunchCurrent) {
+              await connectedServiceCleanupOnExit?.();
+              throw new Error(
+                'Foreground Connected Account binding changed before runtime open',
+              );
             }
             connectedServiceClaimSucceeded = true;
             return {

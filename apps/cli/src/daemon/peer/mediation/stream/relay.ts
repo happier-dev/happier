@@ -30,6 +30,7 @@ export type MachineLiveStreamRelayTerminator = Readonly<{
     >;
     applyControl: (envelope: MachineLiveStreamRelayEnvelopeV1) => Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
     stop: (streamId: string) => Promise<void>;
+    dispose: () => Promise<void>;
 }>;
 
 type ActiveRelayStream = Readonly<{
@@ -168,6 +169,8 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
 }>): MachineLiveStreamRelayTerminator {
     const activeStreams = new Map<string, ActiveRelayStream>();
     const bytesByStreamId = new Map<string, number>();
+    let disposed = false;
+    let disposePromise: Promise<void> | null = null;
 
     function emitObservability(inputEvent: Readonly<{
         kind: DaemonPeerMediationObservabilityEventKind;
@@ -221,6 +224,10 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
 
     return {
         start: async (startRequest) => {
+            if (disposed) {
+                emitObservability({ kind: 'flow.denied', startRequest, reasonCode: 'relay_disposed' });
+                return { ok: false, reasonCode: 'relay_disposed' };
+            }
             if (startRequest.routeKind !== 'server_relay') {
                 emitObservability({ kind: 'flow.denied', startRequest, reasonCode: 'invalid_route_kind' });
                 return { ok: false, reasonCode: 'invalid_route_kind' };
@@ -341,6 +348,16 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                 emitObservability({ kind: 'flow.errored', startRequest, reasonCode: capture.reasonCode });
                 return { ok: false, reasonCode: capture.reasonCode };
             }
+            if (disposed) {
+                bytesByStreamId.delete(session.session.streamId);
+                try {
+                    await capture.session.stop();
+                } catch {
+                    // Disposal remains terminal even when the capture source cannot stop cleanly.
+                }
+                emitObservability({ kind: 'flow.closed', startRequest, reasonCode: 'relay_disposed' });
+                return { ok: false, reasonCode: 'relay_disposed' };
+            }
 
             activeStreams.set(session.session.streamId, {
                 captureSession: capture.session,
@@ -410,6 +427,19 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
                 streamId,
                 observabilityKind: 'flow.closed',
             });
+        },
+        dispose: async () => {
+            if (!disposePromise) {
+                disposed = true;
+                disposePromise = Promise.all([...activeStreams.keys()].map(async (streamId) => {
+                    await closeActiveStream({
+                        streamId,
+                        observabilityKind: 'flow.closed',
+                        reasonCode: 'relay_disposed',
+                    });
+                })).then(() => undefined);
+            }
+            await disposePromise;
         },
     };
 }

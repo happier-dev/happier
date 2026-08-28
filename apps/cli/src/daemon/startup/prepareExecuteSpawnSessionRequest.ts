@@ -97,6 +97,7 @@ export async function prepareExecuteSpawnSessionRequest(
             && options.existingSessionId.trim().length > 0,
         hasMachineId: typeof options.machineId === 'string' && options.machineId.trim().length > 0,
         hasBackendTarget: options.backendTarget !== undefined,
+        hasAgentTarget: options.agentTarget !== undefined,
         hasProfileId: typeof options.profileId === 'string' && options.profileId.trim().length > 0,
         hasInitialTranscriptAfterSeq: typeof options.initialTranscriptAfterSeq === 'number',
         hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
@@ -124,6 +125,7 @@ export async function prepareExecuteSpawnSessionRequest(
         agentModeId,
         agentModeUpdatedAt,
         modelSelection,
+        agentTarget,
         backendTarget,
     } = options;
     const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
@@ -131,6 +133,7 @@ export async function prepareExecuteSpawnSessionRequest(
     const backendIdentityResolution = await resolveSpawnBackendIdentity({
         existingSessionId: typeof existingSessionId === 'string' ? existingSessionId : '',
         resume: normalizedResume,
+        agentTarget,
         backendTarget,
         credentials: params.request.credentials,
         loadLocalHandoffMetadataByVendorResumeId: params.request.loadLocalHandoffMetadataByVendorResumeId,
@@ -187,6 +190,20 @@ export async function prepareExecuteSpawnSessionRequest(
         ? await catalogEntry.getDaemonSpawnHooks()
         : null;
 
+    let runtimeSelection: ReturnType<typeof readCanonicalSpawnRuntimeSelection>;
+    try {
+        runtimeSelection = readCanonicalSpawnRuntimeSelection({
+            ...options,
+            ...(catalogAgentId ? { agentId: catalogAgentId } : {}),
+        });
+    } catch (error) {
+        return {
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: error instanceof Error ? error.message : 'Invalid runtime descriptor',
+        };
+    }
+
     if (effectiveResume) {
         if (effectiveBackendTargetV2.sourceKind === 'configured') {
             const configuredBackendId = (effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId).trim();
@@ -204,11 +221,7 @@ export async function prepareExecuteSpawnSessionRequest(
             };
         }
         const vendorResumeSupport = await getVendorResumeSupport(catalogAgentId);
-        const runtimeSelection = readCanonicalSpawnRuntimeSelection(options);
         const ok = vendorResumeSupport({
-            ...(runtimeSelection.agentRuntimeSelection
-                ? { agentRuntimeSelection: runtimeSelection.agentRuntimeSelection }
-                : {}),
             ...(runtimeSelection.runtimeDescriptorV1
                 ? { runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1 }
                 : {}),

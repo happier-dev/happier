@@ -88,8 +88,10 @@ function mapPrivateExternalTakeoverPlan() {
         linkedSessionId: 'private-linked-session',
         targetAgent: {
             id: PRIVATE_BACKEND_ID,
-            provenance: 'external',
-            source: { kind: 'path' },
+            identity: {
+                pluginId: 'happier.fixture.logging-privacy',
+                localId: PRIVATE_BACKEND_ID,
+            },
             hostAccess: {
                 required: [{
                     id: 'fixture-process',
@@ -146,7 +148,8 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
             '[DAEMON RUN] Preparing session spawn',
             expect.objectContaining({
                 hasMachineId: true,
-                hasBackendTarget: true,
+                hasAgentTarget: true,
+                hasBackendTarget: false,
                 hasProfileId: true,
                 environmentVariableCount: 1,
                 environmentVariablesValid: false,
@@ -157,11 +160,12 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
     it('creates no workspace while establishing definitive refusals', async () => {
         // Admission preparation is side-effect-free: the requested workspace is
         // only created once the daemon has cleared every refusal it can already
-        // establish, so a Provider refusal never leaves a directory behind.
+        // establish, so launch admission never leaves a directory behind.
         const result = await prepareExecuteSpawnSessionRequest({
             request: {
                 options: {
                     ...mapPrivateExternalTakeoverPlan(),
+                    agentTarget: undefined,
                     existingSessionId: undefined,
                     resume: undefined,
                 },
@@ -174,7 +178,10 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
             validateEnvVarRecordStrict: () => ({ ok: true, env: {} }),
         });
 
-        expect(result).toMatchObject({ directory: PRIVATE_DIRECTORY });
+        expect(result).toMatchObject({
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        });
         expect(mocks.ensureSessionDirectory).not.toHaveBeenCalled();
         expectNoPrivateSpawnFacts(serializedLoggerCalls());
     });

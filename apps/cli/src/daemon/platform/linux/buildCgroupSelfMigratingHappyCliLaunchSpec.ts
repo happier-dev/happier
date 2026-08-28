@@ -2,6 +2,11 @@ import { join } from 'node:path';
 
 import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions, type HappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessionScopeBaseRelativePath';
+import {
+  buildSystemdUserScopedLaunchSpec,
+  isSystemdUserResourceGovernorReady,
+  type SystemdUserResourceGovernorExecFile,
+} from './systemdUserResourceGovernor';
 
 function normalizePid(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : null;
@@ -37,10 +42,32 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
   procfsRootDir?: string;
   cgroupRootDir?: string;
   launchOptions?: HappyCliSubprocessLaunchOptions;
+  environment?: NodeJS.ProcessEnv;
+  systemdUserResourceGovernorExecFile?: SystemdUserResourceGovernorExecFile;
 }>): Promise<ExecutableLaunchSpec | null> {
   const daemonPid = normalizePid(params.daemonPid) ?? process.pid;
   const procfsRootDir = params.procfsRootDir ?? '/proc';
   const cgroupRootDir = params.cgroupRootDir ?? '/sys/fs/cgroup';
+  const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args, params.launchOptions);
+  const systemdUserResourceGovernorReady = await isSystemdUserResourceGovernorReady({
+    environment: params.environment ?? process.env,
+    execFile: params.systemdUserResourceGovernorExecFile,
+  });
+  if (systemdUserResourceGovernorReady) {
+    return buildSystemdUserScopedLaunchSpec({
+      launchSpec: {
+        filePath: baseLaunchSpec.filePath,
+        args: baseLaunchSpec.args,
+        env: {
+          ...(baseLaunchSpec.env ?? {}),
+          // A systemd scope is the owner of this process tree. Do not let the
+          // legacy runner-side cgroup migration move the child out of it.
+          HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP: '',
+        },
+      },
+    });
+  }
+
   const daemonServiceRelativePath = await readUnifiedProcessCgroupRelativePath(daemonPid, procfsRootDir);
   if (!daemonServiceRelativePath) {
     return null;
@@ -51,7 +78,6 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
     return null;
   }
 
-  const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args, params.launchOptions);
   const appSliceAbsolutePath = join(cgroupRootDir, sessionScopeBaseRelativePath);
 
   return {

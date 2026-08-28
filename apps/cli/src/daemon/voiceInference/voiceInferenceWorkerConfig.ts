@@ -36,6 +36,10 @@ export const DEFAULT_VOICE_INFERENCE_WORKER_CONFIG = {
  */
 export const VOICE_INFERENCE_WORKER_IPC_DEFAULTS = {
     requestTimeoutMs: 30_000,
+    // Measured supported Kokoro cold starts can take several minutes under admitted host load.
+    // Warm/prime remain bounded, but use their real operation budget instead of the ordinary
+    // TTS/STT request deadline.
+    warmPrimeRequestTimeoutMs: 600_000,
     maxFrameBytes: 8 * 1024 * 1024,
 } as const;
 
@@ -114,9 +118,10 @@ export function resolveVoiceInferenceMaxLoadedArtifactBytes(): number {
 }
 
 /**
- * Per-request deadline (ms) for a forked-worker IPC request. On expiry the client rejects
- * that request with `runtime_timeout` and marks the worker unhealthy so the supervisor
- * respawns it. Streaming requests reset the deadline on each chunk of activity.
+ * Ordinary inference-request deadline (ms) for a forked-worker IPC request. On expiry the client
+ * rejects that request with `runtime_timeout` and marks the worker unhealthy so the supervisor
+ * respawns it. Streaming requests reset the deadline on each chunk of activity; warm/prime use
+ * their measured operation-specific budget from the same centralized defaults.
  */
 export function resolveVoiceInferenceWorkerRequestTimeoutMs(): number {
     return parseBoundedInt(

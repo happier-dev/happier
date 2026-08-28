@@ -65,6 +65,65 @@ const REMOTE_DEV_NATIVE_RESPAWN_DESCRIPTOR_V1 = {
 };
 
 describe('sessionRunnerRespawnDescriptor', () => {
+  it('rejects a Provider binding model that disagrees with the retained active selection', () => {
+    const spawnOptions = {
+      directory: '/tmp/repo',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelSelection: {
+        v: 1,
+        updatedAt: 10,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_gateway',
+          modelId: 'selection-model',
+        },
+      },
+      providerBindingMetadataV1: {
+        v: 1,
+        connectionId: 'pc_gateway',
+        contributionKey: 'plugin.gateway/gateway',
+        connectionRevision: 2,
+        model: { id: 'binding-model', name: 'Binding model' },
+        protocol: 'openai-responses',
+        materialization: 'engineConfig',
+        adapterBindingKey: 'gateway',
+        compatibilityFingerprint: 'compatibility-v1',
+        bindingSecurityFingerprint: 'security-v1',
+        displaySnapshot: {
+          providerName: 'Gateway',
+          connectionName: 'Work',
+          connectionRole: 'named',
+          connectionDisplayNameMode: 'custom',
+        },
+      },
+    } satisfies SpawnSessionOptions;
+    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions);
+
+    expect(descriptor).toBeNull();
+    expect(SessionRunnerRespawnDescriptorV1Schema.safeParse({
+      version: 2,
+      directory: spawnOptions.directory,
+      backendTarget: spawnOptions.backendTarget,
+      modelSelection: spawnOptions.modelSelection,
+      providerBindingMetadataV1: spawnOptions.providerBindingMetadataV1,
+    }).success).toBe(false);
+
+    const {
+      model: _omittedModel,
+      ...bindingWithoutModel
+    } = spawnOptions.providerBindingMetadataV1;
+    expect(buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
+      ...spawnOptions,
+      providerBindingMetadataV1: bindingWithoutModel,
+    })).toBeNull();
+    expect(SessionRunnerRespawnDescriptorV1Schema.safeParse({
+      version: 2,
+      directory: spawnOptions.directory,
+      backendTarget: spawnOptions.backendTarget,
+      modelSelection: spawnOptions.modelSelection,
+      providerBindingMetadataV1: bindingWithoutModel,
+    }).success).toBe(false);
+  });
   it('imports flat Oh My Pi continuation and persists only structured Agent identity', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
@@ -116,16 +175,20 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(JSON.stringify(persisted)).not.toContain('ohMyPi');
 
     const reread = SessionRunnerRespawnDescriptorV1Schema.parse(persisted);
-    expect(buildSpawnSessionOptionsFromRespawnDescriptorV1(reread)).toMatchObject({
-      backendTarget: {
-        kind: 'backend',
-        backendId: 'ohMyPi',
-        sourceKind: 'built_in',
+    const respawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(reread);
+    expect(respawnOptions).toMatchObject({
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.ohmypi',
+          localId: 'ohmypi',
+        },
       },
       runtimeDescriptorV1: {
         agentId: 'ohMyPi',
       },
     });
+    expect(respawnOptions).not.toHaveProperty('backendTarget');
   });
 
   it('imports the predecessor Oh My Pi continuation envelope and rewrites it structurally', () => {
@@ -215,6 +278,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       connectionId: ProviderConnectionIdSchema.parse('pc_work'),
       contributionKey: 'plugin.openrouter/openrouter',
       connectionRevision: 3,
+      model: { id: 'vendor/model', name: 'Vendor model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'openrouter',
@@ -480,6 +544,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       connectionId: ProviderConnectionIdSchema.parse('pc_work'),
       contributionKey: 'plugin.openrouter/openrouter',
       connectionRevision: 3,
+      model: { id: 'vendor/model', name: 'Vendor model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'openrouter',
@@ -539,6 +604,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       connectionId: ProviderConnectionIdSchema.parse('pc_work'),
       contributionKey: 'plugin.openrouter/openrouter',
       connectionRevision: 3,
+      model: { id: 'provider-model', name: 'Provider model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'openrouter',
@@ -588,6 +654,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       connectionId: ProviderConnectionIdSchema.parse('pc_work'),
       contributionKey: 'plugin.openrouter/openrouter',
       connectionRevision: 3,
+      model: { id: 'provider-model', name: 'Provider model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'openrouter',
@@ -688,6 +755,19 @@ describe('sessionRunnerRespawnDescriptor', () => {
         },
       },
     });
+  });
+
+  it('rejects conflicting released Codex respawn selection without throwing from safeParse', () => {
+    expect(SessionRunnerRespawnDescriptorV1Schema.safeParse({
+      version: 1,
+      directory: '/tmp/repo',
+      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
+    }).success).toBe(false);
   });
 
   it('round-trips mcpSelection through the respawn descriptor', () => {
@@ -886,31 +966,49 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(descriptor?.backendTarget).toBeUndefined();
   });
 
-  it('persists legacy experimentalCodexAcp spawn options as canonical codexBackendMode only', () => {
+  it('persists current Codex runtime selection only through runtimeDescriptorV1', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      experimentalCodexAcp: true,
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     } satisfies SpawnSessionOptions);
 
     expect(descriptor).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
+    expect(descriptor).not.toHaveProperty('codexBackendMode');
     expect(descriptor).not.toHaveProperty('experimentalCodexAcp');
+    const persisted = writeSessionRunnerRespawnDescriptorForPersistence(descriptor!);
+    expect(persisted).toHaveProperty('runtimeDescriptorV1');
+    expect(persisted).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(persisted).not.toHaveProperty('codexBackendMode');
 
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
       approvedNewDirectoryCreation: true,
     });
+    expect(restored).not.toHaveProperty('codexBackendMode');
     expect(restored).not.toHaveProperty('experimentalCodexAcp');
   });
 
-  it('hydrates legacy persisted experimentalCodexAcp descriptors onto canonical codexBackendMode', () => {
+  it('hydrates released experimentalCodexAcp descriptors onto runtimeDescriptorV1', () => {
     const descriptor = SessionRunnerRespawnDescriptorV1Schema.parse({
       version: 1,
       directory: '/tmp/repo',
@@ -924,20 +1022,30 @@ describe('sessionRunnerRespawnDescriptor', () => {
       version: 1,
       directory: '/tmp/repo',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
+    expect(descriptor).not.toHaveProperty('codexBackendMode');
     expect(descriptor).not.toHaveProperty('experimentalCodexAcp');
 
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
       approvedNewDirectoryCreation: true,
     });
+    expect(restored).not.toHaveProperty('codexBackendMode');
     expect(restored).not.toHaveProperty('experimentalCodexAcp');
   });
 
-  it('hydrates legacy experimentalCodexResume descriptors onto canonical codexBackendMode', () => {
+  it('hydrates released experimentalCodexResume descriptors onto runtimeDescriptorV1', () => {
     const descriptor = SessionRunnerRespawnDescriptorV1Schema.parse({
       version: 1,
       directory: '/tmp/repo',
@@ -951,38 +1059,62 @@ describe('sessionRunnerRespawnDescriptor', () => {
       version: 1,
       directory: '/tmp/repo',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
+    expect(descriptor).not.toHaveProperty('codexBackendMode');
     expect(descriptor).not.toHaveProperty('experimentalCodexResume');
 
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
       approvedNewDirectoryCreation: true,
     });
+    expect(restored).not.toHaveProperty('codexBackendMode');
   });
 
-  it('round-trips canonical codex backend mode through the respawn descriptor', () => {
+  it('round-trips a current Codex runtime descriptor without a legacy mode shadow', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
     } satisfies SpawnSessionOptions);
 
     expect(descriptor).toMatchObject({
       version: 1,
       directory: '/tmp/repo',
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
     });
+    expect(descriptor).not.toHaveProperty('codexBackendMode');
 
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
       directory: '/tmp/repo',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
       approvedNewDirectoryCreation: true,
     });
+    expect(restored).not.toHaveProperty('codexBackendMode');
   });
 
   it('round-trips the fresh-session spawn nonce through daemon restart continuity', () => {

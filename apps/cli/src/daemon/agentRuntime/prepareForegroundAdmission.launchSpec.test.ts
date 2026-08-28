@@ -23,6 +23,7 @@ describe('foreground Agent CLI launch admission', () => {
         // This focused CLI-owner test has no plugin prerequisite hook.
         happyHomeDir: '',
         pluginRuntimeRegistry: undefined as unknown as ResolvedExecutablePluginRuntimeRegistry,
+        resolvedAgentId: 'claude',
         directory: '/workspace',
         backendTarget: {
           kind: 'backend',

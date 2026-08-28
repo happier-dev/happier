@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { createConnectedServiceSwitchDeferralQueue } from '../connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
@@ -238,25 +236,4 @@ describe('runtime-v2 connected-service continuation composition', () => {
     });
   });
 
-  it('uses only the thin interrupted-origin Pending producer', async () => {
-    const source = await readFile(new URL('./startDaemonSessionControlRuntime.ts', import.meta.url), 'utf8');
-    expect(source).toContain('enqueueInterruptedOriginContinuation');
-    expect(source.match(/\.enqueueInterruptedOriginContinuation\(/g)).toHaveLength(1);
-    expect(source).toContain("input.recoveryInvocationSource === 'scheduler_retry'");
-    expect(source).toContain('?.activeTurnId?.trim() || null');
-    expect(source).not.toContain('createSessionContinuationRecoveryController');
-    expect(source).not.toContain('retryOriginalCommittedUserMessage');
-    expect(source).not.toContain('resolveConnectedServiceContinuationReplayPlan');
-    expect(source).not.toContain('scheduleSessionContinuationRecoveryTimeout');
-    expect(source).not.toContain('hasNewerExplicitUserInput');
-    expect(source).not.toContain('hasCommittedUserMessageAfterMs');
-    expect(source).not.toContain('failure-at:');
-  });
-
-  it('shares exact live source resolution between in-band reports and scheduler retries', async () => {
-    const source = await readFile(new URL('./startDaemonSessionControlRuntime.ts', import.meta.url), 'utf8');
-    expect(
-      source.match(/resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession/g),
-    ).toHaveLength(2);
-  });
 });

@@ -1403,6 +1403,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                                 });
                             return { status: 'admitted' as const };
                         },
+                        async cancel() {},
                         watch(listener) {
                             listeners.add(listener);
                             return Object.freeze({

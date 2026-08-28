@@ -2,9 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import type {
-    LocalServicePreviewResourceV1,
-    LocalServicePreviewTargetV1,
+import {
+    isLoopbackHostname,
+    type LocalServicePreviewResourceV1,
+    type LocalServicePreviewTargetV1,
 } from '@happier-dev/protocol';
 
 import { createHostedWebStaticAssetPreviewResource } from '../hostedWeb';
@@ -53,14 +54,6 @@ export type StartHostedWebStaticAssetServerInput =
             previewId: string,
         ) => unknown | Promise<unknown>;
     }>;
-
-function isLoopbackHost(host: string): boolean {
-    const normalized = host.trim().toLowerCase();
-    return normalized === 'localhost'
-        || normalized === '::1'
-        || normalized === '[::1]'
-        || /^127(?:\.|$)/u.test(normalized);
-}
 
 function listen(server: Server, host: string): Promise<LocalServicePreviewTargetV1> {
     return new Promise((resolve, reject) => {
@@ -179,7 +172,7 @@ export async function startHostedWebStaticAssetServer(
     input: StartHostedWebStaticAssetServerInput,
 ): Promise<HostedWebStaticAssetServerHandle> {
     const host = input.host ?? '127.0.0.1';
-    if (!isLoopbackHost(host)) {
+    if (!isLoopbackHostname(host)) {
         throw new Error(`Hosted-web static asset server must bind loopback only, received '${host}'`);
     }
     const verifiedArtifactFiles = await readVerifiedArtifactFiles(input);

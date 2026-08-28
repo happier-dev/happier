@@ -172,7 +172,7 @@ async function readReusableExistingAuthority(input: Readonly<{
   status: 'integrityFailure';
   pluginId: string;
   immutableGenerationId: string;
-}> | null> {
+}> | Readonly<{ status: 'unavailable' }> | null> {
   const authority =
     await readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({
       happyHomeDir: input.happyHomeDir,
@@ -198,20 +198,6 @@ async function readReusableExistingAuthority(input: Readonly<{
   ) {
     return Object.freeze({ status: 'hardRevoked' });
   }
-  try {
-    await loadRetainedAgentRuntimeLeaf({
-      paths: resolvePluginStorePaths({
-        happyHomeDir: input.happyHomeDir,
-      }),
-      binding: retainedAgent,
-    });
-  } catch {
-    return Object.freeze({
-      status: 'integrityFailure',
-      pluginId,
-      immutableGenerationId: retainedAgent.immutableGenerationId,
-    });
-  }
   const currentnessProof =
     resolveRetainedAgentCurrentnessProof(retainedAgent);
   if (!await input.readPluginImmutableGenerationIntegrityCurrentness(
@@ -225,6 +211,20 @@ async function readReusableExistingAuthority(input: Readonly<{
       pluginId,
       immutableGenerationId: retainedAgent.immutableGenerationId,
     });
+  }
+  try {
+    await loadRetainedAgentRuntimeLeaf({
+      paths: resolvePluginStorePaths({
+        happyHomeDir: input.happyHomeDir,
+      }),
+      binding: retainedAgent,
+    });
+  } catch {
+    // A generation can remain exactly current while its runtime is temporarily
+    // unavailable, incompatible with this host, or missing an optional export.
+    // Only the explicit immutable-currentness owner above proves custody or
+    // integrity failure and may trigger hard revocation.
+    return Object.freeze({ status: 'unavailable' });
   }
   return Object.freeze({
     status: 'reusable',
