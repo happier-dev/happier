@@ -341,6 +341,24 @@ describe('the candidate row projection', () => {
     expect(row.controls.map((control) => control.id)).toEqual(['add']);
   });
 
+  it('offers no repeat write while the last administration outcome is unknown', () => {
+    for (const lifecycle of [
+      UNKNOWN_TRIAGE_SOURCE_SETTINGS_ROW_LIFECYCLE_V1,
+      { kind: 'configured', sourceInstanceId: INSTANCE_ID },
+      { kind: 'retired', sourceInstanceId: INSTANCE_ID },
+    ] as const) {
+      const row = project(
+        lifecycle,
+        { outcome: { kind: 'outcomeUnknown', message: 'The request timed out.' } },
+      );
+
+      expect(row.status).toBe(
+        'The request timed out. It may already have been applied; refresh before trying again.',
+      );
+      expect(row.controls).toEqual([]);
+    }
+  });
+
   it('states what removal costs rather than implying it discards the user own state', () => {
     const row = project(
       { kind: 'retired', sourceInstanceId: INSTANCE_ID },

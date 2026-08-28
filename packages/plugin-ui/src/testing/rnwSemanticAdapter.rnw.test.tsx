@@ -8,6 +8,7 @@ import { act, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Button } from '../components/Button.js';
+import { usePluginUiFocusTarget } from '../components/Focus.js';
 import { Divider } from '../components/Foundation.js';
 import { Form, Select, TextField } from '../components/Form.js';
 import { Image } from '../components/Image.js';
@@ -22,6 +23,10 @@ import {
   SURFACE_THEME_FIXTURE,
 } from '../surfaceFixture.testSupport.js';
 import { defineUiSurface } from '../surfaceEntry.js';
+import {
+  usePluginUiEphemeralSharedScope,
+  type PluginUiEphemeralSharedScope,
+} from '../hostApi/index.js';
 import { createPluginUiRnwSemanticSurfaceAdapter } from './rnwSemanticAdapter.testSupport.js';
 
 const identity = {
@@ -31,6 +36,48 @@ const identity = {
   generation: 'generation-1',
   sessionId: 'session-1',
 } as const;
+
+describe('ephemeral shared scope test host binding', () => {
+  it('injects one explicitly host-owned scope into separate semantic artifact mounts', async () => {
+    const sharedValue = Object.freeze({ id: 'shared' });
+    const scope: PluginUiEphemeralSharedScope = Object.freeze({
+      acquire: vi.fn(() => Object.freeze({ value: sharedValue, release() {} })),
+    });
+    const observed: unknown[] = [];
+
+    function SharedScopeProbe() {
+      const mountedScope = usePluginUiEphemeralSharedScope();
+      useEffect(() => {
+        const lease = mountedScope?.acquire('window.v1', () => ({
+          value: Object.freeze({ id: 'cold' }),
+          dispose() {},
+        }));
+        observed.push(lease?.value);
+        return () => lease?.release();
+      }, [mountedScope]);
+      return <Text value="Shared scope probe" />;
+    }
+
+    const adapter = () => createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope });
+    const first = await createPluginUiTestkit({
+      identity: { ...identity, viewId: 'list' },
+      surface: defineUiSurface(SharedScopeProbe),
+      surfaceContext: createSurfaceContext(),
+      adapter: adapter(),
+    });
+    const second = await createPluginUiTestkit({
+      identity: { ...identity, viewId: 'composer' },
+      surface: defineUiSurface(SharedScopeProbe),
+      surfaceContext: createSurfaceContext(),
+      adapter: adapter(),
+    });
+
+    expect(observed).toEqual([sharedValue, sharedValue]);
+    expect(scope.acquire).toHaveBeenCalledTimes(2);
+    await first.dispose();
+    await second.dispose();
+  });
+});
 
 describe('plugin-ui RNW semantic fixture adapter', () => {
   it('uses the SDK testing context builder rather than a duplicate local fixture', () => {
@@ -553,6 +600,45 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
       }
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('lets the public semantic harness supply the mounted physical-focus owner', async () => {
+    function AuthorSurface() {
+      const target = usePluginUiFocusTarget();
+      return (
+        <>
+          <Button title="Focus engines" onPress={() => { target.focus(); }} />
+          <Form.Select
+            label="Review engines"
+            options={[{ value: 'codex', label: 'Codex' }]}
+            value={undefined}
+            onChange={() => undefined}
+            focusTarget={target}
+          />
+        </>
+      );
+    }
+
+    const focused: HTMLElement[] = [];
+    const fixture = await createPluginUiTestkit({
+      identity,
+      surface: defineUiSurface(AuthorSurface),
+      surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({
+        physicalFocus(target) {
+          target.focus();
+          if (document.activeElement instanceof HTMLElement) focused.push(document.activeElement);
+          return true;
+        },
+      }),
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Focus engines' }));
+      expect(focused).toHaveLength(1);
+      expect(focused[0]?.getAttribute('aria-label')).toBe('Codex');
+    } finally {
+      await fixture.dispose();
     }
   });
 

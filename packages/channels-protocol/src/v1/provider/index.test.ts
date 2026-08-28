@@ -70,6 +70,7 @@ describe('Channels V1 provider barrel', () => {
             'areConversationEndpointIdentitiesEqual',
             'compareCanonicalConversationResolutionCandidatesV1',
             'hasCanonicalConversationResolutionCandidateOrderV1',
+            'hasCurrentConversationProviderConnectionV1',
         ]);
         expect(Object.keys(provider).some((key) => key.endsWith('ProtocolSchema'))).toBe(false);
     });

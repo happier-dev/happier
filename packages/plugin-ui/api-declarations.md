@@ -1584,6 +1584,7 @@ type SelectProps = Readonly<{
     required?: boolean;
     onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
     disabled?: boolean;
+    focusTarget?: PluginUiFocusTarget;
     testID?: string;
 }>;
 ```
@@ -3627,6 +3628,7 @@ type SelectProps = Readonly<{
     required?: boolean;
     onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
     disabled?: boolean;
+    focusTarget?: PluginUiFocusTarget;
     testID?: string;
 }>;
 ```
@@ -5291,7 +5293,7 @@ Declared by `dist/presentation/content/Foundation.d.ts` as `HappierHeading`.
 ```ts
 function HappierHeading(props: Readonly<{
     children?: ReactNode;
-    controlRef?: (instance: unknown | null) => void;
+    controlRef?: (instance: HappierFocusable | null) => void;
     level: 1 | 2 | 3 | 4 | 5 | 6;
     theme?: HappierUiTheme;
     testID?: string;
@@ -6330,7 +6332,7 @@ Declared by `dist/presentation/layout/Layout.d.ts` as `HappierScreenProps`.
 ```ts
 type HappierScreenProps = Readonly<{
     children?: ReactNode;
-    controlRef?: (instance: unknown | null) => void;
+    controlRef?: (instance: HappierFocusable | null) => void;
     onLayout?: (event: HappierLayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
@@ -6397,6 +6399,7 @@ function HappierSelect<Value = string>(props: Readonly<{
     keyForOption?: (option: HappierSelectOption<Value>, index: number) => string;
     minimumTouchTarget?: number;
     disabled?: boolean;
+    controlRef?: (instance: HappierFocusable | null) => void;
     theme: HappierUiTheme;
     testID?: string;
 }>): import("react/jsx-runtime").JSX.Element;
@@ -6466,7 +6469,7 @@ Declared by `dist/presentation/layout/Layout.d.ts` as `HappierStackProps`.
 ```ts
 type HappierStackProps = Readonly<{
     children?: ReactNode;
-    controlRef?: (instance: unknown | null) => void;
+    controlRef?: (instance: HappierFocusable | null) => void;
     direction?: 'vertical' | 'horizontal';
     gap?: number;
     wrap?: boolean;
@@ -6527,7 +6530,7 @@ type HappierStatusProps = Readonly<{
     theme: HappierUiTheme;
     contrast?: HappierUiAccessibility['contrast'];
     isPulsing?: boolean;
-    controlRef?: (instance: unknown | null) => void;
+    controlRef?: (instance: HappierFocusable | null) => void;
     testID?: string;
     accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
     accessibilityLabel?: string;
@@ -6684,7 +6687,7 @@ type HappierTextFieldProps = Readonly<{
     onCompositionChange?: (isComposing: boolean) => void;
     onEscape?: () => boolean;
     minimumTouchTarget?: number;
-    controlRef?: (instance: unknown | null) => void;
+    controlRef?: (instance: HappierFocusable | null) => void;
     theme: HappierUiTheme;
     testID?: string;
 }>;
@@ -7395,6 +7398,7 @@ Declared by `dist/testing/rnwSemanticAdapter.d.ts` as `PluginUiRnwSemanticSurfac
 
 ```ts
 type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
+    physicalFocus?: (target: HappierFocusable) => boolean;
     targetedSurfaces?: Readonly<{
         readCurrentMounts(): unknown;
         readContributorManifest(pluginId: string): unknown;
@@ -7709,7 +7713,7 @@ type AuthorText = Readonly<{
 Reached from a published signature; not itself a published export.
 
 ```ts
-type FlatVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+type FlatVirtualizedListProps<Item> = (NonSelectableVirtualizedListProps<Item> | SelectableVirtualizedListProps<Item>) & Readonly<{
     items: readonly Item[];
     sections?: never;
 }>;
@@ -7743,6 +7747,21 @@ type ItemSecondaryActionsProps = Readonly<{
     secondaryActions?: undefined;
     secondaryActionAccessibilityLabel?: never;
     onSecondaryAction?: undefined;
+}>;
+```
+
+
+### `dist/components/List.d.ts` — `ListAccessibleNameProps`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ListAccessibleNameProps = Readonly<{
+    accessibilityLabel: string;
+    accessibilityLabelKey?: string;
+}> | Readonly<{
+    accessibilityLabel?: string;
+    accessibilityLabelKey: string;
 }>;
 ```
 
@@ -7820,14 +7839,36 @@ type ListSelectionBaseProps<Item> = Readonly<{
 ```
 
 
+### `dist/components/List.d.ts` — `NonSelectableVirtualizedListProps`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type NonSelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+    selection?: undefined;
+}>;
+```
+
+
 ### `dist/components/List.d.ts` — `SectionedVirtualizedListProps`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
-type SectionedVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+type SectionedVirtualizedListProps<Item> = (NonSelectableVirtualizedListProps<Item> | SelectableVirtualizedListProps<Item>) & Readonly<{
     items?: never;
     sections: readonly ListSectionData<Item>[];
+}>;
+```
+
+
+### `dist/components/List.d.ts` — `SelectableVirtualizedListProps`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & ListAccessibleNameProps & Readonly<{
+    selection: ListSelectionProps<Item>;
 }>;
 ```
 
@@ -7872,10 +7913,10 @@ type VirtualizedListSharedProps<Item> = Readonly<{
     renderItem: (item: Item, index: number, sectionKey: string | null) => ReactNode;
     header?: ReactNode | ((context: ListHeaderContext<Item>) => ReactNode);
     search?: ListSearchProps<Item>;
-    selection?: ListSelectionProps<Item>;
     empty?: ReactNode;
     footer?: ReactNode;
     contentContainerStyle?: HappierStyleProp;
+    preserveVisibleContentPositionOnPrepend?: boolean;
     children?: never;
 }>;
 ```
@@ -8082,7 +8123,7 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type HappierFocusable = Readonly<{
-    focus?: () => void;
+    focus: () => void;
 }>;
 ```
 

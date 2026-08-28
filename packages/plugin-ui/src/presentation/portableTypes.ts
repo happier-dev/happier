@@ -167,7 +167,7 @@ export type HappierStyleProp =
 export type HappierAccessibilityLiveRegion = 'none' | 'polite' | 'assertive';
 
 export type HappierFocusable = Readonly<{
-  focus?: () => void;
+  focus: () => void;
 }>;
 
 export type HappierGestureResponderEvent = Readonly<{

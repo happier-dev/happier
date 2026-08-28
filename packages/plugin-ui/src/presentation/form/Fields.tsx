@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
+import type { HappierFocusable } from '../portableTypes.js';
 import {
   useOptionalHappierUiAccessibility,
   useOptionalHappierUiLocalization,
@@ -299,7 +300,7 @@ export type HappierTextFieldProps = Readonly<{
   /** Additive host floor; the mounted environment's native target always wins. */
   minimumTouchTarget?: number;
   /** Private semantic focus binding supplied by the public TextField adapter; disabled fields report no target. */
-  controlRef?: (instance: unknown | null) => void;
+  controlRef?: (instance: HappierFocusable | null) => void;
   theme: HappierUiTheme;
   testID?: string;
 }>;
@@ -372,7 +373,11 @@ export function HappierTextField(props: HappierTextFieldProps) {
     compositionTargetRef.current = candidate;
     candidate?.addEventListener('compositionstart', handleCompositionStart);
     candidate?.addEventListener('compositionend', handleCompositionEnd);
-    props.controlRef?.(props.disabled === true ? null : instance);
+    const focusTarget = instance && typeof instance === 'object'
+      && 'focus' in instance && typeof instance.focus === 'function'
+      ? instance as HappierFocusable
+      : null;
+    props.controlRef?.(props.disabled === true ? null : focusTarget);
   }, [handleCompositionEnd, handleCompositionStart, props.controlRef, props.disabled]);
   // React Native and React Native Web both report the caret inside the native
   // event; the portable selection is lifted out here so no caller has to know
@@ -512,6 +517,7 @@ type HappierSelectOptionControlProps<Value> = Readonly<{
   fieldIssue: ReturnType<typeof useHappierFieldIssueSemantics>;
   itemGroupRadioIndex?: number;
   accessibilityRole: 'checkbox' | 'radio';
+  controlRef?: (instance: HappierFocusable | null) => void;
 }>;
 
 function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProps<Value>) {
@@ -525,6 +531,10 @@ function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProp
   const tabIndex = groupItem.grouped
     ? groupItem.tabStopIndex === props.itemGroupRadioIndex ? 0 : -1
     : undefined;
+  const registerTarget = useCallback((target: HappierFocusable | null) => {
+    groupItem.grouped && groupItem.targetRef?.(target);
+    props.controlRef?.(target);
+  }, [groupItem.grouped, groupItem.targetRef, props.controlRef]);
 
   return (
     <HappierPressable
@@ -535,7 +545,7 @@ function HappierSelectOptionControl<Value>(props: HappierSelectOptionControlProp
       errorMessageId={props.fieldIssue.issueId}
       checked={props.selected}
       disabled={props.disabled}
-      controlRef={groupItem.grouped ? groupItem.targetRef : undefined}
+      controlRef={groupItem.grouped || props.controlRef !== undefined ? registerTarget : undefined}
       tabIndex={tabIndex}
       onKeyDown={groupItem.grouped ? groupItem.onKeyDown : undefined}
       onPress={props.onPress}
@@ -588,6 +598,20 @@ function defaultHappierSelectOptionKey<Value>(option: HappierSelectOption<Value>
   }
 }
 
+function retainLastSemanticSelections<Value>(
+  values: readonly Value[],
+  isEqual: (left: Value, right: Value) => boolean,
+): Value[] {
+  const retainedInReverseOrder: Value[] = [];
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index]!;
+    if (!retainedInReverseOrder.some((retained) => isEqual(value, retained))) {
+      retainedInReverseOrder.push(value);
+    }
+  }
+  return retainedInReverseOrder.reverse();
+}
+
 export function HappierSelect<Value = string>(props: Readonly<{
   label: string;
   options: readonly HappierSelectOption<Value>[];
@@ -605,6 +629,8 @@ export function HappierSelect<Value = string>(props: Readonly<{
   /** Additive host floor; the mounted environment's native target always wins. */
   minimumTouchTarget?: number;
   disabled?: boolean;
+  /** Receives the field's first enabled physical option. */
+  controlRef?: (instance: HappierFocusable | null) => void;
   theme: HappierUiTheme;
   testID?: string;
 }>) {
@@ -617,7 +643,7 @@ export function HappierSelect<Value = string>(props: Readonly<{
   );
   const isEqual = props.isEqual ?? Object.is;
   const selected = props.multiple
-    ? (Array.isArray(props.value) ? props.value : [])
+    ? retainLastSemanticSelections(Array.isArray(props.value) ? props.value : [], isEqual)
     : (props.value === undefined ? [] : [props.value as Value]);
   const declaredMinimumSelections = typeof props.minimumSelections === 'number'
     && Number.isFinite(props.minimumSelections)
@@ -633,6 +659,7 @@ export function HappierSelect<Value = string>(props: Readonly<{
     ? undefined
     : Math.max(minimumSelections, declaredMaxSelections);
   const usedKeys = new Set<string>();
+  let focusTargetAssigned = false;
   const options = props.options.map((option, index) => {
     const isSelected = selected.some((value) => isEqual(value, option.value));
     const selectionFloorReached = props.multiple
@@ -652,6 +679,8 @@ export function HappierSelect<Value = string>(props: Readonly<{
     const baseKey = props.keyForOption?.(option, index) ?? defaultHappierSelectOptionKey(option, index);
     const key = usedKeys.has(baseKey) ? `${baseKey}:duplicate:${index}` : baseKey;
     usedKeys.add(key);
+    const controlRef = disabled || focusTargetAssigned ? undefined : props.controlRef;
+    if (!disabled) focusTargetAssigned = true;
     return (
       <HappierSelectOptionControl
         key={key}
@@ -662,6 +691,7 @@ export function HappierSelect<Value = string>(props: Readonly<{
         theme={props.theme}
         minimumTouchTarget={minimumTouchTarget}
         fieldIssue={fieldIssue}
+        controlRef={controlRef}
         onPress={() => {
           if (!props.multiple) {
             props.onChange(option.value);
@@ -676,7 +706,9 @@ export function HappierSelect<Value = string>(props: Readonly<{
           // over Action input normalization.
           props.onChange(maximumSelections === undefined
             ? nextSelection
-            : nextSelection.slice(-maximumSelections));
+            : maximumSelections === 0
+              ? []
+              : nextSelection.slice(-maximumSelections));
         }}
       />
     );

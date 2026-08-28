@@ -266,4 +266,15 @@ describe('Plugin UI data provider', () => {
     expect(unavailable.container.textContent).toBe('true:false');
     unavailable.unmount();
   });
+
+  it('reports an unavailable Collection query when the Account Data client is absent', async () => {
+    function QueryProbe() {
+      const query = usePluginCollectionQuery('tasks', 'open', {});
+      return <output>{`${query.status}:${query.rows.length}:${query.hasMore}`}</output>;
+    }
+
+    const mounted = await mountThroughReactNativeWebAsync(<QueryProbe />);
+    expect(mounted.container.textContent).toBe('unavailable:0:false');
+    mounted.unmount();
+  });
 });

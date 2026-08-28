@@ -74,6 +74,7 @@ describe('Channels V1 public management barrel', () => {
             bindingUpdate: management.ConversationBindingUpdateManagementActionDeclarationV1,
             bindingSetEnabled: management.ConversationBindingSetEnabledManagementActionDeclarationV1,
             bindingDelete: management.ConversationBindingDeleteManagementActionDeclarationV1,
+            sessionProjectionBaselineAccept: management.ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
             ingressRetry: management.ConversationIngressRetryManagementActionDeclarationV1,
             deliveryResolve: management.ConversationDeliveryResolveManagementActionDeclarationV1,
             connectionPollRetry: management.ConversationConnectionPollRetryManagementActionDeclarationV1,

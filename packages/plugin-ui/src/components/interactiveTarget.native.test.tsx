@@ -177,6 +177,11 @@ describe('public interactive families use the provider-owned native target polic
         // Physical frames are required for adjacent controls; hit-slop-only
         // growth can overlap the next row or action.
         expect(target.props.hitSlop).toBeUndefined();
+        // DOM-only semantics must not leak into the native view config. Native
+        // assistive technology consumes the canonical accessibilityRole arm.
+        expect(target.props.role).toBeUndefined();
+        expect(target.props.onKeyDown).toBeUndefined();
+        expect(target.props.accessibilityRole).toBeTypeOf('string');
       }
 
       const textField = renderer!.root.findAll((node) => (

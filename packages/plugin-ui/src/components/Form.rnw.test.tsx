@@ -495,6 +495,85 @@ describe('canonical Action Form presentation', () => {
     mount.unmount();
   });
 
+  it('uses one semantic selection set for a required multiselect with duplicate controlled values', async () => {
+    const changes = vi.fn();
+    const mount = mountForm(
+      <HappierSelect
+        label="Review engines"
+        multiple
+        required
+        options={[{ value: 'claude', label: 'Claude' }]}
+        value={['claude', 'claude']}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const claude = mount.container.querySelector<HTMLElement>('[role="checkbox"]');
+
+    expect(claude?.getAttribute('aria-checked')).toBe('true');
+    expect(claude?.getAttribute('aria-disabled')).toBe('true');
+    await act(async () => { claude?.click(); });
+    expect(changes).not.toHaveBeenCalled();
+    mount.unmount();
+  });
+
+  it('enforces a multi-selection floor against semantic values rather than duplicate entries', async () => {
+    const changes = vi.fn();
+    const mount = mountForm(
+      <HappierSelect
+        label="Review engines"
+        multiple
+        minimumSelections={2}
+        options={[
+          { value: 'claude', label: 'Claude' },
+          { value: 'codex', label: 'Codex' },
+        ]}
+        value={['claude', 'claude', 'codex']}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const options = [...mount.container.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+
+    expect(options.every((option) => option.getAttribute('aria-disabled') === 'true')).toBe(true);
+    await act(async () => { options[0]?.click(); });
+    expect(changes).not.toHaveBeenCalled();
+    mount.unmount();
+  });
+
+  it('deduplicates custom-equal selections before floor, cap, and emission while preserving unknown values', async () => {
+    type Choice = Readonly<{ id: string; revision: number }>;
+    const changes = vi.fn();
+    const stale: Choice = { id: 'stale', revision: 1 };
+    const firstA: Choice = { id: 'a', revision: 1 };
+    const retainedA: Choice = { id: 'a', revision: 2 };
+    const b: Choice = { id: 'b', revision: 1 };
+    const mount = mountForm(
+      <HappierSelect<Choice>
+        label="Review engines"
+        multiple
+        minimumSelections={2}
+        maxSelections={3}
+        options={[
+          { value: retainedA, label: 'A' },
+          { value: b, label: 'B' },
+        ]}
+        value={[stale, firstA, retainedA]}
+        isEqual={(left, right) => left.id === right.id}
+        keyForOption={(option) => option.value.id}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const optionB = [...mount.container.querySelectorAll<HTMLElement>('[role="checkbox"]')]
+      .find((option) => option.textContent?.includes('B'));
+
+    await act(async () => { optionB?.click(); });
+
+    expect(changes).toHaveBeenCalledWith([stale, retainedA, b]);
+    mount.unmount();
+  });
+
   it('exposes a zero optional selection cap as unavailable choices', () => {
     const changes = vi.fn();
     const mount = mountForm(
@@ -513,6 +592,31 @@ describe('canonical Action Form presentation', () => {
     expect(claude?.getAttribute('aria-disabled')).toBe('true');
     claude?.click();
     expect(changes).not.toHaveBeenCalled();
+    mount.unmount();
+  });
+
+  it('clears a stale controlled selection when the selection cap is zero', async () => {
+    const changes = vi.fn();
+    const mount = mountForm(
+      <HappierSelect
+        label="Review engines"
+        multiple
+        maxSelections={0}
+        options={[
+          { value: 'claude', label: 'Claude' },
+          { value: 'codex', label: 'Codex' },
+        ]}
+        value={['claude', 'codex']}
+        onChange={changes}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+    const claude = [...mount.container.querySelectorAll<HTMLElement>('[role="checkbox"]')]
+      .find((option) => option.textContent?.includes('Claude'));
+
+    await act(async () => { claude?.click(); });
+
+    expect(changes).toHaveBeenCalledWith([]);
     mount.unmount();
   });
 

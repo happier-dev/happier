@@ -5,19 +5,20 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
     defineProtocolUniqueArray,
+    defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
+    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_ROW_FACTS_V1,
-    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     TRIAGE_ENTRY_PRESENTATION_STATES_V1,
     TRIAGE_ROW_FACT_IMPORTANCES_V1,
     TRIAGE_ROW_FACT_NUMBER_FORMATS_V1,
     TRIAGE_ROW_FACT_STATUS_TONES_V1,
     TRIAGE_ROW_FACT_TIMESTAMP_FORMATS_V1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TRIAGE_SOURCE_ATTENTION_LEVELS_V1,
     TRIAGE_VIEWER_INVOLVEMENTS_V1,
 } from './bounds.js';
@@ -344,7 +345,11 @@ export type TriageSourceScanObservationV1 = ReturnType<
  */
 export const TriageScanContinuationV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    token: defineTriageSingleLineStringV1(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
+    token: defineProtocolUtf8String({
+        minLength: 1,
+        maxUtf8Bytes: MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+        pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+    }),
 }, { policy: 'closed' });
 export type TriageScanContinuationV1 = ReturnType<typeof TriageScanContinuationV1Schema.parse>;
 
@@ -375,5 +380,4 @@ export type TriageSourceScanEvidenceV1 = ReturnType<
 /** @internal Relative-only bounded page of scan observations. */
 export const TriageScanObservationsV1ProtocolSchema = defineProtocolArray(
     TriageSourceScanObservationV1Schema,
-    { maxItems: MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 },
 );

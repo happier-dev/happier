@@ -160,7 +160,7 @@ describe('author package boundary', () => {
 
     // Publication metadata changes atomically with EU-3/EU-4; source authoring is proven here.
     expect(packageJson.private).toBe(true);
-    expect(packageJson.happier?.publicSdkRelease?.posture).toBe('prepublish_hold');
+    expect(packageJson.happier?.publicSdkRelease?.posture).toBe('developer_preview');
     expect(packageJson.happier?.internalRuntimePackage).toBeUndefined();
     expect(packageJson.scripts?.['test:external-authoring']).toBe(
       'node --test ./scripts/validateExternalAuthoringFixture.test.mjs',
@@ -168,8 +168,8 @@ describe('author package boundary', () => {
     expect(packageJson.scripts?.['test:external-authoring:tarballs']).toBe(
       'node ./scripts/validateExternalAuthoringFixture.mjs',
     );
-    // A direct `yarn pack` must build one exact candidate and then verify the
-    // public declaration report against those same bytes.
+    // A direct `yarn pack` builds current source and verifies its public
+    // declaration report; actual publication approval stays at release dispatch.
     const prepack = packageJson.scripts?.prepack ?? '';
     const prepareCandidate = packageJson.scripts?.['prepare:api-governance'] ?? '';
     const declarationCheck = packageJson.scripts?.['check:api-declarations'] ?? '';
@@ -251,7 +251,9 @@ describe('author package boundary', () => {
     expect(hostApiContext).not.toContain('happier.pluginUi.privateResourceStoreScope.v1');
     expect(publicProviderProps).not.toContain('resourceScope');
     expect(publicProviderProps).not.toContain('dataClient');
+    expect(publicProviderProps).not.toContain('ephemeralSharedScope');
     expect(publicHostApiProviderProps).not.toContain('resourceScope');
+    expect(publicHostApiProviderProps).not.toContain('ephemeralSharedScope');
   });
 
   it('keeps plugin-ui bundled while the production host transforms shared source', () => {

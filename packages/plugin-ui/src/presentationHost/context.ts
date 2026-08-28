@@ -1,6 +1,7 @@
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
+import type { HappierFocusable } from '../presentation/portableTypes.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -78,7 +79,7 @@ export type PluginUiPresentationHost = Readonly<{
    * The app retains layout currentness and platform-specific physical focus;
    * plugin code never receives either owner.
    */
-  focusTarget?(target: unknown): boolean;
+  focusTarget?(target: HappierFocusable): boolean;
   renderMarkdown(input: Readonly<{
     value: string;
     selectable: boolean;

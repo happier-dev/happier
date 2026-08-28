@@ -92,6 +92,7 @@ type HarnessProps = Readonly<{
   onAction?: (actionId: string, keys: readonly string[]) => void;
   query?: string;
   retainedSelectionKeys?: readonly string[];
+  onItemPress?: (key: string) => void;
 }>;
 
 function Harness(props: HarnessProps): React.ReactElement {
@@ -105,7 +106,9 @@ function Harness(props: HarnessProps): React.ReactElement {
       accessibilityLabel="Entries"
       items={props.items ?? entries}
       keyForItem={(item: Entry) => item.id}
-      renderItem={(item: Entry) => <List.Item title={item.label} onPress={() => undefined} />}
+      renderItem={(item: Entry) => (
+        <List.Item title={item.label} onPress={() => props.onItemPress?.(item.id)} />
+      )}
       search={props.query === undefined ? undefined : {
         label: 'Search',
         value: props.query,
@@ -207,8 +210,13 @@ describe('List multi-selection capability', () => {
 
   it('enters selection mode from an ordinary touch-sized control and then toggles rows without opening them', async () => {
     const opened: string[] = [];
+    const itemActions: string[] = [];
     const mounted = mount(
-      <Harness withActionBar onSelectedKeyChange={(key) => opened.push(key)} />,
+      <Harness
+        withActionBar
+        onSelectedKeyChange={(key) => opened.push(key)}
+        onItemPress={(key) => itemActions.push(key)}
+      />,
     );
 
     const enter = mounted.container.querySelector<HTMLElement>(
@@ -228,6 +236,7 @@ describe('List multi-selection capability', () => {
     await pressRow(mounted.container, 'Delta');
 
     expect(opened).toEqual([]);
+    expect(itemActions).toEqual([]);
     expect(selectedLabels(mounted.container)).toEqual(['Bravo', 'Delta']);
     expect(mounted.container.querySelector('[data-testid="bulk-bar"]')).not.toBeNull();
     mounted.unmount();
@@ -235,15 +244,25 @@ describe('List multi-selection capability', () => {
 
   it('opens a detail on a plain press and toggles once a selection is live', async () => {
     const opened: string[] = [];
-    const mounted = mount(<Harness onSelectedKeyChange={(key) => opened.push(key)} />);
+    const itemActions: string[] = [];
+    const mounted = mount(
+      <Harness
+        onSelectedKeyChange={(key) => opened.push(key)}
+        onItemPress={(key) => itemActions.push(key)}
+      />,
+    );
 
     await pressRow(mounted.container, 'Alpha');
     expect(opened).toEqual(['a']);
+    expect(itemActions).toEqual(['a']);
 
     await pressRow(mounted.container, 'Bravo', { ctrlKey: true });
     await pressRow(mounted.container, 'Delta');
 
     expect(opened).toEqual(['a']);
+    // A selection gesture is fully handled by the collection owner. It must
+    // not also invoke the author's ordinary row action.
+    expect(itemActions).toEqual(['a']);
     expect(selectedLabels(mounted.container)).toEqual(['Bravo', 'Delta']);
     mounted.unmount();
   });

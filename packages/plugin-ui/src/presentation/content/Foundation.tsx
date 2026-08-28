@@ -11,7 +11,7 @@ import {
 } from '../../environment/interactiveTarget.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierPressable } from '../interaction/Pressable.js';
-import type { HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
+import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 
@@ -26,7 +26,7 @@ export type HappierMetadataEntry = Readonly<{
 export function HappierHeading(props: Readonly<{
   children?: ReactNode;
   /** Private semantic focus binding supplied by the public Heading adapter. */
-  controlRef?: (instance: unknown | null) => void;
+  controlRef?: (instance: HappierFocusable | null) => void;
   level: 1 | 2 | 3 | 4 | 5 | 6;
   theme?: HappierUiTheme;
   testID?: string;

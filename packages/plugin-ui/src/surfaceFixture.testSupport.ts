@@ -39,6 +39,8 @@ export function createHostApiStub(
     publishCurrentUiContext: () => undefined,
     executeAction: async () => unsupportedHostMethod(),
     selectActionInput: async () => ({ kind: 'cancelled' as const }),
+    openNewSession: async () => unsupportedHostMethod(),
+    settleEphemeralInput: async () => unsupportedHostMethod(),
     readResource: async () => resource,
     statOpenableContent: async () => unsupportedHostMethod(),
     readOpenableContent: async () => unsupportedHostMethod(),

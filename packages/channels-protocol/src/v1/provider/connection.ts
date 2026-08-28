@@ -182,6 +182,33 @@ export type ConversationProviderConnectionsSnapshotV1 = ReturnType<
 export const ConversationProviderConnectionsSnapshotV1JsonSchema: PluginJsonSchema =
     ConversationProviderConnectionsSnapshotV1Schema.jsonSchema;
 
+/**
+ * Matches the caller-filtered current connection authority returned by the
+ * core list/read Actions. Provider source setup uses this one decision instead
+ * of independently deciding whether a retained, disabled, or deleting row can
+ * actually observe the selected credential identity.
+ */
+export function hasCurrentConversationProviderConnectionV1(input: Readonly<{
+    connections: ConversationProviderConnectionsSnapshotV1;
+    providerConnectionKey: string;
+    credentialRef: ConversationQualifiedConnectedAccountRefV1 | null;
+}>): boolean {
+    return Object.values(input.connections).some((connection) => {
+        if (
+            !connection.enabled
+            || connection.deletionState !== 'none'
+            || connection.providerConnectionKey !== input.providerConnectionKey
+        ) return false;
+        const actual = connection.credentialRef;
+        const expected = input.credentialRef;
+        return actual === null || expected === null
+            ? actual === expected
+            : actual.accountId === expected.accountId
+                && actual.service.pluginId === expected.service.pluginId
+                && actual.service.localId === expected.service.localId;
+    });
+}
+
 /** Empty by design: host-stamped caller provenance supplies the reconciliation scope. */
 export const ConversationProviderConnectionsListInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
 export type ConversationProviderConnectionsListInputV1 = ReturnType<

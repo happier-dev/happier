@@ -15,6 +15,14 @@
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
+    "./projection/actionResultText": {
+      "types": "./dist/projection/actionResultText.d.ts",
+      "default": "./dist/projection/actionResultText.js"
+    },
+    "./projection/actionResultSequence": {
+      "types": "./dist/projection/actionResultSequence.d.ts",
+      "default": "./dist/projection/actionResultSequence.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "default": "./dist/ui.js"

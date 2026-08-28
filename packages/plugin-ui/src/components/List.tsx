@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -61,6 +62,9 @@ import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
+// React Native defines values <=16 as unthrottled. Anchor preservation needs
+// the latest platform scroll offset before the content-size transition.
+const LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS = 16;
 
 type ListBaseProps = Readonly<{
   /** Names the collection for assistive technology. */
@@ -235,6 +239,26 @@ type VirtualizedListSharedProps<Item> = Readonly<{
   footer?: ReactNode;
   /** Additive container layout for a virtualized collection. */
   contentContainerStyle?: HappierStyleProp;
+  /**
+   * Keep the first previously visible keyed row at the same viewport offset
+   * when this collection receives a pure prepend. Native delegates to the
+   * platform virtualizer; RNW uses the real scroll/content metrics from this
+   * same List owner.
+   */
+  preserveVisibleContentPositionOnPrepend?: boolean;
+  /**
+   * Keep retained content inside one stable keyed row at the same viewport
+   * offset when an author inserts content before it inside that row.
+   *
+   * Change `revision` only for the insertion that names `anchorKey`. List then
+   * owns the platform scroll correction from its real content metrics. This is
+   * deliberately distinct from a top-level prepend: the virtualizer cannot see
+   * an insertion inside an otherwise unchanged row key.
+   */
+  preserveVisibleContentPositionOnInsert?: Readonly<{
+    anchorKey: string;
+    revision: string | number;
+  }>;
   children?: never;
 }>;
 
@@ -361,6 +385,12 @@ export type ItemProps = Readonly<{
   icon?: ReactNode;
   accessory?: ReactNode;
   /**
+   * Keep an independently interactive accessory beside, rather than inside,
+   * the row's primary Pressable. Use this for buttons, toggles, and compound
+   * controls; decorative or passive trailing content stays inside by default.
+   */
+  accessoryOutsidePressable?: boolean;
+  /**
    * Let the accessory take its own line rather than starve the row's text.
    *
    * A row whose accessory is a small trailing affordance wants the default: one
@@ -401,10 +431,12 @@ export type ItemProps = Readonly<{
 }> & ItemSecondaryActionsProps;
 export type ListItemProps = ItemProps;
 
+type ListItemSelectionDisposition = 'open' | 'handled';
+
 type ListItemSelectionContextValue = Readonly<{
   selected: boolean;
   /** The activation event carries the modifier keys one press means something by. */
-  select: (event?: HappierGestureResponderEvent) => void;
+  select: (event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
   positionInSet: number;
   setSize: number;
   roving: HappierRovingCollectionItem;
@@ -430,7 +462,7 @@ type VirtualizedListRowProps<Item> = Readonly<{
    * instead of every mounted row.
    */
   isTabStop: boolean;
-  onSelect: (key: string, event?: HappierGestureResponderEvent) => void;
+  onSelect: (key: string, event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
   onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
 }>;
@@ -723,7 +755,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // focus on the row it landed on, so it also RETIRES any request still waiting
   // for a reveal — otherwise that row's later registration pulls focus off the
   // row the reader just chose, one or more frames after the interaction.
-  const selectItem = useCallback((key: string, event?: HappierGestureResponderEvent) => {
+  const selectItem = useCallback((
+    key: string,
+    event?: HappierGestureResponderEvent,
+  ): ListItemSelectionDisposition => {
     rowFocusRequest.abandon();
     const store = multiStoreRef.current;
     if (store !== null) {
@@ -742,11 +777,12 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         if (action === 'toggle') store.toggle(key);
         else if (action === 'selectRange') store.selectRange(key);
         else store.addRange(key);
-        return;
+        return 'handled';
       }
     }
     requestFocusRef.current(key);
     requestSelectionRef.current(key);
+    return 'open';
   }, [rowFocusRequest]);
   const requestQueryChange = (nextQuery: string) => {
     if (composingQueryRef.current !== null) {
@@ -851,6 +887,76 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
 
   const listRef = useRef<FlatList<Item> | null>(null);
   const sectionListRef = useRef<SectionList<Item, ListSectionData<Item>> | null>(null);
+  const previousRowKeysRef = useRef<readonly string[]>([]);
+  const previousInsertAnchorRef = useRef<Readonly<{
+    anchorKey: string;
+    revision: string | number;
+  }> | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const contentHeightRef = useRef<number | null>(null);
+  const pendingContentPreservationRef = useRef<Readonly<{
+    contentHeight: number;
+    offset: number;
+  }> | null>(null);
+  const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
+  useLayoutEffect(() => {
+    const previous = previousRowKeysRef.current;
+    previousRowKeysRef.current = rowKeys;
+    const previousInsertAnchor = previousInsertAnchorRef.current;
+    const insertAnchor = props.preserveVisibleContentPositionOnInsert ?? null;
+    previousInsertAnchorRef.current = insertAnchor;
+    const contentHeight = contentHeightRef.current;
+    const insertedInsideStableAnchor = insertAnchor !== null
+      && contentHeight !== null
+      && previous.includes(insertAnchor.anchorKey)
+      && rowKeys.includes(insertAnchor.anchorKey)
+      && (previousInsertAnchor === null
+        || previousInsertAnchor.anchorKey !== insertAnchor.anchorKey
+        || !Object.is(previousInsertAnchor.revision, insertAnchor.revision));
+    if (insertedInsideStableAnchor) {
+      pendingContentPreservationRef.current = {
+        contentHeight,
+        offset: scrollOffsetRef.current,
+      };
+      return;
+    }
+    if (!props.preserveVisibleContentPositionOnPrepend || Platform.OS !== 'web') {
+      pendingContentPreservationRef.current = null;
+      return;
+    }
+    const prependedCount = rowKeys.length - previous.length;
+    const purePrepend = previous.length > 0
+      && prependedCount > 0
+      && previous.every((key, index) => rowKeys[index + prependedCount] === key);
+    pendingContentPreservationRef.current = purePrepend && contentHeight !== null
+      ? { contentHeight, offset: scrollOffsetRef.current }
+      : null;
+  }, [
+    props.preserveVisibleContentPositionOnInsert,
+    props.preserveVisibleContentPositionOnPrepend,
+    rowKeys,
+  ]);
+  const onCollectionScroll = useCallback((event: Readonly<{
+    nativeEvent?: Readonly<{ contentOffset?: Readonly<{ y?: unknown }> }>;
+  }>) => {
+    const offset = event.nativeEvent?.contentOffset?.y;
+    if (typeof offset === 'number' && Number.isFinite(offset)) scrollOffsetRef.current = offset;
+  }, []);
+  const onCollectionContentSizeChange = useCallback((_width: number, height: number) => {
+    const pending = pendingContentPreservationRef.current;
+    pendingContentPreservationRef.current = null;
+    contentHeightRef.current = height;
+    if (pending === null || height <= pending.contentHeight) return;
+    const offset = pending.offset + height - pending.contentHeight;
+    scrollOffsetRef.current = offset;
+    if (visibleSections !== undefined) {
+      sectionListRef.current?.getScrollResponder()?.scrollTo({ y: offset, animated: false });
+      return;
+    }
+    listRef.current?.scrollToOffset({ offset, animated: false });
+  }, [visibleSections]);
+  const observeContentMetrics = props.preserveVisibleContentPositionOnInsert !== undefined
+    || (props.preserveVisibleContentPositionOnPrepend === true && Platform.OS === 'web');
   const rowTargets = useRef(new Map<string, HappierFocusable>());
   const registerTarget = useCallback((key: string, target: HappierFocusable | null) => {
     if (target === null) {
@@ -1163,6 +1269,16 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       extraData={extraData}
       renderItem={renderSectionRow}
       renderSectionHeader={renderSectionHeader}
+      maintainVisibleContentPosition={props.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
+        ? { minIndexForVisible: 0 }
+        : undefined}
+      onScroll={observeContentMetrics
+        ? onCollectionScroll
+        : undefined}
+      scrollEventThrottle={observeContentMetrics ? LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS : undefined}
+      onContentSizeChange={observeContentMetrics
+        ? onCollectionContentSizeChange
+        : undefined}
       onScrollToIndexFailed={(info) => {
         // Same rule as the flat arm: approach an unmeasured cell by the
         // measured average and let the pending focus resolve when the row
@@ -1191,6 +1307,16 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       keyboardShouldPersistTaps="handled"
       extraData={extraData}
       renderItem={renderFlatRow}
+      maintainVisibleContentPosition={props.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
+        ? { minIndexForVisible: 0 }
+        : undefined}
+      onScroll={observeContentMetrics
+        ? onCollectionScroll
+        : undefined}
+      scrollEventThrottle={observeContentMetrics ? LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS : undefined}
+      onContentSizeChange={observeContentMetrics
+        ? onCollectionContentSizeChange
+        : undefined}
       onScrollToIndexFailed={(info) => {
         // Without a fixed row height the virtualizer cannot land on a row it has
         // never measured. Approach it by the measured average; the pending focus
@@ -1266,7 +1392,14 @@ function renderListItem(
     onContextMenu(event: unknown): void;
   }>,
 ): ReactElement {
-  const { secondaryActions, secondaryActionAccessibilityLabel, onSecondaryAction, accessory, ...item } = props;
+  const {
+    secondaryActions,
+    secondaryActionAccessibilityLabel,
+    onSecondaryAction,
+    accessory,
+    accessoryOutsidePressable,
+    ...item
+  } = props;
   const hasSecondaryActions = secondaryActions !== undefined
     && secondaryActions.length > 0
     && onSecondaryAction !== undefined;
@@ -1316,7 +1449,7 @@ function renderListItem(
       onContextMenu={secondaryActionsControl?.onContextMenu}
       accessory={composedAccessory}
       hasSecondaryActions={hasSecondaryActions}
-      accessoryOutsidePressable={hasSecondaryActions}
+      accessoryOutsidePressable={hasSecondaryActions || accessoryOutsidePressable === true}
       suppressListItemRole={suppressListItemRole}
     />
   );
@@ -1379,8 +1512,8 @@ function ListItem(props: ListItemProps): ReactElement {
     accessibilitySetSize: selection.setSize,
     rovingCollectionItem,
     onPress: (event) => {
-      selection.select(event);
-      return props.onPress?.(event);
+      const disposition = selection.select(event);
+      return disposition === 'open' ? props.onPress?.(event) : undefined;
     },
   }, defaultSecondaryActionAccessibilityLabel, true, {
     open: secondaryActionsOpen,

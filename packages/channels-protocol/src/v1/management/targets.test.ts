@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import * as targets from './targets.js';
 import {
     ConversationBindingTargetV1JsonSchema,
-    ConversationBindingTargetMutationV1Schema,
     ConversationBindingTargetV1Schema,
     ConversationBindingV1JsonSchema,
     ConversationBindingV1Schema,
@@ -118,27 +118,24 @@ describe('Channels V1 binding targets', () => {
         expect(hasFinalizingDeleteDisabledBranch(ConversationBindingV1JsonSchema)).toBe(true);
     });
 
-    it('keeps persisted Automation versions distinct from caller mutation preconditions', () => {
-        const persisted = {
+    it('keeps one stable Automation target for persistence and mutations', () => {
+        const target = {
             kind: 'automation',
             automationId: 'automation-1',
-            templateVersion: 4,
-            policy: { resultDelivery: 'finalResult' },
-        } as const;
-        const mutation = {
-            kind: 'automation',
-            automationId: 'automation-1',
-            expectedTemplateVersion: 4,
             policy: { resultDelivery: 'finalResult' },
         } as const;
 
-        expect(ConversationBindingTargetV1Schema.parse(persisted)).toEqual(persisted);
-        expect(ConversationBindingTargetMutationV1Schema.parse(mutation)).toEqual(mutation);
-        expect(ConversationBindingTargetV1Schema.safeParse(mutation).success).toBe(false);
-        expect(ConversationBindingTargetMutationV1Schema.safeParse({
-            ...mutation,
+        expect(ConversationBindingTargetV1Schema.parse(target)).toEqual(target);
+        expect(ConversationBindingTargetV1Schema.safeParse({
+            ...target,
             templateVersion: 4,
         }).success).toBe(false);
+        expect(ConversationBindingTargetV1Schema.safeParse({
+            ...target,
+            expectedTemplateVersion: 4,
+        }).success).toBe(false);
+        expect(targets).not.toHaveProperty('ConversationBindingTargetMutationV1Schema');
+        expect(targets).not.toHaveProperty('ConversationBindingTargetMutationV1JsonSchema');
     });
 
     it('preserves the session owner policy without accepting an unbounded non-JSON recipe', () => {
@@ -173,7 +170,6 @@ describe('Channels V1 binding targets', () => {
         const target = {
             kind: 'automation',
             automationId: 'automation-1',
-            templateVersion: 4,
             policy: { resultDelivery: 'finalResult' },
         } as const;
 

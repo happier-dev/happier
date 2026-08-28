@@ -6,26 +6,27 @@ adds framework components without declaring a second host contract.
 
 ## Plugin UI release posture
 
-Current publication posture: **prepublish hold** until the Plugin SDK EU-3/EU-4
-atomic publication and export cutover. The source package is author-facing now;
-the hold prevents an incomplete standalone artifact from being published early.
+Plugin UI has one package-level **Developer Preview** source contract. The
+workspace package remains `private: true` at `0.0.0` and is unpublished while
+the publication gates are open. Source exports, maintained external-author
+fixtures, host wiring, package builds, and loaded development-stack QA establish
+feature readiness; they do not establish a released package or public SemVer
+policy.
 
-This workspace package is intentionally still `private: true` and versioned
-`0.0.0`. It is packability-ready for local dry-run validation, but external
-publication requires an explicit product/release decision. Do not publish,
-change versions, or remove the private posture as part of package-hardening
-work.
+External publication requires an explicit product/release decision. Do not
+publish, change versions, or remove the private posture as part of feature or
+package-hardening work.
 
-Support policy while held:
+Developer Preview support policy:
 
 - The root entry is the ergonomic, curated author tier. Advanced trusted React
   Native/RNW authors may also import the public `./advanced`,
   `./presentation`, and `./environment` tiers; they compose the same canonical
   implementations and projected environment that Happier core uses, rather
   than a plugin-only primitive library.
-- All declared entry points are pre-publication source contracts while this
-  package is private and versioned `0.0.0`; no compatibility alias or stability
-  promise beyond this hold is implied. Import only the declared package entry
+- All declared entry points are Developer Preview source contracts while this
+  package is private and versioned `0.0.0`; no released compatibility or
+  stability promise is implied. Import only the declared package entry
   points, never `src/**` or an undocumented subpath.
 - Host factories, internal source files, and app-private UI modules are not public
   plugin APIs.
@@ -69,6 +70,17 @@ every later theme, locale, direction, text-scale and safe-area change arrives
 through the host's `watchContext` subscription. Install `PluginUiProvider`
 yourself only in an isolated test or complete standalone mount, through the
 explicit advanced entry.
+
+RN/RNW artifacts can use `usePluginUiEphemeralSharedScope()` to share one
+opaque in-process value between surfaces from the same Account, plugin and
+immutable plugin generation. Acquire a versioned plugin-local key only from a
+committed effect, subscription or event lifecycle—not during React render—keep
+the returned lease for exactly as long as the surface uses the value, and
+release it on cleanup. The host disposes the value after its final lease or
+when that scope retires. This capability is unavailable to hosted-web frames:
+object and function identity cannot cross an iframe, and the hosted bridge has
+no scope field. Authors must not replace that boundary with a realm global,
+artifact-local cache, JSON mirror or private RPC bridge.
 
 Subpath exports are available for narrower imports:
 
@@ -161,7 +173,7 @@ copy. Graduated so far:
 | `Button` | Real pressable semantics over the shared press→pending owner Happier's own buttons render: async pending, reentry guard, hover/focus, accessible busy/disabled state |
 | `ActionPanel`, `ActionPanel.Section`, `Action.Execute` / `.Copy` / `.OpenExternal` / `.OpenSurface` / `.Refresh` | Real toolbar and action semantics. Each member dispatches through the canonical host method for its concern and reports a typed outcome, including the `outcomeUnknown` settlement that must never be retried blindly |
 | `Surface`, `Card` | Real native surface hosts over shared surface/press behavior; Happier's `SurfaceCard` consumes that behavior while applying its app-private RN styles locally |
-| `List`, `List.Section`, `List.Item`, `Item`, `ItemGroup` | Real list and row semantics over the shared collection owner. Virtualized `List` owns its bounded search/filter/selected-option state before rows reach the native virtualizer; authors retain match semantics and controlled values. Theme injection, touch-target policy, overflow placement and group indexing remain adapter-owned |
+| `List`, `List.Section`, `List.Item`, `Item`, `ItemGroup` | Real list and row semantics over the shared collection owner. Virtualized `List` owns its bounded search/filter/selected-option state before rows reach the native virtualizer; authors retain match semantics and controlled values. Authors mark independently interactive accessories with `accessoryOutsidePressable`; theme injection, touch-target policy, overflow placement and group indexing remain adapter-owned |
 | `Form`, `Form.Field`, `Form.TextField`, `Form.Toggle`, `Form.Select`, `Form.ValidationMessage`, `Form.Actions` | Real form semantics over the canonical action-form owner. Authors provide static already-resolved options; host option sources and account inventory remain host-owned |
 | `Popover`, `Menu`, `Dropdown`, `ContextMenu` | Controlled overlay semantics over the incumbent presentation host. It owns anchoring, focus return, Escape, outside dismissal and Android Back; authors supply only semantic state and items |
 

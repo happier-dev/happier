@@ -494,6 +494,7 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
                         {...(row.status === null ? {} : { subtitle: row.status })}
                         {...(row.locator === null ? {} : { detail: row.locator })}
                         tone={row.tone}
+                        accessoryOutsidePressable
                         accessory={(
                           <Row gap="small">
                             {row.keyFollowsProviderName ? (

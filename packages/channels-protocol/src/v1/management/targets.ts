@@ -103,7 +103,6 @@ const conversationSessionBindingTargetV1 = defineProtocolObject({
 const conversationAutomationBindingTargetV1 = defineProtocolObject({
     kind: defineProtocolLiteral('automation'),
     automationId: automationIdV1,
-    templateVersion: nonnegativeSafeInteger,
     policy: defineProtocolObject({
         resultDelivery: defineProtocolUnion([
             defineProtocolLiteral('finalResult'),
@@ -112,25 +111,13 @@ const conversationAutomationBindingTargetV1 = defineProtocolObject({
     }, { policy: 'closed' }),
 }, { policy: 'closed' });
 
-const conversationAutomationBindingTargetMutationV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('automation'),
-    automationId: automationIdV1,
-    expectedTemplateVersion: nonnegativeSafeInteger,
-    policy: defineProtocolObject({
-        resultDelivery: defineProtocolUnion([
-            defineProtocolLiteral('finalResult'),
-            defineProtocolLiteral('none'),
-        ]),
-    }, { policy: 'closed' }),
-}, { policy: 'closed' });
-
-/** @internal Relative-only persisted binding-target union. */
+/** @internal Relative-only binding target shared by persistence and present-user mutations. */
 export const ConversationBindingTargetV1ProtocolSchema = defineProtocolUnion([
     conversationSessionBindingTargetV1,
     conversationAutomationBindingTargetV1,
 ]);
 
-/** The persisted Channels target; Automation stores its verified template version. */
+/** The persisted Channels target keeps stable Automation identity, never a mutable recipe generation. */
 export const ConversationBindingTargetV1Schema = ConversationBindingTargetV1ProtocolSchema;
 export type ConversationBindingTargetV1 = ReturnType<typeof ConversationBindingTargetV1Schema.parse>;
 /** The Session arm of the canonical persisted binding-target union. */
@@ -141,20 +128,6 @@ export type ConversationSessionBindingTargetV1 = Extract<
 /** The bounded JSON recipe that Channels validates through the Session owner at dispatch time. */
 export type ChannelSessionSpawnRecipeV1 = ConversationJsonObjectV1;
 export const ConversationBindingTargetV1JsonSchema: PluginJsonSchema = ConversationBindingTargetV1Schema.jsonSchema;
-
-/** @internal Relative-only present-user target mutation union. */
-export const ConversationBindingTargetMutationV1ProtocolSchema = defineProtocolUnion([
-    conversationSessionBindingTargetV1,
-    conversationAutomationBindingTargetMutationV1,
-]);
-
-/** The caller supplies an Automation equality precondition, never a persisted version. */
-export const ConversationBindingTargetMutationV1Schema = ConversationBindingTargetMutationV1ProtocolSchema;
-export type ConversationBindingTargetMutationV1 = ReturnType<
-    typeof ConversationBindingTargetMutationV1Schema.parse
->;
-export const ConversationBindingTargetMutationV1JsonSchema: PluginJsonSchema =
-    ConversationBindingTargetMutationV1Schema.jsonSchema;
 
 const conversationBindingV1CommonFields = {
     v: defineProtocolLiteral(1),

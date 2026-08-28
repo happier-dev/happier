@@ -7,6 +7,7 @@ import {
 
 import type {
   HappierAlignment,
+  HappierFocusable,
   HappierJustification,
   HappierKeyboardShouldPersistTaps,
   HappierLayoutChangeEvent,
@@ -17,10 +18,21 @@ import { PluginUiPopoverScrollSourceProvider } from '../../presentationHost/cont
 
 export type HappierLayoutGap = 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge';
 
+export type HappierLayoutSpacing = Readonly<Record<Exclude<HappierLayoutGap, 'none'>, number>>;
+
+/** One semantic gap vocabulary for public and host declarative adapters. */
+export function resolveHappierLayoutGap(
+  gap: HappierLayoutGap | undefined,
+  spacing: HappierLayoutSpacing,
+): number {
+  const resolvedGap = gap ?? 'medium';
+  return resolvedGap === 'none' ? 0 : spacing[resolvedGap];
+}
+
 export type HappierStackProps = Readonly<{
   children?: ReactNode;
   /** Private semantic focus binding supplied by the public layout adapter. */
-  controlRef?: (instance: unknown | null) => void;
+  controlRef?: (instance: HappierFocusable | null) => void;
   direction?: 'vertical' | 'horizontal';
   gap?: number;
   wrap?: boolean;
@@ -35,7 +47,7 @@ export type HappierStackProps = Readonly<{
 export type HappierScreenProps = Readonly<{
   children?: ReactNode;
   /** Private semantic focus binding supplied by the public layout adapter. */
-  controlRef?: (instance: unknown | null) => void;
+  controlRef?: (instance: HappierFocusable | null) => void;
   /** Reports this box's resolved size and position after the platform lays it out. */
   onLayout?: (event: HappierLayoutChangeEvent) => void;
   testID?: string;

@@ -527,7 +527,13 @@ function controlsFor(
   lifecycle: TriageSourceSettingsRowLifecycleV1,
   presence: TriageSourceSettingsRowSubjectV1['presence'],
   title: string,
+  outcome: TriageSourceSettingsConfigurationV1 | undefined,
 ): readonly TriageSourceSettingsRowControlV1[] {
+  // An unknown write may already have committed. Until Refresh replaces that
+  // ambiguity with the target's configured-instance read, repeating any row
+  // arm could create or mutate the same intent twice.
+  if (outcome?.kind === 'outcomeUnknown') return [];
+
   // Add, Update and Restore all submit a freshly discovered draft. Without one
   // there is nothing to submit, and `remove` — the only arm that names a row and
   // nothing else — is the only control that stays honest.
@@ -601,7 +607,7 @@ function projectTriageSourceSettingsRow(input: Readonly<{
     status: settled?.text ?? standing?.text ?? null,
     locator: subject.locator === subject.label ? null : subject.locator,
     tone: settled?.tone ?? standing?.tone ?? 'neutral',
-    controls: controlsFor(lifecycle, subject.presence, subject.label),
+    controls: controlsFor(lifecycle, subject.presence, subject.label, input.outcome),
     sourceInstanceId: lifecycle.kind === 'unknown' ? null : lifecycle.sourceInstanceId,
     draft: subject.presence === 'discovered' ? subject.draft : null,
     keyFollowsProviderName: subject.keyFollowsProviderName,

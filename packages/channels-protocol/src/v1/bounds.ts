@@ -44,6 +44,7 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     bindingUpdate: 'binding/update-v1',
     bindingSetEnabled: 'binding/set-enabled-v1',
     bindingDelete: 'binding/delete-v1',
+    sessionProjectionBaselineAccept: 'binding/session-projection-baseline-accept-v1',
     streamBaselineAccept: 'stream/baseline-accept-v1',
     deliveryResolve: 'delivery/resolve-v1',
     ingressRetry: 'ingress/retry-v1',

@@ -7,6 +7,7 @@ import {
   type PluginUiPresentationHost,
 } from '../presentationHost/context.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { Button } from './Button.js';
 import { Item, ItemGroup, List } from './List.js';
 import { useListMultiSelectionController } from './ListMultiSelection.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
@@ -205,6 +206,35 @@ describe('plugin-ui List item presentation', () => {
     expect(option?.getAttribute('aria-selected')).toBe('true');
     expect(mount.container.querySelector('[role="button"]')).toBeNull();
 
+    mount.unmount();
+  });
+
+  it('keeps an independently interactive accessory outside its selectable row', () => {
+    const entries = [{ id: 'more', title: 'More entries may exist' }] as const;
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List
+          accessibilityLabel="Entries"
+          items={entries}
+          keyForItem={(item) => item.id}
+          selection={{ selectedKey: null, onSelectedKeyChange: () => undefined }}
+          renderItem={(item) => (
+            <List.Item
+              title={item.title}
+              accessory={<Button title="Load more" onPress={() => undefined} />}
+              accessoryOutsidePressable
+            />
+          )}
+        />
+      </PluginUiProvider>,
+    );
+
+    const option = mount.container.querySelector<HTMLElement>('[role="option"]');
+    const loadMore = mount.container.querySelector<HTMLElement>('[role="button"]');
+    expect(option).not.toBeNull();
+    expect(loadMore).not.toBeNull();
+    expect(option?.contains(loadMore ?? null)).toBe(false);
     mount.unmount();
   });
 

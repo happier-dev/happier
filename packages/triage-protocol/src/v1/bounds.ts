@@ -80,10 +80,8 @@ export const TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 =
  * text on the detail surface, but the row read as truncated on every non-Latin
  * list in the product, which is a display bound failing at its one job.
  *
- * Its cost is paid entirely in the worst case: a scope label is a repository
- * name and a state word is a word whatever this bound admits.
- * `maximumEncodedResult.test.ts` derives that worst case, and
- * `MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1` is where it is paid for.
+ * Its cost is paid by the enclosing Action envelope; no second Triage page
+ * count is derived from this display bound.
  */
 export const MAX_TRIAGE_TEXT_UTF8_BYTES_V1 = 512;
 /**
@@ -150,24 +148,16 @@ export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = 192;
  */
 export const MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 = 1024;
 /**
- * Invocation-local scan continuation token: one per source scan page.
+ * One source lane's invocation-local continuation, derived against the real
+ * external Action response envelope at the aggregate's maximum admitted lane
+ * count and full mounted row window. `maximumEncodedActionValue.test.ts` rebuilds
+ * that maximal schema and proves this exact value is the largest one for which
+ * every lane continuation survives in the response.
  *
- * It stays generous because a fair multi-lane traversal encodes one frontier
- * entry per open lane — a workspace repository, a project, or an involvement
- * lane — plus each lane's provider-issued next URL, and a source that cannot
- * fit its frontier has to abandon the walk rather than resume it. That is not a
- * hypothetical margin: `scm-github` mints a five-lane frontier carrying one
- * full search next-URL per lane, which measures 1,218 UTF-8 bytes for an
- * account-wide connection and 1,968 for one scoped to a maximal `owner/name`
- * repository.
- *
- * An aggregate list result may carry one frontier per walked lane. Strict JSON
- * Action admission has no aggregate byte quota, so this picked 4 KiB ceiling is
- * not a transport derivation. When it fires the source cannot encode a resume
- * point and must report an incomplete, continuation-unavailable walk rather
- * than truncate the opaque token or claim completion.
+ * This is not a provider-cursor guess: changing the Action envelope, aggregate
+ * result shape, lane batch, or row window forces the derivation to move.
  */
-export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = 4 * 1024;
+export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = 40_350;
 /** Bounded non-secret failure detail. */
 export const MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 = 256;
 /**
@@ -177,15 +167,6 @@ export const MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 = 256;
 export const MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 = 64;
 /** Projected fact count; excess facts set `projectionTruncated`. */
 export const MAX_TRIAGE_ROW_FACTS_V1 = 4;
-/**
- * Entries in one scan page. A source sizes its own
- * provider paging against it — Azure DevOps fits exactly two 30-row native
- * pages inside 64, Bitbucket carries the pair as `scanLimit`/`nativePageSize`
- * in its continuation — so changing it changes four first-party walk
- * geometries. No transport, storage, or provider boundary currently derives
- * the global count of sixty-four.
- */
-export const MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 = 64;
 /**
  * One page of the canonical entry-to-Session relation.
  *

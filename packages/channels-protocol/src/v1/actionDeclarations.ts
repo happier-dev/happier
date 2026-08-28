@@ -34,6 +34,7 @@ export type ConversationManagementActionDeclarationsV1 = Readonly<{
     bindingUpdate: ConversationActionDeclarationV1;
     bindingSetEnabled: ConversationActionDeclarationV1;
     bindingDelete: ConversationActionDeclarationV1;
+    sessionProjectionBaselineAccept: ConversationActionDeclarationV1;
     ingressRetry: ConversationActionDeclarationV1;
     deliveryResolve: ConversationActionDeclarationV1;
     connectionPollRetry: ConversationActionDeclarationV1;

@@ -70,7 +70,7 @@ export type PluginUiCollectionQueryResult = Readonly<{
 }>;
 
 type QueryOpenState = Readonly<{
-  client: ReturnType<typeof usePluginUiDataClient> | null;
+  client: ReturnType<typeof usePluginUiDataClientOrNull>;
   key: string;
   pager: PluginUiCollectionQueryPager | null;
   error: Error | null;
@@ -80,6 +80,12 @@ const EMPTY_QUERY_SNAPSHOT: PluginUiCollectionQuerySnapshot = Object.freeze({
   rows: Object.freeze([]),
   hasMore: false,
   status: 'idle',
+});
+
+const UNAVAILABLE_QUERY_SNAPSHOT: PluginUiCollectionQuerySnapshot = Object.freeze({
+  rows: Object.freeze([]),
+  hasMore: false,
+  status: 'unavailable',
 });
 
 const EMPTY_QUERY_OPEN_STATE: QueryOpenState = Object.freeze({
@@ -116,7 +122,7 @@ export function usePluginCollectionQuery(
   uiQueryId: PluginCollectionUiQueryRequestV1['uiQueryId'],
   parameters: PluginCollectionUiQueryRequestV1['parameters'] = {},
 ): PluginUiCollectionQueryResult {
-  const client = usePluginUiDataClient();
+  const client = usePluginUiDataClientOrNull();
   const [attempt, setAttempt] = useState(0);
   const [openState, setOpenState] = useState<QueryOpenState>(EMPTY_QUERY_OPEN_STATE);
   const key = useMemo(
@@ -141,6 +147,10 @@ export function usePluginCollectionQuery(
       pager: null,
       error: null,
     }));
+
+    if (client === null) {
+      return () => { controller.abort(); };
+    }
 
     void client.openCollectionQuery({
       ...queryInput,
@@ -192,8 +202,9 @@ export function usePluginCollectionQuery(
     [pager],
   );
   const getSnapshot = useCallback(
-    () => pager?.getSnapshot() ?? EMPTY_QUERY_SNAPSHOT,
-    [pager],
+    () => pager?.getSnapshot()
+      ?? (client === null ? UNAVAILABLE_QUERY_SNAPSHOT : EMPTY_QUERY_SNAPSHOT),
+    [client, pager],
   );
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const refresh = useCallback(() => {
@@ -220,7 +231,7 @@ export function usePluginCollectionQuery(
   return Object.freeze({
     rows: snapshot.rows,
     hasMore: snapshot.hasMore,
-    status: pager ? snapshot.status : 'loading',
+    status: client === null ? 'unavailable' : pager ? snapshot.status : 'loading',
     ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
     refresh,
     loadMore,

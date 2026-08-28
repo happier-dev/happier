@@ -25,6 +25,7 @@ import { PluginUiDataProviderInternal } from '../data/context.js';
 import type { PluginUiDataClient } from '../data/types.js';
 import { PluginHostApiProviderInternal } from '../hostApi/context.js';
 import type { PluginUiResourceAccountLifetime } from '../hostApi/resourceStore.js';
+import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 import type { ComposerRefV1 } from '../composer/types.js';
 import {
   PluginUiPresentationHostProviderInternal,
@@ -76,6 +77,7 @@ export type PluginUiProviderInternalProps = PluginUiProviderProps & Readonly<{
   surfaceActivity?: Readonly<{ active: boolean }>;
   presentationHost?: PluginUiPresentationHost;
   dataClient?: PluginUiDataClient;
+  ephemeralSharedScope?: PluginUiEphemeralSharedScope | null;
 }>;
 
 /**
@@ -107,6 +109,7 @@ export function PluginUiProviderInternal({
   surfaceActivity,
   presentationHost,
   dataClient,
+  ephemeralSharedScope,
   context,
   children,
 }: PluginUiProviderInternalProps) {
@@ -204,6 +207,7 @@ export function PluginUiProviderInternal({
       {...(mountedPluginId === undefined ? {} : { mountedPluginId })}
       {...(composerRef === undefined ? {} : { composerRef })}
       {...(surfaceActivity === undefined ? {} : { surfaceActivity })}
+      {...(ephemeralSharedScope === undefined ? {} : { ephemeralSharedScope })}
     >
       <PluginSurfaceContextContext.Provider value={effectiveContext}>
         <HappierUiEnvironmentProvider environment={environment}>

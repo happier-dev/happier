@@ -148,7 +148,6 @@ describe('Triage protocol public barrel', () => {
             'MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1',
             'MAX_TRIAGE_ROW_FACTS_V1',
             'MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1',
-            'MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1',
             'MAX_TRIAGE_TEXT_UTF8_BYTES_V1',
         ]);
         for (const [name, value] of bounds) {
@@ -156,12 +155,6 @@ describe('Triage protocol public barrel', () => {
                 (bound: unknown) => Number.isSafeInteger(bound) && (bound as number) > 0,
             );
         }
-        // The scan page count and the display-text bound are one budget: the
-        // page multiplies every per-entry display byte on the way to the
-        // operation-shape inventory. `maximumEncodedResult.test.ts` derives that worst
-        // case; pinning both values here is what makes a consumer-visible
-        // change to either one deliberate.
-        expect(protocol.MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1).toBe(64);
         expect(protocol.MAX_TRIAGE_TEXT_UTF8_BYTES_V1).toBe(512);
     });
 });

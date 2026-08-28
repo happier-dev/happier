@@ -18,6 +18,8 @@ const flatListCapture = vi.hoisted(() => ({
   imperativeReveals: [] as Array<Readonly<{ method: string; index?: number; offset?: number }>>,
   renderItem: [] as Array<(input: Readonly<{ item: unknown; index: number }>) => React.ReactNode>,
   scrollToIndex: [] as Array<(index: number) => void>,
+  onScroll: [] as Array<(offset: number) => void>,
+  onContentSizeChange: [] as Array<(height: number) => void>,
   windowStarts: [] as number[],
 }));
 
@@ -48,6 +50,8 @@ vi.mock('react-native', async () => {
       // without evaluating `forwardRef` while this mock factory is still
       // resolving its own `react-native` import.
       ref?: React.Ref<unknown>;
+      onScroll?: (event: Readonly<{ nativeEvent: Readonly<{ contentOffset: Readonly<{ y: number }> }> }>) => void;
+      onContentSizeChange?: (width: number, height: number) => void;
     }>) {
       const [windowStart, setWindowStart] = React.useState(0);
       const maximumWindowStart = Math.max(0, props.data.length - VIRTUALIZED_WINDOW_SIZE);
@@ -90,6 +94,12 @@ vi.mock('react-native', async () => {
       flatListCapture.renderItem.push(props.renderItem);
       flatListCapture.scrollToIndex.push((index) => {
         setWindowStart(Math.max(0, Math.min(index, maximumWindowStart)));
+      });
+      flatListCapture.onScroll.push((offset) => {
+        props.onScroll?.({ nativeEvent: { contentOffset: { y: offset } } });
+      });
+      flatListCapture.onContentSizeChange.push((height) => {
+        props.onContentSizeChange?.(0, height);
       });
       flatListCapture.windowStarts.push(boundedWindowStart);
       return (
@@ -257,6 +267,100 @@ describe('virtualized List data ownership', () => {
 
     expect(flatListCapture.data).toHaveLength(1);
     expect(flatListCapture.data[0]).toBe(items);
+    mount.unmount();
+  });
+
+  it('keeps the visible flat-list content still when earlier keyed rows are prepended', async () => {
+    flatListCapture.imperativeReveals.length = 0;
+    flatListCapture.onScroll.length = 0;
+    flatListCapture.onContentSizeChange.length = 0;
+
+    function Conversation() {
+      const [items, setItems] = React.useState([
+        { id: 'c3', label: 'Third' },
+        { id: 'c4', label: 'Fourth' },
+      ]);
+      return (
+        <>
+          <button onClick={() => setItems([
+            { id: 'c1', label: 'First' },
+            { id: 'c2', label: 'Second' },
+            ...items,
+          ])}>Earlier</button>
+          <List
+            items={items}
+            keyForItem={(item) => item.id}
+            renderItem={(item) => <List.Item title={item.label} />}
+            preserveVisibleContentPositionOnPrepend
+          />
+        </>
+      );
+    }
+
+    const mount = mountList(<Conversation />);
+    act(() => {
+      flatListCapture.onContentSizeChange.at(-1)?.(200);
+      flatListCapture.onScroll.at(-1)?.(80);
+    });
+    await act(async () => { mount.container.querySelector('button')?.click(); });
+    act(() => { flatListCapture.onContentSizeChange.at(-1)?.(320); });
+
+    expect(flatListCapture.imperativeReveals).toContainEqual({
+      method: 'scrollToOffset',
+      offset: 200,
+    });
+    mount.unmount();
+  });
+
+  it('keeps retained content still when content is inserted inside a stable keyed row', async () => {
+    flatListCapture.imperativeReveals.length = 0;
+    flatListCapture.onScroll.length = 0;
+    flatListCapture.onContentSizeChange.length = 0;
+
+    function Conversation() {
+      const [replyWindow, setReplyWindow] = React.useState(2);
+      const [threadId, setThreadId] = React.useState('thread-7');
+      const items = [{ id: threadId, label: `Latest ${String(replyWindow)} replies` }] as const;
+      return (
+        <>
+          <button onClick={() => setReplyWindow(4)}>Earlier replies</button>
+          <button onClick={() => {
+            setThreadId('thread-8');
+            setReplyWindow(6);
+          }}>Replace thread</button>
+          <List
+            items={items}
+            keyForItem={(item) => item.id}
+            renderItem={(item) => <List.Item title={item.label} />}
+            preserveVisibleContentPositionOnInsert={{
+              anchorKey: 'thread-7',
+              revision: replyWindow,
+            }}
+          />
+        </>
+      );
+    }
+
+    const mount = mountList(<Conversation />);
+    act(() => {
+      flatListCapture.onContentSizeChange.at(-1)?.(240);
+      flatListCapture.onScroll.at(-1)?.(90);
+    });
+    await act(async () => { mount.container.querySelector('button')?.click(); });
+    act(() => { flatListCapture.onContentSizeChange.at(-1)?.(300); });
+
+    expect(flatListCapture.imperativeReveals).toContainEqual({
+      method: 'scrollToOffset',
+      offset: 150,
+    });
+    await act(async () => {
+      mount.container.querySelectorAll('button')[1]?.click();
+    });
+    act(() => { flatListCapture.onContentSizeChange.at(-1)?.(360); });
+    expect(flatListCapture.imperativeReveals).toEqual([{
+      method: 'scrollToOffset',
+      offset: 150,
+    }]);
     mount.unmount();
   });
 

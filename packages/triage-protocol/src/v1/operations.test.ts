@@ -40,12 +40,12 @@ describe('Triage scan paging', () => {
         }).success).toBe(false);
     });
 
-    it('clamps a scan page request to the V1 throughput ceiling', () => {
+    it('does not invent a V1 throughput ceiling beneath the Action envelope', () => {
         expect(TriageScanInputV1Schema.safeParse({
             v: 1,
             instance,
-            page: { kind: 'initial', limit: 65 },
-        }).success).toBe(false);
+            page: { kind: 'initial', limit: 65_536 },
+        }).success).toBe(true);
         expect(TriageScanInputV1Schema.safeParse({
             v: 1,
             instance,

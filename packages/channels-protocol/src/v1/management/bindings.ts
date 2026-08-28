@@ -32,7 +32,7 @@ import {
     ConversationResolvedPrincipalCandidatesV1ProtocolSchema,
 } from '../provider/resolution.js';
 import {
-    ConversationBindingTargetMutationV1ProtocolSchema,
+    ConversationBindingTargetV1ProtocolSchema,
     ConversationBindingV1ProtocolSchema,
     ConversationPrincipalIdV1ProtocolSchema,
 } from './targets.js';
@@ -49,7 +49,7 @@ const protocolBoolean = defineProtocolUnion([
 ]);
 
 const mutableBindingPolicyFieldsV1 = {
-    target: ConversationBindingTargetMutationV1ProtocolSchema,
+    target: ConversationBindingTargetV1ProtocolSchema,
     allowBotSenders: protocolBoolean,
     inputMode: defineProtocolUnion([
         defineProtocolLiteral(CONVERSATION_BINDING_INPUT_MODES_V1[0]),
@@ -381,7 +381,6 @@ export const ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema = def
     kind: defineProtocolLiteral('notVerified'),
     reason: defineProtocolUnion([
         defineProtocolLiteral('notFound'),
-        defineProtocolLiteral('templateVersionMismatch'),
         defineProtocolLiteral('resultDeliveryUnsupported'),
     ]),
 }, { policy: 'closed' });

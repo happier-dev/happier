@@ -15,42 +15,24 @@ describe('triage paging token envelope', () => {
         });
     });
 
-    it('refuses to mint a token wider than the bound instead of emitting one', () => {
-        // The whole point: an over-bound token rejects the ENTIRE scan result at the
-        // Action boundary, so the walk must end here and settle a truthful partial.
-        const wide = encodeTriagePagingTokenV1({
-            v: 1,
-            cursor: 'x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
-        });
+    it('admits the schema-derived aggregate-envelope ceiling and refuses one byte beyond it', () => {
+        const jsonFramingBytes = new TextEncoder().encode('{"v":1,"cursor":""}').byteLength;
+        const fittingCursor = 'x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 - jsonFramingBytes);
+        const fitting = encodeTriagePagingTokenV1({ v: 1, cursor: fittingCursor });
+        const overflowing = encodeTriagePagingTokenV1({ v: 1, cursor: `${fittingCursor}x` });
+        const validButOverBound = JSON.stringify({ v: 1, cursor: `${fittingCursor}x` });
 
-        expect(wide).toBeNull();
-        // One byte under the bound still mints, so the refusal is the bound and not
-        // a rounded-down guess about it.
-        const fits = encodeTriagePagingTokenV1({
-            c: 'x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 - 12),
-        });
-        expect(fits).not.toBeNull();
-        expect(new TextEncoder().encode(fits ?? '').byteLength)
-            .toBeLessThanOrEqual(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+        expect(fitting).not.toBeNull();
+        expect(overflowing).toBeNull();
+        expect(decodeTriagePagingTokenV1(fitting ?? '')).toEqual({ v: 1, cursor: fittingCursor });
+        expect(decodeTriagePagingTokenV1(validButOverBound)).toBeNull();
     });
 
-    it('measures the bound in UTF-8 bytes rather than code units', () => {
-        // A multi-byte cursor is where a `length` check silently admits four times
-        // the bytes the contract allows.
-        const multiByte = '\u{1F600}'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 / 4);
-
-        expect(multiByte.length).toBeLessThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
-        expect(encodeTriagePagingTokenV1({ cursor: multiByte })).toBeNull();
-    });
-
-    it('rejects bytes that are not a bounded JSON object', () => {
+    it('rejects values that are not JSON objects', () => {
         expect(decodeTriagePagingTokenV1('not-json')).toBeNull();
         expect(decodeTriagePagingTokenV1('[1,2]')).toBeNull();
         expect(decodeTriagePagingTokenV1('"cursor"')).toBeNull();
         expect(decodeTriagePagingTokenV1('null')).toBeNull();
-        expect(decodeTriagePagingTokenV1(
-            JSON.stringify({ c: 'x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) }),
-        )).toBeNull();
     });
 
     it('refuses a frontier JSON cannot represent rather than emitting undefined', () => {

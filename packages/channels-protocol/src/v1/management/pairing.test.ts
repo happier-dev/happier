@@ -94,8 +94,8 @@ describe('Channels V1 pairing cancellation management contract', () => {
         });
         expect(ConversationPairingCreateResultV1Schema.parse({
             kind: 'notVerified',
-            reason: 'templateVersionMismatch',
-        })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+            reason: 'notFound',
+        })).toEqual({ kind: 'notVerified', reason: 'notFound' });
 
         expect(ConversationPairingFinalizeInputV1Schema.safeParse({
             ...finalizeInput,
@@ -292,7 +292,6 @@ describe('Channels V1 pairing cancellation management contract', () => {
         }
         for (const reason of [
             'notFound',
-            'templateVersionMismatch',
             'resultDeliveryUnsupported',
         ] as const) {
             expect(ConversationPairingFinalizeResultV1Schema.parse({

@@ -342,7 +342,6 @@ export function HappierPressable({
         minHeight: nativeMinimumInteractiveTargetSize,
       };
   const physicalHitSlop = nativeMinimumInteractiveTargetSize === undefined ? hitSlop : undefined;
-  const webRoleProps: Readonly<Record<'role', string>> = { role: webRole ?? accessibilityRole };
   const webContextMenuProps = Platform.OS === 'web' && onContextMenu && !isDisabled
     ? { onContextMenu: (event: unknown) => onContextMenu(event) }
     : undefined;
@@ -353,6 +352,9 @@ export function HappierPressable({
       : accessibilityRole === 'menuitemradio'
         ? 'radio'
         : accessibilityRole;
+  const platformRoleProps = Platform.OS === 'web'
+    ? { role: webRole ?? accessibilityRole }
+    : { accessibilityRole: nativeAccessibilityRole };
   const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab'
     ? selected === true
     : undefined;
@@ -399,8 +401,7 @@ export function HappierPressable({
       ref={setControlRef}
       nativeID={nativeID}
       testID={testID}
-      accessibilityRole={nativeAccessibilityRole}
-      {...webRoleProps}
+      {...platformRoleProps}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
       // Emitted in BOTH prop shapes on purpose, from one computed fact.
@@ -436,7 +437,7 @@ export function HappierPressable({
       onPressIn={onPressIn}
       onLongPress={isDisabled ? undefined : onLongPress}
       {...webContextMenuProps}
-      onKeyDown={Platform.OS === 'web' || onKeyDown !== undefined ? handleKeyDown : undefined}
+      onKeyDown={Platform.OS === 'web' ? handleKeyDown : undefined}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       onFocus={() => { setFocused(true); onFocusChange?.(true); }}

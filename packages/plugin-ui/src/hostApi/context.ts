@@ -15,6 +15,7 @@ import {
   type PluginUiResourceStore,
 } from './resourceStore.js';
 import type { ComposerRefV1 } from '../composer/types.js';
+import type { PluginUiEphemeralSharedScope } from './ephemeralSharedScope.public.js';
 
 /**
  * The bound surface controller, published to the plugin's component tree (§3.1).
@@ -29,6 +30,7 @@ type PluginHostApiContextValue = Readonly<{
   resourceStore: PluginUiResourceStore;
   composerRef: ComposerRefV1 | null;
   surfaceActive: boolean;
+  ephemeralSharedScope: PluginUiEphemeralSharedScope | null;
 }>;
 
 const PluginHostApiContext = createContext<PluginHostApiContextValue | null>(null);
@@ -51,6 +53,8 @@ export type PluginHostApiProviderInternalProps = PluginHostApiProviderProps & Re
   /** Host-validated Composer mount identity; never author-supplied. */
   composerRef?: ComposerRefV1 | null;
   surfaceActivity?: Readonly<{ active: boolean }>;
+  /** Host-owned Account+plugin+generation scope; absent on unsupported renderers. */
+  ephemeralSharedScope?: PluginUiEphemeralSharedScope | null;
 }>;
 
 export function PluginHostApiProvider(props: PluginHostApiProviderProps) {
@@ -77,6 +81,9 @@ export function PluginHostApiProvider(props: PluginHostApiProviderProps) {
       ...(privateProps.surfaceActivity === undefined
         ? {}
         : { surfaceActivity: privateProps.surfaceActivity }),
+      ...(privateProps.ephemeralSharedScope === undefined
+        ? {}
+        : { ephemeralSharedScope: privateProps.ephemeralSharedScope }),
     },
     props.children,
   );
@@ -90,6 +97,7 @@ export function PluginHostApiProviderInternal({
   mountedPluginId,
   composerRef = null,
   surfaceActivity,
+  ephemeralSharedScope = null,
   children,
 }: PluginHostApiProviderInternalProps) {
   const resourceClient = useMemo(
@@ -106,8 +114,14 @@ export function PluginHostApiProviderInternal({
   );
   useEffect(() => () => resourceStore.dispose(), [resourceStore]);
   const value = useMemo(
-    () => Object.freeze({ hostApi, resourceStore, composerRef, surfaceActive: surfaceActivity?.active ?? false }),
-    [hostApi, resourceStore, composerRef, surfaceActivity, surfaceActivity?.active],
+    () => Object.freeze({
+      hostApi,
+      resourceStore,
+      composerRef,
+      surfaceActive: surfaceActivity?.active ?? false,
+      ephemeralSharedScope,
+    }),
+    [hostApi, resourceStore, composerRef, surfaceActivity, surfaceActivity?.active, ephemeralSharedScope],
   );
   return createElement(PluginHostApiContext.Provider, { value }, children);
 }
@@ -145,4 +159,20 @@ export function usePluginSurfaceActivity(): Readonly<{ active: boolean }> {
     throw new Error('PluginHostApiProvider is required before reading plugin surface activity.');
   }
   return useMemo(() => Object.freeze({ active: context.surfaceActive }), [context.surfaceActive]);
+}
+
+/**
+ * Read the optional host-owned ephemeral scope for this artifact.
+ *
+ * In-process provider mounts where the host did not install this capability
+ * return `null`. Hosted frames have no in-process provider or scope bridge at
+ * all. The hook never manufactures a realm-local fallback because doing so
+ * would create a second value owner.
+ */
+export function usePluginUiEphemeralSharedScope(): PluginUiEphemeralSharedScope | null {
+  const context = useContext(PluginHostApiContext);
+  if (!context) {
+    throw new Error('PluginHostApiProvider is required before reading the ephemeral shared scope.');
+  }
+  return context.ephemeralSharedScope;
 }

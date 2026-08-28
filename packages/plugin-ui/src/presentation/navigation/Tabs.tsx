@@ -74,6 +74,16 @@ export function useHappierTabPanelActivity(): HappierTabPanelActivity {
   return activity;
 }
 
+/**
+ * Private presentation composition seam. Semantic components that merely need
+ * to pause work inside a retained panel may read absence as "not nested";
+ * author code keeps using the strict public hook above so an accidental read
+ * outside Tabs never fabricates an active interval.
+ */
+export function useOptionalHappierTabPanelActivityInternal(): HappierTabPanelActivity | null {
+  return useContext(HappierTabPanelActivityContext);
+}
+
 const hiddenPanelStyle: ViewStyle = { display: 'none' };
 
 /**

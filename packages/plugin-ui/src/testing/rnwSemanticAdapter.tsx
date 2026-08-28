@@ -1,4 +1,4 @@
-import { act, Fragment, type ReactNode } from 'react';
+import { act, cloneElement, Fragment, isValidElement, type ReactElement, type ReactNode } from 'react';
 
 import {
   PluginUiSemanticRoleSchema,
@@ -13,6 +13,8 @@ import type {
   PluginUiSemanticTarget,
 } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import type { HappierFocusable } from '../presentation/portableTypes.js';
+import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 
 import { Text } from '../components/Text.js';
 import {
@@ -23,6 +25,10 @@ import {
 
 /** Optional strict targeted-Surface support for the public RNW semantic adapter. */
 export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
+  /** Test-environment physical focus owner used by public logical focus targets. */
+  physicalFocus?: (target: HappierFocusable) => boolean;
+  /** Optional host-owned scope shared by the artifact mounts under test. */
+  ephemeralSharedScope?: PluginUiEphemeralSharedScope;
   targetedSurfaces?: Readonly<{
     /** Read the current strict daemon cold-admission projection on every render. */
     readCurrentMounts(): unknown;
@@ -32,22 +38,27 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
 }>;
 
 function createSemanticPresentationHost(input: Readonly<{
-  options: NonNullable<PluginUiRnwSemanticSurfaceAdapterOptions['targetedSurfaces']>;
+  options: PluginUiRnwSemanticSurfaceAdapterOptions;
   readCurrentContext(): RenderContext;
 }>): PluginUiPresentationHost {
   return Object.freeze({
+    ...(input.options.physicalFocus === undefined
+      ? {}
+      : { focusTarget: input.options.physicalFocus }),
     renderMarkdown: () => null,
     renderCodeBlock: () => null,
     renderPopover: () => null,
     renderIcon: () => null,
     renderTargetedSurface(presentation: PluginUiTargetedSurfacePresentation) {
       const context = input.readCurrentContext();
+      const targetedSurfaces = input.options.targetedSurfaces;
+      if (targetedSurfaces === undefined) return presentation.fallback ?? null;
       const admission = readPluginUiTestkitTargetedSurfaceAdmission({
-        mounts: input.options.readCurrentMounts(),
+        mounts: targetedSurfaces.readCurrentMounts(),
         target: context.surface.targetedContributions.target,
         surface: presentation.surface,
         launchInput: presentation.input,
-        contributorManifest: input.options.readContributorManifest(
+        contributorManifest: targetedSurfaces.readContributorManifest(
           presentation.surface.contributor.pluginId,
         ),
         ...(presentation.instanceKey === undefined ? {} : { instanceKey: presentation.instanceKey }),
@@ -66,8 +77,19 @@ function renderSemanticSurface(input: Readonly<{
   surface: RenderSurface;
   context: RenderContext;
   presentationHost?: PluginUiPresentationHost;
+  ephemeralSharedScope?: PluginUiEphemeralSharedScope;
 }>): ReactNode {
-  const rendered = input.surface(input.context) as ReactNode;
+  const raw = input.surface(input.context) as ReactNode;
+  const rawType = isValidElement(raw) ? raw.type : null;
+  const rendered = input.ephemeralSharedScope !== undefined
+    && isValidElement(raw)
+    && (typeof rawType === 'function' || (typeof rawType === 'object' && rawType !== null))
+    && Reflect.get(rawType, Symbol.for('happier.pluginUi.privateSurfaceEntryProvider.v1')) === true
+      ? cloneElement(
+          raw as ReactElement<Record<string, unknown>>,
+          { ephemeralSharedScope: input.ephemeralSharedScope },
+        )
+      : raw;
   return input.presentationHost === undefined
     ? rendered
     : (
@@ -313,13 +335,20 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
     async mount({ surface, context, signal }) {
       if (signal.aborted) throw new Error('The Plugin UI semantic surface was already cancelled.');
       let currentContext = context;
-      const presentationHost = options.targetedSurfaces === undefined
+      const presentationHost = options.targetedSurfaces === undefined && options.physicalFocus === undefined
         ? undefined
         : createSemanticPresentationHost({
-            options: options.targetedSurfaces,
+            options,
             readCurrentContext: () => currentContext,
           });
-      const mount = await mountRnw(renderSemanticSurface({ surface, context, presentationHost }));
+      const mount = await mountRnw(renderSemanticSurface({
+        surface,
+        context,
+        presentationHost,
+        ...(options.ephemeralSharedScope === undefined
+          ? {}
+          : { ephemeralSharedScope: options.ephemeralSharedScope }),
+      }));
       let revision = 0;
       let disposed = false;
       let disposal: Promise<void> | undefined;
@@ -378,7 +407,14 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
           const previousContext = currentContext;
           currentContext = nextContext;
           try {
-            await mount.render(renderSemanticSurface({ surface, context: nextContext, presentationHost }));
+            await mount.render(renderSemanticSurface({
+              surface,
+              context: nextContext,
+              presentationHost,
+              ...(options.ephemeralSharedScope === undefined
+                ? {}
+                : { ephemeralSharedScope: options.ephemeralSharedScope }),
+            }));
           } catch (error) {
             currentContext = previousContext;
             throw error;

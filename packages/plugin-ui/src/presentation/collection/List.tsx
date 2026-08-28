@@ -485,8 +485,13 @@ export function HappierListItem({
       style={[itemStyle, style]}
     >
       {behavior.accessoryPlacement === 'outside' ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
-          <View style={{ flex: 1, minWidth: 0 }}>{row}</View>
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
+          minWidth: 0,
+        }}>
+          <View style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
           {accessory}
         </View>
       ) : row}

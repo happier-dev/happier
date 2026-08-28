@@ -49,9 +49,9 @@ const EXTERNAL_SEMANTIC_FRAMEWORK_ENTRIES = Object.freeze([
 // test pins to the workspace browser app.
 //
 // Nothing else may be added here. `zod`, `undici-types`, and `csstype` used to be installed from
-// repository copies; they belong to the exact candidate's own dependency closure (the SDK declares
+// repository copies; they belong to the packed artifacts' own dependency closure (the SDK declares
 // `zod` and `@types/node`, and the packet-owned `@types/react` pulls `csstype`). Supplying them
-// from the checkout let a candidate that failed to declare or ship them still compile here, which
+// from the checkout let an artifact that failed to declare or ship them still compile here, which
 // is exactly the defect this fixture exists to catch.
 const EXTERNAL_AUTHORING_FIXTURE_OWNED_TYPE_PACKAGES = Object.freeze(['@types/react-dom']);
 const EXACT_PAIR_PACKAGE_NAMES = new Set([SDK_PACKAGE_NAME, PLUGIN_UI_PACKAGE_NAME]);
@@ -462,7 +462,7 @@ export async function assertPackedTargetInstallations({
       manifest.name !== expectedPackage.packageName
       || (expectedPackage.version !== undefined && manifest.version !== expectedPackage.version)
     ) {
-      throw new Error(`Installed ${expectedPackage.packageName} identity does not match its exact packed artifact`);
+      throw new Error(`Installed ${expectedPackage.packageName} identity does not match its packed artifact`);
     }
     if (typeof manifest.version !== 'string' || manifest.version.trim() === '') {
       throw new Error(`Installed ${expectedPackage.packageName} has no package version`);
@@ -594,7 +594,7 @@ async function assertPublicPresentationContract(consumerRoot) {
  * TypeScript is structural, so the author fixture's negative object literals
  * prove that host metadata cannot be supplied but cannot distinguish a local
  * value vocabulary from an identically shaped imported Action schema. Inspect
- * the exact packed declaration to retain that owner boundary: Form and Select
+ * the packed declaration to retain that owner boundary: Form and Select
  * may normalize into the Action schema internally, but they must not publish
  * an SDK or Protocol type through their curated author props.
  */
@@ -972,7 +972,7 @@ async function runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot }
     consumerRoot,
     // This advanced public author tier is otherwise mounted only by the RNW
     // semantic proof. Resolve it through Vite development as well, so the
-    // exact packed `/advanced`, `/presentation`, and `/environment` entries cannot regress
+    // packed `/advanced`, `/presentation`, and `/environment` entries cannot regress
     // behind a production-only build.
     entryPaths: ['/src/browser.tsx', '/src/semanticSurface.tsx'],
   });

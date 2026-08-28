@@ -289,13 +289,18 @@ export type SelectProps = Readonly<{
   required?: boolean;
   onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
   disabled?: boolean;
+  /** Logical focus target transferred to the first enabled option in this field. */
+  focusTarget?: PluginUiFocusTarget;
   testID?: string;
 }>;
 
 export function Select(props: SelectProps): ReactElement {
+  const { focusTarget, ...rest } = props;
+  const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
   return <HappierSelect
-    {...props}
+    {...rest}
     value={props.value}
+    controlRef={focusBinding}
     theme={usePluginTheme()}
     isEqual={(left, right) => isSameActionInputOptionValue(
       toCanonicalActionInputOptionValue(left),

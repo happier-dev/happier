@@ -8,6 +8,8 @@ describe('Channels V1 bounds', () => {
         expect(bounds.CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1).toBe('happier.channels/providers');
         expect(bounds.CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1).toBe(1);
         expect(bounds.CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry).toBe('connection/poll-retry-v1');
+        expect(bounds.CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept)
+            .toBe('binding/session-projection-baseline-accept-v1');
         expect(bounds.CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead).toBe('binding/read-v1');
         expect(bounds.CONVERSATION_MANAGEMENT_ACTION_IDS_V1).not.toHaveProperty('connectionSetEnabled');
         expect(bounds.CONVERSATION_MANAGEMENT_ACTION_IDS_V1).not.toHaveProperty('bindingTargetRotate');

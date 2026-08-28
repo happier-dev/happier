@@ -213,15 +213,21 @@ export function reduceHappierListMultiSelection(
     case 'toggle': {
       if (!isEligible(state, action.key)) return state;
       const selectedKeys = new Set(state.selectedKeys);
-      if (selectedKeys.has(action.key)) selectedKeys.delete(action.key);
-      else selectedKeys.add(action.key);
-      const nextAnchorKey = selectedKeys.size > 0 ? action.key : null;
+      const removed = selectedKeys.delete(action.key);
+      if (!removed) selectedKeys.add(action.key);
+      const nextAnchorKey = selectedKeys.size === 0
+        ? null
+        : removed
+          ? firstSelectedVisibleKey(selectedKeys, state.visibleOrderedKeys)
+          : action.key;
       return commit(state, {
         ...state,
         isSelectionMode: selectedKeys.size > 0,
         selectedKeys,
         anchorKey: nextAnchorKey,
-        focusedKey: nextAnchorKey,
+        // The row the reader toggled remains the current cursor even when it is
+        // no longer selected. Anchor and focus are deliberately separate facts.
+        focusedKey: selectedKeys.size > 0 ? action.key : null,
       });
     }
     case 'selectRange': {

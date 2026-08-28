@@ -100,7 +100,6 @@ const bindingCreateInput = {
     target: {
         kind: 'automation',
         automationId: 'automation-1',
-        expectedTemplateVersion: 1,
         policy: { resultDelivery: 'finalResult' },
     },
 } as const;

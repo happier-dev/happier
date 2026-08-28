@@ -62,6 +62,7 @@ export type {
 } from './lifecycle.js';
 
 export {
+    hasCurrentConversationProviderConnectionV1,
     ConversationProviderConnectionInputV1JsonSchema,
     ConversationProviderConnectionInputV1Schema,
     ConversationProviderConnectionReadInputV1JsonSchema,

@@ -132,4 +132,24 @@ describe('plugin-ui List row accessory wrapping', () => {
     expect(column?.style.minWidth).toBe('50%');
     mount.unmount();
   });
+
+  it('keeps the wrapping contract when an interactive accessory is outside the row pressable', () => {
+    const mount = mountRow(
+      <List.Item
+        title={LONG_TITLE}
+        onPress={() => undefined}
+        accessoryWraps
+        accessoryOutsidePressable
+        accessory={<Button title="Attach" onPress={() => undefined} />}
+      />,
+    );
+    const accessory = [...mount.container.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find((element) => element.textContent === 'Attach');
+    const outerContent = accessory?.parentElement;
+    const primaryContent = outerContent?.firstElementChild as HTMLElement | null;
+
+    expect(outerContent?.style.flexWrap).toBe('wrap');
+    expect(primaryContent?.style.minWidth).toBe('50%');
+    mount.unmount();
+  });
 });

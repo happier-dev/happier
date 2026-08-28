@@ -61,6 +61,25 @@ describe('reduceHappierListMultiSelection', () => {
     expect(state.version).toBe(2);
   });
 
+  it('keeps a surviving selected range anchor when the toggled row is removed', () => {
+    let state = createInitialHappierListMultiSelectionState({
+      scopeKey: 'scope-a',
+      visibleOrderedKeys: ['a', 'b', 'c', 'd'],
+    });
+
+    state = reduceHappierListMultiSelection(state, { type: 'replace', key: 'b' });
+    state = reduceHappierListMultiSelection(state, { type: 'toggle', key: 'a' });
+    state = reduceHappierListMultiSelection(state, { type: 'toggle', key: 'd' });
+    state = reduceHappierListMultiSelection(state, { type: 'toggle', key: 'd' });
+
+    expect(selectedKeys(state)).toEqual(['a', 'b']);
+    expect(state.anchorKey).toBe('a');
+    expect(state.focusedKey).toBe('d');
+
+    state = reduceHappierListMultiSelection(state, { type: 'selectRange', targetKey: 'c' });
+    expect(selectedKeys(state)).toEqual(['a', 'b', 'c']);
+  });
+
   it('adds a disjoint range when requested', () => {
     let state = createInitialHappierListMultiSelectionState({
       scopeKey: 'scope-a',

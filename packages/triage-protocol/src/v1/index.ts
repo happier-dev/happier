@@ -160,11 +160,14 @@ export type {
 
 export {
     TriagePrepareReviewWorkspaceInputV1Schema,
+    projectTriagePrepareReviewWorkspaceInputV1,
     TriagePrepareReviewWorkspaceResultV1Schema,
     TriagePullRequestReviewRevisionV1Schema,
     TriageReviewWorkspaceCurrentnessV1Schema,
     TriageReviewWorkspaceObservedRevisionV1Schema,
     TriageSelectedWorkspaceScopeV1Schema,
+    TriageVerifyReviewWorkspaceInputV1Schema,
+    TriageVerifyReviewWorkspaceResultV1Schema,
 } from './workspace.js';
 export type {
     TriagePrepareReviewWorkspaceInputV1,
@@ -173,6 +176,8 @@ export type {
     TriageReviewWorkspaceCurrentnessV1,
     TriageReviewWorkspaceObservedRevisionV1,
     TriageSelectedWorkspaceScopeV1,
+    TriageVerifyReviewWorkspaceInputV1,
+    TriageVerifyReviewWorkspaceResultV1,
 } from './workspace.js';
 
 export {

@@ -10,7 +10,13 @@ import { usePluginTheme, useSurfaceContext } from './components/PluginUiProvider
 import { usePluginUiDataClient, type PluginUiDataClient } from './data/index.js';
 import { createUnavailablePluginUiAccountKv } from './data/accountKv.js';
 import { createUnavailablePluginUiAccountSettings } from './data/accountSettings.js';
-import { useComposer, usePluginResource, usePluginSurfaceActivity } from './hostApi/index.js';
+import {
+  useComposer,
+  usePluginResource,
+  usePluginSurfaceActivity,
+  usePluginUiEphemeralSharedScope,
+  type PluginUiEphemeralSharedScope,
+} from './hostApi/index.js';
 import type { PluginUiPresentationHost } from './presentationHost/context.js';
 import { mountThroughReactNativeWebAsync } from './rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from './surfaceFixture.testSupport.js';
@@ -141,6 +147,18 @@ function HostedDataAuthorSurface(context: RenderContext) {
   hostedDataAuthorContext = context;
   hostedDataClient = usePluginUiDataClient();
   return <Text value="hosted-data-client-bound" testID="hosted-data-client-state" />;
+}
+
+let hostedEphemeralAuthorContext: RenderContext | undefined;
+let hostedEphemeralScope: PluginUiEphemeralSharedScope | null | undefined;
+
+function HostedEphemeralAuthorSurface(context: RenderContext) {
+  hostedEphemeralAuthorContext = context;
+  hostedEphemeralScope = usePluginUiEphemeralSharedScope();
+  return <Text
+    value={hostedEphemeralScope === null ? 'ephemeral-scope-unavailable' : 'ephemeral-scope-bound'}
+    testID="hosted-ephemeral-scope-state"
+  />;
 }
 
 let composerCurrentRef: ComposerRefV1 | null | undefined;
@@ -495,6 +513,37 @@ describe('defineUiSurface', () => {
     })).rejects.toMatchObject({ code: 'plugin_collection_ui_query_unavailable' });
     await expect(unavailableDataClient.accountSettings.snapshot())
       .rejects.toMatchObject({ code: 'plugin_settings_persistence_unavailable' });
+    mount.unmount();
+  });
+
+  it('returns null when the in-process private scope binding is absent', async () => {
+    hostedEphemeralAuthorContext = undefined;
+    hostedEphemeralScope = undefined;
+    const surface = createSurfaceContext();
+    const context = createRenderContext(
+      surface,
+      createHostApiStub(surface),
+      Object.freeze({
+        kind: 'available',
+        acquireTransport: async () => Object.freeze({
+          request: async () => {
+            throw new Error('The hosted surface must not query Data while reading an ephemeral scope.');
+          },
+          subscribe: () => Object.freeze({ dispose() {} }),
+          subscribeDisconnect: () => Object.freeze({ dispose() {} }),
+        }),
+      }),
+    );
+
+    const mount = await mountThroughReactNativeWebAsync(
+      defineUiSurface(HostedEphemeralAuthorSurface)(context) as ReactElement,
+    );
+
+    expect(mount.container.textContent).toBe('ephemeral-scope-unavailable');
+    expect(hostedEphemeralScope).toBeNull();
+    expect(hostedEphemeralAuthorContext).toBeDefined();
+    expect(Object.getOwnPropertySymbols(hostedEphemeralAuthorContext ?? {})).toEqual([]);
+    expect(hostedEphemeralAuthorContext).not.toHaveProperty('ephemeralSharedScope');
     mount.unmount();
   });
 

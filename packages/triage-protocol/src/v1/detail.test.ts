@@ -8,6 +8,7 @@ import {
 import {
     TriagePrepareReviewWorkspaceInputV1Schema,
     TriagePrepareReviewWorkspaceResultV1Schema,
+    projectTriagePrepareReviewWorkspaceInputV1,
 } from './workspace.js';
 
 const fixture = createTriageSourceV1Fixture();
@@ -103,6 +104,18 @@ describe('the Composer-origin address', () => {
 });
 
 describe('Triage review-workspace result', () => {
+    it('projects one source input and omits an unselected workspace', () => {
+        const { v: _v, workspace: _workspace, ...facts } = fixture.prepareReviewWorkspaceInput;
+        const projected = projectTriagePrepareReviewWorkspaceInputV1({
+            ...facts,
+            workspace: null,
+        });
+
+        expect(projected.v).toBe(1);
+        expect(Object.hasOwn(projected, 'workspace')).toBe(false);
+        expect(TriagePrepareReviewWorkspaceInputV1Schema.parse(projected)).toEqual(projected);
+    });
+
     it('carries the source route into preparation and its canonical pull-request reference back out', () => {
         expect(TriagePrepareReviewWorkspaceInputV1Schema.safeParse({
             ...fixture.prepareReviewWorkspaceInput,

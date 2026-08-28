@@ -18,6 +18,9 @@ type PackageManifest = Readonly<{
     dependencies?: Readonly<Record<string, string>>;
     peerDependencies?: Readonly<Record<string, string>>;
     bundledDependencies?: readonly string[];
+    happier?: Readonly<{
+        publicSdkRelease?: Readonly<{ posture?: string }>;
+    }>;
 }>;
 
 async function readManifest(url: URL): Promise<PackageManifest> {
@@ -83,10 +86,14 @@ describe('Triage protocol publication boundary', () => {
             private?: boolean;
             exports?: Record<string, unknown>;
             files?: readonly string[];
+            happier?: Readonly<{
+                publicSdkRelease?: Readonly<{ posture?: string }>;
+            }>;
         }>;
 
         expect(packageJson.name).toBe('@happier-dev/triage-protocol');
         expect(packageJson.private).not.toBe(true);
+        expect(packageJson.happier?.publicSdkRelease?.posture).toBe('developer_preview');
         expect(packageJson.files).toContain('README.md');
         expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([
             '.',

@@ -215,6 +215,10 @@ describe('Composer facade', () => {
     });
 
     if (!service) throw new Error('Composer service was not provided.');
+    // Exact lookup is deliberately independent from a Composer-bound mount:
+    // generic destinations can address a known document while `current()`
+    // truthfully remains absent for this surface.
+    expect(service.current()).toBeNull();
     for (const suppliedRef of refs) {
       const originalRef = { ...suppliedRef };
       const handle = await service.get(suppliedRef);

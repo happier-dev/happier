@@ -22,7 +22,7 @@ import {
     ConversationBindingEndpointSelectionV1ProtocolSchema,
 } from './bindings.js';
 import {
-    ConversationBindingTargetMutationV1ProtocolSchema,
+    ConversationBindingTargetV1ProtocolSchema,
     ConversationBindingV1ProtocolSchema,
 } from './targets.js';
 
@@ -147,7 +147,7 @@ export const ConversationPairingCreateInputV1ProtocolSchema = defineProtocolObje
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedConnectionRevision: positiveSafeInteger,
     endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
-    target: ConversationBindingTargetMutationV1ProtocolSchema,
+    target: ConversationBindingTargetV1ProtocolSchema,
 }, { policy: 'closed' });
 
 export const ConversationPairingCreateInputV1Schema = ConversationPairingCreateInputV1ProtocolSchema;

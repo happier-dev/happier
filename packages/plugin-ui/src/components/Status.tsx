@@ -8,6 +8,8 @@ import {
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import type { TextTone } from './Text.js';
+import { usePluginSurfaceActivity } from '../hostApi/context.js';
+import { useOptionalHappierTabPanelActivityInternal } from '../presentation/navigation/Tabs.js';
 
 export type StatusProps = Readonly<{
   /** Semantic meaning, resolved from the host theme. */
@@ -44,6 +46,8 @@ export function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: 
   const translate = usePluginTranslation();
   const resolvedLabel = resolveAuthorText(translate, label, labelKey) ?? label;
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
+  const surfaceActivity = usePluginSurfaceActivity();
+  const tabPanelActivity = useOptionalHappierTabPanelActivityInternal();
 
   return (
     <HappierStatus
@@ -51,6 +55,7 @@ export function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: 
       tone={tone}
       theme={theme}
       isPulsing={pulsing}
+      animationEnabled={surfaceActivity.active && (tabPanelActivity?.active ?? true)}
       controlRef={focusBinding}
       testID={testID}
     />

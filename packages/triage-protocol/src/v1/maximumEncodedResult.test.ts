@@ -17,15 +17,11 @@ import {
     utf8ByteLength,
     type MeasurableSchemaV1,
 } from '../testing/v1/maximumEncodedValue.js';
-import {
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
-    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-} from './bounds.js';
+import { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './bounds.js';
 import { TriageSourcesContributionProtocolV1 } from './contribution.js';
 import { TriageDetailSurfaceInputV1Schema } from './detail.js';
 import { TriageEntryLocatorV1Schema, TriageEntryRefV1Schema } from './identity.js';
 import {
-    TriageConfiguredSourceInstanceV1Schema,
     TriageListInstancesInputV1Schema,
     TriageListInstancesResultV1Schema,
 } from './instances.js';
@@ -64,41 +60,19 @@ import {
  * with it.
  */
 
-/**
- * The effective private-envelope ceiling of one persisted row, owned by
- * `packages/protocol/src/plugins/data/collectionLimitsV1.ts`
- * (`maximumPrivateEnvelopeEncodedBytes`).
- *
- * Only genuine user state is persisted at an Account: the canonical entry
- * reference a pin or Session link names, and the configured source instance.
- * Provider-derived observations are not a persisted corpus and never meet
- * this ceiling.
- */
-const PRIVATE_ENVELOPE_CEILING_BYTES = 512 * 1024;
-
 const measuredSchemas = {
     presentObservation: TriageSourceObservationV1Schema,
-    scanPage: TriageScanResultV1Schema,
     getInput: TriageGetInputV1Schema,
     detailInput: TriageDetailSurfaceInputV1Schema,
     prepareReviewWorkspaceInput: TriagePrepareReviewWorkspaceInputV1Schema,
     administrationInput: TriageSourceAdministrationActionInputV1Schema,
 } as const satisfies Readonly<Record<string, MeasurableSchemaV1>>;
 
-const persistedRowSchemas = {
-    entryRef: TriageEntryRefV1Schema,
-    configuredInstance: TriageConfiguredSourceInstanceV1Schema,
-} as const satisfies Readonly<Record<string, MeasurableSchemaV1>>;
-
 const derivedMaxima = deriveMaximumEncodedBytesByLabel(measuredSchemas);
-const derivedPersistedRowMaxima = deriveMaximumEncodedBytesByLabel(persistedRowSchemas);
 
 function reachableStringFields(): ReadonlyMap<string, PluginJsonSchema> {
     const fields = new Map<string, PluginJsonSchema>();
-    for (const schema of [
-        ...Object.values<MeasurableSchemaV1>(measuredSchemas),
-        ...Object.values<MeasurableSchemaV1>(persistedRowSchemas),
-    ]) {
+    for (const schema of Object.values<MeasurableSchemaV1>(measuredSchemas)) {
         collectSchemaStringFields(schema.jsonSchema, '(root)', fields);
     }
     return fields;
@@ -269,7 +243,6 @@ describe('maximum encoded value derivation', () => {
         // derivation instead of silently consuming the remaining headroom.
         expect(derivedMaxima).toEqual({
             presentObservation: 12_887,
-            scanPage: 833_424,
             getInput: 11_496,
             detailInput: 468_370,
             prepareReviewWorkspaceInput: 14_243,
@@ -277,34 +250,8 @@ describe('maximum encoded value derivation', () => {
         });
     });
 
-    it('keeps a full scan page the largest value, so the page count is the binding bound', () => {
-        const others = Object.entries(derivedMaxima)
-            .filter(([label]) => label !== 'scanPage')
-            .map(([, bytes]) => bytes);
-
-        expect(derivedMaxima.scanPage).toBeGreaterThan(Math.max(...others));
-        expect(derivedMaxima.scanPage)
-            .toBeGreaterThan(derivedMaxima.presentObservation * MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1);
-    });
-});
-
-describe('persisted user-state rows', () => {
-    /**
-     * Provider-derived observations are not persisted, so only genuine user
-     * state meets this ceiling: the canonical entry reference a pin or Session
-     * link names, and the configured source instance.
-     */
-    it('keeps every persisted row below the private-envelope ceiling, base64 included', () => {
-        expect(derivedPersistedRowMaxima).toEqual({
-            entryRef: 1_496,
-            configuredInstance: 8_269,
-        });
-
-        for (const [label, bytes] of Object.entries(derivedPersistedRowMaxima)) {
-            // Base64 expansion alone, before nonce, authentication tag, padding,
-            // and JSON framing; the encoder owns the exact envelope.
-            expect(Math.ceil(bytes / 3) * 4, `${label} envelope`)
-                .toBeLessThan(PRIVATE_ENVELOPE_CEILING_BYTES);
-        }
+    it('leaves the scan result unbounded until the canonical Action envelope', () => {
+        expect(() => buildMaximalSchemaValue(TriageScanResultV1Schema, 'scan result'))
+            .toThrow();
     });
 });

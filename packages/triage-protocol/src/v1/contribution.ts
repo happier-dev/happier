@@ -22,6 +22,8 @@ import {
 import {
     TriagePrepareReviewWorkspaceInputV1Schema,
     TriagePrepareReviewWorkspaceResultV1Schema,
+    TriageVerifyReviewWorkspaceInputV1Schema,
+    TriageVerifyReviewWorkspaceResultV1Schema,
 } from './workspace.js';
 
 /**
@@ -64,6 +66,15 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             },
             resultSchema: TriagePrepareReviewWorkspaceResultV1Schema,
             action: { surface: 'plugin', dangerLevel: 'writesLocal' },
+        },
+        verifyReviewWorkspace: {
+            required: false,
+            input: {
+                kind: 'protocolDefined',
+                schema: TriageVerifyReviewWorkspaceInputV1Schema,
+            },
+            resultSchema: TriageVerifyReviewWorkspaceResultV1Schema,
+            action: { surface: 'plugin', dangerLevel: 'safe' },
         },
     },
     surfaces: {

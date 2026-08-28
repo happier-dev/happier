@@ -53,7 +53,7 @@
   ],
   "happier": {
     "publicSdkRelease": {
-      "posture": "prepublish_hold",
+      "posture": "developer_preview",
       "supportPolicy": "README.md#plugin-ui-release-posture",
       "externalPublicationRequiresApproval": true
     }

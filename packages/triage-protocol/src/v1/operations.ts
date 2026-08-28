@@ -5,7 +5,6 @@ import {
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import { MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 } from './bounds.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import {
     TriageEntryLocatorV1Schema,
@@ -37,7 +36,6 @@ export const TriageScanInputV1Schema = defineProtocolUnion([
             limit: defineProtocolNumber({
                 integer: true,
                 minimum: 1,
-                maximum: MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
             }),
         }, { policy: 'closed' }),
     }, { policy: 'closed' }),

@@ -20,6 +20,7 @@ describe('curated plugin-ui public API', () => {
       useExecutePluginAction: expect.any(Function),
       usePluginResource: expect.any(Function),
       useLivePluginResource: expect.any(Function),
+      usePluginUiEphemeralSharedScope: expect.any(Function),
     }));
     expect(advancedEntry).toEqual(expect.objectContaining({
       PluginUiProvider: expect.any(Function),

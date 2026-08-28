@@ -17,8 +17,13 @@ import {
     TriageIdentifierV1ProtocolSchema,
     TriageLocationV1ProtocolSchema,
     TriageTextV1ProtocolSchema,
+    type TriageEntryLocatorV1,
+    type TriageEntryRefV1,
 } from './identity.js';
-import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
+import {
+    TriageConfiguredSourceInstanceV1Schema,
+    type TriageConfiguredSourceInstanceV1,
+} from './instances.js';
 
 /**
  * A closed transport projection of the incumbent user-selected saved-workspace
@@ -102,7 +107,7 @@ export type TriageReviewWorkspaceCurrentnessV1 = ReturnType<
 >;
 
 /**
- * The optional source-owned preparation request. `workspace: null` means no
+ * The optional source-owned preparation request. An omitted `workspace` means no
  * user-selected workspace and returns `workspaceRequired` without a filesystem
  * probe; the `AbortSignal` is execution options, never serialized input
  * (`CONTRACT.md` §5.3).
@@ -118,11 +123,38 @@ export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
      */
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
-    workspace: TriageSelectedWorkspaceScopeV1Schema.nullable(),
+    workspace: TriageSelectedWorkspaceScopeV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriagePrepareReviewWorkspaceInputV1 = ReturnType<
     typeof TriagePrepareReviewWorkspaceInputV1Schema.parse
 >;
+
+/**
+ * The one projection into the source-owned workspace operation input.
+ *
+ * The UI selection draft, the daemon's selected-input correspondence check,
+ * and the eventual source execution all cross this exact boundary. Keeping the
+ * projection here prevents those three callers from independently deciding
+ * whether `v`, workflow-only fields, or an empty workspace selection belong on
+ * the source wire. A missing user selection is omission: it is not an explicit
+ * JSON value the source can mistake for a selected workspace.
+ */
+export function projectTriagePrepareReviewWorkspaceInputV1(input: Readonly<{
+    instance: TriageConfiguredSourceInstanceV1;
+    entryRef: TriageEntryRefV1;
+    lastKnownLocator: TriageEntryLocatorV1;
+    observed: TriageReviewWorkspaceObservedRevisionV1;
+    workspace?: TriageSelectedWorkspaceScopeV1 | null;
+}>): TriagePrepareReviewWorkspaceInputV1 {
+    return TriagePrepareReviewWorkspaceInputV1Schema.parse({
+        v: 1,
+        instance: input.instance,
+        entryRef: input.entryRef,
+        lastKnownLocator: input.lastKnownLocator,
+        observed: input.observed,
+        ...(input.workspace == null ? {} : { workspace: input.workspace }),
+    });
+}
 
 /**
  * Only `prepared` reaches Session composition. `created` is the sole rollback
@@ -174,4 +206,61 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
 ]);
 export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
     typeof TriagePrepareReviewWorkspaceResultV1Schema.parse
+>;
+
+/**
+ * Final source-owned verification of an already prepared review workspace.
+ * It repeats the exact selected source, provider revision and saved-workspace
+ * scope, while `prepared` carries only the source's own prior materialization
+ * result. Triage cannot substitute a path or provider reference from another
+ * source.
+ */
+export const TriageVerifyReviewWorkspaceInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceInstanceV1Schema,
+    entryRef: TriageEntryRefV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema,
+    observed: TriageReviewWorkspaceObservedRevisionV1Schema,
+    workspace: TriageSelectedWorkspaceScopeV1Schema,
+    prepared: defineProtocolObject({
+        repositoryPath: TriageLocationV1ProtocolSchema,
+        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+    }, { policy: 'closed' }),
+}, { policy: 'closed' });
+export type TriageVerifyReviewWorkspaceInputV1 = ReturnType<
+    typeof TriageVerifyReviewWorkspaceInputV1Schema.parse
+>;
+
+/**
+ * The provider and canonical SCM owner jointly verify the final start facts.
+ * No failing arm returns a replacement path or silently refreshes the user's
+ * selection.
+ */
+export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('verified'),
+        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('workspaceMismatch'),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('unavailable'),
+        reason: defineProtocolUnion([
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[0]),
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[1]),
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[2]),
+        ]),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('refused'),
+        reason: defineProtocolUnion([
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[0]),
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[1]),
+            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[2]),
+        ]),
+    }, { policy: 'closed' }),
+]);
+export type TriageVerifyReviewWorkspaceResultV1 = ReturnType<
+    typeof TriageVerifyReviewWorkspaceResultV1Schema.parse
 >;

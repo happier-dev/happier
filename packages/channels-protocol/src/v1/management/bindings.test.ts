@@ -108,8 +108,8 @@ describe('Channels V1 binding management mutation contracts', () => {
         expect(ConversationBindingUpdateResultV1Schema.parse(updateResult)).toEqual(updateResult);
         expect(ConversationAutomationTargetNotVerifiedResultV1Schema.parse({
             kind: 'notVerified',
-            reason: 'templateVersionMismatch',
-        })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+            reason: 'notFound',
+        })).toEqual({ kind: 'notVerified', reason: 'notFound' });
         expect(ConversationAutomationTargetNotVerifiedResultV1Schema.parse({
             kind: 'notVerified',
             reason: 'resultDeliveryUnsupported',
@@ -167,7 +167,6 @@ describe('Channels V1 binding management mutation contracts', () => {
             target: {
                 kind: 'automation',
                 automationId: 'automation-1',
-                expectedTemplateVersion: 1,
                 policy: { resultDelivery: 'finalResult' },
             },
         } as const;
@@ -306,8 +305,8 @@ describe('Channels V1 binding management mutation contracts', () => {
         })).toEqual({ kind: 'notReady', reason: 'network' });
         expect(mutationResultSchema.parse({
             kind: 'notVerified',
-            reason: 'templateVersionMismatch',
-        })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+            reason: 'notFound',
+        })).toEqual({ kind: 'notVerified', reason: 'notFound' });
         expect(ConversationBindingMutationResultV1Schema.safeParse({ kind: 'stale' }).success).toBe(true);
         expect(mutationResultSchema.safeParse({
             kind: 'stale',
@@ -405,7 +404,6 @@ describe('Channels V1 binding policy defaults', () => {
                 target: {
                     kind: 'automation',
                     automationId: 'automation-1',
-                    expectedTemplateVersion: 1,
                     policy: { resultDelivery: 'finalResult' },
                 },
                 ...conversationBindingPolicyForOmittedFieldsV1(audience),

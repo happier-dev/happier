@@ -5,13 +5,16 @@ import type {
   SurfaceContext,
 } from '@happier-dev/plugin-sdk/ui';
 import type { Disposable } from '@happier-dev/plugin-sdk';
+import type { ReactElement } from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   usePluginHostApi,
   useLivePluginResource,
   usePluginResource,
+  usePluginUiEphemeralSharedScope,
+  type PluginUiEphemeralSharedScope,
   type PluginUiResourceSnapshot,
 } from './index.js';
 import {
@@ -23,6 +26,22 @@ import { PluginHostApiProviderInternal } from './context.js';
 import { createSurfaceContext } from '../surfaceFixture.testSupport.js';
 
 const resourceRef = { pluginId: 'acme.preview', localId: 'review-summary' } as const;
+const mountedTrees = new Set<renderer.ReactTestRenderer>();
+
+function createRenderer(element: ReactElement): renderer.ReactTestRenderer {
+  const tree = renderer.create(element);
+  mountedTrees.add(tree);
+  return tree;
+}
+
+afterEach(() => {
+  act(() => {
+    for (const tree of mountedTrees) tree.unmount();
+  });
+  mountedTrees.clear();
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
 const surfaceContextFixture: SurfaceContext = createSurfaceContext({
   mount: {
@@ -107,6 +126,46 @@ function deferred<T>() {
 }
 
 describe('plugin host API hooks', () => {
+  it('exposes only the host-injected ephemeral shared scope and has no artifact-local fallback', () => {
+    const scope: PluginUiEphemeralSharedScope = {
+      acquire: vi.fn(() => null),
+    };
+    const seen: Array<PluginUiEphemeralSharedScope | null> = [];
+
+    function Probe() {
+      seen.push(usePluginUiEphemeralSharedScope());
+      return null;
+    }
+
+    let withoutScope: renderer.ReactTestRenderer | undefined;
+    act(() => {
+      withoutScope = createRenderer(
+        <PluginHostApiProviderInternal hostApi={createHostApiStub().api}>
+          <Probe />
+        </PluginHostApiProviderInternal>,
+      );
+    });
+    expect(seen.at(-1)).toBeNull();
+
+    let withScope: renderer.ReactTestRenderer | undefined;
+    act(() => {
+      withScope = createRenderer(
+        <PluginHostApiProviderInternal
+          hostApi={createHostApiStub().api}
+          ephemeralSharedScope={scope}
+        >
+          <Probe />
+        </PluginHostApiProviderInternal>,
+      );
+    });
+    expect(seen.at(-1)).toBe(scope);
+
+    act(() => {
+      withoutScope?.unmount();
+      withScope?.unmount();
+    });
+  });
+
   it('accepts a minimal bound Resource client without a Surface host facade', async () => {
     const client: PluginUiResourceClient = {
       readResource: vi.fn(async () => ({
@@ -626,7 +685,7 @@ describe('plugin host API hooks', () => {
 
     expect(() => {
       act(() => {
-        renderer.create(<Probe />);
+        createRenderer(<Probe />);
       });
     }).toThrow(/PluginHostApiProvider/);
   });
@@ -647,7 +706,7 @@ describe('plugin host API hooks', () => {
 
     let tree: renderer.ReactTestRenderer | undefined;
     await act(async () => {
-      tree = renderer.create(
+      tree = createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -693,7 +752,7 @@ describe('plugin host API hooks', () => {
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(<Harness mounted />);
+      tree = createRenderer(<Harness mounted />);
     });
     expect(snapshots.at(-1)).toMatchObject({
       freshness: 'fresh',
@@ -729,7 +788,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -765,7 +824,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -804,7 +863,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -852,7 +911,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -883,7 +942,7 @@ describe('plugin host API hooks', () => {
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(
+      tree = createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe live={false} />
         </PluginHostApiProvider>,
@@ -962,7 +1021,7 @@ describe('plugin host API hooks', () => {
 
     let tree: renderer.ReactTestRenderer | undefined;
     await act(async () => {
-      tree = renderer.create(
+      tree = createRenderer(
         <PluginHostApiProviderInternal
           hostApi={host.api}
           accountLifetime={null}
@@ -1058,7 +1117,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -1119,7 +1178,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -1184,7 +1243,7 @@ describe('plugin host API hooks', () => {
     }
 
     await act(async () => {
-      renderer.create(
+      createRenderer(
         <PluginHostApiProvider hostApi={host.api}>
           <Probe />
         </PluginHostApiProvider>,
@@ -1260,7 +1319,7 @@ describe('plugin host API hooks', () => {
 
     let tree: renderer.ReactTestRenderer | undefined;
     await act(async () => {
-      tree = renderer.create(
+      tree = createRenderer(
         <PluginHostApiProviderInternal
           hostApi={host.api}
           accountLifetime={accountA.lifetime}
@@ -1319,7 +1378,7 @@ describe('plugin host API hooks', () => {
 
     let tree: renderer.ReactTestRenderer | undefined;
     await act(async () => {
-      tree = renderer.create(
+      tree = createRenderer(
         <PluginHostApiProviderInternal
           hostApi={hostA.api}
           accountLifetime={account.lifetime}

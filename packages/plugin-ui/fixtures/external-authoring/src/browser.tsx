@@ -58,6 +58,7 @@ const browserHostApi: PluginUiHostApi = {
   watchContext: async () => ({ dispose() {} }),
   executeAction: async () => unsupportedBrowserHostMethod(),
   selectActionInput: async () => unsupportedBrowserHostMethod(),
+  openNewSession: async () => unsupportedBrowserHostMethod(),
   readResource: async () => unsupportedBrowserHostMethod(),
   statOpenableContent: async () => unsupportedBrowserHostMethod(),
   readOpenableContent: async () => unsupportedBrowserHostMethod(),

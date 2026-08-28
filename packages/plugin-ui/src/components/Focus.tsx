@@ -4,6 +4,7 @@ import {
   useOptionalPluginUiPresentationHost,
   type PluginUiPresentationHost,
 } from '../presentationHost/context.js';
+import type { HappierFocusable } from '../presentation/portableTypes.js';
 
 /**
  * An author-held logical target for one public component. It has no physical
@@ -16,7 +17,7 @@ export type PluginUiFocusTarget = Readonly<{
 
 type FocusBinding = Readonly<{
   host: PluginUiPresentationHost;
-  target: unknown;
+  target: HappierFocusable;
 }>;
 
 type FocusBindingRef = { current: FocusBinding | null };
@@ -65,14 +66,14 @@ function clearFocusBinding(
  */
 export function usePluginUiFocusTargetBindingInternal(
   focusTarget: PluginUiFocusTarget | undefined,
-): ((target: unknown | null) => void) | undefined {
+): ((target: HappierFocusable | null) => void) | undefined {
   const presentationHost = useOptionalPluginUiPresentationHost();
   const targetBindingRef = readFocusBindingRef(focusTarget);
   const ownedBindingRef = useRef<FocusBinding | null>(null);
   const clear = useCallback(() => {
     clearFocusBinding(targetBindingRef, ownedBindingRef);
   }, [targetBindingRef]);
-  const bind = useCallback((target: unknown | null) => {
+  const bind = useCallback((target: HappierFocusable | null) => {
     clear();
     if (targetBindingRef === undefined || target === null || presentationHost?.focusTarget === undefined) return;
     const binding = Object.freeze({ host: presentationHost, target });

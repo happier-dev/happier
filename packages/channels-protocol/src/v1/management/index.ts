@@ -35,6 +35,9 @@ import {
     ConversationConnectionPollRetryManagementActionDeclarationV1,
 } from './pollRetry.js';
 import {
+    ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
+} from './projectionBaseline.js';
+import {
     ConversationConnectionPrepareInputV1Schema,
     ConversationConnectionPrepareResultV1Schema,
 } from './prepare.js';
@@ -164,6 +167,17 @@ export {
     ConversationConnectionPollRetryResultV1JsonSchema,
     ConversationConnectionPollRetryResultV1Schema,
 } from './pollRetry.js';
+export {
+    ConversationSessionProjectionBaselineAcceptInputV1JsonSchema,
+    ConversationSessionProjectionBaselineAcceptInputV1Schema,
+    ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
+    ConversationSessionProjectionBaselineAcceptResultV1JsonSchema,
+    ConversationSessionProjectionBaselineAcceptResultV1Schema,
+} from './projectionBaseline.js';
+export type {
+    ConversationSessionProjectionBaselineAcceptInputV1,
+    ConversationSessionProjectionBaselineAcceptResultV1,
+} from './projectionBaseline.js';
 export type {
     ConversationConnectionPollRetryInputV1,
     ConversationConnectionPollRetryResultV1,
@@ -209,8 +223,6 @@ export type {
     ConversationIngressRetryResultV1,
 } from './recovery.js';
 export {
-    ConversationBindingTargetMutationV1JsonSchema,
-    ConversationBindingTargetMutationV1Schema,
     ConversationBindingTargetV1JsonSchema,
     ConversationBindingTargetV1Schema,
     ConversationBindingV1JsonSchema,
@@ -218,7 +230,6 @@ export {
 } from './targets.js';
 export type {
     ChannelSessionSpawnRecipeV1,
-    ConversationBindingTargetMutationV1,
     ConversationBindingTargetV1,
     ConversationBindingV1,
     ConversationSessionBindingTargetV1,
@@ -360,6 +371,7 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     bindingUpdate: ConversationBindingUpdateManagementActionDeclarationV1,
     bindingSetEnabled: ConversationBindingSetEnabledManagementActionDeclarationV1,
     bindingDelete: ConversationBindingDeleteManagementActionDeclarationV1,
+    sessionProjectionBaselineAccept: ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
     ingressRetry: ConversationIngressRetryManagementActionDeclarationV1,
     deliveryResolve: ConversationDeliveryResolveManagementActionDeclarationV1,
     connectionPollRetry: ConversationConnectionPollRetryManagementActionDeclarationV1,

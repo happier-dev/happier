@@ -35,6 +35,10 @@ export const ConversationProviderAutomationEventAdmitInputV1ProtocolSchema = def
     occurrenceId: conversationOccurrenceIdV1,
     occurredAt: nonNegativeSafeInteger,
     observationReceivedAt: nonNegativeSafeInteger,
+    observedDelta: defineProtocolUnion([
+        defineProtocolLiteral(0),
+        defineProtocolLiteral(1),
+    ]),
 }, { policy: 'closed' });
 
 /**

@@ -52,6 +52,7 @@ type _VisibleTitleButtonMayUseItsTitleAsTheAccessibleName = Assert<(
   Readonly<{ title: string; icon: string; onPress: () => void }> extends ButtonProps ? true : false
 )>;
 type _AuthorTextFieldFocusTarget = Assert<IsEqual<TextFieldProps['focusTarget'], PluginUiFocusTarget | undefined>>;
+type _AuthorSelectFocusTarget = Assert<IsEqual<SelectProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 type _AuthorHeadingFocusTarget = Assert<IsEqual<HeadingProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 type _AuthorStatusFocusTarget = Assert<IsEqual<StatusProps['focusTarget'], PluginUiFocusTarget | undefined>>;
 type _AuthorScreenFocusTarget = Assert<IsEqual<ScreenProps['focusTarget'], PluginUiFocusTarget | undefined>>;
@@ -117,6 +118,7 @@ type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
   | 'icon'
   | 'accessory'
   | 'accessoryWraps'
+  | 'accessoryOutsidePressable'
   | 'tone'
   | 'onPress'
   | 'disabled'
@@ -239,10 +241,9 @@ const hostProducedConnectedAccountOptions: FormProps['hints'] = {
   }],
 };
 
-const privateAccessoryPlacement: ItemProps = {
+const independentAccessoryPlacement: ItemProps = {
   title: 'Repository',
-  // @ts-expect-error The public Item never accepts the private accessory-placement injection.
-  accessoryOutsidePressable: undefined,
+  accessoryOutsidePressable: true,
 };
 
 const privateThemeInjection: ItemProps = {
@@ -373,7 +374,7 @@ void connectedAccountSelect;
 void hostOwnedSelectMetadata;
 void hostResolvedOptionsSource;
 void hostProducedConnectedAccountOptions;
-void privateAccessoryPlacement;
+void independentAccessoryPlacement;
 void privateThemeInjection;
 void privateTouchTargetInjection;
 void privateSecondaryActionState;

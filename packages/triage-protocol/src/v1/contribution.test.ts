@@ -13,15 +13,16 @@ import { TriageDetailSurfaceInputV1Schema } from './detail.js';
 import { TriageListInstancesInputV1Schema } from './instances.js';
 
 describe('Triage sources contribution protocol', () => {
-    it('declares the three required safe read roles and one optional local-write role', () => {
+    it('declares required reads plus optional prepare and final verification roles', () => {
         const operations = TriageSourcesContributionProtocolV1.operations;
         expect(Object.keys(operations).sort())
-            .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
+            .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
         for (const role of ['listInstances', 'scan', 'get'] as const) {
             expect(operations[role].declaration.dangerLevel).toBe('safe');
             expect(operations[role].declaration.surfaces).toEqual(['plugin']);
         }
         expect(operations.prepareReviewWorkspace.declaration.dangerLevel).toBe('writesLocal');
+        expect(operations.verifyReviewWorkspace.declaration.dangerLevel).toBe('safe');
     });
 
     it('binds every role to a protocol-defined input rather than a contributor-defined one', () => {

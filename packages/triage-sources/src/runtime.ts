@@ -32,3 +32,10 @@ export {
   type ProviderWriteConfirmation,
 } from './invocation/writeSettlement.js';
 export { parseForgeLinkHeader, readForgeLinkHeaderValue } from './http/linkHeader.js';
+export {
+  advanceCursorCycleWalkV1,
+  readCursorCycleProbeV1,
+  type CursorCycleAdvanceV1,
+  type CursorCycleProbeV1,
+  type CursorCycleWalkV1,
+} from './paging/cursorCycle.js';

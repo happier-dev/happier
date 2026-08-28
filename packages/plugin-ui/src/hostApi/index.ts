@@ -20,7 +20,18 @@ export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 export {
   usePluginHostApi,
   usePluginSurfaceActivity,
+  usePluginUiEphemeralSharedScope,
 } from './context.js';
+export {
+  useReviewCommentProposalsForEntry,
+  type ReviewCommentProposalQueryV1,
+  type ReviewCommentProposalReadV1,
+  type ReviewCommentProposalWithBodyV1,
+} from './reviewCommentProposals.public.js';
+export type {
+  PluginUiEphemeralSharedScope,
+  PluginUiEphemeralSharedValueLease,
+} from './ephemeralSharedScope.public.js';
 export {
   type ComposerHandle,
   type ComposerContentService,

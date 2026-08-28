@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConversationProviderConnectionsSnapshotV1Schema } from './connection.js';
+import {
+    ConversationProviderConnectionsSnapshotV1Schema,
+    hasCurrentConversationProviderConnectionV1,
+} from './connection.js';
 
 const reconciliationSnapshot = {
     v: 1,
@@ -32,5 +35,45 @@ describe('Channels V1 provider connection snapshots', () => {
         expect(JSON.stringify(ConversationProviderConnectionsSnapshotV1Schema.jsonSchema))
             .toContain('"connectionId"');
         expect(ConversationProviderConnectionsSnapshotV1Schema.jsonSchema).not.toHaveProperty('propertyNames');
+    });
+
+    it('matches one exact enabled current provider identity and credential without caller-local variants', () => {
+        const credentialRef = {
+            service: { pluginId: 'example.provider', localId: 'account' },
+            accountId: 'account-1',
+        } as const;
+        const connections = {
+            'connection-1': { ...reconciliationSnapshot, credentialRef },
+        };
+        expect(hasCurrentConversationProviderConnectionV1({
+            connections,
+            providerConnectionKey: 'provider:connection-1',
+            credentialRef,
+        })).toBe(true);
+        expect(hasCurrentConversationProviderConnectionV1({
+            connections,
+            providerConnectionKey: 'provider:connection-1',
+            credentialRef: { ...credentialRef, accountId: 'account-2' },
+        })).toBe(false);
+        expect(hasCurrentConversationProviderConnectionV1({
+            connections: {
+                'connection-1': { ...connections['connection-1'], enabled: false },
+            },
+            providerConnectionKey: 'provider:connection-1',
+            credentialRef,
+        })).toBe(false);
+        expect(hasCurrentConversationProviderConnectionV1({
+            connections: {
+                'connection-1': {
+                    ...connections['connection-1'],
+                    // Declared deleting arm: a retained row is disabled and
+                    // `pendingStopReconciliation` (arm 2 pins enabled:false).
+                    enabled: false,
+                    deletionState: 'pendingStopReconciliation',
+                },
+            },
+            providerConnectionKey: 'provider:connection-1',
+            credentialRef,
+        })).toBe(false);
     });
 });

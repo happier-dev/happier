@@ -13,6 +13,7 @@ import {
   HappierScreen,
   HappierScrollArea,
   HappierStack,
+  resolveHappierLayoutGap,
   type HappierLayoutGap,
 } from '../presentation/layout/Layout.js';
 import { usePluginTheme } from './PluginUiProvider.js';
@@ -78,7 +79,7 @@ export type ScrollAreaProps = Readonly<{
 
 function useGap(gap: LayoutGap = 'medium'): number {
   const { spacing } = usePluginTheme();
-  return gap === 'none' ? 0 : spacing[gap];
+  return resolveHappierLayoutGap(gap, spacing);
 }
 
 export function Screen({ children, safeArea = false, focusTarget, ...props }: ScreenProps): ReactElement {

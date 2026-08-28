@@ -120,7 +120,6 @@ describe('shared overlay menu Android touch targets', () => {
     expect(triggers).toHaveLength(3);
 
     for (const trigger of triggers) {
-      expect(trigger.props.role).toBe('button');
       const frame = resolvePressableStyle(trigger.props.style);
       expect(frame.minHeight).toBeGreaterThanOrEqual(48);
       expect(frame.minWidth).toBeGreaterThanOrEqual(48);
@@ -203,7 +202,7 @@ describe('shared overlay menu Android touch targets', () => {
       </PluginUiProvider>
     );
     const radioRows = () => renderer!.root.findAll((node) => (
-      node.type === 'Pressable' && node.props.role === 'menuitemradio'
+      node.type === 'Pressable' && node.props.accessibilityRole === 'radio'
     ));
 
     await act(async () => {

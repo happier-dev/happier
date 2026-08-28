@@ -2,7 +2,7 @@ import { cloneElement, isValidElement, type ReactNode } from 'react';
 import { View, type TextStyle } from 'react-native';
 
 import type { HappierUiAccessibility, HappierUiTheme } from '../../environment/types.js';
-import type { HappierAccessibilityLiveRegion, HappierPortableStyle } from '../portableTypes.js';
+import type { HappierAccessibilityLiveRegion, HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
@@ -24,8 +24,10 @@ export type HappierStatusProps = Readonly<{
   contrast?: HappierUiAccessibility['contrast'];
   /** Whether the status is currently active/in flight. */
   isPulsing?: boolean;
+  /** Host-owned retained-surface activity; false pauses native pulse work. */
+  animationEnabled?: boolean;
   /** Private semantic focus binding supplied by the public Status adapter. */
-  controlRef?: (instance: unknown | null) => void;
+  controlRef?: (instance: HappierFocusable | null) => void;
   testID?: string;
   /** Hosts control whether a dynamically changing status should announce. */
   accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
@@ -95,6 +97,7 @@ export function HappierStatus(props: HappierStatusProps) {
       <HappierStatusDot
         color={toneColor}
         isPulsing={props.isPulsing}
+        animationEnabled={props.animationEnabled}
         {...(highContrast ? {
           size: 8,
           style: { borderWidth: 1, borderColor: props.theme.colors.text },
