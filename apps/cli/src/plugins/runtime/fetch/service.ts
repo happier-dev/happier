@@ -21,7 +21,6 @@ import type {
     PluginInvocationServicesSeed,
 } from '../invocation/services/types';
 import {
-    assessPluginNetworkOriginLocality,
     resolvePluginNetworkOriginAdmission,
     type PluginNetworkAddressResolver,
 } from './originLocality';
@@ -167,6 +166,23 @@ export type StablePluginHttpBindingPolicy = Readonly<{
     credentialBindingHost?: StablePluginHttpCredentialBindingHost | null;
     revalidateFinalPolicy?: StablePluginHttpHostParams['revalidateFinalPolicy'] | null;
 }>;
+
+async function assertPluginNetworkBindingCurrent(
+    seed: PluginInvocationServicesSeed,
+    binding: PluginInvocationServiceBinding,
+): Promise<void> {
+    if (
+        seed.signal.aborted
+        || !seed.isGenerationCurrent()
+        || binding.networkRevocationSignal?.aborted
+        || (binding.networkCurrentness !== undefined && !await binding.networkCurrentness())
+    ) {
+        throw new PluginError({
+            code: 'plugin_final_generation_retired',
+            message: 'Connected-account network configuration is no longer current',
+        });
+    }
+}
 
 const REDACTED_VALUE = '[redacted]';
 const NO_PRIVATE_CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set();
@@ -979,15 +995,7 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
             ...(interceptorRegistry ? { interceptorRegistry } : {}),
             ...(params.retry ? { retry: params.retry } : {}),
             revalidateFinalPolicy: async (effect) => {
-                if (
-                    binding.networkCurrentness
-                    && !await binding.networkCurrentness()
-                ) {
-                    throw new PluginError({
-                        code: 'plugin_final_generation_retired',
-                        message: 'Connected-account network configuration is no longer current',
-                    });
-                }
+                await assertPluginNetworkBindingCurrent(seed, binding);
                 const url = new URL(effect.request.url);
                 const method = (effect.request.method ?? 'GET').toUpperCase();
                 const selectedResourceScopes = binding.networkScopes?.filter((scope) => (
@@ -1019,6 +1027,11 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                     serviceBinding: binding,
                     ...effect,
                 });
+                // DNS and the optional host policy are both genuine awaited
+                // boundaries. Recheck the exact selected binding after them,
+                // immediately before handing its admitted addresses to the
+                // socket owner.
+                await assertPluginNetworkBindingCurrent(seed, binding);
                 return Object.freeze({
                     validatedAddresses: admission.validatedAddresses,
                 });
@@ -1151,24 +1164,14 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                             message: 'Plugin generation is no longer current',
                         });
                     }
-                    if (binding.networkCurrentness && !await binding.networkCurrentness()) {
-                        throw new PluginError({
-                            code: 'plugin_final_generation_retired',
-                            message: 'Connected-account network configuration is no longer current',
-                        });
-                    }
-                    if (binding.networkRevocationSignal?.aborted) {
-                        throw new PluginError({
-                            code: 'plugin_final_generation_retired',
-                            message: 'Connected-account network configuration is no longer current',
-                        });
-                    }
+                    await assertPluginNetworkBindingCurrent(seed, binding);
                     const admittedInput = snapshotPluginWebSocketOpenInput(input);
                     const normalized = normalizePluginWebSocketOpenInput(admittedInput);
-                    const privateNetwork = await assessPluginNetworkOriginLocality(
+                    const admission = await resolvePluginNetworkOriginAdmission(
                         normalized.targetOrigin,
                         resolverOptions,
-                    ) === 'private';
+                    );
+                    const privateNetwork = admission.locality === 'private';
                     const permitted = binding.networkClientScopes?.some((scope) => (
                         scope.origins.includes(normalized.targetOrigin)
                         && scope.transports.includes('websocket')
@@ -1180,6 +1183,13 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                             message: 'Plugin WebSocket operation is outside the bound network.client scope',
                         });
                     }
+                    if (admission.validatedAddresses.length === 0) {
+                        throw new PluginError({
+                            code: 'plugin_websocket_permission_denied',
+                            message: 'Plugin WebSocket operation has no validated network address',
+                        });
+                    }
+                    await assertPluginNetworkBindingCurrent(seed, binding);
                     const lifecycle = new AbortController();
                     const abortLifecycle = (reason: Readonly<{ kind: string }>) => {
                         if (!lifecycle.signal.aborted) lifecycle.abort(reason);
@@ -1209,6 +1219,7 @@ export function createStablePluginHttpHost(params: StablePluginHttpHostParams): 
                         const connection = await params.adapter.openWebSocket(admittedInput, {
                             signal: options.signal,
                             lifecycleSignal: lifecycle.signal,
+                            validatedAddresses: admission.validatedAddresses,
                         });
                         if (
                             lifecycle.signal.aborted

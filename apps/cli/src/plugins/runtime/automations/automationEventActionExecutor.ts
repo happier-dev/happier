@@ -66,6 +66,7 @@ const INSTALLED_AUTOMATION_EVENT_ACTION_PRODUCERS_V1: ReadonlySet<AutomationEven
  */
 export type ResolveAutomationEventAdoptedDefinitionSetV1 = (
   caller: PluginMachineMaterializationRefV1,
+  immutableGenerationId: string,
   transport: AutomationEventSourcesListTransportV1,
 ) => AutomationEventAdoptedDefinitionSetV1 | null;
 
@@ -117,24 +118,27 @@ function readAdmissionRequestSelectors(
   request: AutomationEventAdmitHttpRequestV1,
 ): ReadonlyArray<Readonly<{
   automationId: string;
-  templateVersion: number;
+  triggerId: string;
+  triggerRevision: number;
   sourceSelectorId: string;
 }>> {
   return 'input' in request
     ? request.input.definitions
     : request.hostEvidence.definitions.map((definition) => ({
       automationId: definition.automationId,
-      templateVersion: definition.templateVersion,
+      triggerId: definition.triggerId,
+      triggerRevision: definition.triggerRevision,
       sourceSelectorId: definition.sourceSelectorId,
     }));
 }
 
 function isSameAdmissionSelector(
-  left: Readonly<{ automationId: string; templateVersion: number; sourceSelectorId: string }>,
-  right: Readonly<{ automationId: string; templateVersion: number; sourceSelectorId: string }>,
+  left: Readonly<{ automationId: string; triggerId: string; triggerRevision: number; sourceSelectorId: string }>,
+  right: Readonly<{ automationId: string; triggerId: string; triggerRevision: number; sourceSelectorId: string }>,
 ): boolean {
   return left.automationId === right.automationId
-    && left.templateVersion === right.templateVersion
+    && left.triggerId === right.triggerId
+    && left.triggerRevision === right.triggerRevision
     && left.sourceSelectorId === right.sourceSelectorId;
 }
 
@@ -222,23 +226,18 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       return admissionFailure('automation_event_caller_materialization_unavailable');
     }
     const immutableGenerationId = args.caller.immutableGenerationId;
-    // A current host must never turn an unstamped local Action invocation into
-    // a source-status write. Older binaries may still use the HTTP route;
-    // that transport compatibility writes NULL provenance and the UI hides
-    // recovery. It is not a local current-host fallback.
-    if (
-      args.actionId === 'automation.event.source.status.report'
-      && immutableGenerationId === undefined
-    ) {
+    // Every current Event operation is bound to the exact admitted immutable
+    // generation. There is no released unstamped Event SDK contract to retain.
+    if (immutableGenerationId === undefined) {
       return admissionFailure('automation_event_caller_generation_unavailable');
     }
-    // Source-status callers were rejected above when unstamped. Other Event
-    // Action kinds do not persist recovery authority, so an unstamped legacy
-    // caller remains current once its materialization is proven.
+    if (!revalidateCallerImmutableGeneration) {
+      return admissionFailure('automation_event_caller_generation_unavailable');
+    }
     const revalidateCaller = createPluginActionCallerCurrentnessCheck({
       caller: {
         pluginId: args.caller.pluginId,
-        ...(immutableGenerationId === undefined ? {} : { immutableGenerationId }),
+        immutableGenerationId,
         materialization: materialization.data,
       },
       revalidateMaterialization: revalidateCallerMaterialization,
@@ -299,6 +298,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       try {
         adoptedDefinitionSet = params.resolveAdoptedDefinitionSet?.(
           materialization.data,
+          immutableGenerationId,
           adoptedTransport,
         ) ?? null;
       } catch {
@@ -355,7 +355,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       ...(args.caller.contributionLocalId
         ? { contributionLocalId: args.caller.contributionLocalId }
         : {}),
-      ...(immutableGenerationId === undefined ? {} : { immutableGenerationId }),
+      immutableGenerationId,
       materialization: materialization.data,
     };
     let admissionInput: ReturnType<typeof AutomationEventAdmitInputV1Schema.safeParse> | null = null;

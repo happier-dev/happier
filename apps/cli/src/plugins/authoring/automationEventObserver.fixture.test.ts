@@ -1,4 +1,7 @@
 import {
+  AutomationSourceSelectorIdV1Schema,
+  AutomationTriggerIdSchema,
+  deriveAutomationOccurrenceKeyV1,
   ingestPluginManifestV2,
   type AutomationRunStateChangedHostEventV1,
 } from '@happier-dev/protocol';
@@ -14,11 +17,37 @@ const fixtureModuleUrl = new URL(
   '../../../../../packages/tests/fixtures/plugin-platform/automation-event-observer/index.ts',
   import.meta.url,
 ).href;
+const eventRef = {
+  pluginId: 'com.example.automation-event-observer',
+  localId: 'ledger-entry-appended',
+} as const;
+const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
+  '3f5b6d0e-1c4a-4d2b-9f77-2a0c4e6b8d91',
+);
 
 const lifecyclePayload = Object.freeze({
   runId: 'run-1',
   automationId: 'automation-1',
-  originKind: 'pluginEvent',
+  runCause: {
+    kind: 'trigger',
+    triggerId: AutomationTriggerIdSchema.parse('trigger-external-ledger'),
+    triggerRevision: 4,
+    triggerKind: 'pluginEvent',
+    occurrenceKey: deriveAutomationOccurrenceKeyV1({
+      triggerId: AutomationTriggerIdSchema.parse('trigger-external-ledger'),
+      evidence: {
+        v: 1,
+        kind: 'pluginEvent',
+        eventRef,
+        sourceSelectorId,
+        occurrenceId: 'entry-1',
+        occurredAt: 1_725_000_000_000,
+        payload: { entryId: 'entry-1' },
+      },
+    }),
+    occurredAt: 1_725_000_000_000,
+    evidence: { eventRef, sourceSelectorId },
+  },
   previousState: 'claimed',
   currentState: 'running',
   transitionedAt: 1_725_000_000_000,

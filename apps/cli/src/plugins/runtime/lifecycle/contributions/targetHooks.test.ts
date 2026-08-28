@@ -394,6 +394,7 @@ describe('target hook handler registry', () => {
                 id: 'resolve-prerequisites',
                 qualifiedId: `${KIMI_PLUGIN_MANIFEST.id}/hooks/resolve-prerequisites`,
             },
+            invokedAtMs: expect.any(Number),
             signal: callerSignal,
         });
         expect(receivedContext?.services).not.toHaveProperty('callerControlled');

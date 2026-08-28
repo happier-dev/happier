@@ -1117,6 +1117,7 @@ async function resolveBundledPackageEntry(
 }
 
 async function admitBundledImmutablePluginGeneration(input: Readonly<{
+  paths: PluginStorePaths;
   artifact: BundledImmutablePluginArtifact;
   resolvePackageEntry: (
     packageName: string,
@@ -1133,6 +1134,28 @@ async function admitBundledImmutablePluginGeneration(input: Readonly<{
       sourceProvenance: pluginSourceProvenanceForKind('bundled'),
     }),
   });
+  try {
+    const prepared = await readPreparedImmutablePluginGeneration({
+      paths: input.paths,
+      immutableGenerationId: artifact.record.immutableGenerationId,
+    });
+    if (
+      prepared.record.pluginId !== artifact.record.pluginId
+      || !isDeepStrictEqual(prepared.record, artifact.record)
+    ) {
+      throw new Error(
+        `Bundled plugin generation custody mismatch for '${artifact.record.pluginId}'`,
+      );
+    }
+    return Object.freeze({
+      pluginId: artifact.record.pluginId,
+      immutableGenerationId: artifact.record.immutableGenerationId,
+      rootPath: prepared.rootPath,
+      record: prepared.record,
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
+  }
   const lexicalEntryPath = resolve(await input.resolvePackageEntry(
     artifact.packageName,
     artifact.packageEntryRelativePath,
@@ -1174,11 +1197,16 @@ async function admitBundledImmutablePluginGeneration(input: Readonly<{
       throw new Error(`Bundled plugin daemon entry is absent from immutable inventory for '${artifact.record.pluginId}'`);
     }
   }
+  const prepared = await prepareImmutablePluginGeneration({
+    paths: input.paths,
+    sourceRootPath: rootPath,
+    record: artifact.record,
+  });
   return Object.freeze({
     pluginId: artifact.record.pluginId,
     immutableGenerationId: artifact.record.immutableGenerationId,
-    rootPath,
-    record: artifact.record,
+    rootPath: prepared.rootPath,
+    record: prepared.record,
   });
 }
 
@@ -1272,6 +1300,7 @@ export async function readCurrentCommittedPluginGenerations(
     try {
       await assertGenerationNotRetired(paths, artifact.record.immutableGenerationId);
       admitted = await admitBundledImmutablePluginGeneration({
+        paths,
         artifact,
         resolvePackageEntry: options?.resolveBundledPackageEntry ?? resolveBundledPackageEntry,
       });
@@ -2193,6 +2222,7 @@ export async function readCurrentPluginImmutableGenerationIntegrityCurrentness(
       });
       if (beforeBarriers.installedAuthorityPresent) return false;
       const generation = await admitBundledImmutablePluginGeneration({
+        paths: input.paths,
         artifact: exactBundledArtifact,
         resolvePackageEntry:
           input.resolveBundledPackageEntry

@@ -418,6 +418,23 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         expect(Object.isFrozen(sessionRunner)).toBe(true);
     });
 
+    it('fails closed before spawning a Windows managed service when atomic tree containment is unavailable', async () => {
+        const exec = createExec();
+        const host = createManagedServiceProcessSupervisorHost({ platform: 'win32' });
+        const servers = host.bind({
+            generation: 'generation-windows-custody',
+            pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent',
+            isGenerationCurrent: () => true,
+            exec,
+        });
+
+        await expect(servers.supervise(managedSpec('windows-managed'))).rejects.toMatchObject({
+            code: 'plugin_managed_server_custody_failed',
+        });
+        expect(exec.spawn).not.toHaveBeenCalled();
+    });
+
     it('immediately publishes the current snapshot to a new observer', async () => {
         const { servers } = createHarness();
         const handle = await servers.supervise(externalSpec('attached'));
@@ -844,10 +861,13 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             write: () => undefined,
             close: closeLog,
         });
-        const process = createProcess(4242);
+        const processResult = deferred<PluginProcessResult>();
+        const process = createProcess(4242, processResult);
         process.dispose
             .mockRejectedValueOnce(new Error('/private/process/path'))
-            .mockImplementationOnce(async () => undefined);
+            .mockImplementationOnce(async () => {
+                processResult.resolve(CLEAN_EXIT);
+            });
         const disposeOutput = vi.fn()
             .mockImplementationOnce(() => { throw new Error('/private/output/path'); })
             .mockImplementation(() => undefined);
@@ -873,28 +893,29 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             () => null,
             (error: unknown) => error,
         );
-        expect(first).toBeInstanceOf(AggregateError);
-        expect(first).toMatchObject({ code: 'plugin_managed_server_cleanup_failed' });
-        expect((first as AggregateError).errors).toMatchObject([
-            {
-                code: 'plugin_managed_server_cleanup_failed',
-                details: { phase: 'outputSubscription' },
-            },
-            {
-                code: 'plugin_managed_server_cleanup_failed',
-                details: { phase: 'process' },
-            },
-        ]);
+        expect(first).toMatchObject({
+            code: 'plugin_managed_server_termination_incomplete',
+            retryable: true,
+        });
         expect(String(first)).not.toMatch(/private|path/u);
-        expect(
-            (first as AggregateError).errors.map(String).join('\n'),
-        ).not.toMatch(/private|path/u);
-        expect(disposeOutput).toHaveBeenCalledOnce();
+        // Without a terminal process fact the supervisor retains every sibling
+        // phase that could erase its exact retry/custody record.
+        expect(disposeOutput).not.toHaveBeenCalled();
         expect(process.dispose).toHaveBeenCalledTimes(1);
-        expect(closeLog).toHaveBeenCalledTimes(1);
-        expect(durability.releaseEndpointProjection).toHaveBeenCalledTimes(1);
+        expect(closeLog).not.toHaveBeenCalled();
+        expect(durability.releaseEndpointProjection).not.toHaveBeenCalled();
 
-        await expect(handle.dispose()).resolves.toBeUndefined();
+        const second = await handle.dispose().then(
+            () => null,
+            (error: unknown) => error,
+        );
+        expect(second).toBeInstanceOf(AggregateError);
+        expect(second).toMatchObject({
+            code: 'plugin_managed_server_cleanup_failed',
+        });
+        expect((second as AggregateError).errors).toMatchObject([{
+            details: { phase: 'outputSubscription' },
+        }]);
         await expect(handle.dispose()).resolves.toBeUndefined();
         expect(disposeOutput).toHaveBeenCalledTimes(2);
         expect(process.dispose).toHaveBeenCalledTimes(2);
@@ -915,10 +936,13 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         durability.publishEndpointProjection.mockRejectedValueOnce(
             new Error('/private/projection-secret'),
         );
-        const process = createProcess(4_243);
+        const processResult = deferred<PluginProcessResult>();
+        const process = createProcess(4_243, processResult);
         process.dispose
             .mockRejectedValueOnce(new Error('/private/process-secret'))
-            .mockResolvedValueOnce(undefined);
+            .mockImplementationOnce(async () => {
+                processResult.resolve(CLEAN_EXIT);
+            });
         const disposeOutput = vi.fn()
             .mockImplementationOnce(() => {
                 throw new Error('/private/output-secret');
@@ -966,13 +990,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                 details: { phase: 'establishment' },
             },
             {
-                details: { phase: 'outputSubscription' },
-            },
-            {
-                details: { phase: 'process' },
-            },
-            {
-                details: { phase: 'durableLog' },
+                details: { phase: 'establishment' },
             },
         ]);
         expect(String(error)).not.toMatch(/private|secret|path/u);
@@ -980,10 +998,13 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             (error as AggregateError).errors.map(String).join('\n'),
         ).not.toMatch(/private|secret|path/u);
         expect(retainedCleanup).not.toBeNull();
-        expect(disposeOutput).toHaveBeenCalledOnce();
+        expect(disposeOutput).not.toHaveBeenCalled();
         expect(process.dispose).toHaveBeenCalledOnce();
-        expect(closeLog).toHaveBeenCalledOnce();
+        expect(closeLog).not.toHaveBeenCalled();
 
+        await expect(retainedCleanup!()).rejects.toMatchObject({
+            code: 'plugin_managed_server_cleanup_failed',
+        });
         await expect(retainedCleanup!()).resolves.toBeUndefined();
         expect(disposeOutput).toHaveBeenCalledTimes(2);
         expect(process.dispose).toHaveBeenCalledTimes(2);
@@ -1129,10 +1150,10 @@ describe('createManagedServiceProcessSupervisorHost', () => {
 
         processIsTerminal = true;
         terminal.resolve(CLEAN_EXIT);
-        await vi.waitFor(() => {
-            expect(durability.releaseEndpointProjection).toHaveBeenCalledOnce();
-        });
+        await terminal.promise;
+        expect(durability.releaseEndpointProjection).not.toHaveBeenCalled();
         await expect(handle.dispose()).resolves.toBeUndefined();
+        expect(durability.releaseEndpointProjection).toHaveBeenCalledOnce();
         expect(handle.snapshot().state).toBe('stopped');
     });
 
@@ -1640,7 +1661,11 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             })],
         });
         expect(fetch).not.toHaveBeenCalled();
-        await handle.dispose();
+        await expect(handle.dispose()).rejects.toMatchObject({
+            code: 'plugin_managed_server_termination_incomplete',
+            retryable: true,
+        });
+        expect(handle.snapshot().state).not.toBe('stopped');
     });
 
 

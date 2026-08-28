@@ -23,10 +23,22 @@ import {
     MANAGED_SERVICE_NUMERIC_CONTRACT,
 } from './managedServiceSpecNormalization';
 import {
+    installManagedProcessCustodyForHost,
     installPreauthorizedPluginExecSpawnForHost,
     type ResolvedPluginExecutable,
 } from './exec';
-import { readSupervisedPluginProcessIdForHost } from '../../exec/processSupervisor';
+import {
+    readSupervisedPluginProcessIdForHost,
+    waitForSupervisedPluginProcessCustody,
+    type SupervisedPluginProcessCustody,
+} from '../../exec/processSupervisor';
+import {
+    createProcessCustodyHandshakePath,
+    createWindowsJobCustodyName,
+    formatWindowsJobCustodyStartIdentity,
+    resolveProcessCustodyRuntimeExecutable,
+    type ProcessCustodySpawnSpec,
+} from '@/subprocess/supervision/processCustody';
 import {
     type PackagedRuntimeBinaryExecutableRef,
 } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
@@ -741,12 +753,19 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         environment: Readonly<Record<string, string>>,
     ): Readonly<Record<string, string>>;
     installPreauthorizedSpawn?: typeof installPreauthorizedPluginExecSpawnForHost;
+    /** Native-custody runtime resolution; injected only by tests. */
+    resolveProcessCustodyRuntimeExecutable?: () => string | null;
+    /** Host platform; injected only by platform contract tests. */
+    platform?: NodeJS.Platform;
 }>): ManagedServiceProcessSupervisorHost {
     const now = params.now ?? Date.now;
     const fetchImpl = params.fetch ?? globalThis.fetch;
     const createInstanceId = params.createInstanceId ?? randomUUID;
     const custodyOwner = params.custodyOwner ?? 'daemon';
     const reservePort = params.reservePort ?? reserveLoopbackPort;
+    // The establish scope shadows `process` with the supervised handle, so the host platform is
+    // captured once here where the global is still visible.
+    const hostPlatform: NodeJS.Platform = params.platform ?? process.platform;
     function resolveInitialEndpoint(spec: ManagedServiceProcessSpec): ManagedServiceProcessEndpoint | null {
         if (spec.mode.kind === 'externalAttach') {
             return parseManagedServiceEndpointUrl(spec.mode.baseUrl, 'userDeclaredAttach');
@@ -831,6 +850,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             | { kind: 'result'; result: PluginProcessResult }
             | { kind: 'failed' }
         > | null = null;
+        let processTerminalObservation: Promise<void> | null = null;
+        let processContainmentTerminated = false;
         let cleanupPromise: Promise<void> | null = null;
         let outputDisposed = false;
         let processDisposed = false;
@@ -894,7 +915,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         const hasProvenManagedProcessTermination = (): boolean => {
             if (spec.mode.kind !== 'managedSpawn') return true;
             const terminal = processTerminal;
-            return terminal?.kind === 'result'
+            return processContainmentTerminated
+                && terminal?.kind === 'result'
                 && (
                     terminal.result.termination.observed.kind === 'exit'
                     || terminal.result.termination.observed.kind === 'signal'
@@ -905,6 +927,21 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             message: 'Managed server termination could not be verified',
             retryable: true,
         }, cause === undefined ? undefined : { cause });
+        const observeSpawnedProcessTerminal = (): void => {
+            if (!process || processTerminalObservation) return;
+            processTerminalObservation = process.wait().then((result) => {
+                processTerminal = Object.freeze({ kind: 'result', result });
+                lifecycleProbeController.abort();
+                stopWatchdog();
+                setUnhealthy('plugin_managed_server_process_exited');
+            }).catch(() => {
+                processTerminal = Object.freeze({ kind: 'failed' });
+                lifecycleProbeController.abort();
+                stopWatchdog();
+                setUnhealthy('plugin_managed_server_process_failed');
+            });
+            void processTerminalObservation;
+        };
         const isGenerationUsable = (): boolean => {
             try {
                 return scope.isGenerationCurrent() && !entry.lifecycle.signal.aborted;
@@ -1203,14 +1240,34 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 const attempt = (async () => {
                     const failures: ManagedServiceCleanupFailure[] = [];
                     if (!processDisposed) {
+                        if (!process) {
+                            processDisposed = true;
+                        }
                         let processDisposalFailure: unknown = null;
-                        try {
-                            await process?.dispose();
-                        } catch (error) {
-                            processDisposalFailure = error;
+                        if (process) {
+                            try {
+                                await process.dispose();
+                                processContainmentTerminated = true;
+                            } catch (error) {
+                                processDisposalFailure = error;
+                            }
+                        }
+                        // The canonical process handle resolves `dispose()`
+                        // and its terminal waiter from the same observed OS
+                        // fact. Join that already-started waiter before
+                        // deciding whether cleanup proved termination; merely
+                        // returning from the termination request is not proof.
+                        if (processTerminalObservation) {
+                            // Publish an already-settled waiter without
+                            // turning cleanup into an unbounded wait when a
+                            // defective handle returns from `dispose()` while
+                            // its terminal waiter is still pending.
+                            await Promise.resolve();
+                            await Promise.resolve();
                         }
                         if (
-                            spec.mode.kind === 'managedSpawn'
+                            process
+                            && spec.mode.kind === 'managedSpawn'
                             && !hasProvenManagedProcessTermination()
                         ) {
                             // `dispose()` returning or a terminator reporting
@@ -1220,7 +1277,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                             // observation arrives.
                             throw terminationIncomplete(processDisposalFailure);
                         }
-                        processDisposed = true;
+                        if (process) processDisposed = true;
                         if (
                             processDisposalFailure !== null
                             && !(
@@ -1295,6 +1352,28 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             ManagedServiceProcessHandle
         > => {
         if (spec.mode.kind === 'managedSpawn') {
+            let managedProcessCustody: ProcessCustodySpawnSpec | null = null;
+            if (hostPlatform === 'win32') {
+                // Windows managed spawn is real job custody — but it is
+                // fail-closed about its helper: without the staged custody
+                // runtime the host cannot prove containment, so it refuses
+                // to spawn at all rather than owning an uncontained tree.
+                const custodyExecutablePath = (
+                    params.resolveProcessCustodyRuntimeExecutable
+                    ?? resolveProcessCustodyRuntimeExecutable
+                )();
+                if (!custodyExecutablePath) {
+                    return fail(
+                        'plugin_managed_server_custody_failed',
+                        'Managed server process-tree custody helper is unavailable on Windows',
+                    );
+                }
+                managedProcessCustody = Object.freeze({
+                    jobName: createWindowsJobCustodyName(createInstanceId()),
+                    executablePath: custodyExecutablePath,
+                    handshakePath: createProcessCustodyHandshakePath(),
+                });
+            }
             if (!spec.mode.endpointDetection) {
                 const host = normalizeLoopbackHost(
                     spec.mode.host ?? '127.0.0.1',
@@ -1482,6 +1561,13 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         supervisionLaunch,
                     )
                     : null;
+                const custodyInstall = managedProcessCustody
+                    ? installManagedProcessCustodyForHost(
+                        scope.exec,
+                        authorizedLaunchRequest,
+                        managedProcessCustody,
+                    )
+                    : null;
                 try {
                     return await scope.exec.spawn(
                         authorizedLaunchRequest,
@@ -1489,6 +1575,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     );
                 } finally {
                     preauthorization?.dispose();
+                    custodyInstall?.dispose();
                 }
             };
             assertGenerationUsable();
@@ -1497,7 +1584,30 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             assertGenerationUsable();
             assertNotAborted(entry.lifecycle.signal);
             process = await spawnAuthorized(request);
-            const processId = readSupervisedPluginProcessIdForHost(process);
+            // Custody begins at spawn return. Start terminal observation before
+            // any later log, projection, endpoint, or health setup can fail.
+            observeSpawnedProcessTerminal();
+            let custodyFacts: SupervisedPluginProcessCustody | null = null;
+            if (managedProcessCustody) {
+                // The helper writes the handshake only after the target was
+                // assigned to the generation-unique job and resumed, so these
+                // facts are the custody-established fact. Without them the
+                // establishment fails before any projection or use.
+                custodyFacts = await waitForSupervisedPluginProcessCustody({
+                    custody: managedProcessCustody,
+                    signal: entry.lifecycle.signal,
+                    timeoutMs: 5_000,
+                });
+                if (!custodyFacts) {
+                    return fail(
+                        'plugin_managed_server_custody_failed',
+                        'Managed server job custody could not be established',
+                    );
+                }
+            }
+            const processId = custodyFacts
+                ? custodyFacts.targetPid
+                : readSupervisedPluginProcessIdForHost(process);
             if (entry.lifecycle.signal.aborted) {
                 return fail('plugin_managed_server_aborted', 'Managed server operation was aborted');
             }
@@ -1572,9 +1682,19 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (params.durability) {
                 try {
                     const pid = processId;
-                    processStartIdentity = pid === null || !params.captureProcessStartIdentity
-                        ? null
-                        : await params.captureProcessStartIdentity(pid);
+                    if (custodyFacts) {
+                        // Windows job custody IS the process identity: the
+                        // projection persists the generation-unique job name,
+                        // and recovery acts on the job. A pid-birth comparison
+                        // could never be as exact as the containment itself.
+                        processStartIdentity = formatWindowsJobCustodyStartIdentity(
+                            custodyFacts.jobName,
+                        );
+                    } else {
+                        processStartIdentity = pid === null || !params.captureProcessStartIdentity
+                            ? null
+                            : await params.captureProcessStartIdentity(pid);
+                    }
                     if (pid === null || !processStartIdentity) {
                         fail(
                             'plugin_managed_server_custody_failed',
@@ -1606,21 +1726,6 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     );
                 }
             }
-            void process.wait().then((result) => {
-                processTerminal = Object.freeze({ kind: 'result', result });
-                lifecycleProbeController.abort();
-                stopWatchdog();
-                setUnhealthy('plugin_managed_server_process_exited');
-                if (hasProvenManagedProcessTermination()) {
-                    void releaseEndpointProjection().catch(() => undefined);
-                }
-            }).catch(() => {
-                processTerminal = Object.freeze({ kind: 'failed' });
-                lifecycleProbeController.abort();
-                stopWatchdog();
-                setUnhealthy('plugin_managed_server_process_failed');
-                void releaseEndpointProjection().catch(() => undefined);
-            });
         } else if (custodyOwner === 'sessionRunner') {
             if (!scope.sessionId || !params.authorizeRunnerSupervision) {
                 return fail(

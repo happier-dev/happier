@@ -731,6 +731,56 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
+  it('serializes concurrent first materializations around one callback revision basis', async () => {
+    const revisionA = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const revisionB = 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1';
+    const firstStarted = deferred<void>();
+    const releaseFirst = deferred<void>();
+    const expectedBases: Array<string | null> = [];
+    let call = 0;
+    const materialize = vi.fn(async (
+      _request: Parameters<ReturnType<typeof createHarness>['materializer']['materialize']>[0],
+      options?: Parameters<ReturnType<typeof createHarness>['materializer']['materialize']>[1],
+    ) => {
+      call += 1;
+      expectedBases.push(options?.credentialRevisionBasis?.expectedCredentialRevision ?? null);
+      if (call === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      const revision = call === 2 ? revisionB : revisionA;
+      options?.credentialRevisionBasis?.captureCredentialRevision(revision);
+      return {
+        kind: 'httpHeaders' as const,
+        headers: { authorization: `Bearer ${revision}` },
+      };
+    });
+    const raw = createInvocationVoiceRawCredentialAccess({
+      materializer: { materialize },
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+
+    const first = raw.materialize(connectedHeaderRequest);
+    const concurrent = raw.materialize(connectedHeaderRequest);
+    await firstStarted.promise;
+    expect(materialize).toHaveBeenCalledTimes(1);
+    releaseFirst.resolve();
+
+    await expect(first).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: `Bearer ${revisionA}` },
+    });
+    await expect(concurrent).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    await expect(raw.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: `Bearer ${revisionA}` },
+    });
+    expect(expectedBases).toEqual([null, revisionA, revisionA]);
+  });
+
   it('pins one opaque SavedSecret callback revision across same-id secret updates', async () => {
     const firstSecret = 'saved-secret-raw-a';
     const replacementSecret = 'saved-secret-raw-b';

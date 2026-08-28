@@ -12,6 +12,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { loadRetainedAgentRuntimeLeaf } from './runner/loadRetainedAgentRuntimeLeaf';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
@@ -27,6 +28,8 @@ type PublicRunnerFixtureState = {
     factoryCalls: number;
     sessionOpenCalls: number;
     sessionDisposeCalls: number;
+    sendCalls: number;
+    cancelCalls: number;
 };
 
 function readPublicRunnerFixtureState(counterKey: string): PublicRunnerFixtureState {
@@ -145,21 +148,57 @@ async function createDevelopmentRunnerFixture(input: Readonly<{
             '  activationCalls: 0,',
             '  factoryCalls: 0,',
             '  sessionOpenCalls: 0,',
-            '  sessionDisposeCalls: 0',
+            '  sessionDisposeCalls: 0,',
+            '  sendCalls: 0,',
+            '  cancelCalls: 0',
             '};',
             'export function runnerFactory() {',
             '  runnerState.factoryCalls += 1;',
+            '  let sequence = 0;',
+            '  const listeners = new Set();',
+            '  let activeTurnId = null;',
+            '  let sessionId = null;',
+            '  const emit = (event) => {',
+            '    const published = { ...event, sessionId, sequence: ++sequence, emittedAtMs: Date.now() };',
+            '    for (const listener of listeners) listener(published);',
+            '  };',
             '  return {',
             '    sessions: {',
-            '      open() {',
+            '      open(request, context) {',
             '        runnerState.sessionOpenCalls += 1;',
+            '        sessionId = request.sessionId;',
             '        return {',
-            '          async send() { return { status: "admitted" }; },',
-            '          async cancel() {},',
-            '          watch() {',
-            '            return { dispose() {} };',
+            '          async send(input) {',
+            '            runnerState.sendCalls += 1;',
+            '            activeTurnId = input.delivery.turnId;',
+            '            emit({ kind: "input-accepted", inputIds: input.inputIds, delivery: input.delivery });',
+            '            emit({ kind: "turn-start", turnId: activeTurnId, startedBy: "host" });',
+            '            emit({ kind: "message-delta", turnId: activeTurnId, channel: "reasoning", text: "Loaded external reasoning." });',
+            '            emit({ kind: "tool-call", turnId: activeTurnId, toolCallId: `${activeTurnId}:tool`, toolName: "external-check", input: { prompt: input.input.text } });',
+            '            if (!input.input.text.includes("cancel")) {',
+            '              const outcome = await context.services.interactions.confirm({',
+            '                kind: "confirmation", title: "Run loaded check?", message: input.input.text,',
+            '              });',
+            '              emit({ kind: "tool-result", turnId: activeTurnId, toolCallId: `${activeTurnId}:tool`, output: { status: outcome.status } });',
+            '              emit({ kind: "message-delta", turnId: activeTurnId, channel: "assistant", text: "Loaded external answer." });',
+            '              emit({ kind: "turn-complete", turnId: activeTurnId });',
+            '              activeTurnId = null;',
+            '            }',
+            '            return { status: "admitted" };',
             '          },',
-            '          async dispose() { runnerState.sessionDisposeCalls += 1; }',
+            '          async cancel(input) {',
+            '            runnerState.cancelCalls += 1;',
+            '            if (activeTurnId !== input.turnId) return { status: "notRunning" };',
+            '            const turnId = activeTurnId;',
+            '            activeTurnId = null;',
+            '            emit({ kind: "turn-cancelled", turnId, cause: input.reason });',
+            '            return { status: "requested", turnId };',
+            '          },',
+            '          watch(listener) {',
+            '            listeners.add(listener);',
+            '            return { dispose() { listeners.delete(listener); } };',
+            '          },',
+            '          async dispose() { runnerState.sessionDisposeCalls += 1; listeners.clear(); }',
             '        };',
             '      }',
             '    }',
@@ -442,6 +481,12 @@ describe('production registry session runner factory resolution', () => {
                     signal,
                 });
             });
+            const loadedConfirm = vi.fn(async () => ({
+                requestId: 'loaded-confirmation',
+                kind: 'confirmation' as const,
+                status: 'approved' as const,
+            }));
+            const unavailablePluginServices = createUnavailablePluginServices();
             const engineRegistry = await resolveCliEngineRegistry({
                 contributes: registry.contributes,
                 runtimeRegistry: registry,
@@ -459,8 +504,10 @@ describe('production registry session runner factory resolution', () => {
                         isCurrent: () => true,
                     },
                     createRuntime: runnerCreateRuntime,
-                    createInvocationServices: () =>
-                        createUnavailablePluginServices(),
+                    createInvocationServices: () => Object.freeze({
+                        ...unavailablePluginServices,
+                        interactions: Object.freeze({ confirm: loadedConfirm }),
+                    }) as never,
                     authorizeNewTurn: async () => ({
                         status: 'admitted' as const,
                     }),
@@ -503,7 +550,7 @@ describe('production registry session runner factory resolution', () => {
                 agentTargetKey: `plugin:${pluginId}:${AGENT_ID}`,
                 session: createRuntimePlacementSessionClient(sessionId),
                 transcriptSession: {},
-                messageBuffer: {},
+                messageBuffer: new MessageBuffer(),
                 mcpServers: {},
                 permissionHandler: {},
                 getPermissionMode: () => 'default',
@@ -513,6 +560,18 @@ describe('production registry session runner factory resolution', () => {
                 startupModelSelection: null,
             } as never) as Readonly<{
                 operations: Readonly<{
+                    sendTurnPrompt(
+                        prompt: string,
+                        input: Readonly<{
+                            turnId: string;
+                            localId: string;
+                            userMessageSeq: number;
+                        }>,
+                    ): Promise<void>;
+                    cancelTurn(): Promise<void>;
+                    subscribeRuntimeEvents(
+                        listener: (event: Readonly<{ kind?: string; channel?: string }>) => void,
+                    ): (() => void) | void;
                     resetOrDisposeRuntime(): Promise<void>;
                 }>;
             }>;
@@ -523,7 +582,48 @@ describe('production registry session runner factory resolution', () => {
                 factoryCalls: 1,
                 sessionOpenCalls: 1,
                 sessionDisposeCalls: 0,
+                sendCalls: 0,
+                cancelCalls: 0,
             });
+
+            const observedEvents: Readonly<{ kind?: string; channel?: string }>[] = [];
+            const unsubscribe = created.operations.subscribeRuntimeEvents((event) => {
+                observedEvents.push(event);
+            });
+            await created.operations.sendTurnPrompt('complete through the loaded leaf', {
+                turnId: 'turn-loaded-success',
+                localId: 'input-loaded-success',
+                userMessageSeq: 1,
+            });
+            expect(observedEvents.map((event) => event.kind)).toEqual([
+                'input-accepted',
+                'turn-start',
+                'message-delta',
+                'tool-call',
+                'tool-result',
+                'message-delta',
+                'turn-complete',
+            ]);
+            expect(observedEvents.filter((event) => event.kind === 'message-delta')
+                .map((event) => event.channel)).toEqual(['reasoning', 'assistant']);
+            expect(loadedConfirm).toHaveBeenCalledOnce();
+
+            observedEvents.length = 0;
+            await created.operations.sendTurnPrompt('cancel through the loaded leaf', {
+                turnId: 'turn-loaded-cancel',
+                localId: 'input-loaded-cancel',
+                userMessageSeq: 2,
+            });
+            await created.operations.cancelTurn();
+            expect(observedEvents.map((event) => event.kind)).toEqual([
+                'input-accepted',
+                'turn-start',
+                'message-delta',
+                'tool-call',
+                'turn-cancelled',
+            ]);
+            expect(state).toMatchObject({ sendCalls: 2, cancelCalls: 1 });
+            unsubscribe?.();
 
             await created.operations.resetOrDisposeRuntime();
             expect(state.sessionDisposeCalls).toBe(1);

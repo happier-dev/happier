@@ -29,11 +29,21 @@ const targetedSurfaceOne = {
     role: 'detail',
     presentation: 'content',
 } as const;
+const inlineSurfaceOne = {
+    kind: 'inline',
+    surface: { pluginId: 'runtime.plugin', localId: 'subagent-details' },
+    role: 'sessionSubagentDetails',
+} as const;
 const composerSurfaceOne = {
     kind: 'composer',
     contribution: { pluginId: 'runtime.plugin', localId: 'composer-region' },
     immutableGenerationId: 'composer-generation-one',
     role: 'region',
+} as const;
+const automationSetupSurfaceOne = {
+    kind: 'automationEventSetupSurface',
+    contribution: { pluginId: 'runtime.plugin', localId: 'repository-updated' },
+    immutableGenerationId: 'automation-generation-one',
 } as const;
 const destinationMount = (destination: typeof destinationOne | typeof destinationTwo) => ({
     kind: 'destination' as const,
@@ -63,6 +73,56 @@ async function reconcileOne(params: Readonly<{
 }
 
 describe('React Native crash-state daemon owner', () => {
+    it('isolates Automation setup surfaces by exact immutable generation through the canonical mount key', async () => {
+        const store = createReactNativeCrashStateStore({
+            happyHomeDir: await mkdtemp(join(tmpdir(), 'happier-rn-crash-state-automation-')),
+        });
+        const replacement = {
+            ...automationSetupSurfaceOne,
+            immutableGenerationId: 'automation-generation-two',
+        } as const;
+        const reconciliation = await reconcileReactNativeCrashStateBindings({
+            store,
+            bindings: [
+                { mount: automationSetupSurfaceOne, renderer, artifactDigest: digestOne },
+                { mount: replacement, renderer, artifactDigest: digestTwo },
+            ],
+        });
+        const originalKey = createReactNativeCrashStateBindingKey({ mount: automationSetupSurfaceOne, renderer });
+        const replacementKey = createReactNativeCrashStateBindingKey({ mount: replacement, renderer });
+
+        expect(originalKey).not.toBe(replacementKey);
+        expect(reconciliation.statesByBindingKey[originalKey]?.token.mount).toEqual(automationSetupSurfaceOne);
+        expect(reconciliation.statesByBindingKey[replacementKey]?.token.mount).toEqual(replacement);
+    });
+
+    it('isolates an inline surface mount from destination and targeted surface mounts', async () => {
+        const store = createReactNativeCrashStateStore({
+            happyHomeDir: await mkdtemp(join(tmpdir(), 'happier-rn-crash-state-inline-')),
+        });
+        const reconciliation = await reconcileReactNativeCrashStateBindings({
+            store,
+            bindings: [
+                { mount: destinationMount(destinationOne), renderer, artifactDigest: digestOne },
+                { mount: inlineSurfaceOne, renderer, artifactDigest: digestOne },
+                { mount: targetedSurfaceOne, renderer, artifactDigest: digestOne },
+            ],
+        });
+
+        const destinationKey = createReactNativeCrashStateBindingKey({
+            mount: destinationMount(destinationOne),
+            renderer,
+        });
+        const inlineKey = createReactNativeCrashStateBindingKey({ mount: inlineSurfaceOne, renderer });
+        const targetedKey = createReactNativeCrashStateBindingKey({ mount: targetedSurfaceOne, renderer });
+
+        expect(new Set([destinationKey, inlineKey, targetedKey])).toHaveLength(3);
+        expect(reconciliation.statesByBindingKey[inlineKey]).toMatchObject({
+            disabled: false,
+            token: { mount: inlineSurfaceOne },
+        });
+    });
+
     it('does not read the unshipped V2 acknowledgement state snapshot', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-rn-crash-state-v2-'));
         const oldStatePath = join(

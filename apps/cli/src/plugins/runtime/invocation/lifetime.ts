@@ -1,4 +1,6 @@
 export type PluginInvocationLifetime = Readonly<{
+    /** Host clock captured once when this invocation is admitted. */
+    invokedAtMs: number;
     signal: AbortSignal;
     redactionLifetimeSignal: AbortSignal;
     settleContext(): void;
@@ -8,6 +10,7 @@ export type PluginInvocationLifetime = Readonly<{
 export function createPluginInvocationLifetime(
     parentSignal?: AbortSignal,
 ): PluginInvocationLifetime {
+    const invokedAtMs = Date.now();
     const contextController = new AbortController();
     const redactionController = new AbortController();
     const abortFromParent = () => {
@@ -18,6 +21,7 @@ export function createPluginInvocationLifetime(
     if (parentSignal?.aborted) abortFromParent();
     let completed = false;
     return Object.freeze({
+        invokedAtMs,
         signal: contextController.signal,
         redactionLifetimeSignal: redactionController.signal,
         settleContext(): void {

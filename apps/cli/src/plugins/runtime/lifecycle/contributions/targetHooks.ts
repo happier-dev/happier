@@ -270,6 +270,7 @@ export function createTargetHookHandlerRegistry(params: Readonly<{
                         plugin,
                         contribution,
                         surface: 'agent',
+                        invokedAtMs: lifetime.invokedAtMs,
                         signal,
                         services,
                         ui: createPluginInvocationPresentation({

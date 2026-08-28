@@ -133,6 +133,31 @@ describe('Account plugin Settings record storage', () => {
         );
     });
 
+    it('distinguishes a proved no-effect response from an ambiguous post-submission outcome', async () => {
+        const get = vi.fn().mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        const post = vi.fn()
+            .mockResolvedValueOnce({ status: 200, data: { unexpected: true } })
+            .mockResolvedValueOnce({
+                status: 503,
+                data: { error: 'plugin_account_settings_storage_unavailable' },
+            })
+            .mockRejectedValueOnce(new Error('response_lost'));
+        const adapter = createAccountPluginSettingsRecordStorage({
+            readCredentials: async () => plainCredentials,
+            isCurrentAccount: () => true,
+            http: { get, post },
+            resolveBaseUrl: () => 'https://server.example',
+        });
+        const request = {
+            expectedRevision: 4 as const,
+            values: { theme: 'light' },
+        };
+
+        await expect(adapter.writeRecord(model, request)).resolves.toEqual({ status: 'outcomeUnknown' });
+        await expect(adapter.writeRecord(model, request)).resolves.toEqual({ status: 'unavailable' });
+        await expect(adapter.writeRecord(model, request)).resolves.toEqual({ status: 'outcomeUnknown' });
+    });
+
     it('seals Account E2EE values with the dedicated settings domain and fails closed without material', async () => {
         const get = vi.fn().mockResolvedValue({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
         const post = vi.fn().mockResolvedValue({

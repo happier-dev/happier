@@ -29,6 +29,9 @@ import {
 import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import { logger } from '@/ui/logger';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type {
+  ManagedServiceSessionBaseUrlResolver,
+} from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { PluginProviderOperationsSource } from '@/plugins/runtime/invocation/services/types';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -136,6 +139,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   }>) => Promise<void>;
   runtimeActionExecute?: RuntimeActionExecute;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+  resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver;
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   resolveExternalSessionCurrentMachineId?: () => string | null;
   externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
@@ -238,6 +242,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     ...(params.managedEndpointRead
       ? { managedEndpointRead: params.managedEndpointRead }
       : {}),
+    ...(params.resolveManagedServiceSessionBaseUrl
+      ? { resolveManagedServiceSessionBaseUrl: params.resolveManagedServiceSessionBaseUrl }
+      : {}),
     ...(params.externalSessionPluginAdmissionOwner
       ? {
           externalSessionPluginAdmissionOwner:
@@ -323,6 +330,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   const stateStore = createPluginRegistryStateStore({
     happyHomeDir: params.happyHomeDir,
     retainedCurrentHostGenerationIds,
+    bundledArtifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
     runtimeLifecycle,
     runHardRevocationCurrentnessChange: changeService.runHardRevocationCurrentnessChange,
     ...(params.startupMode === 'pluginRecovery' ? { pluginRecovery: true } : {}),
@@ -416,6 +424,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               : {}),
             ...(params.managedEndpointRead
               ? { managedEndpointRead: params.managedEndpointRead }
+              : {}),
+            ...(params.resolveManagedServiceSessionBaseUrl
+              ? { resolveManagedServiceSessionBaseUrl: params.resolveManagedServiceSessionBaseUrl }
               : {}),
             ...(params.externalSessionPluginAdmissionOwner
               ? {

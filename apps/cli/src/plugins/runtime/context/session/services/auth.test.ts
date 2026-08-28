@@ -3,7 +3,10 @@ import type {
     ConnectedServiceDaemonAuthBridgeRefreshResult,
 } from '@/daemon/connectedServices/daemonAuthBridgeTypes';
 
-import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
+import type {
+    ConnectedServiceProviderRuntimeAuthAdapter,
+    ConnectedServiceRuntimeAuthAdapterResult,
+} from '@/daemon/connectedServices/runtimeAuth/types';
 import { createSessionHandleAuthService } from './auth';
 
 function createRuntimeAuthAdapter(
@@ -14,7 +17,6 @@ function createRuntimeAuthAdapter(
         materializeActiveProfile: async () => ({}),
         canHotApply: () => ({}),
         hotApply: async () => ({}),
-        recoverAfterRuntimeAuthSwitch: async () => ({}),
         probeQuota: async () => ({}),
         refreshActiveProfile,
     };
@@ -23,6 +25,11 @@ function createRuntimeAuthAdapter(
 function daemonRefreshResult(value: unknown): ConnectedServiceDaemonAuthBridgeRefreshResult {
     // Deliberately bypass the typed control contract to exercise malformed daemon responses.
     return value as ConnectedServiceDaemonAuthBridgeRefreshResult;
+}
+
+function runtimeAuthAdapterResult(value: unknown): ConnectedServiceRuntimeAuthAdapterResult {
+    // Deliberately bypass the author contract only in malformed-result tests.
+    return value as ConnectedServiceRuntimeAuthAdapterResult;
 }
 
 describe('createSessionHandleAuthService runtime auth refresh', () => {
@@ -69,10 +76,33 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         });
 
         expect(refreshActiveProfile).toHaveBeenCalledWith(expect.objectContaining({
-            failingAccessTokenFingerprint: 'sha256:failed',
-            expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-            reason: 'chatgpt_auth_tokens_refresh',
+            target: { agentId: 'codex' },
+            selection: expect.objectContaining({ serviceId: 'openai-codex' }),
         }));
+        const refreshInput = refreshActiveProfile.mock.calls[0]?.[0];
+        expect(refreshInput).not.toHaveProperty('failingAccessTokenFingerprint');
+        expect(refreshInput).not.toHaveProperty('reason');
+    });
+
+    it('keeps the host-owned target environment out of the Agent adapter', async () => {
+        const refreshActiveProfile = vi.fn<
+            ConnectedServiceProviderRuntimeAuthAdapter['refreshActiveProfile']
+        >(async () => ({ status: 'unsupported' as const }));
+        const auth = createSessionHandleAuthService({
+            readSessionId: async () => 'happy-session-1',
+            readAgentId: async () => 'claude',
+            resolveAdapter: async () => createRuntimeAuthAdapter(refreshActiveProfile),
+        });
+
+        await auth.services.refreshRuntimeAuth({
+            serviceId: 'claude-subscription',
+            selection: { kind: 'profile', profileId: 'work' },
+        });
+
+        const input = refreshActiveProfile.mock.calls[0]?.[0];
+        expect(input).not.toHaveProperty('targetMaterializedEnv');
+        expect(input).not.toHaveProperty('env');
+        expect(input).not.toHaveProperty('materializedEnv');
     });
 
     it.each([
@@ -105,7 +135,7 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
             readAgentId: async () => 'pi',
-            resolveAdapter: async () => createRuntimeAuthAdapter(async () => adapterResult),
+            resolveAdapter: async () => createRuntimeAuthAdapter(async () => runtimeAuthAdapterResult(adapterResult)),
         });
 
         await expect(auth.services.refreshRuntimeAuth({
@@ -119,7 +149,7 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
             readAgentId: async () => 'pi',
-            resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
+            resolveAdapter: async () => createRuntimeAuthAdapter(async () => runtimeAuthAdapterResult({
                 status: 'refreshed',
                 result: () => 'credential-bearing closure',
             })),
@@ -139,7 +169,7 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         const auth = createSessionHandleAuthService({
             readSessionId: async () => 'happy-session-1',
             readAgentId: async () => 'pi',
-            resolveAdapter: async () => createRuntimeAuthAdapter(async () => ({
+            resolveAdapter: async () => createRuntimeAuthAdapter(async () => runtimeAuthAdapterResult({
                 status: 'failed',
                 reason: 'provider_refresh_failed',
                 error: Object.assign(new Error('credential expired'), {
@@ -226,7 +256,6 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
                 kind: 'profile',
                 profileId: 'work',
                 serviceId: 'openai-codex',
-                planType: 'plus',
             },
             planType: 'plus',
             failingAccessTokenFingerprint: 'sha256:failed',

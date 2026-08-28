@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,6 +33,7 @@ import {
 import {
   prepareOwnedImmutablePluginGeneration,
   readInstallationStateRevision,
+  type BundledImmutablePluginArtifact,
 } from './generationStore';
 import { derivePluginInstallReviewPrincipalDigest } from '../../daemon/installReviewPrincipal';
 
@@ -41,6 +42,91 @@ const TEST_RUNTIME_LIFECYCLE: PluginRegistryRuntimeLifecycle = Object.freeze({
     abort: async () => undefined,
     adopt: async () => undefined,
   }),
+});
+
+it('projects an admitted bundled generation through the canonical machine Availability inventory', async () => {
+  const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-availability-home-'));
+  const packageRoot = await mkdtemp(join(tmpdir(), 'happier-bundled-availability-package-'));
+  await mkdir(join(packageRoot, '.happier-plugin'), { recursive: true });
+  await mkdir(join(packageRoot, 'dist', 'happier-plugin-ui'), { recursive: true });
+  const manifestBytes = '{}';
+  const entryBytes = 'export {};';
+  const packageMetadataBytes = JSON.stringify({
+    name: '@happier-dev/plugins-availability-fixture',
+    version: '0.0.0',
+  });
+  await writeFile(join(packageRoot, '.happier-plugin', 'plugin.json'), manifestBytes);
+  await writeFile(join(packageRoot, 'dist', 'index.js'), entryBytes);
+  await writeFile(join(packageRoot, 'package.json'), packageMetadataBytes);
+  const artifactDigest = `sha256:${'a'.repeat(64)}`;
+  const uiManifestBytes = JSON.stringify({
+    version: 1,
+    entries: [{
+      contributionId: 'fixture-native',
+      tier: 'reactNative',
+      platform: 'web',
+      entry: 'entry.mjs.bundle',
+      files: [{
+        relativePath: 'entry.mjs.bundle',
+        digest: `sha256:${'b'.repeat(64)}`,
+        byteSize: 1,
+      }],
+      digest: artifactDigest,
+      builtWith: { bundler: 'vite', version: '1.0.0' },
+      hostUiApiVersion: '1.0.0',
+      compat: { react: '19.2.0', reactNative: '0.83.5' },
+    }],
+  });
+  await writeFile(join(packageRoot, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), uiManifestBytes);
+  const bundledArtifact: BundledImmutablePluginArtifact = Object.freeze({
+    packageName: '@happier-dev/plugins-availability-fixture',
+    packageEntryRelativePath: 'dist/index.js',
+    record: Object.freeze({
+      t: 'happier_plugin_generation_v1',
+      schemaVersion: 1,
+      pluginId: 'happier.fixture.availability',
+      immutableGenerationId: 'bundled-generation-fixture',
+      createdAtMs: 0,
+      manifestRelativePath: '.happier-plugin/plugin.json',
+      files: Object.freeze([
+        { relativePath: '.happier-plugin/plugin.json', byteLength: Buffer.byteLength(manifestBytes) },
+        { relativePath: 'dist/happier-plugin-ui/ui-artifacts.json', byteLength: Buffer.byteLength(uiManifestBytes) },
+        { relativePath: 'dist/index.js', byteLength: Buffer.byteLength(entryBytes) },
+        { relativePath: 'package.json', byteLength: Buffer.byteLength(packageMetadataBytes) },
+      ]),
+    }),
+  });
+  const store = createPluginRegistryStateStore({
+    happyHomeDir,
+    bundledArtifacts: [bundledArtifact],
+    resolveBundledPackageEntry: async () => join(packageRoot, 'dist', 'index.js'),
+    nowMs: () => 123,
+  });
+
+  await expect(store.readAvailabilityInventory()).resolves.toEqual({
+    revision: 0,
+    releasePublications: [],
+    materializations: [{
+      materializationId: 'bundled-first-party:bundled-generation-fixture',
+      pluginId: 'happier.fixture.availability',
+      version: '0.0.0',
+      sourceClass: 'bundledFirstParty',
+      portableRelease: false,
+      uiArtifacts: [{
+        contributionId: 'fixture-native',
+        tier: 'reactNative',
+        platform: 'web',
+        artifactDigest,
+      }],
+      enabled: true,
+      trustState: 'trusted',
+      observedAt: 123,
+    }],
+  });
+  await Promise.all([
+    rm(happyHomeDir, { recursive: true, force: true }),
+    rm(packageRoot, { recursive: true, force: true }),
+  ]);
 });
 
 const INSTALL_REVIEW_PRESENTATION_A = PluginInstallReviewPrincipalPresentationV1Schema.parse({

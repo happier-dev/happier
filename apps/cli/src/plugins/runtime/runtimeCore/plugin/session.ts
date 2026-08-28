@@ -93,6 +93,7 @@ type NativeAgentSessionOpenIntent =
 type NativeAgentSessionRuntimeCreation = Readonly<{
     operations: PluginRuntimeHookOperations;
     configuration?: AgentSessionConfigurationSnapshot | null;
+    runtimeCapabilities?: HostSessionRuntimeFactoryResult<PluginRuntimeHookOperations>['runtimeCapabilities'];
     admittedProviderBindingHandoff?: ProviderBindingLaunchHandoffV1 | null;
 }>;
 
@@ -608,10 +609,7 @@ function resolveInitialNativeAgentSessionOpenIntent(
 }
 
 function buildPluginDisplayName(agent: ResolvedAgentContribution, backend: ResolvedAgentRuntimeContribution): string {
-    const agentTitle = normalizeNonEmptyString(agent.runtimeSpec?.title);
-    if (agentTitle) return agentTitle;
-
-    const richDisplayName = agent.richDefinition?.provenance === 'external'
+    const richDisplayName = agent.richDefinition
         ? normalizeNonEmptyString(
             typeof agent.richDefinition.definition.title === 'string'
                 ? agent.richDefinition.definition.title
@@ -619,6 +617,9 @@ function buildPluginDisplayName(agent: ResolvedAgentContribution, backend: Resol
         )
         : null;
     if (richDisplayName) return richDisplayName;
+
+    const agentTitle = normalizeNonEmptyString(agent.runtimeSpec?.title);
+    if (agentTitle) return agentTitle;
 
     return normalizeNonEmptyString(backend.id) ?? normalizeNonEmptyString(agent.id) ?? 'Plugin Runtime';
 }
@@ -988,6 +989,9 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                         nativeRuntime: operations,
                         ...(initialRuntime.configuration
                             ? { configuration: initialRuntime.configuration }
+                            : {}),
+                        ...(initialRuntime.runtimeCapabilities
+                            ? { runtimeCapabilities: initialRuntime.runtimeCapabilities }
                             : {}),
                         ...(initialRuntime.admittedProviderBindingHandoff
                             ? {

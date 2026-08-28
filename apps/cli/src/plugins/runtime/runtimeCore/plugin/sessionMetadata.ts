@@ -33,21 +33,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeNonEmptyString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
 function buildGenericPluginRuntimeDescriptor(backend: ResolvedAgentRuntimeContribution): RuntimeDescriptorV1 | null {
-    const runtimeKind = normalizeNonEmptyString(backend.runtimeKind);
-    if (!runtimeKind) return null;
-
     return {
         v: 1,
         agentId: backend.agentId,
         agent: {
-            backendMode: runtimeKind,
             agentExtra: {
                 owner: 'happier',
                 schemaId: 'happier.pluginRuntimeDescriptorExtra',

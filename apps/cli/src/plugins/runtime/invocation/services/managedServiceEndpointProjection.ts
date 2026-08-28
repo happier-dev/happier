@@ -63,8 +63,16 @@ export type ManagedServiceEndpointProjectionResolveQuery = Readonly<{
     selector:
         | Readonly<{ kind: 'baseUrl'; baseUrl: string }>
         | Readonly<{ kind: 'projectionToken'; projectionToken: string }>
-        | Readonly<{ kind: 'currentContribution' }>;
+        | Readonly<{ kind: 'currentContribution' }>
+        | Readonly<{ kind: 'currentSessionManagedSpawn' }>;
 }>;
+
+/** Host-private lookup for the one managed endpoint owned by an exact Session. */
+export type ManagedServiceSessionBaseUrlResolver = (input: Readonly<{
+    pluginId: string;
+    sessionId: string;
+    contributionId: string;
+}>) => Promise<string | null>;
 
 const MAX_PROJECTION_RECORDS = 256;
 const MAX_RECORD_BYTES = 64 * 1024;
@@ -188,10 +196,10 @@ export function parseManagedServiceEndpointProjectionV1(
     const serverId = readIdentity(raw.serverId);
     const instanceId = readIdentity(raw.instanceId);
     const immutableGenerationId = readIdentity(raw.immutableGenerationId);
-    const process = isRecord(raw.process) && hasExactKeys(raw.process, ['pid', 'startIdentity'])
+    const rawProcessRecord = isRecord(raw.process) && hasExactKeys(raw.process, ['pid', 'startIdentity'])
         ? raw.process
         : null;
-    const processStartIdentity = readIdentity(process?.startIdentity);
+    const processStartIdentity = readIdentity(rawProcessRecord?.startIdentity);
     const endpoint = isRecord(raw.endpoint) && hasExactKeys(raw.endpoint, ['baseUrl', 'host', 'port'])
         ? raw.endpoint
         : null;
@@ -219,8 +227,8 @@ export function parseManagedServiceEndpointProjectionV1(
     if (
         raw.mode === 'managedSpawn'
         && (
-            !Number.isSafeInteger(process?.pid)
-            || (process?.pid as number) <= 1
+            !Number.isSafeInteger(rawProcessRecord?.pid)
+            || (rawProcessRecord?.pid as number) <= 1
             || !processStartIdentity
         )
     ) return null;
@@ -242,7 +250,7 @@ export function parseManagedServiceEndpointProjectionV1(
             ...common,
             mode: 'managedSpawn',
             process: Object.freeze({
-                pid: process!.pid as number,
+                pid: rawProcessRecord!.pid as number,
                 startIdentity: processStartIdentity!,
             }),
         })

@@ -10,6 +10,12 @@ import type {
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import {
+    removeProcessCustodyHandshakeFile,
+    terminateProcessCustodyByJob,
+    waitForProcessCustodyHandshake,
+    type ProcessCustodySpawnSpec,
+} from '@/subprocess/supervision/processCustody';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 
 type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' }>['reason'];
@@ -46,6 +52,52 @@ export type SupervisedPluginProcess = Readonly<{
     dispose(reason?: DisposeReason): Promise<void>;
 }>;
 
+/**
+ * Native process-tree custody for one supervised spawn. The command is the
+ * custody helper itself; the facts here name the generation-unique containment
+ * it must establish and the post-assignment handshake it must publish.
+ */
+type SpawnProcessCustodySpec = ProcessCustodySpawnSpec;
+
+/** Host-private custody facts proven by one handshake. */
+export type SupervisedPluginProcessCustody = Readonly<{
+    jobName: string;
+    targetPid: number;
+}>;
+
+/**
+ * Bounded wait for the helper's post-assignment handshake. A `null` answer
+ * means custody was never proven — the caller must not publish, project, or
+ * use the process, and must fail its establishment instead.
+ */
+export function waitForSupervisedPluginProcessCustody(
+    input: Readonly<{
+        custody: SpawnProcessCustodySpec;
+        signal?: AbortSignal;
+        timeoutMs?: number;
+    }>,
+): Promise<SupervisedPluginProcessCustody | null> {
+    return (async () => {
+        const facts = await waitForProcessCustodyHandshake({
+            handshakePath: input.custody.handshakePath,
+            jobName: input.custody.jobName,
+            ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+            ...(input.signal ? { isAborted: (): boolean => input.signal!.aborted } : {}),
+        });
+        if (!facts) {
+            // An unread marker must never linger where a later spawn could
+            // mistake it for testimony.
+            await removeProcessCustodyHandshakeFile(input.custody.handshakePath);
+            return null;
+        }
+        const custody: SupervisedPluginProcessCustody = Object.freeze({
+            jobName: input.custody.jobName,
+            targetPid: facts.pid,
+        });
+        return custody;
+    })();
+}
+
 type SpawnSupervisedPluginProcessInput = Readonly<{
     command: string;
     args: readonly string[];
@@ -58,6 +110,8 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     maxStderrBytes?: number;
     terminationJoinTimeoutMs?: number;
     terminateProcessTree?: (child: ChildProcessWithoutNullStreams) => Promise<void>;
+    /** Native containment facts; present only when the command is the custody helper. */
+    processCustody?: SpawnProcessCustodySpec;
     spawnOptions?: Omit<SpawnOptionsWithoutStdio, 'cwd' | 'env'>;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
 }>;
@@ -155,8 +209,12 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     let observed: PluginProcessObservedTermination | null = null;
     let terminalResult: PluginProcessResult | null = null;
     let resolveWait!: (result: PluginProcessResult) => void;
+    let resolveObserved!: () => void;
     const waitPromise = new Promise<PluginProcessResult>((resolve) => {
         resolveWait = resolve;
+    });
+    const observedPromise = new Promise<void>((resolve) => {
+        resolveObserved = resolve;
     });
     let terminationPromise: Promise<void> | null = null;
     let disposePromise: Promise<void> | null = null;
@@ -222,6 +280,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     const freezeObserved = (next: PluginProcessObservedTermination): void => {
         if (observed) return;
         observed = next;
+        resolveObserved();
         requestedBy ??= Object.freeze({ kind: 'none' as const });
         if (timeout) {
             clearTimeout(timeout);
@@ -261,22 +320,35 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         }
         if (terminationPromise) return terminationPromise;
         const attempt = (async () => {
-            const terminate = input.terminateProcessTree ?? (async (target: ChildProcessWithoutNullStreams) => {
-                try {
-                    await killProcessTree(target, { graceMs: 100 });
-                } catch {
-                    try {
-                        target.kill();
-                    } catch {
-                        // The process may have won the terminal race.
+            const terminate = input.terminateProcessTree
+                ?? (async (target: ChildProcessWithoutNullStreams) => {
+                    if (input.processCustody) {
+                        // The containment is the named job, not this process:
+                        // terminate by job and prove the FULL member list gone,
+                        // including every descendant, including after the
+                        // root already exited. An unproven outcome keeps the
+                        // job and reports termination as incomplete.
+                        const outcome = await terminateProcessCustodyByJob({
+                            executablePath: input.processCustody.executablePath,
+                            jobName: input.processCustody.jobName,
+                        });
+                        if (outcome !== 'absent') {
+                            throw terminationIncompleteError(
+                                new Error(`Job custody termination was not proven (${outcome})`),
+                            );
+                        }
+                        return;
                     }
-                }
-            });
+                    await killProcessTree(target, { graceMs: 100 });
+                });
             const joined = (async () => {
-                if (!observed) {
-                    await terminate(child);
-                }
-                await waitPromise;
+                // Root exit settles process output, not the owned containment.
+                // Always ask the canonical tree terminator to prove the POSIX
+                // process group / Windows tree absent, including when the
+                // launcher root exited before disposal began.
+                await terminate(child);
+                await observedPromise;
+                seal();
             })();
             // A bounded caller wait may finish first. Keep a rejection from a
             // later tree-kill attempt observed without relabeling the process.
@@ -296,26 +368,16 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 if (!observed && (child.exitCode !== null || child.signalCode !== null)) {
                     freezeObserved(observedTermination(child.exitCode, child.signalCode));
                 }
-                if (observed) {
-                    // An observed exit or signal is the process-terminal fact;
-                    // close-stream reconciliation is not required to prove it.
-                    seal();
-                    return;
-                }
+                if (observed) seal();
                 throw terminationIncompleteError(error);
             } finally {
                 if (timeoutHandle) clearTimeout(timeoutHandle);
             }
             if (!joinedBeforeDeadline) {
-                if (observed) {
-                    // See the error path above: a real exit/signal is enough to
-                    // settle the handle even if `close` never arrives.
-                    seal();
-                    return;
-                }
                 // A join deadline is a bounded caller wait, not evidence that
-                // the OS process died. Keep its host-private custody and leave
-                // `handle.wait()` pending until a real terminal event arrives.
+                // the OS-owned containment is absent. Keep host-private custody
+                // even when the root process itself already exited.
+                if (observed) seal();
                 throw terminationIncompleteError();
             }
         })();

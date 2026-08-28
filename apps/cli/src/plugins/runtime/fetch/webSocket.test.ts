@@ -431,6 +431,33 @@ describe('plugin WebSocket host adapter', () => {
         }
     });
 
+    it('connects only through an admitted address while retaining the original WebSocket hostname', async () => {
+        const peer = await createWebSocketPeer();
+        const peerUrl = new URL(peer.url);
+        try {
+            const connection = await createPluginWebSocketConnection({
+                url: `ws://pinned.invalid:${peerUrl.port}${peerUrl.pathname}`,
+                protocols: ['fixture-v1'],
+                allowInsecureWs: true,
+            }, { validatedAddresses: ['127.0.0.1'] });
+
+            expect(connection.url).toBe(`ws://pinned.invalid:${peerUrl.port}${peerUrl.pathname}`);
+            expect(peer.receivedHeader('host')).toBe(`pinned.invalid:${peerUrl.port}`);
+            connection.dispose();
+            await connection.closed;
+        } finally {
+            await peer.close();
+        }
+    });
+
+    it('never falls back to ordinary DNS when admission supplies an empty address set', async () => {
+        await expect(createPluginWebSocketConnection({
+            url: 'wss://unresolved.example.test/socket',
+        }, { validatedAddresses: [] })).rejects.toMatchObject({
+            code: 'plugin_websocket_connect_failed',
+        });
+    });
+
     it('does not disclose an already-buffered message after lifecycle retirement', async () => {
         const peer = await createWebSocketPeer();
         const lifecycle = new AbortController();

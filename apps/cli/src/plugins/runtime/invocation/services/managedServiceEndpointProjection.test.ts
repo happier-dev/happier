@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { createManagedServiceEndpointProjectionV1 } from './managedServiceEndpointProjection';
+import {
+    createManagedServiceEndpointProjectionV1,
+    parseManagedServiceEndpointProjectionV1,
+} from './managedServiceEndpointProjection';
 
 function projectionInput() {
     return {
@@ -125,4 +128,5 @@ describe('managed service endpoint projection', () => {
             },
         })).toThrow(/invalid/u);
     });
+
 });

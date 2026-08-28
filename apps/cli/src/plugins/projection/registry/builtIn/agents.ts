@@ -1,8 +1,4 @@
-import {
-    getAllAgentDefinitionContracts,
-    getAllAgentCatalogDefinitions,
-} from '@happier-dev/agents/definitions';
-import type { AgentCatalogDefinition } from '@happier-dev/agents/definitions';
+import { getAllAgentDefinitionContracts } from '@happier-dev/agents/definitions';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { projectAgentCliSessionCommandCatalogEntry } from '../agentCatalogEntryHooks';
@@ -11,45 +7,36 @@ import type {
     ResolvedCatalogEntry,
 } from '../types';
 
-export type BundledAgentImplementationBinding = Readonly<{
+export type BundledAgentRegistrationBinding = Readonly<{
     identity: PluginContributionIdentityV1;
     implementationOwnerId: string;
     registrationFamily: string;
-    implementation: unknown;
 }>;
 
-type CatalogHookFactory = () => Partial<ResolvedCatalogEntry>;
-
-function readCatalogHookFactory(binding: BundledAgentImplementationBinding): CatalogHookFactory {
-    if (binding.registrationFamily !== 'agents' || typeof binding.implementation !== 'function') {
-        throw new Error(
-            `Invalid bundled implementation binding '${binding.identity.pluginId}/${binding.identity.localId}'`,
-        );
-    }
-    return binding.implementation as CatalogHookFactory;
-}
-
 function indexAgentBindings(
-    bindings: readonly BundledAgentImplementationBinding[],
-): ReadonlyMap<string, Readonly<{
-    binding: BundledAgentImplementationBinding;
-    createHooks: CatalogHookFactory;
-}>> {
-    const byAgentId = new Map<string, Readonly<{
-        binding: BundledAgentImplementationBinding;
-        createHooks: CatalogHookFactory;
-    }>>();
+    bindings: readonly BundledAgentRegistrationBinding[],
+): Readonly<{
+    byIdentity: ReadonlyMap<string, BundledAgentRegistrationBinding>;
+    byImplementationOwnerId: ReadonlyMap<string, BundledAgentRegistrationBinding>;
+}> {
+    const byIdentity = new Map<string, BundledAgentRegistrationBinding>();
+    const byAgentId = new Map<string, BundledAgentRegistrationBinding>();
     for (const binding of bindings) {
         if (binding.registrationFamily !== 'agents') continue;
         if (byAgentId.has(binding.implementationOwnerId)) {
             throw new Error(`Duplicate bundled agent implementation binding '${binding.implementationOwnerId}'`);
         }
-        byAgentId.set(binding.implementationOwnerId, {
-            binding,
-            createHooks: readCatalogHookFactory(binding),
-        });
+        const identity = manifestAgentKey(binding.identity.pluginId, binding.identity.localId);
+        if (byIdentity.has(identity)) {
+            throw new Error(`Duplicate bundled agent registration identity '${binding.identity.pluginId}/${binding.identity.localId}'`);
+        }
+        byAgentId.set(binding.implementationOwnerId, binding);
+        byIdentity.set(identity, binding);
     }
-    return byAgentId;
+    return Object.freeze({
+        byIdentity,
+        byImplementationOwnerId: byAgentId,
+    });
 }
 
 function indexManifestAgents(
@@ -74,10 +61,12 @@ function indexManifestAgentsByIdentity(
 ): ReadonlyMap<string, ResolvedAgentContribution> {
     const byIdentity = new Map<string, ResolvedAgentContribution>();
     for (const contribution of contributions) {
-        if (!contribution.pluginId) continue;
-        const key = manifestAgentKey(contribution.pluginId, contribution.id);
+        const pluginId = contribution.identity?.pluginId ?? contribution.pluginId;
+        const localId = contribution.identity?.localId ?? contribution.id;
+        if (!pluginId) continue;
+        const key = manifestAgentKey(pluginId, localId);
         if (byIdentity.has(key)) {
-            throw new Error(`Duplicate bundled manifest agent identity '${contribution.pluginId}/${contribution.id}'`);
+            throw new Error(`Duplicate bundled manifest agent identity '${pluginId}/${localId}'`);
         }
         byIdentity.set(key, contribution);
     }
@@ -86,69 +75,82 @@ function indexManifestAgentsByIdentity(
 
 export function projectBuiltInAgents(params: Readonly<{
     manifestAgents: readonly ResolvedAgentContribution[];
-    implementationBindings: readonly BundledAgentImplementationBinding[];
+    registrationBindings: readonly BundledAgentRegistrationBinding[];
 }>): readonly ResolvedAgentContribution[] {
-    const manifestAgentsById = indexManifestAgents(params.manifestAgents);
+    indexManifestAgents(params.manifestAgents);
     const manifestAgentsByIdentity = indexManifestAgentsByIdentity(params.manifestAgents);
-    const implementationByAgentId = indexAgentBindings(params.implementationBindings);
-    const catalogDefinitionsById: ReadonlyMap<string, AgentCatalogDefinition> = new Map(
-        getAllAgentCatalogDefinitions().map((definition) => [definition.id, definition] as const),
+    const registrationBindings = indexAgentBindings(params.registrationBindings);
+    const compatibilityDefinitionsById = new Map(
+        getAllAgentDefinitionContracts().map((definition) => [definition.id, definition]),
     );
-
-    return Object.freeze(getAllAgentDefinitionContracts().map((definition): ResolvedAgentContribution => {
-        const implementation = implementationByAgentId.get(definition.id);
-        const manifestContribution = implementation
-            ? manifestAgentsByIdentity.get(manifestAgentKey(
-                implementation.binding.identity.pluginId,
-                implementation.binding.identity.localId,
+    const projectedIds = new Set<string>();
+    const projected = params.manifestAgents.map((manifestContribution): ResolvedAgentContribution => {
+        const manifestIdentity = manifestContribution.identity
+            ?? (manifestContribution.pluginId
+                ? { pluginId: manifestContribution.pluginId, localId: manifestContribution.id }
+                : null);
+        const registration = manifestIdentity
+            ? registrationBindings.byIdentity.get(manifestAgentKey(
+                manifestIdentity.pluginId,
+                manifestIdentity.localId,
             ))
-            : manifestAgentsById.get(definition.id);
-        const catalogDefinition = catalogDefinitionsById.get(definition.id);
-        if (!manifestContribution || !catalogDefinition) {
-            throw new Error(`Missing bundled manifest or catalog definition for agent '${definition.id}'`);
+            : undefined;
+        const canonicalAgentId = registration?.implementationOwnerId ?? manifestContribution.id;
+        if (projectedIds.has(canonicalAgentId)) {
+            throw new Error(`Duplicate bundled canonical agent '${canonicalAgentId}'`);
         }
+        projectedIds.add(canonicalAgentId);
         if (!manifestContribution.runtimeSpec) {
-            throw new Error(`Missing bundled manifest CLI metadata for agent '${definition.id}'`);
+            throw new Error(`Missing bundled manifest CLI metadata for agent '${canonicalAgentId}'`);
         }
         const runtimeSpec = Object.freeze({
             ...manifestContribution.runtimeSpec,
-            id: definition.id,
+            id: canonicalAgentId,
         });
+        if (!manifestContribution.catalogEntry) {
+            throw new Error(`Missing bundled manifest catalog projection for agent '${canonicalAgentId}'`);
+        }
         const catalogEntry: ResolvedCatalogEntry = Object.freeze({
-            ...(manifestContribution.catalogEntry ?? {}),
-            id: definition.id,
-            cliSubcommand: catalogDefinition.core.cliSubcommand,
-            vendorResumeSupport: catalogDefinition.core.resume.vendorResume,
-            // Host-owned canonical identity for `happy <agent>`: the bundled
-            // manifest may declare the Agent under a differently cased local id,
-            // and review Agents declare no Session capability at all. The one
-            // command projector supplies the generic handler; an active Agent
-            // registration can replace only this focused declaration.
-            ...projectAgentCliSessionCommandCatalogEntry({ agentId: definition.id }),
-            ...(implementation ? implementation.createHooks() : {}),
+            ...manifestContribution.catalogEntry,
+            id: canonicalAgentId,
+            // Host-owned canonical identity for the bundled implementation.
+            // CLI and vendor-resume facts remain exactly as the public manifest
+            // projected them. The generic command owner adds behavior only.
+            ...projectAgentCliSessionCommandCatalogEntry({ agentId: canonicalAgentId }),
         });
         const providerRequirements = manifestContribution.richDefinition?.definition.providerRequirements;
+        const compatibilityDefinition = compatibilityDefinitionsById.get(canonicalAgentId);
         const richDefinition = manifestContribution.richDefinition
             ? Object.freeze({
                 ...manifestContribution.richDefinition,
                 definition: Object.freeze({
                     ...manifestContribution.richDefinition.definition,
-                    id: definition.id,
+                    id: canonicalAgentId,
                 }),
             })
             : undefined;
         return Object.freeze({
             ...manifestContribution,
-            id: definition.id,
+            id: canonicalAgentId,
             provenance: 'first_party',
             source: { kind: 'bundled' },
             definition: Object.freeze({
-                ...definition,
+                ...(compatibilityDefinition ?? manifestContribution.definition),
+                id: canonicalAgentId,
                 ...(providerRequirements ? { providerRequirements } : {}),
             }),
             richDefinition,
             runtimeSpec,
             catalogEntry,
         } satisfies ResolvedAgentContribution);
-    }));
+    });
+    for (const binding of registrationBindings.byImplementationOwnerId.values()) {
+        if (!manifestAgentsByIdentity.has(manifestAgentKey(
+            binding.identity.pluginId,
+            binding.identity.localId,
+        ))) {
+            throw new Error(`Missing bundled manifest for agent '${binding.implementationOwnerId}'`);
+        }
+    }
+    return Object.freeze(projected);
 }

@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
+  buildAutomationConversationOccurrenceEvidenceV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
+  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
   isAutomationTriggerEvidenceCiphertextV1,
   openAutomationConversationReplyContextStoredEnvelopeV1,
   openAccountScopedBlobCiphertext,
@@ -29,7 +31,6 @@ const credentials = {
 const input = {
   automationId: 'automation-1',
   bindingId: 'binding-1',
-  templateVersion: 3,
   occurrenceId: 'telegram:update:1',
   occurredAt: 1_700_000_000_000,
   sender: { id: 'sender-1' },
@@ -48,6 +49,7 @@ const callerMaterialization = {
   machineId: 'machine-caller',
   materializationId: 'materialization-caller',
 } as const;
+const callerImmutableGenerationId = 'generation-caller';
 
 const plainCurrentness: AccountEncryptionCurrentnessResponse = {
   mode: 'plain',
@@ -104,9 +106,9 @@ function e2eeAccountFixture() {
 }
 
 describe('createAutomationConversationActionExecutor', () => {
-    beforeEach(() => {
-      vi.clearAllMocks();
-    });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it('signs and sends the bounded target list only to the exact selector endpoint', async () => {
     transportMocks.createPublisherHeader.mockResolvedValueOnce('publisher-proof');
@@ -114,7 +116,6 @@ describe('createAutomationConversationActionExecutor', () => {
       data: {
         items: [{
           automationId: 'automation-1',
-          templateVersion: 3,
           label: 'Conversation target',
           execution: { targetType: 'new_session', enabled: true },
         }],
@@ -122,7 +123,10 @@ describe('createAutomationConversationActionExecutor', () => {
       },
     });
     const listInput = { limit: 2, cursor: 'automation-0' } as const;
-    const executor = createAutomationConversationActionExecutor({ credentials });
+    const executor = createAutomationConversationActionExecutor({
+      credentials,
+      ...currentCaller,
+    });
 
     await expect(executor({
       actionId: 'automation.conversation.targets.list',
@@ -131,15 +135,15 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({
       items: [{
-          automationId: 'automation-1',
-          templateVersion: 3,
-          label: 'Conversation target',
-          execution: { targetType: 'new_session', enabled: true },
-        }],
+        automationId: 'automation-1',
+        label: 'Conversation target',
+        execution: { targetType: 'new_session', enabled: true },
+      }],
       nextCursor: null,
     });
 
@@ -148,6 +152,7 @@ describe('createAutomationConversationActionExecutor', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       input: listInput,
@@ -172,7 +177,10 @@ describe('createAutomationConversationActionExecutor', () => {
     const controller = new AbortController();
     const cancellation = new Error('cancelled');
     controller.abort(cancellation);
-    const executor = createAutomationConversationActionExecutor({ credentials });
+    const executor = createAutomationConversationActionExecutor({
+      credentials,
+      ...currentCaller,
+    });
 
     await expect(executor({
       actionId: 'automation.conversation.targets.list',
@@ -181,6 +189,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       signal: controller.signal,
@@ -192,14 +201,14 @@ describe('createAutomationConversationActionExecutor', () => {
   it('signs and sends target verification only to the exact verifier endpoint', async () => {
     transportMocks.createPublisherHeader.mockResolvedValueOnce('publisher-proof');
     transportMocks.post.mockResolvedValueOnce({
-      data: { kind: 'verified', templateVersion: 3 },
+      data: { kind: 'verified' },
     });
     const verifyInput = {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     } as const;
     const executor = createAutomationConversationActionExecutor({
       credentials,
+      ...currentCaller,
     });
 
     await expect(executor({
@@ -209,15 +218,17 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
-    })).resolves.toEqual({ kind: 'verified', templateVersion: 3 });
+    })).resolves.toEqual({ kind: 'verified' });
 
     const body = {
       v: 1,
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       input: verifyInput,
@@ -242,12 +253,12 @@ describe('createAutomationConversationActionExecutor', () => {
     const controller = new AbortController();
     const verifyInput = {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     } as const;
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
     const executor = createAutomationConversationActionExecutor({
       credentials,
       transport: { execute },
+      ...currentCaller,
     });
 
     await expect(executor({
@@ -257,10 +268,11 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       signal: controller.signal,
-    })).resolves.toEqual({ kind: 'verified', templateVersion: 3 });
+    })).resolves.toEqual({ kind: 'verified' });
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
       {
@@ -268,6 +280,7 @@ describe('createAutomationConversationActionExecutor', () => {
         caller: {
           pluginId: 'happier.channels',
           contributionLocalId: 'binding/create-v1',
+          immutableGenerationId: callerImmutableGenerationId,
           materialization: callerMaterialization,
         },
         input: verifyInput,
@@ -283,18 +296,19 @@ describe('createAutomationConversationActionExecutor', () => {
     controller.abort(cancellation);
     const executor = createAutomationConversationActionExecutor({
       credentials,
+      ...currentCaller,
     });
 
     await expect(executor({
       actionId: 'automation.conversation.target.verify',
       input: {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
-        },
+      },
       caller: {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       signal: controller.signal,
@@ -324,6 +338,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       signal: controller.signal,
@@ -336,6 +351,7 @@ describe('createAutomationConversationActionExecutor', () => {
         caller: {
           pluginId: 'happier.channels',
           contributionLocalId: 'provider/observation-ingest-v1',
+          immutableGenerationId: callerImmutableGenerationId,
           materialization: callerMaterialization,
         },
         input,
@@ -349,7 +365,6 @@ describe('createAutomationConversationActionExecutor', () => {
                 automationId: input.automationId,
                 occurrenceKey: expect.any(String),
               },
-              templateVersion: input.templateVersion,
               opaqueContext: input.resultDelivery.opaqueContext,
             }),
           },
@@ -383,6 +398,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'com.acme.other',
         contributionLocalId: 'observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: externalMaterialization,
       },
     })).resolves.toEqual({ kind: 'admitted', runId: 'run-1', checkpointSafe: true });
@@ -392,6 +408,7 @@ describe('createAutomationConversationActionExecutor', () => {
       caller: {
         pluginId: 'com.acme.other',
         contributionLocalId: 'observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: externalMaterialization,
       },
       input,
@@ -405,7 +422,6 @@ describe('createAutomationConversationActionExecutor', () => {
               automationId: input.automationId,
               occurrenceKey: expect.any(String),
             },
-            templateVersion: input.templateVersion,
             opaqueContext: input.resultDelivery.opaqueContext,
           }),
         },
@@ -449,8 +465,7 @@ describe('createAutomationConversationActionExecutor', () => {
       actionId: 'automation.conversation.target.verify',
       input: {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
-        },
+      },
       caller: { kind: 'host' } as never,
     })).resolves.toEqual({
       ok: false,
@@ -470,18 +485,20 @@ describe('createAutomationConversationActionExecutor', () => {
       kind: 'plugin',
       pluginId: 'acme.slack-bridge',
       contributionLocalId: 'slack/binding-v1',
+      immutableGenerationId: callerImmutableGenerationId,
       materialization: thirdPartyMaterialization,
     } as const;
     const stampedCaller = {
       pluginId: 'acme.slack-bridge',
       contributionLocalId: 'slack/binding-v1',
+      immutableGenerationId: callerImmutableGenerationId,
       materialization: thirdPartyMaterialization,
     } as const;
     const admitInput = {
       ...input,
-      // `resultDelivery` stays `none` because the reply-handoff actionRef is
-      // still pinned to `happier.channels` by the result-delivery schema.
-      // Conversation participation itself is open to any host-stamped plugin.
+      // The shared fixture's reply Action belongs to Channels, while a reply
+      // must stay inside its admitting plugin. This path exercises admission
+      // without result delivery; the third-party handoff suite covers replies.
       resultDelivery: { kind: 'none' },
     } as const;
     const execute = vi.fn(async (
@@ -490,9 +507,16 @@ describe('createAutomationConversationActionExecutor', () => {
     ) => {
       expect(request.caller).toEqual(stampedCaller);
       return actionId === 'automation.conversation.targets.list'
-        ? { items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Target' }], nextCursor: null }
+        ? {
+          items: [{
+            automationId: 'automation-1',
+            label: 'Target',
+            execution: { targetType: 'new_session' as const, enabled: true },
+          }],
+          nextCursor: null,
+        }
         : actionId === 'automation.conversation.target.verify'
-          ? { kind: 'verified' as const, templateVersion: 3 }
+          ? { kind: 'verified' as const }
           : { kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const };
     });
     const executor = createAutomationConversationActionExecutor({
@@ -507,17 +531,20 @@ describe('createAutomationConversationActionExecutor', () => {
       input: { limit: 2 },
       caller: thirdPartyCaller,
     })).resolves.toEqual({
-      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Target' }],
+      items: [{
+        automationId: 'automation-1',
+        label: 'Target',
+        execution: { targetType: 'new_session', enabled: true },
+      }],
       nextCursor: null,
     });
     await expect(executor({
       actionId: 'automation.conversation.target.verify',
       input: {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
-        },
+      },
       caller: thirdPartyCaller,
-    })).resolves.toEqual({ kind: 'verified', templateVersion: 3 });
+    })).resolves.toEqual({ kind: 'verified' });
     await expect(executor({
       actionId: 'automation.conversation.admit',
       input: admitInput,
@@ -552,6 +579,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({ kind: 'admitted', runId: 'run-1', checkpointSafe: true });
@@ -584,7 +612,29 @@ describe('createAutomationConversationActionExecutor', () => {
     });
     expect(hostEvidence.automationId).toBe(input.automationId);
     expect(hostEvidence.occurredAt).toBe(input.occurredAt);
-    expect(hostEvidence.occurrenceEvidenceEqualityTag).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(hostEvidence).not.toHaveProperty('triggerId');
+    const conversationEvidence = buildAutomationConversationOccurrenceEvidenceV1({
+      accountMode: 'e2ee',
+      bindingId: input.bindingId,
+      occurrenceId: input.occurrenceId,
+      occurredAt: input.occurredAt,
+      caller: {
+        pluginId: callerMaterialization.pluginId,
+        contributionLocalId: 'provider/observation-ingest-v1',
+        machineId: callerMaterialization.machineId,
+      },
+      sender: input.sender,
+      text: input.text,
+      resultDelivery: { kind: 'none' },
+    });
+    expect(hostEvidence.occurrenceEvidenceEqualityTag).toBe(
+      deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
+        material: account.snapshot.material,
+        accountId: 'account-1',
+        automationId: input.automationId,
+        evidence: conversationEvidence,
+      }),
+    );
     expect(isAutomationTriggerEvidenceCiphertextV1(hostEvidence.triggerEvidenceEnvelope.c)).toBe(true);
     expect(
       isAutomationTriggerEvidenceCiphertextV1(hostEvidence.executionTriggerEvidenceEnvelope.c),
@@ -635,6 +685,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({ kind: 'admitted', runId: 'run-1', checkpointSafe: true });
@@ -664,7 +715,6 @@ describe('createAutomationConversationActionExecutor', () => {
         automationId: input.automationId,
         occurrenceKey: request.hostEvidence.occurrenceKey,
       },
-      templateVersion: input.templateVersion,
       opaqueContext: input.resultDelivery.opaqueContext,
     });
   });
@@ -695,7 +745,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
-        immutableGenerationId: 'generation-caller',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({
@@ -732,7 +782,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
-        immutableGenerationId: 'generation-caller',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({
@@ -743,25 +793,18 @@ describe('createAutomationConversationActionExecutor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('does not make ordinary target reads acquire the durable admission fence', async () => {
-    const execute = vi.fn(async (actionId: string) => (
-      actionId === 'automation.conversation.targets.list'
-        ? { items: [], nextCursor: null }
-        : { kind: 'verified' as const, templateVersion: 3 }
-    ));
+  it('rejects target list and verify when the exact caller materialization is stale before HTTP', async () => {
     const revalidateCallerMaterialization = vi.fn(async () => false);
     const executor = createAutomationConversationActionExecutor({
       credentials,
-      transport: { execute },
       revalidateCallerMaterialization,
-      revalidateCallerImmutableGeneration: async () => false,
-      ...plainAccount,
+      revalidateCallerImmutableGeneration: async () => true,
     });
     const caller = {
       kind: 'plugin',
       pluginId: 'happier.channels',
       contributionLocalId: 'provider/observation-ingest-v1',
-      immutableGenerationId: 'generation-caller',
+      immutableGenerationId: callerImmutableGenerationId,
       materialization: callerMaterialization,
     } as const;
 
@@ -769,15 +812,63 @@ describe('createAutomationConversationActionExecutor', () => {
       actionId: 'automation.conversation.targets.list',
       input: { limit: 2 },
       caller,
-    })).resolves.toEqual({ items: [], nextCursor: null });
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'automation_conversation_caller_materialization_unavailable',
+      error: 'automation_conversation_caller_materialization_unavailable',
+    });
     await expect(executor({
       actionId: 'automation.conversation.target.verify',
-      input: { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      input: { automationId: 'automation-1' },
       caller,
-    })).resolves.toEqual({ kind: 'verified', templateVersion: 3 });
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'automation_conversation_caller_materialization_unavailable',
+      error: 'automation_conversation_caller_materialization_unavailable',
+    });
 
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(revalidateCallerMaterialization).not.toHaveBeenCalled();
+    expect(revalidateCallerMaterialization).toHaveBeenCalledTimes(2);
+    expect(transportMocks.createPublisherHeader).not.toHaveBeenCalled();
+    expect(transportMocks.post).not.toHaveBeenCalled();
+  });
+
+  it('rejects target list and verify when the exact caller generation is stale before HTTP', async () => {
+    const revalidateCallerImmutableGeneration = vi.fn(async () => false);
+    const executor = createAutomationConversationActionExecutor({
+      credentials,
+      revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration,
+    });
+    const caller = {
+      kind: 'plugin',
+      pluginId: 'happier.channels',
+      contributionLocalId: 'provider/observation-ingest-v1',
+      immutableGenerationId: callerImmutableGenerationId,
+      materialization: callerMaterialization,
+    } as const;
+
+    await expect(executor({
+      actionId: 'automation.conversation.targets.list',
+      input: { limit: 2 },
+      caller,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'automation_conversation_caller_generation_unavailable',
+      error: 'automation_conversation_caller_generation_unavailable',
+    });
+    await expect(executor({
+      actionId: 'automation.conversation.target.verify',
+      input: { automationId: 'automation-1' },
+      caller,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'automation_conversation_caller_generation_unavailable',
+      error: 'automation_conversation_caller_generation_unavailable',
+    });
+
+    expect(revalidateCallerImmutableGeneration).toHaveBeenCalledTimes(2);
+    expect(transportMocks.createPublisherHeader).not.toHaveBeenCalled();
+    expect(transportMocks.post).not.toHaveBeenCalled();
   });
 
   it('fails closed when Account currentness cannot be established for an admission', async () => {
@@ -800,6 +891,7 @@ describe('createAutomationConversationActionExecutor', () => {
         kind: 'plugin',
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
@@ -13,6 +13,7 @@ import {
   type PluginInstallReviewPrincipalDigest,
   type PluginInstallReviewPrincipalPresentationV1,
 } from '@happier-dev/protocol';
+import { PluginUiArtifactsManifestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';
@@ -41,9 +42,11 @@ import {
   createDefaultPluginInstallationAvailabilityProjection,
   persistInstallationStateRevision,
   readPreparedImmutablePluginGeneration,
+  readCurrentCommittedPluginGenerations,
   readInstallationStateRevision,
   readPluginRegistryCommitInstallationAuthority,
   type OwnedPreparedImmutablePluginGeneration,
+  type BundledImmutablePluginArtifact,
   type PluginInstallationAvailabilityProjection,
   type PluginInstallationStateRevision,
   PluginInstallationAvailabilityProjectionSchema,
@@ -228,6 +231,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   reconciliationSurfaces?: readonly PluginRegistryReconcileSurface[];
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
   retainedCurrentHostGenerationIds?: readonly string[];
+  bundledArtifacts?: readonly BundledImmutablePluginArtifact[];
+  resolveBundledPackageEntry?: (
+    packageName: string,
+    packageEntryRelativePath: string,
+  ) => Promise<string>;
   runtimeLifecycle?: PluginRegistryRuntimeLifecycle;
   /**
    * Explicit operator recovery start. An unreadable durable current record is
@@ -518,11 +526,85 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return await readCommittedState(commit);
   }
 
-  function projectAvailabilityInventory(
+  async function projectBundledAvailabilityMaterializations(): Promise<readonly Omit<
+    PluginMachineMaterializationV1,
+    'serverIdentityId' | 'machineId'
+  >[]> {
+    const bundledArtifacts = params?.bundledArtifacts ?? [];
+    if (bundledArtifacts.length === 0) return Object.freeze([]);
+    const admitted = await readCurrentCommittedPluginGenerations(paths, {
+      bundledArtifacts,
+      isolateInvalidInstalledGenerations: true,
+      ...(params?.resolveBundledPackageEntry
+        ? { resolveBundledPackageEntry: params.resolveBundledPackageEntry }
+        : {}),
+    });
+    if (!admitted) return Object.freeze([]);
+    const materializations = await Promise.all(bundledArtifacts.map(async (artifact) => {
+      const generation = admitted.generations.get(artifact.record.pluginId);
+      if (
+        !generation
+        || generation.immutableGenerationId !== artifact.record.immutableGenerationId
+      ) {
+        const rejected = admitted.rejectedGenerations.get(artifact.record.pluginId);
+        throw new Error(
+          rejected?.message
+            ?? `Bundled plugin '${artifact.record.pluginId}' was not admitted for Availability`,
+        );
+      }
+      const packageMetadata = JSON.parse(
+        await readFile(join(generation.rootPath, 'package.json'), 'utf8'),
+      ) as unknown;
+      if (
+        typeof packageMetadata !== 'object'
+        || packageMetadata === null
+        || Array.isArray(packageMetadata)
+        || !('name' in packageMetadata)
+        || packageMetadata.name !== artifact.packageName
+        || !('version' in packageMetadata)
+        || typeof packageMetadata.version !== 'string'
+      ) {
+        throw new Error(
+          `Bundled plugin '${artifact.record.pluginId}' has invalid admitted package metadata`,
+        );
+      }
+      const uiManifestRelativePath = 'dist/happier-plugin-ui/ui-artifacts.json';
+      const uiArtifacts = artifact.record.files.some(
+        (file) => file.relativePath === uiManifestRelativePath,
+      )
+        ? PluginUiArtifactsManifestV1Schema.parse(JSON.parse(
+            await readFile(join(generation.rootPath, uiManifestRelativePath), 'utf8'),
+          ) as unknown).entries.map((entry) => Object.freeze({
+            contributionId: entry.contributionId,
+            tier: entry.tier,
+            platform: entry.platform,
+            artifactDigest: entry.digest,
+          }))
+        : [];
+      return Object.freeze({
+        // The exact accepted custody occurrence is also the machine
+        // materialization occurrence. A replacement generation must never
+        // retain the predecessor's executable coordinate merely because the
+        // package name stayed stable.
+        materializationId: `bundled-first-party:${artifact.record.immutableGenerationId}`,
+        pluginId: artifact.record.pluginId,
+        version: packageMetadata.version,
+        sourceClass: 'bundledFirstParty' as const,
+        portableRelease: false,
+        uiArtifacts: Object.freeze(uiArtifacts),
+        enabled: true,
+        trustState: 'trusted' as const,
+        observedAt: nowMs(),
+      });
+    }));
+    return Object.freeze(materializations);
+  }
+
+  async function projectAvailabilityInventory(
     current: Awaited<ReturnType<typeof readCommittedState>>,
-  ): PluginRegistryAvailabilityInventory {
+  ): Promise<PluginRegistryAvailabilityInventory> {
     const releasePublications: PluginAvailabilityReleasePublishActionInputV1[] = [];
-    const materializations = Object.entries(current.revision.plugins).map(([
+    const installedMaterializations = Object.entries(current.revision.plugins).map(([
       pluginId,
       installation,
     ]) => {
@@ -590,7 +672,10 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           `${right.facts.ref.pluginId}\u0000${right.facts.ref.version}`,
         )
       ))),
-      materializations: Object.freeze([...materializations].sort((left, right) => (
+      materializations: Object.freeze([
+        ...installedMaterializations,
+        ...await projectBundledAvailabilityMaterializations(),
+      ].sort((left, right) => (
         left.materializationId.localeCompare(right.materializationId)
       ))),
     });
@@ -1618,15 +1703,15 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     readAvailabilityInventory: async () => {
       const current = await readPersistedCurrent();
       return current
-        ? projectAvailabilityInventory(current)
+        ? await projectAvailabilityInventory(current)
         : Object.freeze({
             revision: 0,
             releasePublications: Object.freeze([]),
-            materializations: Object.freeze([]),
+            materializations: await projectBundledAvailabilityMaterializations(),
           });
     },
     readAvailabilityInventoryForCommit: async (record) => (
-      projectAvailabilityInventory(await readCommittedState(record))
+      await projectAvailabilityInventory(await readCommittedState(record))
     ),
     readSnapshot: async () => {
       const current = await readPersistedCurrent();

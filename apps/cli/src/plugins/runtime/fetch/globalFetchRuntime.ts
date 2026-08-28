@@ -56,6 +56,13 @@ function createRedirectRefusedError(): PluginError {
   });
 }
 
+function createValidatedAddressRequiredError(): PluginError {
+  return new PluginError({
+    code: 'plugin_fetch_adapter_unavailable',
+    message: 'Plugin fetch connection has no validated network address',
+  });
+}
+
 function createRequestAbortController(signal: AbortSignal | undefined): Readonly<{
   controller: AbortController;
   dispose(): void;
@@ -184,7 +191,10 @@ export function createGlobalFetchRuntime(
     ) {
       const requestAbort = createRequestAbortController(options.signal);
       try {
-        if (options.validatedAddresses && options.validatedAddresses.length > 0) {
+        if (options.validatedAddresses !== undefined) {
+          if (options.validatedAddresses.length === 0) {
+            throw createValidatedAddressRequiredError();
+          }
           const response = await openPinnedStream({
             url: request.url,
             validatedAddresses: options.validatedAddresses,

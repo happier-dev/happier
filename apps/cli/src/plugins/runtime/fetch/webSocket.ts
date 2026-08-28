@@ -1,4 +1,4 @@
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
@@ -16,6 +16,8 @@ import WebSocket from 'ws';
 export type PluginWebSocketRuntimeOptions = PluginCancellationOptions & Readonly<{
     /** Host-owned lifecycle signal; never exposed through the public SDK. */
     lifecycleSignal?: AbortSignal;
+    /** Exact address set admitted for this socket open; never exposed through the public SDK. */
+    validatedAddresses?: readonly string[];
 }>;
 
 export type NormalizedPluginWebSocketOpenInput = Readonly<{
@@ -468,6 +470,14 @@ export async function createPluginWebSocketConnection(
     assertNotAborted(options.signal);
     assertNotAborted(options.lifecycleSignal);
 
+    const pinnedAddress = options.validatedAddresses?.[0];
+    if (options.validatedAddresses !== undefined && pinnedAddress === undefined) {
+        throw pluginWebSocketError(
+            'plugin_websocket_connect_failed',
+            'Plugin WebSocket connection has no validated network address',
+        );
+    }
+
     const driverOptions: BoundedWsClientOptions = Object.freeze({
         headers: normalized.headers,
         followRedirects: false,
@@ -483,6 +493,22 @@ export async function createPluginWebSocketConnection(
         // default a plugin connection can inherit.
         rejectUnauthorized: true,
         skipUTF8Validation: false,
+        ...(pinnedAddress === undefined ? {} : {
+            // The request retains the original URL hostname, so Host and TLS
+            // SNI/certificate verification remain name-based. Only socket
+            // resolution is constrained to the addresses the policy owner
+            // admitted immediately before this open.
+            lookup: ((_hostname, lookupOptions, callback) => {
+                if (typeof lookupOptions === 'object' && lookupOptions.all === true) {
+                    callback(null, options.validatedAddresses!.map((address) => ({
+                        address,
+                        family: address.includes(':') ? 6 as const : 4 as const,
+                    })));
+                    return;
+                }
+                callback(null, pinnedAddress, pinnedAddress.includes(':') ? 6 : 4);
+            }) satisfies LookupFunction,
+        }),
     });
     let socket: WebSocket;
     try {

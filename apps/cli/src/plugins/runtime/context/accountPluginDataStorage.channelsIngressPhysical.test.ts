@@ -439,6 +439,7 @@ describe('Channels C3 physical E2EE ingress batches', () => {
                     pluginId: 'happier.channel.telegram',
                 },
             },
+            invokedAtMs: 1,
             signal: new AbortController().signal,
             services: { storage: { account } } as PluginServices,
         } satisfies PluginInvocationContext;

@@ -73,7 +73,7 @@ vi.mock('../projection/registry/sources/generatedBundledPluginArtifacts', async 
 });
 
 vi.mock('../projection/registry/sources/generatedBundledPlugins', () => ({
-  BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: Object.freeze([]),
+  BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: Object.freeze([]),
 }));
 vi.mock('../projection/registry/sources/generatedBundledPluginManifests', () => ({
   BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: Object.freeze([]),

@@ -414,12 +414,11 @@ describe('retained Agent optional HostAccess', () => {
                 family: 'agents',
                 localId: AGENT_ID,
             }]);
-            expect(
-                hRegistry.contributes.agentDefinitionsById
-                    .get(AGENT_ID)
-                    ?.catalogEntry
-                    .connectedAccountRequestAuthUses,
-            ).toMatchObject([{
+            const currentHAgent = hRegistry.contributes.agentDefinitionsById.get(AGENT_ID);
+            if (!currentHAgent?.catalogEntry) {
+                throw new Error('Expected current H Agent catalog entry');
+            }
+            expect(currentHAgent.catalogEntry.connectedAccountRequestAuthUses).toMatchObject([{
                 purpose: 'request-auth-h',
             }]);
             const acquireRetainedGContributions =
@@ -436,12 +435,11 @@ describe('retained Agent optional HostAccess', () => {
             if (!retainedGContributions) {
                 throw new Error('Expected retained G Agent purpose contributions');
             }
-            expect(
-                retainedGContributions.contributes.agentDefinitionsById
-                    .get(AGENT_ID)
-                    ?.catalogEntry
-                    .connectedAccountRequestAuthUses,
-            ).toMatchObject([{
+            const retainedGAgent = retainedGContributions.contributes.agentDefinitionsById.get(AGENT_ID);
+            if (!retainedGAgent?.catalogEntry) {
+                throw new Error('Expected retained G Agent catalog entry');
+            }
+            expect(retainedGAgent.catalogEntry.connectedAccountRequestAuthUses).toMatchObject([{
                 purpose: 'request-auth-g',
             }]);
             expect(retainedGContributions.contributes.actions).toEqual([]);

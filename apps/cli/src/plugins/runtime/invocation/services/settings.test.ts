@@ -362,6 +362,65 @@ describe('stable typed settings foundation', () => {
         expect(subscribers.size).toBe(0);
     });
 
+    it('settles an ambiguous Account write only through an explicit readback postcondition', async () => {
+        const records = [
+            { status: 'present' as const, revision: 3, values: { codexBackendMode: 'acp' } },
+            { status: 'present' as const, revision: 4, values: { codexBackendMode: 'appServer' } },
+        ];
+        const adapter = {
+            async readRecord() {
+                return records.shift() ?? { status: 'unavailable' as const };
+            },
+            async writeRecord() {
+                return { status: 'outcomeUnknown' as const };
+            },
+        };
+        const model = createStablePluginSettingsModel({
+            pluginId: 'happier.agent.codex',
+            contribution: {
+                id: 'agent-settings',
+                version: 1,
+                title: 'Codex settings',
+                target: { kind: 'agent', agent: 'codex' },
+                scope: 'account',
+                fields: [{
+                    id: 'codexBackendMode',
+                    title: 'Backend mode',
+                    schema: { type: 'string', enum: ['appServer', 'acp'] },
+                    default: 'appServer',
+                }],
+                presentation: { sections: [], subagentSections: [] },
+            },
+        });
+        const service = createStablePluginSettingsOwner({
+            recordStore: createAccountSettingsBackedSettingsRecordStore(adapter),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        await expect(service.set('codexBackendMode', 'appServer')).resolves.toEqual({
+            scope: { kind: 'account' },
+            revision: '4',
+        });
+
+        const oneShotAdapter = {
+            async readRecord() {
+                return { status: 'present' as const, revision: 4, values: { codexBackendMode: 'appServer' } };
+            },
+            async writeRecord() {
+                return { status: 'outcomeUnknown' as const };
+            },
+        };
+        const oneShotService = createStablePluginSettingsOwner({
+            recordStore: createAccountSettingsBackedSettingsRecordStore(oneShotAdapter),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+        await expect(oneShotService.set('codexBackendMode', 'acp', { expectedRevision: '4' }))
+            .rejects.toMatchObject({
+                code: 'plugin_settings_outcome_unknown',
+                details: { lastKnownRevision: '4' },
+            });
+    });
+
     it('rejects retired Settings scopes instead of translating them into a supported owner', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-scopes-'));
         const recordStore = createPluginStorageBackedSettingsRecordStore({

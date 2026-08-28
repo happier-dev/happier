@@ -10,11 +10,9 @@ import {
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
   compilePluginJsonSchema,
   openAutomationTriggerDefinitionStoredEnvelopeV1,
-  parseAutomationRunExecutionRecipeV1,
-  serializeAutomationRunExecutionRecipeV1,
-  validateAutomationRunExecutionRecipeOuterV1,
   type AccountEncryptionCurrentnessResponse,
   type AccountScopedCryptoMaterialSnapshotV1,
+  type AutomationEventActionHttpCallerV1,
   type AutomationEventDeclarationReleaseV1,
   type AutomationEventStoredDefinitionProjectionV1,
   type AutomationEventSourcesListInputV1,
@@ -45,7 +43,7 @@ import {
 
 export type AutomationEventStoredDefinitionsHttpTransportV1 = Readonly<{
   read(params: Readonly<{
-    caller: PluginMachineMaterializationRefV1;
+    caller: AutomationEventActionHttpCallerV1;
     input: AutomationEventSourcesListInputV1;
     webhookInvocationReference?: PluginWebhookInvocationReferenceV1;
     signal?: AbortSignal;
@@ -59,6 +57,7 @@ export type AutomationEventStoredDefinitionsHttpTransportV1 = Readonly<{
  */
 export function createAutomationEventStoredDefinitionsHttpTransportV1(params: Readonly<{
   credentials: StoredCredentials;
+  revalidateCaller(caller: AutomationEventActionHttpCallerV1, signal?: AbortSignal): Promise<boolean>;
 }>): AutomationEventStoredDefinitionsHttpTransportV1 {
   return Object.freeze({
     async read(request) {
@@ -66,7 +65,8 @@ export function createAutomationEventStoredDefinitionsHttpTransportV1(params: Re
         v: 1,
         caller: {
           pluginId: request.caller.pluginId,
-          materialization: request.caller,
+          immutableGenerationId: request.caller.immutableGenerationId,
+          materialization: request.caller.materialization,
         },
         input: request.input,
         ...(request.webhookInvocationReference === undefined
@@ -79,6 +79,10 @@ export function createAutomationEventStoredDefinitionsHttpTransportV1(params: Re
         body,
       });
       if (!publisherHeader) throw new Error('automation_event_publisher_proof_unavailable');
+      request.signal?.throwIfAborted();
+      if (!await params.revalidateCaller(request.caller, request.signal)) {
+        throw new Error('automation_event_caller_not_current');
+      }
       request.signal?.throwIfAborted();
       const response = await axios.post(
         `${resolveServerHttpBaseUrl()}${AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1}`,
@@ -123,7 +127,8 @@ async function projectStoredDefinition(params: Readonly<{
   const binding = AutomationTriggerDefinitionBindingV1Schema.parse({
     v: 1,
     automationId: params.storedDefinition.automationId,
-    templateVersion: params.storedDefinition.templateVersion,
+    triggerId: params.storedDefinition.triggerId,
+    triggerRevision: params.storedDefinition.triggerRevision,
     triggerKind: 'pluginEvent',
     eventRef: params.storedDefinition.eventRef,
     sourceSelectorId: params.storedDefinition.sourceSelectorId,
@@ -141,23 +146,6 @@ async function projectStoredDefinition(params: Readonly<{
     opened.definition,
   );
   if (!payload.success) return null;
-  const parsedExecutionRecipe = parseAutomationRunExecutionRecipeV1(
-    params.storedDefinition.executionRecipe,
-  );
-  if (parsedExecutionRecipe.kind !== 'available') return null;
-  const executionRecipe = validateAutomationRunExecutionRecipeOuterV1({
-    recipe: parsedExecutionRecipe.recipe,
-    accountCurrentness: accountEncryption.witness,
-  });
-  if (
-    executionRecipe.kind !== 'available'
-    || executionRecipe.recipe.templateVersion !== params.storedDefinition.templateVersion
-    || executionRecipe.recipe.triggerEvidence !== null
-  ) return null;
-  const canonicalExecutionRecipe = serializeAutomationRunExecutionRecipeV1(
-    executionRecipe.recipe,
-  );
-  if (canonicalExecutionRecipe.kind !== 'available') return null;
   let payloadValidator: PluginJsonSchemaValidator;
   try {
     payloadValidator = compilePluginJsonSchema(params.storedDefinition.payloadSchema);
@@ -167,7 +155,8 @@ async function projectStoredDefinition(params: Readonly<{
   if (params.transport.kind !== params.storedDefinition.observationTransport.kind) return null;
   const projected = AutomationEventSourceDefinitionV1Schema.safeParse({
     automationId: params.storedDefinition.automationId,
-    templateVersion: params.storedDefinition.templateVersion,
+    triggerId: params.storedDefinition.triggerId,
+    triggerRevision: params.storedDefinition.triggerRevision,
     eventRef: params.storedDefinition.eventRef,
     sourceInstanceId: payload.data.sourceInstanceId,
     sourceSelectorId: params.storedDefinition.sourceSelectorId,
@@ -185,7 +174,6 @@ async function projectStoredDefinition(params: Readonly<{
         ...projected.data,
         webhookRoutingSourceInstanceId: payload.data.webhookRoutingSourceInstanceId,
       },
-      executionRecipe: canonicalExecutionRecipe.serialized,
       payloadValidator,
       eventDeclarationRelease: params.eventDeclarationRelease,
     };
@@ -193,7 +181,6 @@ async function projectStoredDefinition(params: Readonly<{
   return payload.data.webhookRoutingSourceInstanceId === undefined
     ? {
       definition: projected.data,
-      executionRecipe: canonicalExecutionRecipe.serialized,
       payloadValidator,
       eventDeclarationRelease: params.eventDeclarationRelease,
     }
@@ -210,11 +197,16 @@ async function projectStoredDefinition(params: Readonly<{
 export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly<{
   credentials: StoredCredentials;
   caller: PluginMachineMaterializationRefV1;
+  immutableGenerationId: string;
   transport: AutomationEventSourcesListTransportV1;
   generationSignal: AbortSignal;
   isGenerationCurrent(): boolean;
   revalidateCallerMaterialization(
     caller: PluginMachineMaterializationRefV1,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
+  revalidateCallerImmutableGeneration(
+    caller: Readonly<{ pluginId: string; immutableGenerationId: string }>,
     signal?: AbortSignal,
   ): Promise<boolean>;
   readStoredDefinitions?: AutomationEventStoredDefinitionsHttpTransportV1['read'];
@@ -228,6 +220,15 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
   const readStoredDefinitions = params.readStoredDefinitions
     ?? createAutomationEventStoredDefinitionsHttpTransportV1({
       credentials: params.credentials,
+      revalidateCaller: async (caller, signal) => (
+        params.isGenerationCurrent()
+        && await params.revalidateCallerMaterialization(caller.materialization, signal)
+        && await params.revalidateCallerImmutableGeneration({
+          pluginId: caller.pluginId,
+          immutableGenerationId: caller.immutableGenerationId,
+        }, signal)
+        && params.isGenerationCurrent()
+      ),
     }).read;
   const resolveAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
     ?? (async (signal?: AbortSignal) => await fetchAccountEncryptionCurrentness({
@@ -256,7 +257,14 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
     isGenerationCurrent: params.isGenerationCurrent,
     revalidateCallerMaterialization: params.revalidateCallerMaterialization,
     resolveAccountEncryption,
-    readStoredDefinitions,
+    readStoredDefinitions: async (request) => await readStoredDefinitions({
+      ...request,
+      caller: {
+        pluginId: params.caller.pluginId,
+        immutableGenerationId: params.immutableGenerationId,
+        materialization: params.caller,
+      },
+    }),
     projectStoredDefinition: async ({
       storedDefinition,
       eventDeclarationRelease,

@@ -4,8 +4,14 @@ import type {
     NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginSettingsContributionV2,
 } from '@happier-dev/protocol';
-import { preparePluginJsonSchema } from '@happier-dev/protocol';
+import {
+    preparePluginJsonSchema,
+} from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import {
+    defineProtocolObject,
+    defineProtocolString,
+} from '@happier-dev/plugin-sdk/protocol';
 
 import {
     createStablePluginDeclarativeModel,
@@ -179,12 +185,10 @@ describe('stable declarative plugin model', () => {
     });
 
   it('projects a target-local Surface only from the exact host-stamped inventory', () => {
-    const inputValidation = preparePluginJsonSchema({
-      type: 'object',
-      properties: { reviewId: { type: 'string' } },
-      required: ['reviewId'],
-      additionalProperties: false,
-    });
+    const inputNormalizer = defineProtocolObject({
+      reviewId: defineProtocolString(),
+    }, { policy: 'closed' });
+    const inputValidation = preparePluginJsonSchema(inputNormalizer.jsonSchema);
     const model = createStablePluginDeclarativeModel({
       pluginId: 'com.acme.dashboard',
       generation: 'generation-dashboard-a',
@@ -219,6 +223,7 @@ describe('stable declarative plugin model', () => {
         },
         inputSchema: inputValidation.jsonSchema,
         inputValidation,
+        inputNormalizer,
       }],
       availability: { visible: true, enabledActions: {} },
     });

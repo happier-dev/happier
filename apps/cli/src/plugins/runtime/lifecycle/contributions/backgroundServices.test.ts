@@ -228,10 +228,13 @@ describe('background service runner host', () => {
             agentDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
+        const terminalFailure = vi.fn();
         const activated = await activatePluginRuntimeRegistry({
             contributes,
             generation: 1,
             invocationServices,
+            onTerminalActivationFailure: terminalFailure,
+            adoptActivationComponent: vi.fn(),
             resolveActivationSource: () => ({
                 kind: 'bundled',
                 moduleId: '@happier-dev/plugins-background-host-access/daemon',
@@ -245,6 +248,7 @@ describe('background service runner host', () => {
 
         activated.startAdoptedBackgroundServices();
         await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(terminalFailure).toHaveBeenCalledWith(pluginId));
 
         expect(policyCalls).toEqual([{
             target: {
@@ -268,6 +272,17 @@ describe('background service runner host', () => {
             },
             networkClientRequestIds: ['gateway'],
         });
+        expect(activated.activatedPluginIds.has(pluginId)).toBe(false);
+        expect(activated.failedActivationPluginIds.has(pluginId)).toBe(true);
+        expect(activated.targetActivationFacts).toContainEqual(expect.objectContaining({
+            pluginId,
+            status: 'unavailable',
+            bound: [],
+            diagnostics: expect.arrayContaining([expect.objectContaining({
+                code: 'plugin_activation_failed',
+                message: expect.stringMatching(/background service 'gateway-supervisor' stopped/i),
+            })]),
+        }));
         await activated.dispose();
     });
 
@@ -549,6 +564,7 @@ describe('background service runner host', () => {
                             qualifiedId: `${input.pluginId}/backgroundServices/${input.localId}`,
                         }),
                         surface: 'background' as const,
+                        invokedAtMs: 1,
                         signal: input.signal,
                         services: createUnavailablePluginServices(),
                         ui: createPluginInvocationPresentation({
@@ -597,6 +613,7 @@ describe('background service runner host', () => {
                         plugin: Object.freeze({ id: input.pluginId, version: input.pluginVersion }),
                         contribution: Object.freeze({ id: input.localId, qualifiedId: input.localId }),
                         surface: 'background' as const,
+                        invokedAtMs: 1,
                         signal: input.signal,
                         services: createUnavailablePluginServices(),
                         ui: createPluginInvocationPresentation({ currentSession: null, signal: input.signal, isGenerationCurrent: input.isGenerationCurrent }),
@@ -632,6 +649,7 @@ describe('background service runner host', () => {
                         plugin: Object.freeze({ id: input.pluginId, version: input.pluginVersion }),
                         contribution: Object.freeze({ id: input.localId, qualifiedId: input.localId }),
                         surface: 'background' as const,
+                        invokedAtMs: 1,
                         signal: input.signal,
                         services: createUnavailablePluginServices(),
                         ui: createPluginInvocationPresentation({ currentSession: null, signal: input.signal, isGenerationCurrent: input.isGenerationCurrent }),
@@ -720,6 +738,7 @@ describe('background service runner host', () => {
                     plugin: seed.plugin,
                     contribution: seed.contribution,
                     surface: 'background' as const,
+                    invokedAtMs: 1,
                     signal: seed.signal,
                     services: owner.createServices(
                         seed,

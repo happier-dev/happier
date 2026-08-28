@@ -1,6 +1,6 @@
 import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol/installables';
 
-import { BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS } from './sources/generatedBundledPlugins';
+import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from './sources/generatedBundledPlugins';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 import { projectBuiltInAgents } from './builtIn/agents';
 import { loadBundledPluginLocators } from './builtIn/locators';
@@ -15,7 +15,9 @@ type ResolvedBuiltInContributionInputs = ResolvedContributionInputs & Required<
 
 /**
  * Projects first-party packages through the same canonical manifest path as
- * installed plugins, then overlays only host-owned executable Agent facts.
+ * installed plugins, then joins only host-owned canonical identity and proven
+ * bundled backend-compatibility facts. Author-owned CLI, catalog, capability,
+ * and presentation facts remain on the public manifest projection.
  */
 export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs {
     const loadedPlugins = loadBundledPluginLocators(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS);
@@ -28,7 +30,7 @@ export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs
     });
     const agents = projectBuiltInAgents({
         manifestAgents: projected.agents ?? EMPTY_CONTRIBUTIONS,
-        implementationBindings: BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
+        registrationBindings: BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
     });
 
     return Object.freeze({

@@ -397,6 +397,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 plugin: seed.plugin,
                 contribution: seed.contribution,
                 surface: seed.surface,
+                invokedAtMs: lifetime.invokedAtMs,
                 signal,
                 services,
                 ui: createPluginInvocationPresentation({
@@ -561,6 +562,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 plugin: seed.plugin,
                 contribution: seed.contribution,
                 surface: seed.surface,
+                invokedAtMs: lifetime.invokedAtMs,
                 signal,
                 services,
                 ui: createPluginInvocationPresentation({
@@ -629,15 +631,16 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     );
                 }
                 const options = input.signal ? { signal: input.signal } : undefined;
+                const operation = input.operation;
                 let result: unknown;
                 let invoked = false;
-                switch (input.operation.kind) {
+                switch (operation.kind) {
                     case 'beginOAuth':
                         if (mode.kind !== 'oauthAuthorizationCode') break;
-                        params.registerRawForRedaction(seed, input.operation.request.state);
+                        params.registerRawForRedaction(seed, operation.request.state);
                         result = await invokeCurrentConnectedAccountCallback(
                             assertCurrent,
-                            () => mode.begin(input.operation.request, context, options),
+                            () => mode.begin(operation.request, context, options),
                         );
                         invoked = true;
                         break;
@@ -656,7 +659,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         ) break;
                         for (const field of input.admission.descriptor.fields) {
                             if (!field.secret) continue;
-                            const value = input.operation.fields[field.id];
+                            const value = operation.fields[field.id];
                             if (value !== undefined) {
                                 params.registerRawForRedaction(seed, value);
                             }
@@ -664,7 +667,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         result = await invokeCurrentConnectedAccountCallback(
                             assertCurrent,
                             () => mode.complete(
-                                Object.freeze({ fields: input.operation.fields }),
+                                Object.freeze({ fields: operation.fields }),
                                 context,
                                 options,
                             ),
@@ -673,13 +676,13 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         break;
                     case 'completeOAuth':
                         if (mode.kind !== 'oauthAuthorizationCode') break;
-                        params.registerRawForRedaction(seed, input.operation.completion.code);
-                        params.registerRawForRedaction(seed, input.operation.completion.callbackUrl);
-                        params.registerRawForRedaction(seed, input.operation.completion.state);
-                        params.registerRawForRedaction(seed, input.operation.completion.pkceVerifier);
+                        params.registerRawForRedaction(seed, operation.completion.code);
+                        params.registerRawForRedaction(seed, operation.completion.callbackUrl);
+                        params.registerRawForRedaction(seed, operation.completion.state);
+                        params.registerRawForRedaction(seed, operation.completion.pkceVerifier);
                         result = await invokeCurrentConnectedAccountCallback(
                             assertCurrent,
-                            () => mode.complete(input.operation.completion, context, options),
+                            () => mode.complete(operation.completion, context, options),
                         );
                         invoked = true;
                         break;
@@ -735,21 +738,22 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             const { lease, seed, context, assertCurrent, lifetime } = await createEstablishedContext(input);
             try {
                 const options = input.signal ? { signal: input.signal } : undefined;
+                const operation = input.operation;
                 let result: unknown;
                 let quotaLeafUnavailable = false;
-                switch (input.operation.kind) {
+                switch (operation.kind) {
                     case 'refresh':
                         result = await invokeCurrentConnectedAccountCallback(
                             assertCurrent,
                             () => lease.runtime.refresh(Object.freeze({
                                 ...context,
                                 operation: Object.freeze({
-                                    operationId: input.operation.operationId,
+                                    operationId: operation.operationId,
                                     configurationRevision:
                                         input.target.expectedRuntimeConfigurationRevision,
                                 }),
                                 stagedCredentials: guardStagedCredentials(
-                                    input.operation.stagedCredentials,
+                                    operation.stagedCredentials,
                                     assertCurrent,
                                     (value) => params.registerRawForRedaction(seed, value),
                                 ),
@@ -789,7 +793,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         result = await invokeCurrentConnectedAccountCallback(
                             assertCurrent,
                             () => lease.runtime.materialize(
-                                input.operation.request,
+                                operation.request,
                                 context,
                                 options,
                             ),
@@ -798,7 +802,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 }
                 const redactDiagnosticText = params.redactDiagnosticText;
                 const snapshot = snapshotConnectedAccountEstablishedResult(
-                    input.operation,
+                    operation,
                     result,
                     Object.freeze({
                         quotaLeafUnavailable,

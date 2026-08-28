@@ -889,7 +889,7 @@ describe('immutable plugin generation store', () => {
     }
   });
 
-  it('admits bundled structural facts without rehashing or scanning its package tree', async () => {
+  it('adopts bundled structural facts into immutable daemon custody without recurring source scans', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-'));
     const packageRoot = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-package-'));
     const paths = resolvePluginStorePaths({ happyHomeDir });
@@ -922,30 +922,40 @@ describe('immutable plugin generation store', () => {
       const current = await readCurrentCommittedPluginGenerations(paths, options);
       expect(current?.generations.get(record.pluginId)).toMatchObject({
         immutableGenerationId: record.immutableGenerationId,
-        rootPath: await realpath(packageRoot),
+        rootPath: join(paths.generationsDir, record.immutableGenerationId),
       });
+      await expect(readFile(join(
+        paths.generationsDir,
+        record.immutableGenerationId,
+        'dist/index.js',
+      ), 'utf8')).resolves.toBe('export default 1');
       await expect(current?.isCurrent()).resolves.toBe(true);
 
       await writeFile(join(packageRoot, 'dist', 'unreviewed.mjs'), 'export default 2', 'utf8');
       await writeFile(packageEntryPath, 'export default 2', 'utf8');
       await expect(current?.isCurrent()).resolves.toBe(true);
+      await expect(readFile(join(
+        paths.generationsDir,
+        record.immutableGenerationId,
+        'dist/index.js',
+      ), 'utf8')).resolves.toBe('export default 1');
 
       await rm(manifestPath);
       // Ordinary serving currentness is desired/applied identity, not a
-      // recurring package-tree verifier. A fresh admission still diagnoses
-      // the missing manifest below.
+      // recurring package-tree verifier. A fresh read reuses the exact private
+      // custody rather than making the mutable package tree authoritative.
       await expect(current?.isCurrent()).resolves.toBe(true);
       const missingManifest = await readCurrentCommittedPluginGenerations(paths, options);
-      expect(missingManifest?.generations.size).toBe(0);
-      expect([...missingManifest!.unavailableBundledPackageNames])
-        .toEqual(['@happier-dev/plugins-review-fixture']);
+      expect(missingManifest?.generations.get(record.pluginId)?.rootPath)
+        .toBe(join(paths.generationsDir, record.immutableGenerationId));
+      expect([...missingManifest!.unavailableBundledPackageNames]).toEqual([]);
 
       await writeFile(manifestPath, '{}', 'utf8');
       await rm(packageEntryPath);
       const missingEntry = await readCurrentCommittedPluginGenerations(paths, options);
-      expect(missingEntry?.generations.size).toBe(0);
-      expect([...missingEntry!.unavailableBundledPackageNames])
-        .toEqual(['@happier-dev/plugins-review-fixture']);
+      expect(missingEntry?.generations.get(record.pluginId)?.rootPath)
+        .toBe(join(paths.generationsDir, record.immutableGenerationId));
+      expect([...missingEntry!.unavailableBundledPackageNames]).toEqual([]);
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(packageRoot, { recursive: true, force: true });

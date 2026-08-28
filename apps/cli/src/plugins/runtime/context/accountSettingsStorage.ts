@@ -9,6 +9,7 @@ import {
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
     updateAccountSettingsV2Once,
+    updateAccountSettingsV2OnceAgainstLatest,
     updateAccountSettingsV2WithRetry,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import type {
@@ -194,16 +195,16 @@ export async function updateActivePluginAccountSettings(
         deps.assertCurrent?.();
         return isPublicationCurrent();
     };
-    const result = await updateAccountSettingsV2WithRetry({
+    const common = {
         credentials,
-        ...(typeof mutation === 'function'
-            ? { mutate: mutation }
-            : { mutation }),
         deps: deps.accountSettingsUpdateDeps,
         shouldSubmit,
         shouldCommit: isPublicationCurrent,
         ...(deps.signal ? { signal: deps.signal } : {}),
-    });
+    };
+    const result = typeof mutation === 'function'
+        ? await updateAccountSettingsV2OnceAgainstLatest({ ...common, mutate: mutation })
+        : await updateAccountSettingsV2WithRetry({ ...common, mutation });
     if (isSettledSuccess(result)) {
         publishSettledActiveSnapshot({
             credentials,

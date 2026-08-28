@@ -43,7 +43,10 @@ import {
   preparePluginAuthorDependencies,
   runPluginUiArtifactBuild,
 } from '../authoring/toolchain';
-import { isPluginDaemonOutputManifestPath } from '../authoring/daemonOutputManifest';
+import {
+  cleanupPluginDaemonOutputManifest,
+  isPluginDaemonOutputManifestPath,
+} from '../authoring/daemonOutputManifest';
 import { generatePluginActionContracts } from '../authoring/actionContracts';
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../runtime/activationSources';
 
@@ -356,6 +359,34 @@ async function collectSelectedFiles(params: Readonly<{
   return Object.freeze([...selected].sort(compareCodeUnits));
 }
 
+async function selectAuthorOwnedPackFiles(params: Readonly<{
+  packageRootPath: string;
+  selectors: readonly string[];
+  generatedDaemonEntrypoint: string | null;
+}>): Promise<readonly string[]> {
+  if (!params.generatedDaemonEntrypoint) return params.selectors;
+  const generatedDaemonEntrypoint = params.generatedDaemonEntrypoint.replace(/^\.\//u, '');
+  const authorOwnedSelectors: string[] = [];
+  for (const selector of params.selectors) {
+    const selectsGeneratedDaemonOutput = generatedDaemonEntrypoint === selector
+      || generatedDaemonEntrypoint.startsWith(`${selector}/`);
+    if (
+      selectsGeneratedDaemonOutput
+      && !(await pathExists(join(params.packageRootPath, ...selector.split('/'))))
+    ) {
+      // Code-defined packages name their generated daemon directory in
+      // `package.json#files` before it exists (the canonical scaffold uses
+      // `dist`). The pack owner emits that output directly into staging below
+      // and rewrites `files` from its exact outputs. Only defer this proven
+      // generated selector; every author-owned selector still receives the
+      // ordinary existence and symbolic-link validation.
+      continue;
+    }
+    authorOwnedSelectors.push(selector);
+  }
+  return Object.freeze(authorOwnedSelectors);
+}
+
 function isInternalPluginPackPath(relativePath: string): boolean {
   const normalizedPath = relativePath.replaceAll('\\', '/');
   // Toolchain metadata is never a public plugin artifact. Keep this
@@ -532,6 +563,11 @@ async function preparePackOperationAuthoringSource(
   });
   if (!preparation.ok) return [createDiagnostic(preparation.diagnostic.message)];
 
+  // Retire only outputs claimed by the preceding daemon bundle before the
+  // current UI build and archive selection. This preserves author-owned and UI
+  // files that share `dist` while preventing a prior daemon/chunk graph from
+  // entering the new archive ahead of the freshly staged runtime below.
+  await cleanupPluginDaemonOutputManifest(preparation.projectRoot);
   const uiBuild = await runPluginUiArtifactBuild({
     projectRoot: preparation.projectRoot,
   });
@@ -646,9 +682,16 @@ export async function packLocalPlugin(params: Readonly<{
         packageRootPath: resolvedSource.pluginRootPath,
         pluginVersion: resolvedSource.manifest.version,
       });
-      const selectedFiles = await collectSelectedFiles({
+      const authorOwnedSelectors = await selectAuthorOwnedPackFiles({
         packageRootPath: resolvedSource.pluginRootPath,
         selectors: packageContract.files,
+        generatedDaemonEntrypoint: resolvedSource.authorEntryPath === null
+          ? null
+          : (resolvedSource.manifest.entrypoints?.daemon ?? null),
+      });
+      const selectedFiles = await collectSelectedFiles({
+        packageRootPath: resolvedSource.pluginRootPath,
+        selectors: authorOwnedSelectors,
       });
       const filteredPackFiles = filterInternalPluginPackFiles({
         selectedFiles,

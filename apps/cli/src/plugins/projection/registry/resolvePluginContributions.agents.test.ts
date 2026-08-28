@@ -217,8 +217,8 @@ describe('resolved plugin Agent projection', () => {
         try {
             delete process.env.ACME_API_KEY;
             await expect(authSpec?.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/acme' })).resolves.toMatchObject({
-                state: 'unknown',
-                reason: 'unsupported',
+                state: 'logged_out',
+                reason: 'missing_credentials',
             });
             process.env.ACME_API_KEY = 'secret';
             await expect(authSpec?.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/acme' })).resolves.toMatchObject({

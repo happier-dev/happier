@@ -5,6 +5,7 @@ import {
     createPluginActionInvocation,
     PluginHostAccessRequestV2Schema,
     type PluginActionPresentUserGatePolicy,
+    type PluginActionInputParser,
 } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -95,6 +96,7 @@ export type TargetActionInvocationRegistration = Readonly<{
     immutableGenerationId?: string;
     localId: string;
     definition: TargetActionDefinition;
+    inputParser?: PluginActionInputParser;
     handler: ActionHandler<JsonValue, JsonValue | void>;
 }>;
 
@@ -343,7 +345,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             && previous.registration.generation === registration.generation
             && previous.registration.immutableGenerationId === registration.immutableGenerationId
             && previous.registration.definition.inputSchema === registration.definition.inputSchema
-            && previous.registration.definition.resultSchema === registration.definition.resultSchema;
+            && previous.registration.definition.resultSchema === registration.definition.resultSchema
+            && previous.registration.inputParser === registration.inputParser;
     }
 
     function buildIndex(
@@ -399,6 +402,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     pluginId: registration.pluginId,
                     localId: registration.localId,
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
+                    ...(registration.inputParser === undefined ? {} : { inputParser: registration.inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
                     generationSignal,
                     isCurrent: isRegistrationCurrent,
@@ -592,6 +596,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         plugin: seed.plugin,
                         contribution: seed.contribution,
                         surface: seed.surface,
+                        invokedAtMs: lifetime.invokedAtMs,
                         ...(seed.caller ? { caller: seed.caller } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
                         ...(seed.messageAction ? { messageAction: seed.messageAction } : {}),

@@ -364,6 +364,7 @@ function definitionWithConnectedAccountSource() {
                                 origin: 'https://voice.example.test',
                                 headerNames: ['authorization'],
                             },
+                            requiredHeaderNames: ['authorization'],
                             allowedHeaderNames: ['authorization'],
                         }],
                     },

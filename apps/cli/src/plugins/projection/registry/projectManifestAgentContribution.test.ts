@@ -71,10 +71,11 @@ describe('projectManifestAgentContribution', () => {
             backendIdForSessionRuntime: 'com.acme.agent/acme-agent',
             runtimeAuthorityAgentId: 'com.acme.agent/acme-agent',
             agentIdForAccountSettings: 'com.acme.agent/acme-agent',
+            isExplicitCliSubcommand: true,
         });
     });
 
-    it('derives resume eligibility from session capability and keeps execution-only and auxiliary Agents out of the catalog', () => {
+    it('derives resume eligibility and projects finite Agents while keeping auxiliary-only Agents out of the catalog', () => {
         const noResumeSessionAgent = project(sessionAgent(['create']));
         const executionOnlyAgent = project({
             id: 'acme-execution',
@@ -106,7 +107,11 @@ describe('projectManifestAgentContribution', () => {
         });
 
         expect(noResumeSessionAgent.catalogEntry?.vendorResumeSupport).toBe('unsupported');
-        expect(executionOnlyAgent.catalogEntry).toBeNull();
+        expect(executionOnlyAgent.catalogEntry).toMatchObject({
+            id: 'com.acme.agent/acme-execution',
+            cliSubcommand: 'com.acme.agent/acme-execution',
+            vendorResumeSupport: 'unsupported',
+        });
         expect(auxiliaryOnlyAgent.catalogEntry).toBeNull();
     });
 
@@ -163,6 +168,10 @@ describe('projectManifestAgentContribution', () => {
         });
 
         expect(contribution.catalogEntry).not.toHaveProperty('connectedServiceIds');
+        expect(contribution.catalogEntry?.connectedAccountServiceIds).toEqual([
+            'happier.agent.codex/openai-codex',
+            'com.acme.agent/anthropic',
+        ]);
     });
 
     it('projects exact legacy-compatible Connected Service ids for the retained first-party legacy adapter', () => {
@@ -182,6 +191,10 @@ describe('projectManifestAgentContribution', () => {
 
         expect(contribution.catalogEntry?.connectedServiceIds).toEqual([
             'openai-codex',
+        ]);
+        expect(contribution.catalogEntry?.connectedAccountServiceIds).toEqual([
+            'happier.agent.codex/openai-codex',
+            'happier.agent.codex/anthropic',
         ]);
     });
 });

@@ -1,8 +1,8 @@
-import { join, resolve } from 'node:path';
-import { rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { JsonValue, PluginPath } from '@happier-dev/plugin-sdk';
+import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import type {
     AgentCliAuthContributionV1,
     AgentCliSessionCommandBuildOptionsResultV1,
@@ -17,100 +17,56 @@ import type {
     AgentSessionStartupContributionV1,
     AgentTerminalPromptSubmitVerificationPolicyV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { getAgentCliRuntimeSpec } from '@happier-dev/agents/cli/runtime';
-import { isBundledAgentId } from '@happier-dev/agents/agent-ids';
-import {
-    resolveConnectedAccountRequestAuthCapabilityPath,
-} from '@happier-dev/agents/request-auth';
-import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import {
     isPluginAgentCliAuthBackgroundCheckSafe,
     StrictJsonValueSchema,
     type PluginAgentCliMetadata,
 } from '@happier-dev/protocol';
-import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
-import { type ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
 import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
-import {
-    hasExactConnectedServiceRestartContinuityContext,
-    isConnectedToConnectedServiceSwitch,
-    isExactSameConnectedServiceSelection,
-    isSameConnectedServiceAuthGroup,
-    providerSessionStateUnavailableForResume,
-} from '@/daemon/connectedServices/switchContinuityContext';
 import type {
     CatalogAgentId,
     ConnectedServiceStateSharingDescriptor,
-    ConnectedServiceSwitchContinuityParams,
-    ConnectedServiceSwitchContinuityResult,
 } from '@/agent/catalog/types';
-import {
-    resolveConnectedServiceCredentialResolutions,
-} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import {
-    resolveConnectedServiceGroupHomeDir,
-    resolveConnectedServiceHomeDir,
-} from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
-import {
-    createRetainedConnectedServicesMaterialization,
-    type ConnectedServiceMaterializationCredentialRefreshFailureCategory,
-    type ConnectedServicesMaterializationDiagnostic,
-    type ConnectedServicesMaterializer,
-} from '@/daemon/connectedServices/materialization/materializer';
-import {
-    ensurePrivateConnectedServiceMaterializedRoot,
-} from '@/daemon/connectedServices/materialize/privateMaterializedRoot';
-import { parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
-import { createRestartResumeConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/createRestartResumeConnectedServiceRuntimeAuthAdapter';
-import type {
-    ConnectedServiceProviderRuntimeAuthAdapter,
-    ConnectedServiceRuntimeFailureClassification,
-} from '@/daemon/connectedServices/runtimeAuth/types';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
-import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
-import { canResumeFromMaterializedStateCore } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedStateCore';
-import { REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON } from '@/daemon/connectedServices/verifyResumeReachableTypes';
-import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import {
-    withConnectedServiceStateSharingDestinationLock,
-    withConnectedServiceStateSharingLocks,
-} from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
-import {
-    readConnectedServiceStateSharingManifest,
-    writeConnectedServiceStateSharingManifest,
-} from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
-import { configuration } from '@/configuration';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
-import {
-    readSessionHandoffContribution,
-} from './sessionHandoffContribution';
 import { projectPluginSystemToolContributions } from '@/plugins/runtime/exec/system/tools/definitions';
 import {
     createAgentCliSystemToolService,
     type AgentCliSystemToolBinding,
 } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
+import type {
+    ManagedServiceSessionBaseUrlResolver,
+} from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
+import type {
+    ConnectedServiceProviderRuntimeAuthAdapter,
+    ConnectedServiceRuntimeAuthAdapterResult,
+} from '@/daemon/connectedServices/runtimeAuth/types';
 import { createNativeAgentCliAuthStaticProbe } from './agentCliMetadata';
 
 import type {
     ResolvedCatalogEntry,
     ResolvedAgentContribution,
 } from './types';
-import type {
-    ConnectedServiceStateSharingDescriptorResult,
-    ConnectedServicesContribution,
-    AgentRuntimeContribution,
-    VerifyResumeReachable,
-} from './agentRuntimeContribution';
 
-type CredentialRecord = ConnectedServiceCredentialRecordV1;
-type AgentCatalogHookFactory = () => Partial<NonNullable<ResolvedAgentContribution['catalogEntry']>>;
 type CatalogCliCommandHandler = Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getCliCommandHandler']>>>;
+type RuntimeAuthTargetInput = Parameters<ConnectedServiceProviderRuntimeAuthAdapter['materializeActiveProfile']>[0];
+type RuntimeAuthFailureInput = Parameters<ConnectedServiceProviderRuntimeAuthAdapter['classifyRuntimeAuthFailure']>[0];
+type RuntimeAuthProviderOutcomeInput = Parameters<
+    NonNullable<ConnectedServiceProviderRuntimeAuthAdapter['verifyProviderOutcome']>
+>[0];
+type VerifyResumeReachableInput = Parameters<NonNullable<ResolvedCatalogEntry['verifyResumeReachable']>>[0];
+type SessionControlsProbeVariantInput = Parameters<
+    NonNullable<ResolvedCatalogEntry['resolveSessionControlsProbeVariant']>
+>[0];
+type ModelsProbeVariantInput = Parameters<NonNullable<ResolvedCatalogEntry['resolveModelsProbeVariant']>>[0];
+type SessionRuntimePreferencesInput = Parameters<
+    NonNullable<ResolvedCatalogEntry['resolveSessionRuntimePreferences']>
+>[0];
 type RunBackendSessionCliCommand = typeof import('@/cli/runBackendSessionCliCommand')['runBackendSessionCliCommand'];
 type ResolveSessionCommandResumeDelegation =
     typeof import('@/cli/sessionCommandResumeDelegation')['resolveSessionCommandResumeDelegation'];
@@ -175,25 +131,249 @@ export function projectAgentExperimentalVendorResumeSupportCatalogEntry(params: 
 export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<{
     agentId: CatalogAgentId;
     connectedAccountLaunch: AgentConnectedAccountLaunchContributionV1;
+    hostAccess?: ResolvedAgentContribution['hostAccess'];
+    isCurrent(): boolean;
 }>): Pick<
     ResolvedCatalogEntry,
-    'connectedAccountRequestAuthUses' | 'getConnectedServiceStateSharingDescriptor'
+    | 'connectedAccountRequestAuthUses'
+    | 'connectedAccountFileEnvironmentUses'
+    | 'connectedAccountEnvironmentUses'
+    | 'connectedAccountSwitchContinuity'
+    | 'getConnectedServiceStateSharingDescriptor'
+    | 'getConnectedServiceRuntimeAuthAdapter'
+    | 'verifyResumeReachable'
 > {
     const requestAuthUses = params.connectedAccountLaunch.requestAuthUses;
+    const fileEnvironmentUses = params.connectedAccountLaunch.fileEnvironmentUses;
+    const environmentUses = params.connectedAccountLaunch.environmentUses;
+    const switchContinuity = params.connectedAccountLaunch.switchContinuity;
     const stateSharingDescriptor = params.connectedAccountLaunch.stateSharingDescriptor;
+    const continuity = params.connectedAccountLaunch.continuity;
+    const nativeAuthCodec = continuity?.nativeAuthCodec;
+    const nativeHomeEnvironmentKey = stateSharingDescriptor?.nativeHome?.environmentKey;
+    if (
+        fileEnvironmentUses !== undefined
+        || environmentUses !== undefined
+        || nativeHomeEnvironmentKey !== undefined
+    ) {
+        const admittedProcessEnvironmentKeys = new Set(
+            [
+                ...(params.hostAccess?.required ?? []),
+                ...(params.hostAccess?.optional ?? []),
+            ].flatMap((request) => request.capability === 'environment'
+                ? request.scope.keys.map((key) => key.toLowerCase())
+                : request.capability === 'process'
+                    ? (request.scope.envKeys ?? []).map((key) => key.toLowerCase())
+                    : []),
+        );
+        const environmentKeyIdentities = new Set<string>();
+        for (const use of [
+            ...(fileEnvironmentUses ?? []),
+            ...(environmentUses ?? []),
+            ...(nativeHomeEnvironmentKey === undefined ? [] : [{ environmentKey: nativeHomeEnvironmentKey }]),
+        ]) {
+            const identity = use.environmentKey.toLowerCase();
+            if (!admittedProcessEnvironmentKeys.has(identity)) {
+                throw new Error(`Agent '${params.agentId}' connected-account launch environment '${use.environmentKey}' is not declared in its process environment`);
+            }
+            if (environmentKeyIdentities.has(identity)) {
+                throw new Error(`Agent '${params.agentId}' connected-account launch environment '${use.environmentKey}' is declared more than once`);
+            }
+            environmentKeyIdentities.add(identity);
+        }
+    }
     const descriptor: ConnectedServiceStateSharingDescriptor | undefined = stateSharingDescriptor === undefined
         ? undefined
         : Object.freeze({
             ...stateSharingDescriptor,
             providerId: params.agentId,
         });
+    const retiredAdapterResult = Object.freeze({
+        supported: false,
+        reason: 'plugin_generation_retired',
+    }) satisfies ConnectedServiceRuntimeAuthAdapterResult;
+    const contributedAdapter = continuity?.runtimeAuthAdapter;
+    const commonRuntimeAuthInput = (input: RuntimeAuthTargetInput) => Object.freeze({
+        target: input.target,
+        selection: input.selection,
+    });
+    const unavailableNativeAuthVerification = (reason: string) => Object.freeze({
+        status: 'unavailable' as const,
+        retryable: true,
+        reason,
+    });
+    const inspectNativeAuth = nativeAuthCodec
+        ? async (input: RuntimeAuthTargetInput) => {
+            if (!params.isCurrent()) {
+                return unavailableNativeAuthVerification('plugin_generation_retired');
+            }
+            if (!input.credential || !input.nativeHome || !stateSharingDescriptor) {
+                return unavailableNativeAuthVerification('native_auth_materialization_unavailable');
+            }
+            try {
+                const files = await input.nativeHome.readFiles(
+                    stateSharingDescriptor.authIsolation.secretEntries,
+                );
+                if (!params.isCurrent()) {
+                    return unavailableNativeAuthVerification('plugin_generation_retired');
+                }
+                return nativeAuthCodec.inspect({
+                    selection: input.selection,
+                    credential: input.credential,
+                    files,
+                });
+            }
+            catch {
+                return unavailableNativeAuthVerification('native_auth_codec_failed');
+            }
+        }
+        : undefined;
+    const materializeNativeAuth = nativeAuthCodec
+        ? async (input: RuntimeAuthTargetInput) => {
+            if (!params.isCurrent()) {
+                return unavailableNativeAuthVerification('plugin_generation_retired');
+            }
+            if (!input.credential || !input.nativeHome || !stateSharingDescriptor) {
+                return unavailableNativeAuthVerification('native_auth_materialization_unavailable');
+            }
+            let materialization: ReturnType<typeof nativeAuthCodec.materialize>;
+            try {
+                materialization = nativeAuthCodec.materialize({
+                    selection: input.selection,
+                    credential: input.credential,
+                });
+            }
+            catch {
+                return unavailableNativeAuthVerification('native_auth_codec_failed');
+            }
+            if (!params.isCurrent()) {
+                return unavailableNativeAuthVerification('plugin_generation_retired');
+            }
+            const currentness = await input.validateCurrentBeforeMutation?.();
+            if (currentness?.current === false) {
+                return unavailableNativeAuthVerification(currentness.reason);
+            }
+            await input.nativeHome.replaceFiles(materialization.files);
+            return await inspectNativeAuth!(input);
+        }
+        : undefined;
+    const runtimeAuthAdapter: ConnectedServiceProviderRuntimeAuthAdapter | null = contributedAdapter
+        ? Object.freeze({
+            classifyRuntimeAuthFailure: (input: RuntimeAuthFailureInput) => params.isCurrent()
+                ? contributedAdapter.classifyRuntimeAuthFailure(input)
+                : null,
+            materializeActiveProfile: async (input: RuntimeAuthTargetInput) => {
+                if (!params.isCurrent()) return retiredAdapterResult;
+                const result = await contributedAdapter.materializeActiveProfile(commonRuntimeAuthInput(input));
+                return params.isCurrent() ? result : retiredAdapterResult;
+            },
+            canHotApply: (input: RuntimeAuthTargetInput) => params.isCurrent()
+                ? contributedAdapter.canHotApply({
+                    ...commonRuntimeAuthInput(input),
+                    ...(input.applySelectedAuthGeneration
+                        ? { applySelectedAuthGeneration: input.applySelectedAuthGeneration }
+                        : {}),
+                    ...(materializeNativeAuth
+                        ? { materializeNativeAuth: async () => await materializeNativeAuth(input) }
+                        : {}),
+                })
+                : retiredAdapterResult,
+            hotApply: async (input: RuntimeAuthTargetInput) => {
+                if (!params.isCurrent()) return retiredAdapterResult;
+                const result = await contributedAdapter.hotApply({
+                    ...commonRuntimeAuthInput(input),
+                    ...(input.applySelectedAuthGeneration
+                        ? { applySelectedAuthGeneration: input.applySelectedAuthGeneration }
+                        : {}),
+                    ...(materializeNativeAuth
+                        ? { materializeNativeAuth: async () => await materializeNativeAuth(input) }
+                        : {}),
+                });
+                return params.isCurrent() ? result : retiredAdapterResult;
+            },
+            ...(contributedAdapter.verifyActiveAccount
+                ? {
+                    verifyActiveAccount: async (input: RuntimeAuthTargetInput) => {
+                        if (!params.isCurrent()) {
+                            return { status: 'unavailable' as const, retryable: false, reason: 'plugin_generation_retired' };
+                        }
+                        const result = await contributedAdapter.verifyActiveAccount!({
+                            ...commonRuntimeAuthInput(input),
+                            ...(input.readProviderAccount
+                                ? { readProviderAccount: input.readProviderAccount }
+                                : {}),
+                            ...(inspectNativeAuth
+                                ? { inspectNativeAuth: async () => await inspectNativeAuth(input) }
+                                : {}),
+                        });
+                        return params.isCurrent()
+                            ? result
+                            : { status: 'unavailable' as const, retryable: false, reason: 'plugin_generation_retired' };
+                    },
+                }
+                : {}),
+            ...(contributedAdapter.verifyProviderOutcome
+                ? {
+                    verifyProviderOutcome: async (input: RuntimeAuthProviderOutcomeInput) => {
+                        if (!params.isCurrent()) {
+                            return { status: 'unavailable' as const, reason: 'plugin_generation_retired' };
+                        }
+                        const result = await contributedAdapter.verifyProviderOutcome!(input);
+                        return params.isCurrent()
+                            ? result
+                            : { status: 'unavailable' as const, reason: 'plugin_generation_retired' };
+                    },
+                }
+                : {}),
+            probeQuota: async (input: RuntimeAuthTargetInput) => {
+                if (!params.isCurrent()) return retiredAdapterResult;
+                const result = await contributedAdapter.probeQuota({
+                    ...commonRuntimeAuthInput(input),
+                    ...(input.readProviderUsage
+                        ? { readProviderUsage: input.readProviderUsage as (params?: JsonValue) => Promise<unknown> }
+                        : {}),
+                });
+                return params.isCurrent() ? result : retiredAdapterResult;
+            },
+            refreshActiveProfile: async (input: RuntimeAuthTargetInput) => {
+                if (!params.isCurrent()) return retiredAdapterResult;
+                const result = await contributedAdapter.refreshActiveProfile(commonRuntimeAuthInput(input));
+                return params.isCurrent() ? result : retiredAdapterResult;
+            },
+        })
+        : null;
     return Object.freeze({
         ...(requestAuthUses === undefined
             ? {}
             : { connectedAccountRequestAuthUses: requestAuthUses }),
+        ...(fileEnvironmentUses === undefined
+            ? {}
+            : { connectedAccountFileEnvironmentUses: fileEnvironmentUses }),
+        ...(environmentUses === undefined
+            ? {}
+            : { connectedAccountEnvironmentUses: environmentUses }),
+        ...(switchContinuity === undefined
+            ? {}
+            : { connectedAccountSwitchContinuity: switchContinuity }),
         ...(descriptor === undefined
             ? {}
             : { getConnectedServiceStateSharingDescriptor: async () => descriptor }),
+        ...(runtimeAuthAdapter === null
+            ? {}
+            : { getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter }),
+        ...(continuity?.verifyResumeReachable === undefined
+            ? {}
+            : {
+                verifyResumeReachable: async (input: VerifyResumeReachableInput) => {
+                    if (!params.isCurrent()) {
+                        return { ok: false as const, reason: 'plugin_generation_retired' };
+                    }
+                    const result = await continuity.verifyResumeReachable!(input);
+                    return params.isCurrent()
+                        ? result
+                        : { ok: false as const, reason: 'plugin_generation_retired' };
+                },
+            }),
     });
 }
 
@@ -204,9 +384,13 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
  */
 export function projectAgentProviderCliAttachCatalogEntry(params: Readonly<{
     agentId: CatalogAgentId;
+    pluginId: string;
+    localAgentId: string;
     providerCliAttach: AgentProviderCliAttachDeclarationV1;
+    resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver;
 }>): Pick<ResolvedCatalogEntry, 'resolveHostAgentRuntimeSurfaces'> {
     const providerCliAttach = params.providerCliAttach;
+    const resolveManagedServiceSessionBaseUrl = params.resolveManagedServiceSessionBaseUrl;
     return Object.freeze({
         resolveHostAgentRuntimeSurfaces: async () => {
             const { createProviderCliAttachSurface } = await import(
@@ -218,6 +402,17 @@ export function projectAgentProviderCliAttachCatalogEntry(params: Readonly<{
                     resolveTarget: providerCliAttach.resolveTarget,
                     createArgs: providerCliAttach.createArgs,
                     buildHealthUrl: providerCliAttach.buildHealthUrl,
+                    ...(resolveManagedServiceSessionBaseUrl
+                        ? {
+                            readFallbackServerBaseUrl: async (input) => (
+                                await resolveManagedServiceSessionBaseUrl({
+                                    pluginId: params.pluginId,
+                                    sessionId: input.sessionId,
+                                    contributionId: `${params.pluginId}/agents/${params.localAgentId}`,
+                                })
+                            ),
+                        }
+                        : {}),
                 }),
             });
         },
@@ -231,11 +426,28 @@ export function projectAgentProviderCliAttachCatalogEntry(params: Readonly<{
  */
 export function projectAgentTerminalPromptSubmitVerificationCatalogEntry(params: Readonly<{
     terminalPromptSubmitVerification: AgentTerminalPromptSubmitVerificationPolicyV1;
+    isCurrent(): boolean;
 }>): Pick<ResolvedCatalogEntry, 'getTerminalPromptSubmitVerificationPolicy'> {
+    const policy = Object.freeze({
+        shouldVerifyAfterSubmit: (promptText: string) => params.isCurrent()
+            && params.terminalPromptSubmitVerification.shouldVerifyAfterSubmit(promptText),
+        ...(params.terminalPromptSubmitVerification.verifyBeforeSubmitStaging
+            ? {
+                verifyBeforeSubmitStaging: (input: Parameters<NonNullable<
+                    AgentTerminalPromptSubmitVerificationPolicyV1['verifyBeforeSubmitStaging']
+                >>[0]) => params.isCurrent()
+                    && params.terminalPromptSubmitVerification.verifyBeforeSubmitStaging!(input),
+            }
+            : {}),
+        verifyAfterSubmit: (input: Parameters<
+            AgentTerminalPromptSubmitVerificationPolicyV1['verifyAfterSubmit']
+        >[0]) => params.isCurrent()
+            && params.terminalPromptSubmitVerification.verifyAfterSubmit(input),
+    });
     return Object.freeze({
-        getTerminalPromptSubmitVerificationPolicy: async () => (
-            params.terminalPromptSubmitVerification
-        ),
+        getTerminalPromptSubmitVerificationPolicy: async () => params.isCurrent()
+            ? policy
+            : null,
     });
 }
 
@@ -246,84 +458,90 @@ export function projectAgentTerminalPromptSubmitVerificationCatalogEntry(params:
  */
 export function projectAgentCliAuthCatalogEntry(params: Readonly<{
     agentId: CatalogAgentId;
+    pluginId: string;
     cliAuth: AgentCliAuthContributionV1;
-    cli: PluginAgentCliMetadata | null;
+    cli: PluginAgentCliMetadata;
+    runtimeSpec?: AgentCliRuntimeDescriptor | null;
     systemTools: readonly PluginSystemToolContributionV1[];
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     hostAccess?: ResolvedAgentContribution['hostAccess'];
     isCurrent(): boolean;
 }>): Pick<ResolvedCatalogEntry, 'getCliAuthSpec'> {
-    const staticProbe = params.cli
-        ? createNativeAgentCliAuthStaticProbe(params.cli)
-        : null;
+    const staticProbe = createNativeAgentCliAuthStaticProbe(params.cli);
     const admittedSystemToolIds = new Set<string>();
     for (const request of params.hostAccess?.required ?? []) {
         if (request.capability !== 'process') continue;
         for (const executable of request.scope.executables) {
-            if (executable.kind === 'systemTool') admittedSystemToolIds.add(executable.id);
+            if (executable.kind === 'systemTool') {
+                if (typeof executable.id !== 'string' && executable.id.pluginId !== params.pluginId) {
+                    continue;
+                }
+                admittedSystemToolIds.add(
+                    typeof executable.id === 'string' ? executable.id : executable.id.localId,
+                );
+            }
         }
     }
     const admittedSystemTools = params.systemTools.filter((tool) => admittedSystemToolIds.has(tool.id));
     return Object.freeze({
-        getCliAuthSpec: async () => {
-            const { createCatalogCliAuthSpec } = await import(
-                '@/capabilities/cliAuth/createCatalogCliAuthSpec'
-            );
-            return createCatalogCliAuthSpec(params.agentId, {
-                isSafeForBackgroundChecks: params.cli !== null
-                    && isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
-                detectAuthStatus: async () => {
-                    if (!params.isCurrent()) {
-                        return { state: 'unknown', reason: 'probe_failed' };
-                    }
-                    const staticCredential = staticProbe?.readPresentCredential();
-                    if (staticCredential) return staticCredential;
-                    const executableEnvironment = Object.freeze(Object.fromEntries(
-                        Object.entries(process.env).filter(
-                            (entry): entry is [string, string] => typeof entry[1] === 'string',
-                        ),
-                    ));
-                    const systemToolExec = createProviderScopedStableExecService({
-                        cwd: process.cwd(),
-                        environment: executableEnvironment,
-                        systemTools: admittedSystemTools,
-                        agentId: params.agentId,
-                        agentCliSystemTool: params.agentCliSystemTool,
+        getCliAuthSpec: async (): Promise<CliAuthSpec> => ({
+            binaryNames: [
+                params.cli.executable.binaryName,
+                ...(params.cli.executable.alternativeBinaryNames ?? []),
+            ],
+            isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
+            detectAuthStatus: async (): Promise<CliAuthStatusDraft> => {
+                if (!params.isCurrent()) {
+                    return { state: 'unknown', reason: 'probe_failed' };
+                }
+                const staticCredential = staticProbe?.readPresentCredential();
+                if (staticCredential) return staticCredential;
+                const executableEnvironment = Object.freeze(Object.fromEntries(
+                    Object.entries(process.env).filter(
+                        (entry): entry is [string, string] => typeof entry[1] === 'string',
+                    ),
+                ));
+                const systemToolExec = createProviderScopedStableExecService({
+                    cwd: process.cwd(),
+                    environment: executableEnvironment,
+                    systemTools: admittedSystemTools,
+                    agentId: params.agentId,
+                    runtimeSpec: params.runtimeSpec,
+                    agentCliSystemTool: params.agentCliSystemTool,
+                });
+                const unavailable = () => ({
+                    ok: false,
+                    stdout: '',
+                    stderr: '',
+                    exitCode: null,
+                });
+                try {
+                    const status = await params.cliAuth.detectAuthStatus({
+                        runDeclaredSystemToolCommand: async ({ toolId, args, timeoutMs }) => {
+                            try {
+                                const resolved = await systemToolExec.systemTools.resolve({
+                                    toolId,
+                                    purpose: `Probe ${params.agentId} CLI authentication`,
+                                });
+                                const result = await runCliCommandBestEffort({
+                                    resolvedPath: resolved.executablePath,
+                                    args: [...args],
+                                    timeoutMs,
+                                });
+                                return params.isCurrent() ? result : unavailable();
+                            } catch {
+                                return unavailable();
+                            }
+                        },
                     });
-                    const unavailable = () => ({
-                        ok: false,
-                        stdout: '',
-                        stderr: '',
-                        exitCode: null,
-                    });
-                    try {
-                        const status = await params.cliAuth.detectAuthStatus({
-                            runDeclaredSystemToolCommand: async ({ toolId, args, timeoutMs }) => {
-                                try {
-                                    const resolved = await systemToolExec.systemTools.resolve({
-                                        toolId,
-                                        purpose: `Probe ${params.agentId} CLI authentication`,
-                                    });
-                                    const result = await runCliCommandBestEffort({
-                                        resolvedPath: resolved.executablePath,
-                                        args: [...args],
-                                        timeoutMs,
-                                    });
-                                    return params.isCurrent() ? result : unavailable();
-                                } catch {
-                                    return unavailable();
-                                }
-                            },
-                        });
-                        return params.isCurrent()
-                            ? status
-                            : { state: 'unknown', reason: 'probe_failed' };
-                    } catch {
-                        return { state: 'unknown', reason: 'probe_failed' };
-                    }
-                },
-            });
-        },
+                    return params.isCurrent()
+                        ? status
+                        : { state: 'unknown', reason: 'probe_failed' };
+                } catch {
+                    return { state: 'unknown', reason: 'probe_failed' };
+                }
+            },
+        }),
     });
 }
 
@@ -444,6 +662,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     agentId: CatalogAgentId;
     preflightSessionControls: AgentPreflightSessionControlsContributionV1;
     systemTools: readonly PluginSystemToolContributionV1[];
+    runtimeSpec?: AgentCliRuntimeDescriptor | null;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
@@ -480,6 +699,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             environment,
             systemTools: params.systemTools,
             agentId: params.agentId,
+            runtimeSpec: params.runtimeSpec,
             agentCliSystemTool: params.agentCliSystemTool,
             signal,
             isGenerationCurrent: params.isCurrent,
@@ -578,8 +798,12 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         ...(requiresAccountSettings ? { needsAccountSettingsForProbes: true } : {}),
         ...(contribution.resolveProbeVariant
             ? {
-                resolveSessionControlsProbeVariant: (variantParams) => resolveVariant(variantParams),
-                resolveModelsProbeVariant: (variantParams) => resolveVariant(variantParams),
+                resolveSessionControlsProbeVariant: (variantParams: SessionControlsProbeVariantInput) => (
+                    resolveVariant(variantParams)
+                ),
+                resolveModelsProbeVariant: (variantParams: ModelsProbeVariantInput) => (
+                    resolveVariant(variantParams)
+                ),
             }
             : {}),
         getPreflightSessionControlsProbeAdapter: async () => Object.freeze({
@@ -632,473 +856,12 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     });
 }
 
-type MaterializedAuthEnvironmentResult = Awaited<ReturnType<ConnectedServicesContribution['materializeAuthEnvironment']>>;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readAgentCliSystemToolBinding(
-    value: unknown,
-    systemTools: readonly PluginSystemToolContributionV1[],
-): AgentCliSystemToolBinding | null {
-    if (value === undefined) return null;
-    if (!isRecord(value)) {
-        throw new Error('Agent CLI system-tool binding must be an object with a toolId');
-    }
-    if (Object.keys(value).some((key) => key !== 'toolId')) {
-        throw new Error('Agent CLI system-tool binding accepts only toolId');
-    }
-    const toolId = readString(value.toolId);
-    if (!toolId) {
-        throw new Error('Agent CLI system-tool binding toolId must be a non-empty string');
-    }
-    if (!systemTools.some((tool) => tool.id === toolId)) {
-        throw new Error(`Agent CLI system-tool binding '${toolId}' must name a declared system tool`);
-    }
-    return Object.freeze({ toolId });
-}
-
-function readFunction<T>(value: unknown): T | null {
-    return typeof value === 'function' ? value as T : null;
-}
-
-function readPositiveNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function readProviderHttpStatus(value: unknown): number | null {
-    return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
-        ? value
-        : null;
-}
-
-function readMaterializationCredentialRefreshFailureCategory(
-    value: unknown,
-): ConnectedServiceMaterializationCredentialRefreshFailureCategory | null {
-    switch (value) {
-        case 'invalid_grant':
-        case 'invalid_client':
-        case 'provider_401':
-        case 'provider_403':
-        case 'network_error':
-        case 'malformed_response':
-        case 'missing_access_token':
-        case 'missing_refresh_token':
-        case 'unknown':
-            return value;
-        default:
-            return null;
-    }
-}
-
-function normalizeMaterializationCredentialRefreshFailure(value: unknown): ConnectedServicesMaterializationDiagnostic['credentialRefreshFailure'] {
-    const record = isRecord(value) ? value : null;
-    if (!record) return undefined;
-    const category = readMaterializationCredentialRefreshFailureCategory(record.category);
-    if (!category) return undefined;
-    const providerStatus = readProviderHttpStatus(record.providerStatus);
-    const providerErrorCode = readString(record.providerErrorCode);
-    return {
-        category,
-        ...(providerStatus !== null ? { providerStatus } : {}),
-        ...(providerErrorCode ? { providerErrorCode } : {}),
-    };
-}
-
-function readStringArray(value: unknown): readonly string[] {
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
-}
-
-function readNonEmptyStringArray(value: unknown): readonly string[] {
-    return Array.isArray(value)
-        ? value.flatMap((entry) => {
-            const stringValue = readString(entry);
-            return stringValue ? [stringValue] : [];
-        })
-        : [];
-}
-
-function readNonEmptyStringArrayArray(value: unknown): readonly (readonly string[])[] {
-    return Array.isArray(value)
-        ? value.flatMap((entry) => {
-            const stringArray = readNonEmptyStringArray(entry);
-            return stringArray.length > 0 ? [stringArray] : [];
-        })
-        : [];
-}
-
-function readStringFunction(value: unknown): ((input: string) => string) | null {
-    return typeof value === 'function' ? value as (input: string) => string : null;
-}
-
-function readConnectedServiceIdArray(value: unknown): readonly ConnectedServiceId[] {
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((entry) => {
-        const parsed = ConnectedServiceIdSchema.safeParse(entry);
-        return parsed.success ? [parsed.data] : [];
-    });
-}
-
-function readRuntimeAuthAdapter(value: unknown): ConnectedServicesContribution['runtimeAuthAdapter'] {
-    if (value === false) return false;
-    if (!isRecord(value)) return undefined;
-    return typeof value.classifyRuntimeAuthFailure === 'function'
-        && typeof value.materializeActiveProfile === 'function'
-        && typeof value.canHotApply === 'function'
-        && typeof value.hotApply === 'function'
-        && typeof value.recoverAfterRuntimeAuthSwitch === 'function'
-        && typeof value.probeQuota === 'function'
-        && typeof value.refreshActiveProfile === 'function'
-        ? value as ConnectedServicesContribution['runtimeAuthAdapter']
-        : undefined;
-}
-
-function serializeRuntimeAuthDestinationTransitions(
-    agentId: CatalogAgentId,
-    adapter: ConnectedServiceProviderRuntimeAuthAdapter,
-): ConnectedServiceProviderRuntimeAuthAdapter {
-    const run = async <T>(
-        input: Parameters<ConnectedServiceProviderRuntimeAuthAdapter['hotApply']>[0],
-        operation: () => Promise<T>,
-    ): Promise<T> => {
-        const destinationHome = adapter.resolveDestinationHome?.(input) ?? null;
-        return destinationHome
-            ? await withConnectedServiceStateSharingDestinationLock(destinationHome, operation, { providerId: agentId })
-            : await operation();
-    };
-    return {
-        ...adapter,
-        hotApply: async (input) => await run(input, async () => {
-            const currentness = await input.validateCurrentBeforeMutation?.();
-            if (currentness?.current === false) {
-                return {
-                    applied: false,
-                    ...(currentness.authoritativeTarget
-                        ? {
-                            status: 'superseded_after_apply',
-                            activeProfileId: currentness.authoritativeTarget.profileId,
-                            generation: currentness.authoritativeTarget.generation,
-                            credentialRevision: currentness.authoritativeTarget.credentialRevision,
-                        }
-                        : {}),
-                    reason: currentness.reason,
-                    recovery: 'none',
-                };
-            }
-            return await adapter.hotApply(input);
-        }),
-        ...(adapter.verifyActiveAccount
-            ? {
-                verifyActiveAccount: async (input) => await run(
-                    input,
-                    async () => await adapter.verifyActiveAccount!(input),
-                ),
-            }
-            : {}),
-    };
-}
-
-function readQuotaFetcherDescriptor(value: unknown): ConnectedServicesContribution['quotaFetcherDescriptor'] {
-    if (!isRecord(value)) return undefined;
-    const id = readString(value.id);
-    const createFetcher = readFunction<
-        NonNullable<ConnectedServicesContribution['quotaFetcherDescriptor']>['createFetcher']
-    >(value.createFetcher);
-    const terminalAuthFailureProviderCodes = readNonEmptyStringArray(value.terminalAuthFailureProviderCodes);
-    return id && createFetcher
-        ? {
-            id,
-            createFetcher,
-            ...(terminalAuthFailureProviderCodes.length > 0 ? { terminalAuthFailureProviderCodes } : {}),
-        }
-        : undefined;
-}
-
-function resolveProjectedResumeReachability(
-    connectedServices: ConnectedServicesContribution | null,
-): VerifyResumeReachable {
-    return connectedServices?.verifyResumeReachable
-        ?? connectedServices?.resolveResumeReachabilityUnsupported
-        ?? (async () => ({ ok: false, reason: REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON }));
-}
-
-function readPredictiveSoftSwitchLiveSessionRequirement(value: unknown): NonNullable<
-    NonNullable<ConnectedServicesContribution['recoveryCapabilities']>['predictiveSoftSwitch']['liveSessionRequirement']
-> | null | undefined {
-    if (value === undefined || value === null) return undefined;
-    if (!isRecord(value)) return null;
-    if (value.kind === 'none') return { kind: 'none' };
-    if (value.kind !== 'shared_group_auth_surface') return null;
-    const serviceIds = readConnectedServiceIdArray(value.serviceIds);
-    const authEnvKey = typeof value.authEnvKey === 'string' ? value.authEnvKey.trim() : '';
-    if (serviceIds.length === 0 || !authEnvKey) return null;
-    const authEnvSubpath = readStringArray(value.authEnvSubpath);
-    return {
-        kind: 'shared_group_auth_surface',
-        serviceIds,
-        authEnvKey,
-        ...(authEnvSubpath.length > 0 ? { authEnvSubpath } : {}),
-    };
-}
-
-function readRuntimeAuthApplyCapability(value: unknown): NonNullable<
-    ConnectedServicesContribution['recoveryCapabilities']
->['runtimeAuthApply'] | null | undefined {
-    if (value === undefined || value === null) return undefined;
-    if (!isRecord(value)) return null;
-    const directLiveHotAuth = value.directLiveHotAuth;
-    if (directLiveHotAuth === 'unsupported') return { directLiveHotAuth: 'unsupported' };
-    if (!isRecord(directLiveHotAuth)) return null;
-    if (typeof directLiveHotAuth.supportsInTurnApply !== 'boolean') return null;
-    if (typeof directLiveHotAuth.requiresExactRuntimeIdentity !== 'boolean') return null;
-    if (
-        directLiveHotAuth.refreshSelectionResync !== 'required'
-        && directLiveHotAuth.refreshSelectionResync !== 'not_applicable'
-    ) {
-        return null;
-    }
-    const authMode = readRuntimeAuthApplyAuthMode(directLiveHotAuth.authMode);
-    if (!authMode) return null;
-    return {
-        directLiveHotAuth: {
-            supportsInTurnApply: directLiveHotAuth.supportsInTurnApply,
-            requiresExactRuntimeIdentity: directLiveHotAuth.requiresExactRuntimeIdentity,
-            refreshSelectionResync: directLiveHotAuth.refreshSelectionResync,
-            authMode,
-        },
-    };
-}
-
-function readRuntimeAuthApplyAuthMode(
-    value: unknown,
-): NonNullable<
-    Exclude<
-        NonNullable<
-            NonNullable<ConnectedServicesContribution['recoveryCapabilities']>['runtimeAuthApply']
-        >['directLiveHotAuth'],
-        'unsupported'
-    >['authMode']
-> | null {
-    if (!isRecord(value)) return null;
-    if (value.kind === 'managed_provider_session') return { kind: 'managed_provider_session' };
-    if (value.kind === 'api_key') return { kind: 'api_key' };
-    if (value.kind === 'external_token_injection') {
-        const surface = typeof value.surface === 'string' ? value.surface.trim() : '';
-        return surface ? { kind: 'external_token_injection', surface } : null;
-    }
-    if (value.kind === 'provider_owned') {
-        const name = typeof value.name === 'string' ? value.name.trim() : '';
-        return name ? { kind: 'provider_owned', name } : null;
-    }
-    return null;
-}
-
-function readConnectedServiceRecoveryCapabilities(
-    value: unknown,
-): NonNullable<ConnectedServicesContribution['recoveryCapabilities']> | null {
-    if (!isRecord(value)) return null;
-    const predictiveSoftSwitch = isRecord(value.predictiveSoftSwitch) ? value.predictiveSoftSwitch : null;
-    const mode = predictiveSoftSwitch?.mode;
-    if (mode !== 'supported' && mode !== 'unsupported') return null;
-    const liveSessionRequirement = readPredictiveSoftSwitchLiveSessionRequirement(
-        predictiveSoftSwitch?.liveSessionRequirement,
-    );
-    if (liveSessionRequirement === null) return null;
-    const runtimeAuthApply = readRuntimeAuthApplyCapability(value.runtimeAuthApply);
-    if (runtimeAuthApply === null) return null;
-    const sameAccountFanoutStrategy = value.sameAccountFanoutStrategy;
-    const generationApplicationScope = value.generationApplicationScope;
-    const sharedGenerationApplicationServiceIds = readConnectedServiceIdArray(
-        value.sharedGenerationApplicationServiceIds,
-    );
-    return {
-        predictiveSoftSwitch: {
-            mode,
-            ...(liveSessionRequirement === undefined ? {} : { liveSessionRequirement }),
-        },
-        ...(sameAccountFanoutStrategy === 'provider_account_id'
-            || sameAccountFanoutStrategy === 'shared_group_auth_surface'
-            || sameAccountFanoutStrategy === 'none'
-            ? { sameAccountFanoutStrategy }
-            : {}),
-        ...(generationApplicationScope === 'per_session_runtime'
-            || generationApplicationScope === 'shared_group_auth_surface'
-            || generationApplicationScope === 'request_time_auth'
-            || generationApplicationScope === 'unsupported'
-            ? { generationApplicationScope }
-            : {}),
-        ...(sharedGenerationApplicationServiceIds.length > 0
-            ? { sharedGenerationApplicationServiceIds }
-            : {}),
-        ...(runtimeAuthApply === undefined ? {} : { runtimeAuthApply }),
-    };
-}
-
-function readConnectedServicesContribution(value: unknown): ConnectedServicesContribution | null {
-    if (!isRecord(value)) return null;
-    const serviceIds = readConnectedServiceIdArray(value.serviceIds);
-    const requestAuthUses = value.requestAuthUses === undefined
-        ? null
-        : ConnectedAccountRequestAuthUsesV1Schema.safeParse(value.requestAuthUses);
-    const stateSharingServiceIds = readConnectedServiceIdArray(value.stateSharingServiceIds);
-    const noRestartRequiredServiceIds = readConnectedServiceIdArray(value.noRestartRequiredServiceIds);
-    const materializedHomeCredentialEntries = readStringArray(value.materializedHomeCredentialEntries);
-    const resolveStateSharingSourceRoot = readFunction<ConnectedServicesContribution['resolveStateSharingSourceRoot']>(
-        value.resolveStateSharingSourceRoot,
-    );
-    const resolveStateSharingStateEntryNames = readFunction<ConnectedServicesContribution['resolveStateSharingStateEntryNames']>(
-        value.resolveStateSharingStateEntryNames,
-    );
-    const resolveStateSharingStateSourceRoot = readFunction<ConnectedServicesContribution['resolveStateSharingStateSourceRoot']>(
-        value.resolveStateSharingStateSourceRoot,
-    );
-    const createStateSharingSessionImportRoots = readFunction<ConnectedServicesContribution['createStateSharingSessionImportRoots']>(
-        value.createStateSharingSessionImportRoots,
-    );
-    const resolveVendorResumeIdFromImportedFile = readFunction<ConnectedServicesContribution['resolveVendorResumeIdFromImportedFile']>(
-        value.resolveVendorResumeIdFromImportedFile,
-    );
-    const readConnectedServiceId = readFunction<ConnectedServicesContribution['readConnectedServiceId']>(
-        value.readConnectedServiceId,
-    );
-    const createAuthMaterializationInput = readFunction<ConnectedServicesContribution['createAuthMaterializationInput']>(
-        value.createAuthMaterializationInput,
-    );
-    const materializeAuthEnvironment = readFunction<ConnectedServicesContribution['materializeAuthEnvironment']>(
-        value.materializeAuthEnvironment,
-    );
-    const isMaterializedHomeStale = readFunction<
-        NonNullable<ConnectedServicesContribution['materializedHomeFreshness']>['isMaterializedHomeStale']
-    >(value.isMaterializedHomeStale);
-    const sanitizeRetainedMaterializedHome = readFunction<ConnectedServicesContribution['sanitizeRetainedMaterializedHome']>(
-        value.sanitizeRetainedMaterializedHome,
-    );
-    const shouldRestartForServiceSwitch = readFunction<ConnectedServicesContribution['shouldRestartForServiceSwitch']>(
-        value.shouldRestartForServiceSwitch,
-    );
-    const unsupportedSwitchReason = readFunction<ConnectedServicesContribution['unsupportedSwitchReason']>(
-        value.unsupportedSwitchReason,
-    );
-    const verifyResumeReachable = readFunction<ConnectedServicesContribution['verifyResumeReachable']>(
-        value.verifyResumeReachable,
-    );
-    const resolveCandidatePersistedSessionFile = readFunction<
-        NonNullable<ConnectedServicesContribution['resolveCandidatePersistedSessionFile']>
-    >(value.resolveCandidatePersistedSessionFile);
-    const resolveResumeReachabilityUnsupported = readFunction<ConnectedServicesContribution['resolveResumeReachabilityUnsupported']>(
-        value.resolveResumeReachabilityUnsupported,
-    );
-    const classifyUsageLimitError = readFunction<ConnectedServicesContribution['classifyUsageLimitError']>(
-        value.classifyUsageLimitError,
-    );
-    const runtimeAuthAdapter = readRuntimeAuthAdapter(value.runtimeAuthAdapter);
-    const quotaFetcherDescriptor = readQuotaFetcherDescriptor(value.quotaFetcherDescriptor);
-    const daemonAuthBridge = isRecord(value.daemonAuthBridge) ? value.daemonAuthBridge : null;
-    const daemonAuthBridgeRefresh = readFunction<
-        NonNullable<ConnectedServicesContribution['daemonAuthBridge']>['refresh']
-    >(daemonAuthBridge?.refresh);
-    const daemonAuthBridgeServiceIds = readConnectedServiceIdArray(daemonAuthBridge?.serviceIds);
-    const restartRematerializeRequiredReason = readString(value.restartRematerializeRequiredReason);
-    const connectedSwitchSharedStateRequiredReason = readString(value.connectedSwitchSharedStateRequiredReason);
-    const nativeSwitchSharedStateRequiredReason = readString(value.nativeSwitchSharedStateRequiredReason);
-    const usageLimitRecovery = isRecord(value.usageLimitRecovery) ? value.usageLimitRecovery : null;
-    const usageLimitRecoveryOwnerId = readString(usageLimitRecovery?.agentId);
-    const issueProviderFilter = readString(usageLimitRecovery?.issueProviderFilter);
-    const parsedDefaultNativeServiceId = usageLimitRecovery?.defaultNativeServiceId === undefined
-        ? null
-        : ConnectedServiceIdSchema.safeParse(usageLimitRecovery.defaultNativeServiceId);
-    const defaultNativeServiceId = parsedDefaultNativeServiceId?.success ? parsedDefaultNativeServiceId.data : null;
-    const fallbackBackoffEnvKey = readString(usageLimitRecovery?.fallbackBackoffEnvKey);
-    const maxAttemptsEnvKey = readString(usageLimitRecovery?.maxAttemptsEnvKey);
-    const defaultFallbackBackoffMs = readPositiveNumber(usageLimitRecovery?.defaultFallbackBackoffMs);
-    const defaultMaxAttempts = readPositiveNumber(usageLimitRecovery?.defaultMaxAttempts);
-    const recoveryCapabilities = readConnectedServiceRecoveryCapabilities(value.recoveryCapabilities);
-    const resolveLegacyRuntimeAuthFailureSourceRevision = readFunction<
-        NonNullable<ConnectedServicesContribution['resolveLegacyRuntimeAuthFailureSourceRevision']>
-    >(value.resolveLegacyRuntimeAuthFailureSourceRevision);
-    const stateSharingDescriptor = value.stateSharingDescriptor as ConnectedServiceStateSharingDescriptorResult;
-    if (
-        serviceIds.length === 0
-        || !readConnectedServiceId
-        || !createAuthMaterializationInput
-        || !materializeAuthEnvironment
-        || !stateSharingDescriptor
-        || requestAuthUses?.success === false
-    ) {
-        return null;
-    }
-    return {
-        serviceIds,
-        ...(requestAuthUses?.success
-            ? { requestAuthUses: Object.freeze(requestAuthUses.data.map((use) => Object.freeze(use))) }
-            : {}),
-        ...(stateSharingServiceIds.length > 0 ? { stateSharingServiceIds } : {}),
-        ...(noRestartRequiredServiceIds.length > 0 ? { noRestartRequiredServiceIds } : {}),
-        ...(readString(value.materializedRootSubdir) ? { materializedRootSubdir: readString(value.materializedRootSubdir)! } : {}),
-        ...(materializedHomeCredentialEntries.length > 0 ? { materializedHomeCredentialEntries } : {}),
-        ...(resolveStateSharingSourceRoot ? { resolveStateSharingSourceRoot } : {}),
-        ...(resolveStateSharingStateEntryNames ? { resolveStateSharingStateEntryNames } : {}),
-        ...(resolveStateSharingStateSourceRoot ? { resolveStateSharingStateSourceRoot } : {}),
-        ...(createStateSharingSessionImportRoots ? { createStateSharingSessionImportRoots } : {}),
-        ...(resolveVendorResumeIdFromImportedFile ? { resolveVendorResumeIdFromImportedFile } : {}),
-        readConnectedServiceId,
-        createAuthMaterializationInput,
-        materializeAuthEnvironment,
-        ...(isMaterializedHomeStale
-            ? {
-                materializedHomeFreshness: {
-                    isMaterializedHomeStale,
-                },
-            }
-            : {}),
-        ...(sanitizeRetainedMaterializedHome ? { sanitizeRetainedMaterializedHome } : {}),
-        stateSharingDescriptor,
-        ...(shouldRestartForServiceSwitch ? { shouldRestartForServiceSwitch } : {}),
-        ...(unsupportedSwitchReason ? { unsupportedSwitchReason } : {}),
-        ...(restartRematerializeRequiredReason ? { restartRematerializeRequiredReason } : {}),
-        ...(connectedSwitchSharedStateRequiredReason ? { connectedSwitchSharedStateRequiredReason } : {}),
-        ...(nativeSwitchSharedStateRequiredReason ? { nativeSwitchSharedStateRequiredReason } : {}),
-        ...(value.sameAuthGroupRequiresResumeReachability === true ? { sameAuthGroupRequiresResumeReachability: true } : {}),
-        ...(value.exactSameSelectionRequiresResumeReachability === false
-            ? { exactSameSelectionRequiresResumeReachability: false }
-            : {}),
-        ...(verifyResumeReachable ? { verifyResumeReachable } : {}),
-        ...(resolveCandidatePersistedSessionFile ? { resolveCandidatePersistedSessionFile } : {}),
-        ...(resolveResumeReachabilityUnsupported ? { resolveResumeReachabilityUnsupported } : {}),
-        ...(classifyUsageLimitError ? { classifyUsageLimitError } : {}),
-        ...(runtimeAuthAdapter !== undefined ? { runtimeAuthAdapter } : {}),
-        ...(daemonAuthBridgeRefresh && daemonAuthBridgeServiceIds.length > 0
-            ? {
-                daemonAuthBridge: {
-                    serviceIds: daemonAuthBridgeServiceIds,
-                    refresh: daemonAuthBridgeRefresh,
-                },
-            }
-            : {}),
-        ...(quotaFetcherDescriptor ? { quotaFetcherDescriptor } : {}),
-        ...(usageLimitRecoveryOwnerId && fallbackBackoffEnvKey && maxAttemptsEnvKey && defaultFallbackBackoffMs && defaultMaxAttempts
-            ? {
-                usageLimitRecovery: {
-                    agentId: usageLimitRecoveryOwnerId,
-                    ...(issueProviderFilter ? { issueProviderFilter } : {}),
-                    ...(defaultNativeServiceId ? { defaultNativeServiceId } : {}),
-                    fallbackBackoffEnvKey,
-                    maxAttemptsEnvKey,
-                    defaultFallbackBackoffMs,
-                    defaultMaxAttempts,
-                },
-            }
-            : {}),
-        ...(recoveryCapabilities ? { recoveryCapabilities } : {}),
-        ...(resolveLegacyRuntimeAuthFailureSourceRevision
-            ? { resolveLegacyRuntimeAuthFailureSourceRevision }
-            : {}),
-    };
 }
 
 type ResolvedAgentCliSessionCommandDeclaration = Readonly<{
@@ -1177,11 +940,13 @@ function normalizeAgentCliSessionCommandOptions(
 export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
     agentId: CatalogAgentId;
     cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+    isCurrent?: () => boolean;
 }>): Pick<ResolvedCatalogEntry, 'getCliCommandHandler' | 'resolveSessionRuntimePreferences'> {
     const cliSessionCommand = resolveAgentCliSessionCommandDeclaration(
         params.cliSessionCommand,
         params.agentId,
     );
+    const isCurrent = params.isCurrent ?? (() => true);
     return Object.freeze({
         getCliCommandHandler: createCliSessionCommandHandler(
             cliSessionCommand,
@@ -1189,12 +954,18 @@ export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
                 cliSubcommand: params.agentId,
                 runtimeAuthorityAgentId: params.agentId,
             },
+            {},
+            isCurrent,
         ),
         ...(cliSessionCommand.buildSessionOptions
             ? {
-                resolveSessionRuntimePreferences: (input) => normalizeAgentCliSessionCommandOptions(
-                    cliSessionCommand.buildSessionOptions!(input),
-                ),
+                resolveSessionRuntimePreferences: (input: SessionRuntimePreferencesInput) => {
+                    if (!isCurrent()) return {};
+                    const result = normalizeAgentCliSessionCommandOptions(
+                        cliSessionCommand.buildSessionOptions!(input),
+                    );
+                    return isCurrent() ? result : {};
+                },
             }
             : {}),
     });
@@ -1207,11 +978,15 @@ export function createCliSessionCommandHandler(
         runtimeAuthorityAgentId: string;
     }>,
     deps: CliSessionCommandHandlerDeps = {},
+    isCurrent: () => boolean = () => true,
 ) {
     return async () => {
+        if (!isCurrent()) return async () => undefined;
         const runBackendSessionCliCommand = deps.runBackendSessionCliCommand
             ?? (await import('@/cli/runBackendSessionCliCommand')).runBackendSessionCliCommand;
+        if (!isCurrent()) return async () => undefined;
         return async (context: Parameters<CatalogCliCommandHandler>[0]) => {
+            if (!isCurrent()) return;
             if (cliSessionCommand.implicitResumeDelegation) {
                 const resolveSessionCommandResumeDelegation = deps.resolveSessionCommandResumeDelegation
                     ?? (await import('@/cli/sessionCommandResumeDelegation')).resolveSessionCommandResumeDelegation;
@@ -1221,6 +996,7 @@ export function createCliSessionCommandHandler(
                         context.args[0] === identity.cliSubcommand,
                     resumeFlags: cliSessionCommand.implicitResumeDelegation.resumeFlags,
                 });
+                if (!isCurrent()) return;
                 if (decision.kind === 'delegate') {
                     const handleResumeCommand = deps.handleResumeCommand
                         ?? (await import('@/cli/commands/resume')).handleResumeCommand;
@@ -1228,10 +1004,12 @@ export function createCliSessionCommandHandler(
                         terminalRuntime: context.terminalRuntime,
                         rawArgv: context.rawArgv,
                     });
+                    if (!isCurrent()) return;
                     return;
                 }
             }
 
+            if (!isCurrent()) return;
             await runBackendSessionCliCommand({
                 context,
                 backendIdForSessionRuntime: cliSessionCommand.sessionRuntimeId,
@@ -1260,471 +1038,7 @@ export function createCliSessionCommandHandler(
                     ? { providerInfoCommandPrefixes: cliSessionCommand.infoCommandPrefixes }
                     : {}),
             });
-        };
-    };
-}
-
-function materializedRootDirForStableRoot(
-    connectedServices: ConnectedServicesContribution,
-    stableRootDir: string,
-): string {
-    return connectedServices.materializedRootSubdir
-        ? join(stableRootDir, connectedServices.materializedRootSubdir)
-        : stableRootDir;
-}
-
-function normalizeMaterializationDiagnostics(value: readonly unknown[] | undefined): readonly {
-    code: string;
-    providerId?: string;
-    serviceId?: ConnectedServiceId;
-    severity?: 'info' | 'warning' | 'blocking';
-    requestedStateMode?: string;
-    effectiveStateMode?: string;
-    reason?: string;
-    entryName?: string;
-    credentialRefreshFailure?: ConnectedServicesMaterializationDiagnostic['credentialRefreshFailure'];
-}[] {
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((entry) => {
-        const record = isRecord(entry) ? entry : null;
-        const code = readString(record?.code);
-        if (!record || !code) return [];
-        const runtimeOwnerId = readString(record.agentId);
-        const parsedServiceId = record.serviceId === undefined ? null : ConnectedServiceIdSchema.safeParse(record.serviceId);
-        const severity = record.severity === 'info' || record.severity === 'warning' || record.severity === 'blocking'
-            ? record.severity
-            : undefined;
-        const credentialRefreshFailure = normalizeMaterializationCredentialRefreshFailure(record.credentialRefreshFailure);
-        return [{
-            code,
-            ...(runtimeOwnerId ? { providerId: runtimeOwnerId } : {}),
-            ...(parsedServiceId?.success ? { serviceId: parsedServiceId.data } : {}),
-            ...(severity ? { severity } : {}),
-            ...(readString(record.requestedStateMode) ? { requestedStateMode: readString(record.requestedStateMode)! } : {}),
-            ...(readString(record.effectiveStateMode) ? { effectiveStateMode: readString(record.effectiveStateMode)! } : {}),
-            ...(readString(record.reason) ? { reason: readString(record.reason)! } : {}),
-            ...(readString(record.entryName) ? { entryName: readString(record.entryName)! } : {}),
-            ...(credentialRefreshFailure ? { credentialRefreshFailure } : {}),
-        }];
-    });
-}
-
-function normalizeStateSharingDiagnostics(
-    diagnostics: Awaited<ReturnType<typeof applyConnectedServiceStateSharingDescriptor>>['diagnostics'],
-): readonly ConnectedServicesMaterializationDiagnostic[] {
-    return diagnostics.map((diagnostic) => {
-        const runtimeOwnerId = diagnostic.providerId;
-        const parsedServiceId = diagnostic.serviceId === undefined
-            ? null
-            : ConnectedServiceIdSchema.safeParse(diagnostic.serviceId);
-        return {
-            code: diagnostic.code,
-            providerId: runtimeOwnerId,
-            ...(parsedServiceId?.success ? { serviceId: parsedServiceId.data } : {}),
-            ...(diagnostic.requestedStateMode ? { requestedStateMode: diagnostic.requestedStateMode } : {}),
-            ...(diagnostic.effectiveStateMode ? { effectiveStateMode: diagnostic.effectiveStateMode } : {}),
-            ...(diagnostic.entryName ? { entryName: diagnostic.entryName } : {}),
-            ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
-        };
-    });
-}
-
-async function removeMaterializedHomeCredentialEntries(
-    targetDir: string,
-    entries: readonly string[] | undefined,
-): Promise<void> {
-    for (const entry of entries ?? []) {
-        await rm(join(targetDir, entry), { recursive: true, force: true });
-    }
-}
-
-async function applyConnectedServiceStateSharingForContribution(params: Readonly<{
-    agentId: CatalogAgentId;
-    connectedServices: ConnectedServicesContribution;
-    serviceId: ConnectedServiceId;
-    materializedRootDir: string;
-    env: NodeJS.ProcessEnv;
-    stateSourceRoot?: string | null;
-    stateSharingPolicy: ReturnType<typeof resolveConnectedServicesProviderStateSharingPolicyV1>;
-    sessionDirectory?: string | null;
-}>): Promise<Readonly<{
-    diagnostics: readonly ConnectedServicesMaterializationDiagnostic[];
-    effectiveStateMode: 'isolated' | 'shared';
-}>> {
-    const resolveStateSharingSourceRoot = params.connectedServices.resolveStateSharingSourceRoot;
-    const providerLabel = String(params.agentId);
-    if (!resolveStateSharingSourceRoot) {
-        return { diagnostics: [], effectiveStateMode: params.stateSharingPolicy.stateMode };
-    }
-    if (
-        params.connectedServices.stateSharingServiceIds
-        && !params.connectedServices.stateSharingServiceIds.includes(params.serviceId)
-    ) {
-        return { diagnostics: [], effectiveStateMode: params.stateSharingPolicy.stateMode };
-    }
-    const settings = params.stateSharingPolicy;
-    const sourceRoot = resolveStateSharingSourceRoot({ env: params.env });
-    const stateSourceRoot = readString(params.stateSourceRoot) ?? sourceRoot;
-    const lockRoots = settings.stateMode === 'shared'
-        ? [params.materializedRootDir, sourceRoot, stateSourceRoot]
-        : [params.materializedRootDir];
-    return await withConnectedServiceStateSharingLocks(lockRoots, async () => {
-        const stateEntryNames = await params.connectedServices.resolveStateSharingStateEntryNames?.({
-            sourceRoot: stateSourceRoot,
-            materializedRootDir: params.materializedRootDir,
-            env: params.env,
-            requestedStateMode: settings.stateMode,
-            effectiveStateMode: settings.stateMode,
-        });
-        const sessionImportRoots = settings.stateMode === 'shared'
-            ? params.connectedServices.createStateSharingSessionImportRoots?.({
-                sourceRoot: stateSourceRoot,
-                materializedRootDir: params.materializedRootDir,
-            }) ?? [{
-                sourceRoot: join(params.materializedRootDir, 'projects'),
-                destinationRoot: join(stateSourceRoot, 'projects'),
-                includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
-            }]
-            : [];
-        await removeMaterializedHomeCredentialEntries(
-            params.materializedRootDir,
-            params.connectedServices.materializedHomeCredentialEntries,
-        );
-        const existingManifest = await readConnectedServiceStateSharingManifest(params.materializedRootDir);
-        if (settings.stateMode === 'shared') {
-            await params.connectedServices.reconcileStateSharingSource?.({
-                sourceRoot: stateSourceRoot,
-                materializedRootDir: params.materializedRootDir,
-            });
-        }
-        const applyResult = await applyConnectedServiceStateSharingDescriptor({
-            descriptor: params.connectedServices.stateSharingDescriptor,
-            nativeSourceContext: {
-                sourceRoot,
-                sourceEnv: params.env as Record<string, string>,
-            },
-            target: {
-                targetMaterializedRoot: params.materializedRootDir,
-                targetMaterializedEnv: {},
-            },
-            configMode: settings.configMode,
-            requestedStateMode: settings.stateMode,
-            effectiveStateMode: settings.stateMode,
-            cwd: params.sessionDirectory ?? process.cwd(),
-            existingManifest,
-            ...(stateEntryNames ? { stateEntryNames } : {}),
-            resolveStateSourceRoot: (entryName) =>
-                params.connectedServices.resolveStateSharingStateSourceRoot?.({
-                    entryName,
-                    sourceRoot: stateSourceRoot,
-                    materializedRootDir: params.materializedRootDir,
-                    env: params.env,
-                }) ?? stateSourceRoot,
-            sessionImportRoots,
-            ...(params.connectedServices.resolveVendorResumeIdFromImportedFile
-                ? { resolveVendorResumeIdFromImportedFile: params.connectedServices.resolveVendorResumeIdFromImportedFile }
-                : {}),
-            providerLabel,
-        });
-        await removeMaterializedHomeCredentialEntries(
-            params.materializedRootDir,
-            params.connectedServices.materializedHomeCredentialEntries,
-        );
-        await writeConnectedServiceStateSharingManifest(params.materializedRootDir, applyResult.manifest);
-        return {
-            diagnostics: normalizeStateSharingDiagnostics(applyResult.diagnostics),
-            effectiveStateMode: applyResult.manifest.effectiveStateMode,
-        };
-    }, { providerId: providerLabel });
-}
-
-function createConnectedServicesMaterializer(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-    exec: ExecService,
-): ConnectedServicesMaterializer {
-    const mergeAuthMaterializationInput = (
-        target: Record<string, unknown>,
-        input: Readonly<Record<string, unknown>>,
-    ): void => {
-        for (const [key, value] of Object.entries(input)) {
-            if (value === null || value === undefined) continue;
-            target[key] = value;
-        }
-    };
-
-    return async ({
-        materializationKey,
-        activeServerDir,
-        rootDir,
-        recordsByServiceId,
-        selectionsByServiceId,
-        connectedAccountMaterializationAuthority,
-        accountSettings,
-        processEnv,
-        sessionDirectory,
-    }) => {
-        const materializationInput: Record<string, unknown> = {};
-        const requestAuthPurposeBindings = connectedAccountMaterializationAuthority.kind === 'qualified'
-            ? connectedAccountMaterializationAuthority.requestAuthPurposeBindings
-            : [];
-        let primaryRecord: CredentialRecord | null = null;
-        let primaryServiceId: ConnectedServiceId | null = null;
-
-        for (const serviceId of connectedServices.serviceIds) {
-            const record = selectionsByServiceId?.get(serviceId)?.record ?? recordsByServiceId.get(serviceId) ?? null;
-            if (!record) continue;
-            if (connectedAccountMaterializationAuthority.kind === 'legacy_unfenced_one_shot') {
-                mergeAuthMaterializationInput(
-                    materializationInput,
-                    connectedServices.createAuthMaterializationInput(serviceId, record),
-                );
-            }
-            primaryRecord ??= record;
-            primaryServiceId ??= serviceId;
-        }
-
-        if (!primaryRecord || !primaryServiceId) return null;
-        const stateSharingPolicy = resolveConnectedServicesProviderStateSharingPolicyV1(
-            accountSettings?.connectedServicesProviderStateSharingSettingsV1,
-            agentId,
-        );
-        const primarySelection = selectionsByServiceId?.get(primaryServiceId);
-        const stableRootDir = primarySelection?.kind === 'group'
-            ? resolveConnectedServiceGroupHomeDir({
-                activeServerDir,
-                serviceId: primarySelection.serviceId,
-                groupId: primarySelection.groupId,
-                agentId,
-            })
-            : resolveConnectedServiceHomeDir({
-                activeServerDir,
-                serviceId: primaryServiceId,
-                profileId: primarySelection?.kind === 'profile' ? primarySelection.profileId : primaryRecord.profileId,
-                agentId,
-            });
-        const materializedRootDir = materializedRootDirForStableRoot(connectedServices, stableRootDir);
-        await ensurePrivateConnectedServiceMaterializedRoot(materializedRootDir);
-
-        const env = processEnv ?? process.env;
-        // Thread group-bound selections' groupIds to the plugin materializer so runtime-auth
-        // selection identities can be pool-scoped (without generation) at the single owner.
-        const connectedServiceGroupIdsByServiceId = Object.fromEntries(
-            [...(selectionsByServiceId?.entries() ?? [])]
-                .flatMap(([serviceId, selection]) => selection.kind === 'group' ? [[serviceId, selection.groupId] as const] : []),
-        );
-        const materializationContext = {
-            ...materializationInput,
-            connectedAccountMaterializationAuthority:
-                connectedAccountMaterializationAuthority.kind,
-            ...(Object.keys(connectedServiceGroupIdsByServiceId).length > 0
-                ? { connectedServiceGroupIdsByServiceId }
-                : {}),
-            rootDir: materializedRootDir,
-            processEnv: env,
-            connectedServicesSessionStateSharingRequested: stateSharingPolicy.stateMode === 'shared',
-            sessionDirectory: sessionDirectory ?? null,
-            exec,
-            ...(requestAuthPurposeBindings.length
-                ? {
-                    requestAuth: Object.freeze({
-                        purposeBindings: requestAuthPurposeBindings,
-                        capabilityPath:
-                            resolveConnectedAccountRequestAuthCapabilityPath(
-                                rootDir,
-                            ),
-                    }),
-                }
-                : {}),
-        };
-        const stateSharing = await applyConnectedServiceStateSharingForContribution({
-            agentId,
-            connectedServices,
-            serviceId: primaryServiceId,
-            materializedRootDir,
-            env,
-            stateSharingPolicy,
-            sessionDirectory: sessionDirectory ?? null,
-        });
-        const materialized = await connectedServices.materializeAuthEnvironment({
-            ...materializationContext,
-            connectedServicesSessionStateSharingEffectiveMode: stateSharing.effectiveStateMode,
-            materializationId: materializationKey,
-        });
-
-        return {
-            ...createRetainedConnectedServicesMaterialization({
-                rootDir: materializedRootDir,
-                env: materialized.env,
-            }),
-            ...(requestAuthPurposeBindings.length
-                ? { requestAuthMaterializedRoot: rootDir }
-                : {}),
-            diagnostics: [
-                ...stateSharing.diagnostics,
-                ...normalizeMaterializationDiagnostics(materialized.diagnostics),
-            ],
-        };
-    };
-}
-
-function createRuntimeAuthAdapter(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-): ConnectedServiceProviderRuntimeAuthAdapter | null {
-    if (connectedServices.runtimeAuthAdapter === false) return null;
-    if (connectedServices.runtimeAuthAdapter) return connectedServices.runtimeAuthAdapter;
-    if (!connectedServices.classifyUsageLimitError) return null;
-    const restartResume = createRestartResumeConnectedServiceRuntimeAuthAdapter(agentId);
-    return {
-        ...restartResume,
-        classifyRuntimeAuthFailure(input) {
-            const selection = isRecord(input.selection) ? input.selection : null;
-            const error = isRecord(input.error) ? input.error : null;
-            const classified = connectedServices.classifyUsageLimitError?.({
-                providerErrorPath: true,
-                error: input.error,
-                parseResetAt: parseProviderResetAt,
-            });
-            if (!isRecord(classified)) return restartResume.classifyRuntimeAuthFailure(input);
-            const serviceId = readString(selection?.serviceId) ?? readString(error?.serviceId);
-            if (!serviceId) return null;
-            const classification: ConnectedServiceRuntimeFailureClassification = {
-                kind: readString(classified.kind) === 'rate_limit' ? 'rate_limit' : 'usage_limit',
-                serviceId,
-                profileId: readString(selection?.activeProfileId ?? selection?.profileId),
-                groupId: readString(selection?.groupId),
-                resetsAtMs: typeof classified.resetAtMs === 'number' ? classified.resetAtMs : null,
-                retryAfterMs: typeof classified.retryAfterMs === 'number' ? classified.retryAfterMs : null,
-                planType: null,
-                rateLimits: classified,
-                source: 'structured_provider_error',
-            };
-            return {
-                ...classification,
-                limitCategory: readConnectedServiceLimitCategoryV1(classified.limitCategory) ?? 'usage_limit',
-                providerLimitId: readString(classified.providerLimitId),
-                quotaScope: readString(classified.quotaScope) ?? 'unknown',
-                action: isRecord(classified.action) ? classified.action : null,
-            } as ConnectedServiceRuntimeFailureClassification;
-        },
-    };
-}
-
-function createConnectedServiceMaterializedHomeRootResolver(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-): NonNullable<ResolvedCatalogEntry['resolveConnectedServiceMaterializedHomeRoot']> {
-    return (params) => {
-        const serviceId = connectedServices.readConnectedServiceId(params.serviceId);
-        if (!serviceId) return null;
-        const selection = params.selection;
-        const stableRootDir = selection?.kind === 'group'
-            ? resolveConnectedServiceGroupHomeDir({
-                activeServerDir: params.activeServerDir,
-                serviceId,
-                groupId: selection.groupId,
-                agentId,
-            })
-            : resolveConnectedServiceHomeDir({
-                activeServerDir: params.activeServerDir,
-                serviceId,
-                profileId: selection?.kind === 'profile' ? selection.profileId : params.profileId,
-                agentId,
-            });
-        return materializedRootDirForStableRoot(connectedServices, stableRootDir);
-    };
-}
-
-function createSwitchContinuityResolver(
-    agentId: CatalogAgentId,
-    connectedServices: ConnectedServicesContribution,
-    runtimeAuthAdapter: ConnectedServiceProviderRuntimeAuthAdapter | null,
-    verifyResumeReachable: VerifyResumeReachable,
-) {
-    return async (params: ConnectedServiceSwitchContinuityParams): Promise<ConnectedServiceSwitchContinuityResult> => {
-        if (!connectedServices.shouldRestartForServiceSwitch?.(params.serviceId)) {
-            return {
-                mode: 'unsupported',
-                reason: connectedServices.unsupportedSwitchReason?.(params.serviceId)
-                    ?? 'unsupported_service',
-            };
-        }
-        if (
-            runtimeAuthAdapter
-            && isConnectedToConnectedServiceSwitch(params)
-            && params.runtimeAuthSelection !== null
-            && params.runtimeAuthSelection !== undefined
-        ) {
-            const hotApply = runtimeAuthAdapter.canHotApply({
-                target: { agentId },
-                selection: params.runtimeAuthSelection,
-                targetMaterializedEnv: params.targetMaterializedEnv ?? null,
-                materializedEnv: params.targetMaterializedEnv ?? null,
-            });
-            if (isRecord(hotApply) && hotApply.supported === true) {
-                return { mode: 'hot_apply' };
-            }
-        }
-        if (isConnectedToConnectedServiceSwitch(params)) {
-            const restartContinuityCanBeProven = (
-                connectedServices.exactSameSelectionRequiresResumeReachability !== false
-                && isExactSameConnectedServiceSelection(params)
-            )
-                || (
-                    connectedServices.sameAuthGroupRequiresResumeReachability === true
-                    && isSameConnectedServiceAuthGroup(params)
-                );
-            if (!restartContinuityCanBeProven) {
-                if (connectedServices.connectedSwitchSharedStateRequiredReason) {
-                    return {
-                        mode: 'restart_shared_state_required',
-                        reason: connectedServices.connectedSwitchSharedStateRequiredReason,
-                    };
-                }
-                return {
-                    mode: 'restart_same_home',
-                    reason: connectedServices.restartRematerializeRequiredReason ?? 'provider_rematerialization_required',
-                };
-            }
-            if (!hasExactConnectedServiceRestartContinuityContext(params)) {
-                return providerSessionStateUnavailableForResume();
-            }
-
-            const targetMaterializedRoot = readString(params.targetMaterializedRoot);
-            const providerSessionId = readString(params.vendorResumeId);
-            const cwd = readString(params.cwd);
-            const materializationIdentity = params.connectedServiceMaterializationIdentityV1 ?? null;
-            const targetMaterializedEnv = params.targetMaterializedEnv ?? null;
-            if (!targetMaterializedRoot || !providerSessionId || !cwd || !materializationIdentity || !targetMaterializedEnv) {
-                return providerSessionStateUnavailableForResume();
-            }
-
-            const reachability = await canResumeFromMaterializedStateCore({
-                targetMaterializedRoot,
-                targetMaterializedEnv,
-                requestedStateMode: 'isolated',
-                effectiveStateMode: 'isolated',
-                materializationIdentity,
-                vendorResumeId: providerSessionId,
-                cwd,
-                candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
-                verifyResumeReachable,
-            });
-            return reachability.ok
-                ? { mode: 'restart_same_home' }
-                : providerSessionStateUnavailableForResume({
-                    diagnostics: reachability.continuityDiagnostics,
-                });
-        }
-        return connectedServices.nativeSwitchSharedStateRequiredReason
-            ? {
-                mode: 'restart_shared_state_required',
-                reason: connectedServices.nativeSwitchSharedStateRequiredReason,
-            }
-            : {
-            mode: 'restart_same_home',
-            reason: connectedServices.restartRematerializeRequiredReason ?? 'provider_rematerialization_required',
+            if (!isCurrent()) return;
         };
     };
 }
@@ -1734,6 +1048,7 @@ function createProviderScopedStableExecService(params: Readonly<{
     environment: Readonly<Record<string, string>>;
     systemTools: readonly PluginSystemToolContributionV1[];
     agentId?: CatalogAgentId;
+    runtimeSpec?: AgentCliRuntimeDescriptor | null;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     signal?: AbortSignal;
     isGenerationCurrent?: () => boolean;
@@ -1751,12 +1066,12 @@ function createProviderScopedStableExecService(params: Readonly<{
         ? definitions.find((definition) => definition.toolId === params.agentCliSystemTool?.toolId)
         : undefined;
     const systemTools = params.agentId
-        && isBundledAgentId(params.agentId)
+        && params.runtimeSpec
         && params.agentCliSystemTool
         && boundDefinition
         ? createAgentCliSystemToolService({
             agentId: params.agentId,
-            runtimeSpec: getAgentCliRuntimeSpec(params.agentId),
+            runtimeSpec: params.runtimeSpec,
             binding: params.agentCliSystemTool,
             definition: boundDefinition,
             processEnv: { ...params.environment },
@@ -1796,188 +1111,5 @@ function createProviderScopedStableExecService(params: Readonly<{
             return resolvedPath;
         },
         systemTools,
-    });
-}
-
-function createProviderScopedExecService(
-    systemTools?: readonly PluginSystemToolContributionV1[],
-    agentId?: CatalogAgentId,
-    agentCliSystemTool?: AgentCliSystemToolBinding | null,
-): ExecService {
-    const environment = Object.freeze(Object.fromEntries(
-        Object.entries(process.env).filter(
-            (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-    ));
-    return createProviderScopedStableExecService({
-        cwd: process.cwd(),
-        environment,
-        systemTools: systemTools ?? [],
-        agentId,
-        agentCliSystemTool,
-    });
-}
-
-export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
-    agentId: CatalogAgentId;
-    packageName: string;
-    contribution: AgentRuntimeContribution;
-    /** Static manifest catalog fact; it is never sourced from the runtime aggregate. */
-    agentCliSystemTool?: AgentCliSystemToolBinding;
-    systemTools?: readonly PluginSystemToolContributionV1[];
-}>): AgentCatalogHookFactory {
-    const systemTools = params.systemTools ?? Object.freeze([]);
-    const agentCliSystemTool = readAgentCliSystemToolBinding(
-        params.agentCliSystemTool,
-        systemTools,
-    );
-    const connectedServices = readConnectedServicesContribution(params.contribution.connectedServices);
-    const sessionHandoff = readSessionHandoffContribution(params.contribution.sessionHandoff);
-    const rawRuntimeAuthAdapter = connectedServices
-        ? createRuntimeAuthAdapter(params.agentId, connectedServices)
-        : null;
-    const runtimeAuthAdapter = rawRuntimeAuthAdapter
-        ? serializeRuntimeAuthDestinationTransitions(params.agentId, rawRuntimeAuthAdapter)
-        : null;
-    const projectedResumeReachability = resolveProjectedResumeReachability(connectedServices);
-    const connectedServiceSwitchContinuityResolver = connectedServices?.shouldRestartForServiceSwitch
-        ? createSwitchContinuityResolver(
-            params.agentId,
-            connectedServices,
-            runtimeAuthAdapter,
-            projectedResumeReachability,
-        )
-        : null;
-    const switchContinuityResolver = connectedServiceSwitchContinuityResolver;
-
-    return () => {
-        const exec = createProviderScopedExecService(
-            systemTools,
-            params.agentId,
-            agentCliSystemTool,
-        );
-        return ({
-        ...(connectedServices
-            ? {
-                getConnectedServicesMaterializer: async () =>
-                    createConnectedServicesMaterializer(params.agentId, connectedServices, exec),
-                ...(connectedServices.noRestartRequiredServiceIds
-                    ? { connectedServiceNoRestartRequiredServiceIds: connectedServices.noRestartRequiredServiceIds }
-                    : {}),
-                ...(connectedServices.shouldRestartForServiceSwitch
-                    ? {
-                        shouldRestartConnectedServiceOnCredentialUpdate: (serviceId: ConnectedServiceId) =>
-                            connectedServices.shouldRestartForServiceSwitch?.(serviceId) === true,
-                    }
-                    : {}),
-                connectedServiceIds: connectedServices.serviceIds,
-                ...(connectedServices.requestAuthUses
-                    ? { connectedAccountRequestAuthUses: connectedServices.requestAuthUses }
-                    : {}),
-                resolveConnectedServiceMaterializedHomeRoot:
-                    createConnectedServiceMaterializedHomeRootResolver(params.agentId, connectedServices),
-                ...(connectedServices.materializedHomeFreshness
-                    ? {
-                        getConnectedServiceMaterializedHomeFreshness: async () =>
-                            connectedServices.materializedHomeFreshness ?? null,
-                    }
-                    : {}),
-                ...(connectedServices.sanitizeRetainedMaterializedHome
-                    ? { sanitizeRetainedConnectedServiceMaterializedHome: connectedServices.sanitizeRetainedMaterializedHome }
-                    : {}),
-                getConnectedServiceStateSharingDescriptor: async () =>
-                    connectedServices.stateSharingDescriptor,
-                ...(connectedServices.recoveryCapabilities
-                    ? {
-                        getConnectedServiceRecoveryCapabilities: async () =>
-                            connectedServices.recoveryCapabilities ?? null,
-                    }
-                    : {}),
-                ...(connectedServices.resolveLegacyRuntimeAuthFailureSourceRevision
-                    ? {
-                        resolveLegacyConnectedServiceRuntimeAuthFailureSourceRevision:
-                            connectedServices.resolveLegacyRuntimeAuthFailureSourceRevision,
-                    }
-                    : {}),
-                ...(runtimeAuthAdapter
-                    ? {
-                        getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter,
-                    }
-                    : {}),
-                ...(connectedServices.daemonAuthBridge
-                    ? {
-                        getConnectedServiceDaemonAuthBridgeRefresh: async (serviceId: ConnectedServiceId) =>
-                            connectedServices.daemonAuthBridge?.serviceIds.includes(serviceId) === true
-                                ? connectedServices.daemonAuthBridge.refresh
-                                : null,
-                    }
-                    : {}),
-                ...(connectedServices.quotaFetcherDescriptor
-                    ? {
-                        getConnectedServiceQuotaFetcherDescriptor: async () =>
-                            connectedServices.quotaFetcherDescriptor ?? null,
-                    }
-                    : {}),
-                ...(switchContinuityResolver
-                    ? { resolveConnectedServiceSwitchContinuity: switchContinuityResolver }
-                    : {}),
-                ...(connectedServices.verifyResumeReachable || connectedServices.resolveResumeReachabilityUnsupported
-                    ? { verifyResumeReachable: projectedResumeReachability }
-                    : {}),
-                ...(connectedServices.usageLimitRecovery
-                    ? {
-                        sessionUsageLimitRecoveryBackoffPolicy: {
-                            providerId: connectedServices.usageLimitRecovery.agentId,
-                            issueProviderFilter:
-                                connectedServices.usageLimitRecovery.issueProviderFilter ?? null,
-                            defaultNativeServiceId:
-                                connectedServices.usageLimitRecovery.defaultNativeServiceId ?? null,
-                            fallbackBackoffEnvKey:
-                                connectedServices.usageLimitRecovery.fallbackBackoffEnvKey,
-                            maxAttemptsEnvKey:
-                                connectedServices.usageLimitRecovery.maxAttemptsEnvKey,
-                            defaultFallbackBackoffMs:
-                                connectedServices.usageLimitRecovery.defaultFallbackBackoffMs,
-                            defaultMaxAttempts:
-                                connectedServices.usageLimitRecovery.defaultMaxAttempts,
-                        },
-                    }
-                    : {}),
-            }
-            : {}),
-        ...(connectedServices?.resolveCandidatePersistedSessionFile
-            ? {
-                resolveConnectedServiceCandidatePersistedSessionFile:
-                    connectedServices.resolveCandidatePersistedSessionFile,
-            }
-            : {}),
-        ...(sessionHandoff?.agentBundleRecords
-            ? {
-                getSessionHandoffAgentBundleRecordExtractor: async () =>
-                    sessionHandoff.agentBundleRecords?.extract ?? null,
-            }
-            : {}),
-        ...(sessionHandoff?.runtimeLocalMetadata
-            ? { buildRuntimeLocalHandoffMetadata: sessionHandoff.runtimeLocalMetadata.build }
-            : {}),
-        ...(sessionHandoff?.nativeSessionLog
-            ? { resolveAgentNativeSessionLogPath: sessionHandoff.nativeSessionLog.resolvePath }
-            : {}),
-        });
-    };
-}
-
-export function applyAgentCatalogEntryHooks(
-    contribution: ResolvedAgentContribution,
-    hooksByAgentId: Readonly<Record<string, AgentCatalogHookFactory>>,
-): ResolvedAgentContribution {
-    const createHooks = hooksByAgentId[contribution.id];
-    if (!createHooks || !contribution.catalogEntry) return contribution;
-    return Object.freeze({
-        ...contribution,
-        catalogEntry: Object.freeze({
-            ...contribution.catalogEntry,
-            ...createHooks(),
-        }),
     });
 }

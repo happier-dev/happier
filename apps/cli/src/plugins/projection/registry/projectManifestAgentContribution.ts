@@ -20,10 +20,9 @@ import type {
 const EMPTY_SYSTEM_TOOLS: readonly PluginSystemToolContributionV1[] = Object.freeze([]);
 
 /**
- * Adapts the Agent's declared catalog facts to the host catalog. A bundled
- * Agent supplies its host hooks as a first-party module; a contributed Agent
- * declares its static catalog facts in the manifest, and both reach the catalog
- * through their canonical projection owners.
+ * Adapts the Agent's declared catalog facts to the host catalog. Bundled and
+ * installed Agents declare the same public manifest facts and both reach the
+ * catalog through these canonical projection owners.
  *
  * `cliSessionCommand` is always present so the Agent's `happy <agent>` session
  * subcommand has exactly one builder. The declared block stays optional, so an

@@ -22,7 +22,6 @@ import {
   isSameAutomationEventDeclarationReleaseV1,
   isValidPluginJsonSchemaValue,
   readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1,
-  freezeAutomationRunPluginEventExecutionRecipeV1,
   sameAutomationAccountContentIdentityV1,
   sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
   sealAutomationRunTriggerEvidenceEnvelopeV1,
@@ -75,8 +74,6 @@ export type AutomationEventAdoptedDefinitionV1 = AutomationEventSourceDefinition
  */
 export type AutomationEventAdoptedDefinitionForAdmissionV1 = Readonly<{
   definition: AutomationEventAdoptedDefinitionV1;
-  /** Canonical strict definition recipe with `triggerEvidence:null`. */
-  executionRecipe: string;
   payloadValidator: PluginJsonSchemaValidator;
   /** Immutable release that supplied this compiled Event payload validator. */
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
@@ -84,7 +81,6 @@ export type AutomationEventAdoptedDefinitionForAdmissionV1 = Readonly<{
 
 type AutomationEventAdoptedDefinitionSnapshotRecordV1 = Readonly<{
   definition: AutomationEventAdoptedDefinitionV1;
-  executionRecipe: string | null;
   payloadValidator: PluginJsonSchemaValidator | null;
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1 | null;
 }>;
@@ -211,14 +207,12 @@ function compareCanonicalUnsignedRevisions(left: string, right: string): number 
 }
 
 function definitionStableKey(definition: Readonly<{
-  automationId: string;
-  eventRef: Readonly<{ pluginId: string; localId: string }>;
+  triggerId: string;
 }>): string {
-  return [
-    definition.automationId,
-    definition.eventRef.pluginId,
-    definition.eventRef.localId,
-  ].map((part) => `${part.length}:${part}`).join('|');
+  // The server cursor owns database ordering by the globally unique trigger
+  // ID. The daemon must not apply a second lexical comparator over a locally
+  // encoded Automation-first composite: that can reject a valid server page.
+  return definition.triggerId;
 }
 
 function checkpointRetirementCandidateKey(
@@ -300,12 +294,14 @@ function sameTransport(
  */
 export function admissionKey(params: Readonly<{
   automationId: string;
-  templateVersion: number;
+  triggerId: string;
+  triggerRevision: number;
   sourceSelectorId: string;
 }>): string {
   return [
     params.automationId,
-    String(params.templateVersion),
+    params.triggerId,
+    String(params.triggerRevision),
     params.sourceSelectorId,
   ].map((part) => `${part.length}:${part}`).join('|');
 }
@@ -349,7 +345,8 @@ function isExactAdoptedDefinitionForPreparation(params: Readonly<{
   const { definition } = params;
   if (
     definition.automationId !== params.selector.automationId
-    || definition.templateVersion !== params.selector.templateVersion
+    || definition.triggerId !== params.selector.triggerId
+    || definition.triggerRevision !== params.selector.triggerRevision
     || definition.sourceSelectorId !== params.selector.sourceSelectorId
     || !sameEventRef(definition.eventRef, params.eventRef)
     || definition.eventRef.pluginId !== params.caller.pluginId
@@ -387,7 +384,8 @@ function projectionMatchesStoredDefinition(
 ): boolean {
   if (
     definition.automationId !== storedDefinition.automationId
-    || definition.templateVersion !== storedDefinition.templateVersion
+    || definition.triggerId !== storedDefinition.triggerId
+    || definition.triggerRevision !== storedDefinition.triggerRevision
     || definition.eventRef.pluginId !== storedDefinition.eventRef.pluginId
     || definition.eventRef.localId !== storedDefinition.eventRef.localId
     || definition.sourceSelectorId !== storedDefinition.sourceSelectorId
@@ -543,9 +541,6 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       ) return null;
       definitionsByAdmissionKey.set(key, {
         definition,
-        executionRecipe: isDefinitionPreparedForAdmission(privateDefinition)
-          ? structuredClone(privateDefinition.executionRecipe)
-          : null,
         payloadValidator: isDefinitionPreparedForAdmission(privateDefinition)
           ? privateDefinition.payloadValidator
           : null,
@@ -580,7 +575,6 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     let expectedStoredDefinitionScope: string | undefined;
     let hasExpectedStoredDefinitionScope = false;
     let firstPage = true;
-    let previousStableKey: string | undefined;
     const seenCursors = new Set<string>();
     const seenStableKeys = new Set<string>();
     const candidate: Array<
@@ -678,10 +672,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
 
       for (const storedDefinition of result.definitions) {
         const stableKey = definitionStableKey(storedDefinition);
-        if (
-          seenStableKeys.has(stableKey)
-          || (previousStableKey !== undefined && stableKey <= previousStableKey)
-        ) {
+        if (seenStableKeys.has(stableKey)) {
           return { kind: 'discarded', reason: 'invalidPage' };
         }
         let projected:
@@ -720,14 +711,12 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           return { kind: 'discarded', reason: 'invalidPage' };
         }
         seenStableKeys.add(stableKey);
-        previousStableKey = stableKey;
         const definition = webhookRoutingSourceInstanceId === undefined
           ? parsed.data
           : { ...parsed.data, webhookRoutingSourceInstanceId };
         candidate.push(isDefinitionPreparedForAdmission(projected)
           ? {
             definition,
-            executionRecipe: projected.executionRecipe,
             payloadValidator: projected.payloadValidator,
             eventDeclarationRelease: projected.eventDeclarationRelease,
           }
@@ -1137,7 +1126,6 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             caller: params.caller,
             transport: params.transport,
           })
-          || selected.executionRecipe === null
           || selected.payloadValidator === null
           ? null
           : selected;
@@ -1253,11 +1241,15 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           });
           const base = {
             automationId: definition.automationId,
-            templateVersion: definition.templateVersion,
+            triggerId: definition.triggerId,
+            triggerRevision: definition.triggerRevision,
             sourceSelectorId: definition.sourceSelectorId,
             sourceContractVersion: definition.sourceContractVersion,
             observationTransport: definition.observationTransport.kind,
-            occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({
+              triggerId: definition.triggerId,
+              evidence,
+            }),
             occurredAt: admissionInput.occurredAt,
             triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
               material: accountMaterial,
@@ -1268,6 +1260,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
               material: accountMaterial,
               accountId: request.accountId,
               automationId: definition.automationId,
+              triggerId: definition.triggerId,
               evidence,
             }),
           };
@@ -1309,18 +1302,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
               },
             },
           });
-          const executionRecipe = freezeAutomationRunPluginEventExecutionRecipeV1({
-            definitionRecipe: selectedDefinition.executionRecipe,
-            templateVersion: definition.templateVersion,
-            triggerEvidence,
-          });
-          if (executionRecipe.kind !== 'available') throw new Error('execution_recipe_invalid');
           return {
             ...base,
-            outcome: {
-              kind: 'matched',
-              executionRecipe: executionRecipe.serialized,
-            },
+            triggerEvidenceEnvelope: triggerEvidence,
+            outcome: { kind: 'matched' },
           };
         };
         async function* prepareEncryptedRequests(): AutomationEventAdmitPreparedRequestSequenceV1 {

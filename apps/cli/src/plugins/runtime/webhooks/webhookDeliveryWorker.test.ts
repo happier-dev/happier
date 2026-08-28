@@ -451,7 +451,7 @@ describe('plugin webhook claimed delivery worker', () => {
     const execute = vi.fn(async () => {
       recordCurrentPluginWebhookAutomationAdmissionResultV1({
         input: {
-          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-event-v1' },
+          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-pushed-v1' },
           occurrenceId: 'delivery-1',
           occurredAt: 1,
           observationReceivedAt: 1,
@@ -552,7 +552,7 @@ describe('plugin webhook claimed delivery worker', () => {
     const execute = vi.fn(async (_actionId: string, _input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
       recordCurrentPluginWebhookAutomationAdmissionResultV1({
         input: {
-          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-event-v1' },
+          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-pushed-v1' },
           occurrenceId: 'delivery-timeout-summary',
           occurredAt: 1,
           observationReceivedAt: 1,
@@ -618,7 +618,7 @@ describe('plugin webhook claimed delivery worker', () => {
     const execute = vi.fn(async () => {
       recordCurrentPluginWebhookAutomationAdmissionResultV1({
         input: {
-          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-event-v1' },
+          eventRef: { pluginId: 'acme.github', localId: 'automation/repository-pushed-v1' },
           occurrenceId: 'delivery-byte-bounded-summary',
           occurredAt: 1,
           observationReceivedAt: 1,

@@ -2,6 +2,8 @@ import {
     buildQualifiedPluginContributionKey,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
+    type DaemonPluginUiTargetedSurfaceSelectedRendererV1,
+    type DaemonPluginReactNativeCrashMountV1,
     DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema,
     type PluginMachineExecutionOriginV1,
     type PluginProjectionV2,
@@ -163,6 +165,100 @@ function createComposerRenderersByQualifiedId(
     return renderersByKey;
 }
 
+/**
+ * The one physical embedded-renderer selector shared by Composer and optional
+ * Automation Event setup surfaces. Semantic owners provide only a same-plugin
+ * renderer chain and mount identity; artifact availability and fallback
+ * selection stay here.
+ */
+export function projectDaemonEmbeddedPluginUiRenderer(input: Readonly<{
+    registry: ResolvedContributionRegistry;
+    projection: PluginProjectionV2;
+    pluginUiHostRuntime: PluginUiProjectionHostRuntimeContext;
+    modelsByRendererKey: Readonly<Record<string, StablePluginDeclarativeModel | undefined>>;
+    contributor: Readonly<{ pluginId: string; localId: string }>;
+    immutableGenerationId: string;
+    renderer: PluginUiRendererChainBindingV1;
+    crashMount?: DaemonPluginReactNativeCrashMountV1;
+}>): Readonly<{
+    rendererChain: readonly Readonly<{ pluginId: string; localId: string }>[];
+    selectedRenderer: DaemonPluginUiTargetedSurfaceSelectedRendererV1;
+}> | null {
+    if (
+        input.registry.immutableGenerationIdsByPluginId?.[input.contributor.pluginId]?.trim()
+        !== input.immutableGenerationId
+    ) return null;
+    const renderersByKey = createComposerRenderersByQualifiedId(input.registry);
+    const entriesById = input.projection.familiesById.pluginUi?.entriesById ?? {};
+    const rendererChainResolution = resolvePluginUiRendererChain({
+        binding: input.renderer,
+        contributorPluginId: input.contributor.pluginId,
+        renderersByQualifiedId: renderersByKey,
+    });
+    if (!rendererChainResolution.ok) return null;
+    const rendererChain = rendererChainResolution.rendererChain;
+    const candidates = rendererChain.map((renderer) => {
+        const declarativeModel = renderer.definition.kind === 'declarative'
+            ? input.modelsByRendererKey[`${renderer.pluginId}\u0000${renderer.definition.id}`]
+            : undefined;
+        const rendererProjection = projectPluginUiRendererRef(renderer, declarativeModel);
+        const availability = projectPluginUiRendererAvailability({
+            pluginId: input.contributor.pluginId,
+            renderer,
+            declarativeModel,
+            registryRendererRef: rendererProjection.registryRendererRef,
+            entriesById,
+        });
+        const crashStateProjection = input.crashMount
+            ? projectPluginUiRendererCrashState({
+                mount: input.crashMount,
+                renderer,
+                availability,
+                hostRuntime: input.pluginUiHostRuntime,
+            })
+            : Object.freeze({ availability });
+        const artifactProjection = resolvePluginUiRendererProjectionEntry({
+            pluginId: input.contributor.pluginId,
+            renderer: rendererProjection.registryRendererRef,
+            entriesById,
+        });
+        return Object.freeze({
+            renderer,
+            rendererRef: rendererProjection.rendererRef,
+            availability: crashStateProjection.availability,
+            ...(artifactProjection ? { artifactProjection } : {}),
+            ...('crashState' in crashStateProjection && crashStateProjection.crashState
+                ? { crashState: crashStateProjection.crashState }
+                : {}),
+        });
+    });
+    const selectedIdentity = selectPluginUiRendererChainMemberV1(
+        rendererChain.map((renderer) => renderer.identity),
+        candidates
+            .filter((candidate) => candidate.availability.state === 'available')
+            .map((candidate) => candidate.renderer.definition.id),
+    ) ?? rendererChain[0]?.identity;
+    const selected = selectedIdentity
+        ? candidates.find((candidate) => (
+            candidate.renderer.identity.pluginId === selectedIdentity.pluginId
+            && candidate.renderer.identity.localId === selectedIdentity.localId
+        ))
+        : undefined;
+    if (!selected) return null;
+    const parsed = DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema.safeParse({
+        identity: Object.freeze({ ...selected.renderer.identity }),
+        renderer: selected.rendererRef,
+        availability: selected.availability,
+        ...(selected.artifactProjection ? { artifactProjection: selected.artifactProjection } : {}),
+        ...(selected.crashState ? { crashState: selected.crashState } : {}),
+    });
+    if (!parsed.success) return null;
+    return Object.freeze({
+        rendererChain: Object.freeze(rendererChain.map((renderer) => Object.freeze({ ...renderer.identity }))),
+        selectedRenderer: parsed.data,
+    });
+}
+
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>
@@ -242,6 +338,74 @@ export function readCurrentComposerReactNativeCrashStateBindings(input: Readonly
 }
 
 /**
+ * Reads the Automation Event setup-surface RN bindings from the same cold
+ * registry and projected artifact identities used by the embedded renderer
+ * selector. Automation remains an embedded placement; it never impersonates
+ * a destination merely to reuse crash containment.
+ */
+export function readCurrentAutomationEventSetupReactNativeCrashStateBindings(input: Readonly<{
+    registry: ResolvedContributionRegistry;
+    projection: PluginProjectionV2;
+}>): readonly ReactNativeCrashStateBinding[] {
+    const renderersByKey = createComposerRenderersByQualifiedId(input.registry);
+    const entriesById = input.projection.familiesById.pluginUi?.entriesById ?? {};
+    const bindingsByKey = new Map<string, ReactNativeCrashStateBinding>();
+    for (const entry of input.registry.automationEligibleEvents ?? []) {
+        const declaration = entry.event.automation.source.setupSurface;
+        if (!declaration) continue;
+        const contribution = entry.event.identity;
+        const immutableGenerationId = entry.event.immutableGenerationId;
+        const rendererChainResolution = resolvePluginUiRendererChain({
+            binding: declaration,
+            contributorPluginId: contribution.pluginId,
+            renderersByQualifiedId: renderersByKey,
+        });
+        if (!rendererChainResolution.ok) continue;
+
+        for (const renderer of rendererChainResolution.rendererChain) {
+            if (renderer.definition.kind !== 'reactNative') continue;
+            const rendererProjection = projectPluginUiRendererRef(renderer, undefined);
+            const rendererEntry = resolvePluginUiRendererProjectionEntry({
+                pluginId: contribution.pluginId,
+                renderer: rendererProjection.registryRendererRef,
+                entriesById,
+            });
+            const rendererRuntime = readRecord(readRecord(rendererEntry)?.runtime);
+            const cacheIdentity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(
+                rendererRuntime?.cacheIdentity,
+            );
+            if (
+                !cacheIdentity.success
+                || cacheIdentity.data.pluginId !== contribution.pluginId
+                || cacheIdentity.data.contributionId !== renderer.definition.id
+                || renderer.identity.pluginId !== contribution.pluginId
+                || renderer.identity.localId !== renderer.definition.id
+            ) continue;
+
+            const binding: ReactNativeCrashStateBinding = Object.freeze({
+                mount: Object.freeze({
+                    kind: 'automationEventSetupSurface' as const,
+                    contribution: Object.freeze({ ...contribution }),
+                    immutableGenerationId,
+                }),
+                renderer: Object.freeze({
+                    pluginId: cacheIdentity.data.pluginId,
+                    localId: cacheIdentity.data.contributionId,
+                }),
+                artifactDigest: cacheIdentity.data.artifactDigest,
+            });
+            const key = createReactNativeCrashStateBindingKey(binding);
+            const previous = bindingsByKey.get(key);
+            if (previous && previous.artifactDigest !== binding.artifactDigest) {
+                throw new Error('Projected Automation Event setup React Native binding has conflicting current artifact digests');
+            }
+            bindingsByKey.set(key, binding);
+        }
+    }
+    return Object.freeze([...bindingsByKey.values()]);
+}
+
+/**
  * Builds the static half of Composer mounts. This does not create a Composer
  * scope, instance key, or launch input: those are host-private live UI facts.
  */
@@ -257,8 +421,6 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
         immutableGenerationId: string;
     }>) => PluginUiTargetedContributionsV1;
 }>): readonly DaemonPluginUiComposerSurfaceCatalogEntryV1[] {
-    const renderersByKey = createComposerRenderersByQualifiedId(input.registry);
-    const entriesById = input.projection.familiesById.pluginUi?.entriesById ?? {};
     const catalog: DaemonPluginUiComposerSurfaceCatalogEntryV1[] = [];
     for (const declaration of listComposerSurfaceDeclarations(input.registry)) {
         const immutableGenerationId = input.registry.immutableGenerationIdsByPluginId?.[
@@ -267,63 +429,22 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
         const executionOrigin = input.pluginExecutionOriginsByPluginId[declaration.contribution.pluginId];
         if (!immutableGenerationId || !executionOrigin) continue;
 
-        const rendererChainResolution = resolvePluginUiRendererChain({
-            binding: declaration.renderer,
-            contributorPluginId: declaration.contribution.pluginId,
-            renderersByQualifiedId: renderersByKey,
+        const rendered = projectDaemonEmbeddedPluginUiRenderer({
+            registry: input.registry,
+            projection: input.projection,
+            pluginUiHostRuntime: input.pluginUiHostRuntime,
+            modelsByRendererKey: input.modelsByRendererKey,
+            contributor: declaration.contribution.identity,
+            immutableGenerationId,
+            renderer: declaration.renderer,
+            crashMount: Object.freeze({
+                kind: 'composer' as const,
+                contribution: Object.freeze({ ...declaration.contribution.identity }),
+                immutableGenerationId,
+                role: declaration.role,
+            }),
         });
-        if (!rendererChainResolution.ok) continue;
-        const rendererChain = rendererChainResolution.rendererChain;
-
-        const candidates = rendererChain.map((renderer) => {
-            const declarativeModel = renderer.definition.kind === 'declarative'
-                ? input.modelsByRendererKey[`${renderer.pluginId}\u0000${renderer.definition.id}`]
-                : undefined;
-            const rendererProjection = projectPluginUiRendererRef(renderer, declarativeModel);
-            const availability = projectPluginUiRendererAvailability({
-                pluginId: declaration.contribution.pluginId,
-                renderer,
-                declarativeModel,
-                registryRendererRef: rendererProjection.registryRendererRef,
-                entriesById,
-            });
-            const crashStateProjection = projectPluginUiRendererCrashState({
-                mount: Object.freeze({
-                    kind: 'composer' as const,
-                    contribution: Object.freeze({ ...declaration.contribution.identity }),
-                    immutableGenerationId,
-                    role: declaration.role,
-                }),
-                renderer,
-                availability,
-                hostRuntime: input.pluginUiHostRuntime,
-            });
-            const artifactProjection = resolvePluginUiRendererProjectionEntry({
-                pluginId: declaration.contribution.pluginId,
-                renderer: rendererProjection.registryRendererRef,
-                entriesById,
-            });
-            return Object.freeze({
-                renderer,
-                rendererRef: rendererProjection.rendererRef,
-                availability: crashStateProjection.availability,
-                ...(artifactProjection ? { artifactProjection } : {}),
-                ...(crashStateProjection.crashState ? { crashState: crashStateProjection.crashState } : {}),
-            });
-        });
-        const selectedIdentity = selectPluginUiRendererChainMemberV1(
-            rendererChain.map((renderer) => renderer.identity),
-            candidates
-                .filter((candidate) => candidate.availability.state === 'available')
-                .map((candidate) => candidate.renderer.definition.id),
-        ) ?? rendererChain[0]?.identity;
-        const selected = selectedIdentity
-            ? candidates.find((candidate) => (
-                candidate.renderer.identity.pluginId === selectedIdentity.pluginId
-                && candidate.renderer.identity.localId === selectedIdentity.localId
-            ))
-            : undefined;
-        if (!selected) continue;
+        if (!rendered) continue;
 
         let contributorTargetedContributions: PluginUiTargetedContributionsV1;
         let resourceCapability: PluginUiResourceBindingCapabilityV1;
@@ -339,15 +460,6 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
             continue;
         }
 
-        const selectedRenderer = DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema.safeParse({
-            identity: Object.freeze({ ...selected.renderer.identity }),
-            renderer: selected.rendererRef,
-            availability: selected.availability,
-            ...(selected.artifactProjection ? { artifactProjection: selected.artifactProjection } : {}),
-            ...(selected.crashState ? { crashState: selected.crashState } : {}),
-        });
-        if (!selectedRenderer.success) continue;
-
         catalog.push(Object.freeze({
             contribution: Object.freeze({ ...declaration.contribution.identity }),
             immutableGenerationId,
@@ -355,8 +467,8 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
             role: declaration.role,
             // The protocol parser owns the public array immutability boundary;
             // keep the source value assignable to its mutable Zod-inferred shape.
-            rendererChain: rendererChain.map((renderer) => ({ ...renderer.identity })),
-            selectedRenderer: selectedRenderer.data,
+            rendererChain: rendered.rendererChain.map((renderer) => ({ ...renderer })),
+            selectedRenderer: rendered.selectedRenderer,
             executionOrigin: Object.freeze({
                 serverIdentityId: executionOrigin.serverIdentityId,
                 materializationRef: Object.freeze({ ...executionOrigin.materializationRef }),

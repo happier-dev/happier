@@ -41,6 +41,9 @@ import type {
   AgentExternalSessionsManagedEndpointReadHost,
 } from '@/session/external/agentExternalSessionsInvocation';
 import type {
+  ManagedServiceSessionBaseUrlResolver,
+} from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
+import type {
   ExternalSessionPluginAdmissionOwner,
 } from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
@@ -183,6 +186,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   readStableEventsBroker?: () => StablePluginEventsBroker | null;
   runtimeActionExecute?: RuntimeActionExecute;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+  resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver;
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   resolveExternalSessionCurrentMachineId?: () => string | null;
   externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
@@ -330,6 +334,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             : {}),
           ...(params.managedEndpointRead
             ? { managedEndpointRead: params.managedEndpointRead }
+            : {}),
+          ...(params.resolveManagedServiceSessionBaseUrl
+            ? { resolveManagedServiceSessionBaseUrl: params.resolveManagedServiceSessionBaseUrl }
             : {}),
           ...(params.externalSessionPluginAdmissionOwner
             ? {

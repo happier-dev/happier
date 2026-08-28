@@ -297,13 +297,15 @@ describe('target SCM runtime generation fencing', () => {
             observedReceiver = this;
             return null;
         });
-        const adapter: Record<string, unknown> = {};
-        Object.defineProperty(adapter, 'detectRemote', {
+        const routing: Record<string, unknown> = {
+            buildCompareUrl: () => null,
+        };
+        Object.defineProperty(routing, 'detectRemote', {
             enumerable: true,
             get: () => detectRemote,
         });
         const runtime = {
-            adapter,
+            adapter: { routing },
         } as PluginScmHostingProviderRuntime;
         const target = {
             pluginId: 'acme.hosting',
@@ -326,10 +328,10 @@ describe('target SCM runtime generation fencing', () => {
             }],
             isGenerationActive: () => active,
         });
-        const retainedDetectRemote = entries.hostingProviders[0]?.registration.adapter.detectRemote;
+        const retainedDetectRemote = entries.hostingProviders[0]?.registration.adapter.routing?.detectRemote;
         expect(retainedDetectRemote).toBeTypeOf('function');
         expect(retainedDetectRemote?.({ remoteName: null, remoteUrl: 'https://example.test/acme/repo' })).toBeNull();
-        expect(observedReceiver).toBe(adapter);
+        expect(observedReceiver).toBe(routing);
 
         active = false;
 
@@ -347,6 +349,10 @@ describe('target SCM runtime generation fencing', () => {
             detectRemote(_input: Readonly<{ remoteName: string | null; remoteUrl: string }>): null {
                 return null;
             }
+
+            buildCompareUrl(): null {
+                return null;
+            }
         }
         const target = {
             pluginId: 'acme.class-hosting',
@@ -357,7 +363,7 @@ describe('target SCM runtime generation fencing', () => {
                 },
             },
         } as unknown as ActivationTarget;
-        const runtime: PluginScmHostingProviderRuntime = { adapter: new Adapter() };
+        const runtime: PluginScmHostingProviderRuntime = { adapter: { routing: new Adapter() } };
         const registration = captureHostingRegistration(
             'acme.class-hosting',
             'class-forge',
@@ -374,7 +380,7 @@ describe('target SCM runtime generation fencing', () => {
             }],
             isGenerationActive: () => active,
         });
-        const retainedDetectRemote = entries.hostingProviders[0]?.registration.adapter.detectRemote;
+        const retainedDetectRemote = entries.hostingProviders[0]?.registration.adapter.routing?.detectRemote;
         expect(retainedDetectRemote?.({ remoteName: null, remoteUrl: 'https://example.test/acme/repo' })).toBeNull();
 
         active = false;

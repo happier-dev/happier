@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AutomationSourceSelectorIdV1Schema,
+  AutomationTriggerIdSchema,
   type AutomationSourceSelectorIdV1,
 } from '@happier-dev/protocol';
 import type {
@@ -50,13 +51,13 @@ function storedDefinition(index: number): AutomationEventStoredDefinitionProject
   };
   return {
     automationId: `automation-${String(index).padStart(4, '0')}`,
-    templateVersion: index,
+    triggerId: AutomationTriggerIdSchema.parse(`trigger-${String(index).padStart(4, '0')}`),
+    triggerRevision: index,
     eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
     sourceSelectorId: sourceSelector(index),
     sourceContractVersion: 1,
     observationTransport,
     storedDefinitionEnvelope,
-    executionRecipe: 'serialized-definition-recipe',
     payloadSchema: { type: 'object' },
   };
 }
@@ -110,7 +111,8 @@ function projectStoredDefinition(
   }
   return {
     automationId: stored.automationId,
-    templateVersion: stored.templateVersion,
+    triggerId: stored.triggerId,
+    triggerRevision: stored.triggerRevision,
     eventRef: stored.eventRef,
     sourceInstanceId: values.sourceInstanceId,
     sourceSelectorId: stored.sourceSelectorId,
@@ -194,6 +196,8 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
     const definition = storedDefinition(1);
     const candidate = {
       automationId: definition.automationId,
+      triggerId: definition.triggerId,
+      triggerRevision: definition.triggerRevision,
       eventRef: definition.eventRef,
       sourceSelectorId: definition.sourceSelectorId,
       sourceContractVersion: definition.sourceContractVersion,
@@ -563,6 +567,32 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
     expect(reReadProjection.definitions[500]).toMatchObject({
       automationId: definitions[500]!.automationId,
       sourceConfig: { repositoryId: 501 },
+    });
+  });
+
+  it('accepts the server cursor order when Automation IDs sort in the opposite direction', async () => {
+    const first = { ...storedDefinition(1), automationId: 'automation-z' };
+    const second = { ...storedDefinition(2), automationId: 'automation-a' };
+    const owner = createAutomationEventAdoptedDefinitionSetV1({
+      caller,
+      transport: { kind: 'checkpointedPull' },
+      generationSignal: new AbortController().signal,
+      isGenerationCurrent: () => true,
+      revalidateCallerMaterialization: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions: async ({ input }) => input.cursor === undefined
+        ? page('7', [first], 'next')
+        : page('7', [second], null),
+      projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
+    });
+
+    await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
+    expect(owner.readPublicProjection()).toMatchObject({
+      kind: 'available',
+      definitions: [
+        { triggerId: first.triggerId },
+        { triggerId: second.triggerId },
+      ],
     });
   });
 

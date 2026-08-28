@@ -20,6 +20,7 @@ const callerMaterialization: PluginMachineMaterializationRefV1 = {
   machineId: 'machine-caller',
   materializationId: 'materialization-caller',
 };
+const callerImmutableGenerationId = 'github-immutable-generation-current';
 
 describe('Automation Event E2 transport boundary', () => {
   it('normalizes a plain admission into one strict request before a custom transport receives it', async () => {
@@ -52,6 +53,7 @@ describe('Automation Event E2 transport boundary', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -66,7 +68,8 @@ describe('Automation Event E2 transport boundary', () => {
       payload: { action: 'opened' },
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: 'trigger-1',
+        triggerRevision: 3,
         sourceSelectorId,
       }],
     });
@@ -77,6 +80,7 @@ describe('Automation Event E2 transport boundary', () => {
       caller: {
         kind: 'plugin',
         pluginId: 'com.acme.github',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({
@@ -88,6 +92,7 @@ describe('Automation Event E2 transport boundary', () => {
       v: 1,
       caller: {
         pluginId: 'com.acme.github',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
       input,
@@ -136,19 +141,22 @@ describe('Automation Event E2 transport boundary', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
     const repeated = {
       automationId: 'automation-1',
-      templateVersion: 3,
+      triggerId: 'trigger-1',
+      triggerRevision: 3,
       sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
         '9d5af559-2c82-4c22-b6a0-ecabce38a631',
       ),
     };
     const other = {
       automationId: 'automation-2',
-      templateVersion: 1,
+      triggerId: 'trigger-2',
+      triggerRevision: 1,
       sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
         '2f0b0f2e-16c9-4f4a-9a5c-3d0d1c2b4a67',
       ),
@@ -168,6 +176,7 @@ describe('Automation Event E2 transport boundary', () => {
       caller: {
         kind: 'plugin',
         pluginId: 'com.acme.github',
+        immutableGenerationId: callerImmutableGenerationId,
         materialization: callerMaterialization,
       },
     })).resolves.toEqual({

@@ -11,11 +11,16 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type {
+    AgentExecutionRunEvent,
     AgentSessionOpenRequest,
     AgentSessionRuntime,
     AgentSessionRuntimeContext,
+    AgentSessionRuntimeEvent,
     AgentRuntimeFactory,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+    createExecutionRunHostBackendFromSessionRuntime,
+} from '@happier-dev/plugin-sdk/host/registration';
 import type {
     JsonValue,
 } from '@happier-dev/plugin-sdk';
@@ -48,6 +53,12 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import {
+    composeNativeAgentSessionRuntimeContext,
+    createNativeAgentSessionHostServices,
+    type NativeAgentSessionHostServiceOwners,
+} from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 
 import { createAgentSessionRunnerFactoryBinding } from './agentSessionRunnerFactoryBinding';
 import { loadRetainedAgentRuntimeLeaf } from './loadRetainedAgentRuntimeLeaf';
@@ -56,6 +67,10 @@ const repoRoot = resolve(
     dirname(fileURLToPath(import.meta.url)),
     '../../../../../..',
 );
+
+type UnsequencedSessionEvent<T> = T extends AgentSessionRuntimeEvent
+    ? Omit<T, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never;
 
 type TerminalHostService = NonNullable<
     AgentSessionRuntimeContext['session']['services']['terminalHost']
@@ -151,13 +166,44 @@ const createOpenRequest = (
 };
 
 function createBoundarySession(): AgentSessionRuntime {
+    const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    let sequence = 0;
+    const publish = (event: UnsequencedSessionEvent<AgentSessionRuntimeEvent>): void => {
+        for (const listener of listeners) {
+            listener({
+                ...event,
+                sequence: ++sequence,
+                sessionId: 'matrix-boundary-session',
+                emittedAtMs: sequence,
+            } as AgentSessionRuntimeEvent);
+        }
+    };
     return {
-        send: vi.fn(async () => ({ status: 'admitted' as const })),
+        send: vi.fn(async (request) => {
+            publish({
+                kind: 'input-accepted',
+                inputIds: request.inputIds,
+                delivery: request.delivery,
+            });
+            publish({
+                kind: 'turn-start',
+                turnId: request.delivery.turnId,
+                startedBy: 'host',
+            });
+            publish({
+                kind: 'turn-complete',
+                turnId: request.delivery.turnId,
+            });
+            return { status: 'admitted' as const };
+        }),
         cancel: vi.fn(async ({ turnId }) => ({
             status: 'requested' as const,
             turnId,
         })),
-        watch: () => ({ dispose: () => undefined }),
+        watch: (listener) => {
+            listeners.add(listener);
+            return { dispose: () => listeners.delete(listener) };
+        },
         dispose: vi.fn(async () => undefined),
     };
 }
@@ -221,67 +267,145 @@ function createMatrixSettingsService(
 function createAcpBoundaryContext(
     agentId: string,
     sessions: AgentSessionRuntime[],
+    hostSessionId: string = `session-${agentId}`,
 ): AgentSessionRuntimeContext {
-    return {
-        plugin: {
-            id: `happier.agent.${agentId.toLowerCase()}`,
-            version: '0.0.0',
-        },
-        contribution: {
-            id: agentId,
-            qualifiedId:
-                `happier.agent.${agentId.toLowerCase()}/agents/${agentId}`,
-        },
-        surface: 'agent',
-        signal: new AbortController().signal,
-        services: {
-            logger: {
-                debug: () => undefined,
-                info: () => undefined,
-                warn: () => undefined,
-                error: () => undefined,
-            },
-            settings: createMatrixSettingsService(),
-            connectedAccounts: {
-                getBinding: async () => null,
-                materialize: async () => {
-                    throw new Error(
-                        'ACP matrix did not grant a connected account',
-                    );
-                },
-                requestSelection: async () => ({
-                    status: 'cancelled' as const,
+    const pluginId = `happier.agent.${agentId.toLowerCase()}`;
+    const sessionId = hostSessionId;
+    const signal = new AbortController().signal;
+    const unavailableServices = createUnavailablePluginServices();
+    const owners = Object.freeze({
+        features: Object.freeze({ isEnabled: () => false }),
+        sessionHooks: Object.freeze({
+            startServer: async () => Object.freeze({
+                port: 4312,
+                stop: () => undefined,
+                dispose: async () => undefined,
+            }),
+            resolveForwarderAssets: async () => Object.freeze({
+                nodeExecutable: '/runtime/node',
+                sessionForwarderScript: '/runtime/session-forwarder.cjs',
+                permissionForwarderScript:
+                    '/runtime/permission-forwarder.cjs',
+            }),
+            createPluginDir: async () => '/tmp/plugin-dir',
+            disposePluginDir: async () => undefined,
+            publishProviderTranscript: async () => undefined,
+        }),
+        transcripts: Object.freeze({
+            fileFollow: Object.freeze({
+                follow: async () => Object.freeze({
+                    id: 'matrix-transcript-follow',
+                    drainNow: async () => undefined,
+                    close: async () => undefined,
                 }),
-                watch: (
-                    _purpose: string,
-                    listener: (event: Readonly<{ kind: 'resync' }>) =>
-                        void | Promise<void>,
-                ) => {
-                    queueMicrotask(() => {
-                        void listener({ kind: 'resync' });
-                    });
-                    return { dispose: () => undefined };
-                },
+            }),
+        }),
+        accountUsage: Object.freeze({
+            resolveSourceContext: async () => null,
+            recordSnapshot: async () => Object.freeze({
+                status: 'unavailable' as const,
+                reason: 'daemon_unavailable' as const,
+            }),
+            adoptProvisionalRecord: async () => Object.freeze({
+                status: 'unavailable' as const,
+                reason: 'daemon_unavailable' as const,
+            }),
+        }),
+        mcp: Object.freeze({
+            resolveForSession: async () => Object.freeze([]),
+        }),
+        toolExecution: Object.freeze({
+            before: async (request) => Object.freeze({
+                status: 'continue' as const,
+                input: request.input,
+            }),
+            observeAfter: async () => undefined,
+        }),
+        dispose: async () => undefined,
+    }) satisfies NativeAgentSessionHostServiceOwners;
+    const sessionServices = createNativeAgentSessionHostServices({
+        owners,
+        agentId,
+        sessionId,
+        directory: '/workspace',
+        signal,
+        isCurrent: () => true,
+        session: {
+            sessionId,
+            updateMetadata: vi.fn(),
+            enqueueAgentMessageCommitted: vi.fn(),
+        },
+        publications: {
+            models: Object.freeze({
+                bind: () => Object.freeze({ dispose: () => undefined }),
+            }),
+            activeInput: Object.freeze({
+                bind: () => Object.freeze({ dispose: () => undefined }),
+                publishStatus: () => undefined,
+            }),
+        },
+        readToolExecutionCapability: () => null,
+        toolsDelivery: 'unsupported',
+    });
+    const services = Object.freeze({
+        ...unavailableServices,
+        logger: {
+            debug: () => undefined,
+            info: () => undefined,
+            warn: () => undefined,
+            error: () => undefined,
+        },
+        settings: createMatrixSettingsService(),
+        connectedAccounts: {
+            ...unavailableServices.connectedAccounts,
+            getBinding: async () => null,
+            materialize: async () => {
+                throw new Error(
+                    'ACP matrix did not grant a connected account',
+                );
             },
-            exec: {
-                run: async () => ({
-                    termination: {
-                        observed: {
-                            kind: 'exit' as const,
-                            exitCode: 0,
-                        },
-                        requestedBy: { kind: 'none' as const },
+            watch: (
+                _purpose: string,
+                listener: (event: Readonly<{ kind: 'resync' }>) =>
+                    void | Promise<void>,
+            ) => {
+                queueMicrotask(() => {
+                    void listener({ kind: 'resync' });
+                });
+                return { dispose: () => undefined };
+            },
+        },
+        exec: {
+            ...unavailableServices.exec,
+            run: async () => ({
+                termination: {
+                    observed: {
+                        kind: 'exit' as const,
+                        exitCode: 0,
                     },
-                    stdout: new TextEncoder().encode('--acp'),
-                    stderr: new Uint8Array(),
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                }),
-            },
+                    requestedBy: { kind: 'none' as const },
+                },
+                stdout: new TextEncoder().encode('--acp'),
+                stderr: new Uint8Array(),
+                stdoutTruncated: false,
+                stderrTruncated: false,
+            }),
         },
-        ui: {},
-        agent: { id: agentId },
-        protocols: {
+    });
+    return composeNativeAgentSessionRuntimeContext({
+        identity: {
+            pluginId,
+            pluginVersion: '0.0.0',
+            agentId,
+        },
+        contributionId: agentId,
+        invokedAtMs: 1,
+        sessionId,
+        signal,
+        services,
+        sessionServices,
+        ui: undefined,
+        protocols: Object.freeze({
             acp: {
                 open: async () => {
                     const session = createBoundarySession();
@@ -289,17 +413,19 @@ function createAcpBoundaryContext(
                     return session;
                 },
             },
-        },
-        session: {
-            id: `session-${agentId}`,
-            services: {},
-        },
+        }),
         workState: {
             publisher: () => ({
-                publish: async () => undefined,
+                publish: async () => ({
+                    status: 'unavailable' as const,
+                    diagnostic: {
+                        code: 'matrix_work_state_unavailable',
+                        severity: 'info' as const,
+                    },
+                }),
             }),
         },
-    } as unknown as AgentSessionRuntimeContext;
+    });
 }
 
 function createAntigravityExecBoundaryContext(input: Readonly<{
@@ -642,7 +768,7 @@ function createPiExecBoundaryContext(input: Readonly<{
     hostSessionId: string;
     resumeProviderSessionId?: string;
 }>): AgentSessionRuntimeContext {
-    const unavailableServices = createUnavailablePluginServices();
+    const baseContext = createAcpBoundaryContext('pi', [], input.hostSessionId);
     let listener:
         ((record: JsonValue) => void | Promise<void>)
         | undefined;
@@ -705,35 +831,29 @@ function createPiExecBoundaryContext(input: Readonly<{
         wait: () => processExit,
         async dispose() {},
     };
-    return {
-        plugin: { id: 'happier.agent.pi', version: '0.0.0' },
-        contribution: {
-            id: 'pi',
-            qualifiedId: 'happier.agent.pi/agents/pi',
-        },
-        surface: 'agent',
-        signal: new AbortController().signal,
-        services: {
-            ...unavailableServices,
+    return Object.freeze({
+        ...baseContext,
+        services: Object.freeze({
+            ...baseContext.services,
             logger: {
-                ...unavailableServices.logger,
+                ...baseContext.services.logger,
                 debug: () => undefined,
                 info: () => undefined,
                 warn: () => undefined,
                 error: () => undefined,
             },
             connectedAccounts: {
-                ...unavailableServices.connectedAccounts,
+                ...baseContext.services.connectedAccounts,
                 getBinding: async () => null,
                 watch: (
                     _purpose: Parameters<
-                        typeof unavailableServices.connectedAccounts.watch
+                        typeof baseContext.services.connectedAccounts.watch
                     >[0],
                     connectedAccountListener: Parameters<
-                        typeof unavailableServices.connectedAccounts.watch
+                        typeof baseContext.services.connectedAccounts.watch
                     >[1],
                 ): ReturnType<
-                    typeof unavailableServices.connectedAccounts.watch
+                    typeof baseContext.services.connectedAccounts.watch
                 > => {
                     queueMicrotask(() => {
                         void connectedAccountListener({ kind: 'resync' });
@@ -742,7 +862,7 @@ function createPiExecBoundaryContext(input: Readonly<{
                 },
             },
             exec: {
-                ...unavailableServices.exec,
+                ...baseContext.services.exec,
                 systemTools: {
                     resolve: async () => ({
                         executable: {
@@ -756,23 +876,20 @@ function createPiExecBoundaryContext(input: Readonly<{
                     spawn: async () => handle,
                 },
             },
-        },
-        ui: {},
-        agent: { id: 'pi' },
+        }),
         protocols: {
+            ...baseContext.protocols,
             acp: {
                 open: async () => {
                     throw new Error('Pi is not ACP');
                 },
             },
         },
-        session: { id: input.hostSessionId },
-        workState: {},
-    } as unknown as AgentSessionRuntimeContext;
+    });
 }
 
 describe('first-party runner Agent factory matrix', () => {
-    it('loads every real session-capable factory leaf through its retained generation binding', async () => {
+    it('loads every real Session runtime through its retained generation binding', async () => {
         const happyHomeDir = await mkdtemp(
             resolve(repoRoot, '.happier-first-party-runner-matrix-'),
         );
@@ -948,6 +1065,83 @@ describe('first-party runner Agent factory matrix', () => {
                         activation.registrations,
                         localAgentId,
                     );
+                    if (agent.id === 'kiro') {
+                        expect(registration?.factory).toBeUndefined();
+                        expect(registration?.sessionRunnerFactory).toBeUndefined();
+                        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+                            happyHomeDir,
+                            contributes: createResolvedContributionRegistry({
+                                agents: [agent],
+                                activationTargets: [],
+                            }),
+                            generation: 1,
+                            generationAuthority: {
+                                commit: null,
+                                generations: new Map([[pluginId, {
+                                    pluginId,
+                                    immutableGenerationId: generated.immutableGenerationId,
+                                    rootPath: prepared.rootPath,
+                                    record: generated,
+                                }]]),
+                                rejectedGenerations: new Map(),
+                                unavailableBundledPackageNames: new Set(),
+                                isCurrent: async () => true,
+                            },
+                        });
+                        try {
+                            const lease = runtimeRegistry.agentRuntimesByAgentId.get(agent.id);
+                            if (!lease?.hasPrimaryRuntime) {
+                                throw new Error('Kiro declarative ACP runtime was not synthesized by the host');
+                            }
+                            expect(lease.sessionRunnerFactoryBinding).toMatchObject({
+                                kind: 'host_declarative_acp_v1',
+                                pluginId,
+                                localAgentId,
+                                immutableGenerationId: generated.immutableGenerationId,
+                            });
+                            const runtime = await lease.createRuntime({
+                                signal: new AbortController().signal,
+                            });
+                            expect(runtime.sessions).toBeDefined();
+                            expect(runtime.executionRuns).toBeUndefined();
+
+                            const boundarySessions: AgentSessionRuntime[] = [];
+                            const context = createAcpBoundaryContext(agent.id, boundarySessions);
+                            const session = await runtime.sessions!.open(
+                                createOpenRequest(agent.id, 'create'),
+                                context,
+                            );
+                            await exerciseSessionLifecycle(session, 'kiro-declarative-session');
+
+                            const run = await createExecutionRunHostBackendFromSessionRuntime({
+                                request: {
+                                    kind: 'create',
+                                    runId: 'kiro-host-derived-run',
+                                    cwd: '/workspace',
+                                    profile: { pluginId, localId: localAgentId },
+                                    input: { text: 'hello from the host-derived Run' },
+                                },
+                                sessionId: 'kiro-host-derived-run',
+                                openSession: async (request) => await runtime.sessions!.open(
+                                    request,
+                                    context,
+                                ),
+                            });
+                            const runEvents: AgentExecutionRunEvent[] = [];
+                            const runWatch = run.watch((event) => runEvents.push(event));
+                            try {
+                                expect(runEvents.map((event) => event.kind)).toContain('run-start');
+                                expect(runEvents.map((event) => event.kind)).toContain('run-complete');
+                                expect(boundarySessions).toHaveLength(2);
+                            } finally {
+                                runWatch.dispose();
+                                await run.dispose();
+                            }
+                        } finally {
+                            await runtimeRegistry.dispose();
+                        }
+                        continue;
+                    }
                     const locator = registration?.sessionRunnerFactory;
                     const registeredFactory = registration?.factory;
                     if (!locator || !registeredFactory) {
@@ -1041,9 +1235,10 @@ describe('first-party runner Agent factory matrix', () => {
                     });
                 }
             }
-            expect([...loadedByAgentId.keys()]).toHaveLength(15);
+            expect([...loadedByAgentId.keys()]).toHaveLength(14);
 
             for (const agent of sessionAgents) {
+                if (agent.id === 'kiro') continue;
                 const factory = loadedByAgentId.get(agent.id);
                 if (!factory) {
                     throw new Error(

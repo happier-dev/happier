@@ -69,6 +69,26 @@ describe('createGlobalFetchRuntime', () => {
         expect(receivedHost).toBe(`dns-rebind.invalid:${address.port}`);
     });
 
+    it('never falls back to ordinary DNS when admission supplies an empty address set', async () => {
+        const fetchMock = vi.fn(async () => new Response('must not dispatch'));
+        const openPinnedStream = vi.fn(async () => {
+            throw new Error('pinned transport must not dispatch');
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const runtime = createGlobalFetchRuntime({ openPinnedStream });
+
+        await expect(runtime.request({
+            url: 'https://unresolved.example.test/resource',
+            method: 'GET',
+            redirect: 'error',
+        }, { validatedAddresses: [] })).rejects.toMatchObject({
+            code: 'plugin_fetch_adapter_unavailable',
+        });
+
+        expect(openPinnedStream).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('does not report a pinned redirect as followed before its next hop is reauthorized', async () => {
         const cancel = vi.fn();
         const runtime = createGlobalFetchRuntime({

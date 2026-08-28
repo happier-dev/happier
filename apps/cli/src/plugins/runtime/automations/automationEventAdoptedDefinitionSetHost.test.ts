@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AutomationEventStoredDefinitionsReadResultV1Schema,
   AutomationSourceSelectorIdV1Schema,
+  AutomationTriggerIdSchema,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
-  serializeAutomationRunExecutionRecipeV1,
   type AccountEncryptionCurrentnessResponse,
   type AutomationEventStoredDefinitionProjectionV1,
   type AutomationEventDeclarationReleaseV1,
@@ -42,6 +42,14 @@ const caller = {
   machineId: 'machine-current',
   materializationId: 'materialization-current',
 } as const satisfies PluginMachineMaterializationRefV1;
+const immutableGenerationId = 'github-generation-current';
+const actionCaller = {
+  pluginId: caller.pluginId,
+  immutableGenerationId,
+  materialization: caller,
+} as const;
+const triggerId = AutomationTriggerIdSchema.parse('trigger-repository-event');
+const triggerRevision = 4;
 const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
   '9d5af559-2c82-4c22-b6a0-ecabce38a631',
 );
@@ -71,45 +79,20 @@ const durableWebhookInvocationReference = {
   lease: { leaseId: 'wh_lease_AAECAwQFBgcICQoLDA0ODw', revision: 5 },
 } as const satisfies PluginWebhookInvocationReferenceV1;
 
-function serializedDefinitionExecutionRecipe(params: Readonly<{
-  templateVersion: number;
-  mode?: 'plain' | 'e2ee';
-  templateCiphertext?: string;
-}>): string {
-  const serialized = serializeAutomationRunExecutionRecipeV1({
-    v: 1,
-    templateVersion: params.templateVersion,
-    template: params.mode === 'e2ee'
-      ? { t: 'encrypted', c: params.templateCiphertext ?? 'opaque-template' }
-      : { t: 'plain', v: { v: 1, prompt: 'Observe this repository event.' } },
-    triggerEvidence: null,
-    target: {
-      kind: 'executionRun',
-      request: {
-        intent: 'task',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'request_response',
-      },
-    },
-  });
-  if (serialized.kind !== 'available') throw new Error('fixture recipe must serialize');
-  return serialized.serialized;
-}
-
 function storedDefinition(options: Readonly<{
   automationId?: string;
+  triggerId?: typeof triggerId;
+  triggerRevision?: number;
   sourceSelectorId?: typeof sourceSelectorId;
-  templateVersion?: number;
 }> = {}): AutomationEventStoredDefinitionProjectionV1 {
   const automationId = options.automationId ?? 'automation-1';
+  const selectedTriggerId = options.triggerId ?? triggerId;
+  const selectedTriggerRevision = options.triggerRevision ?? triggerRevision;
   const selectedSourceSelectorId = options.sourceSelectorId ?? sourceSelectorId;
-  const templateVersion = options.templateVersion ?? 3;
   return {
     automationId,
-    templateVersion,
+    triggerId: selectedTriggerId,
+    triggerRevision: selectedTriggerRevision,
     eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
     sourceSelectorId: selectedSourceSelectorId,
     sourceContractVersion: 1,
@@ -117,14 +100,14 @@ function storedDefinition(options: Readonly<{
       kind: 'checkpointedPull' as const,
       watcherMaterializationRef: caller,
     },
-    executionRecipe: serializedDefinitionExecutionRecipe({ templateVersion }),
     payloadSchema: { type: 'object' },
     storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
       mode: 'plain',
       binding: {
         v: 1,
         automationId,
-        templateVersion,
+        triggerId: selectedTriggerId,
+        triggerRevision: selectedTriggerRevision,
         triggerKind: 'pluginEvent',
         eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
         sourceSelectorId: selectedSourceSelectorId,
@@ -162,7 +145,8 @@ function durablePushStoredDefinition(options: Readonly<{
       binding: {
         v: 1,
         automationId,
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         triggerKind: 'pluginEvent',
         eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
         sourceSelectorId: selectedSourceSelectorId,
@@ -199,6 +183,13 @@ async function collectPreparedAdmissionRequests(
 
 describe('Automation Event adopted-definition host factory', () => {
   it('uses the incumbent private Event route and rejects malformed response bytes at the HTTP boundary', async () => {
+    const immutableGenerationId = 'github-generation-current';
+    const stampedCaller = {
+      pluginId: caller.pluginId,
+      immutableGenerationId,
+      materialization: caller,
+    } as const;
+    const revalidateCaller = vi.fn(async () => true);
     const page = AutomationEventStoredDefinitionsReadResultV1Schema.parse({
       kind: 'page',
       revision: '7',
@@ -209,10 +200,13 @@ describe('Automation Event adopted-definition host factory', () => {
     });
     transportMocks.createPublisherHeader.mockResolvedValueOnce('publisher-proof');
     transportMocks.post.mockResolvedValueOnce({ data: page });
-    const transport = createAutomationEventStoredDefinitionsHttpTransportV1({ credentials });
+    const transport = createAutomationEventStoredDefinitionsHttpTransportV1({
+      credentials,
+      revalidateCaller,
+    });
 
     await expect(transport.read({
-      caller,
+      caller: stampedCaller,
       input: { transport: { kind: 'checkpointedPull' }, pageSize: 1 },
       signal: new AbortController().signal,
     })).resolves.toEqual(page);
@@ -221,7 +215,7 @@ describe('Automation Event adopted-definition host factory', () => {
       path: '/v1/automations/events/stored-definitions/read',
       body: {
         v: 1,
-        caller: { pluginId: caller.pluginId, materialization: caller },
+        caller: stampedCaller,
         input: { transport: { kind: 'checkpointedPull' }, pageSize: 1 },
       },
     });
@@ -230,13 +224,14 @@ describe('Automation Event adopted-definition host factory', () => {
       expect.objectContaining({ v: 1 }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(revalidateCaller).toHaveBeenCalledWith(stampedCaller, expect.any(AbortSignal));
 
     transportMocks.createPublisherHeader.mockResolvedValueOnce('publisher-proof');
     transportMocks.post.mockResolvedValueOnce({
       data: { kind: 'unchanged', revision: '7', sourceConfig: { forbidden: true } },
     });
     await expect(transport.read({
-      caller,
+      caller: stampedCaller,
       input: { transport: { kind: 'checkpointedPull' }, pageSize: 1, knownRevision: '7' },
     })).rejects.toThrow();
   });
@@ -252,10 +247,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '7'
         ? { kind: 'unchanged', revision: '7', eventDeclarationRelease }
         : page,
@@ -265,7 +262,7 @@ describe('Automation Event adopted-definition host factory', () => {
 
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
     const prepared = await owner.prepareAdmission({
-      caller: { pluginId: caller.pluginId, materialization: caller },
+      caller: actionCaller,
       input: {
         eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
         occurrenceId: 'delivery-1',
@@ -274,7 +271,8 @@ describe('Automation Event adopted-definition host factory', () => {
         payload: { action: 'opened' },
         definitions: [{
           automationId: 'automation-1',
-          templateVersion: 3,
+          triggerId,
+          triggerRevision,
           sourceSelectorId,
         }],
       },
@@ -284,14 +282,14 @@ describe('Automation Event adopted-definition host factory', () => {
     });
     await expect(collectPreparedAdmissionRequests(prepared)).resolves.toEqual([{
       v: 1,
-      caller: { pluginId: caller.pluginId, materialization: caller },
+      caller: actionCaller,
       input: {
         eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
         occurrenceId: 'delivery-1',
         occurredAt: 1,
         observationReceivedAt: 2,
         payload: { action: 'opened' },
-        definitions: [{ automationId: 'automation-1', templateVersion: 3, sourceSelectorId }],
+        definitions: [{ automationId: 'automation-1', triggerId, triggerRevision, sourceSelectorId }],
       },
       hostEvidence: {
         v: 1,
@@ -303,10 +301,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const encryptedOwner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async () => ({
         kind: 'page',
         revision: '8',
@@ -361,10 +361,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions,
       resolveAccountEncryptionCurrentness: plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
@@ -374,12 +376,14 @@ describe('Automation Event adopted-definition host factory', () => {
     await expect(owner.readCurrentCheckpointedPullSource({
       reset: {
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         sourceSelectorId,
       },
     })).resolves.toMatchObject({
       automationId: 'automation-1',
-      templateVersion: 3,
+      triggerId,
+      triggerRevision,
       sourceSelectorId,
       sourceConfig: { repositoryId: 42 },
       observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: caller },
@@ -391,7 +395,8 @@ describe('Automation Event adopted-definition host factory', () => {
     await expect(owner.readCurrentCheckpointedPullSource({
       reset: {
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         sourceSelectorId: secondSourceSelectorId,
       },
     })).resolves.toBeNull();
@@ -400,7 +405,8 @@ describe('Automation Event adopted-definition host factory', () => {
     await expect(owner.readCurrentCheckpointedPullSource({
       reset: {
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         sourceSelectorId,
       },
     })).resolves.toBeNull();
@@ -419,10 +425,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '11'
         ? { kind: 'unchanged', revision: '11', eventDeclarationRelease }
         : { kind: 'page', revision: '11', eventDeclarationRelease, definitions, nextCursor: null },
@@ -437,7 +445,8 @@ describe('Automation Event adopted-definition host factory', () => {
       payload: { action: 'opened' },
       definitions: definitions.map((definition) => ({
         automationId: definition.automationId,
-        templateVersion: definition.templateVersion,
+        triggerId: definition.triggerId,
+        triggerRevision: definition.triggerRevision,
         sourceSelectorId: definition.sourceSelectorId,
       })),
     } as const;
@@ -445,7 +454,7 @@ describe('Automation Event adopted-definition host factory', () => {
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '11' });
     const prepare = () => owner.prepareAdmission({
       accountId: 'account-1',
-      caller: { pluginId: caller.pluginId, materialization: caller },
+      caller: actionCaller,
       input,
       randomBytes: (length) => new Uint8Array(length),
     });
@@ -488,10 +497,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'durablePush' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => {
         expect(input.transport).toEqual({ kind: 'durablePush' });
         if (input.knownRevision === '9') {
@@ -550,10 +561,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'durablePush' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions,
       resolveAccountEncryptionCurrentness: plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
@@ -569,7 +582,7 @@ describe('Automation Event adopted-definition host factory', () => {
       definitions: [],
     });
     expect(readStoredDefinitions).toHaveBeenLastCalledWith(expect.objectContaining({
-      caller,
+      caller: actionCaller,
       input: { transport: { kind: 'durablePush' }, pageSize: 500 },
     }));
   });
@@ -610,10 +623,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'durablePush' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions,
       resolveAccountEncryptionCurrentness: plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
@@ -653,17 +668,11 @@ describe('Automation Event adopted-definition host factory', () => {
       accountEncryptionMode: 'e2ee',
       material: { type: 'legacy', secret: credentials.encryption.secret },
     });
-    const templateCiphertext = 'x'.repeat(245 * 1024);
     const definitions = Array.from({ length: 70 }, (_, index) => {
       const automationId = `automation-large-${index}`;
       return {
         ...storedDefinition(),
         automationId,
-        executionRecipe: serializedDefinitionExecutionRecipe({
-          templateVersion: 3,
-          mode: 'e2ee',
-          templateCiphertext,
-        }),
         storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
           mode: 'e2ee',
           material: snapshot.material,
@@ -671,7 +680,8 @@ describe('Automation Event adopted-definition host factory', () => {
           binding: {
             v: 1,
             automationId,
-            templateVersion: 3,
+            triggerId,
+            triggerRevision,
             triggerKind: 'pluginEvent',
             eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
             sourceSelectorId,
@@ -690,10 +700,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '9'
         ? { kind: 'unchanged', revision: '9', eventDeclarationRelease }
         : {
@@ -715,7 +727,6 @@ describe('Automation Event adopted-definition host factory', () => {
       }),
       resolveAccountEncryptionMaterial: async () => snapshot,
     });
-    const actionCaller = { pluginId: caller.pluginId, materialization: caller } as const;
     const input = {
       eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
       occurrenceId: 'delivery-large-1',
@@ -724,7 +735,8 @@ describe('Automation Event adopted-definition host factory', () => {
       payload: { action: 'opened' },
       definitions: definitions.map((definition) => ({
         automationId: definition.automationId,
-        templateVersion: definition.templateVersion,
+        triggerId: definition.triggerId,
+        triggerRevision: definition.triggerRevision,
         sourceSelectorId: definition.sourceSelectorId,
       })),
     } as const;
@@ -788,7 +800,8 @@ describe('Automation Event adopted-definition host factory', () => {
         ? request.input.definitions
         : request.hostEvidence.definitions.map((definition) => ({
           automationId: definition.automationId,
-          templateVersion: definition.templateVersion,
+          triggerId: definition.triggerId,
+          triggerRevision: definition.triggerRevision,
           sourceSelectorId: definition.sourceSelectorId,
         }))
     ))).toEqual(input.definitions);
@@ -802,10 +815,6 @@ describe('Automation Event adopted-definition host factory', () => {
     const plain = storedDefinition();
     const encrypted = {
       ...plain,
-      executionRecipe: serializedDefinitionExecutionRecipe({
-        templateVersion: plain.templateVersion,
-        mode: 'e2ee',
-      }),
       storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: 'e2ee',
         material: snapshot.material,
@@ -813,7 +822,8 @@ describe('Automation Event adopted-definition host factory', () => {
         binding: {
           v: 1,
           automationId: plain.automationId,
-          templateVersion: plain.templateVersion,
+          triggerId: plain.triggerId,
+          triggerRevision: plain.triggerRevision,
           triggerKind: 'pluginEvent',
           eventRef: plain.eventRef,
           sourceSelectorId: plain.sourceSelectorId,
@@ -831,10 +841,12 @@ describe('Automation Event adopted-definition host factory', () => {
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller,
+      immutableGenerationId,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '8'
         ? { kind: 'unchanged', revision: '8', eventDeclarationRelease }
         : {
@@ -860,7 +872,7 @@ describe('Automation Event adopted-definition host factory', () => {
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '8' });
     const prepared = await owner.prepareAdmission({
       accountId: 'account-1',
-      caller: { pluginId: caller.pluginId, materialization: caller },
+      caller: actionCaller,
       input: {
         eventRef: plain.eventRef,
         occurrenceId: 'delivery-1',
@@ -869,7 +881,8 @@ describe('Automation Event adopted-definition host factory', () => {
         payload: { action: 'opened' },
         definitions: [{
           automationId: plain.automationId,
-          templateVersion: plain.templateVersion,
+          triggerId: plain.triggerId,
+          triggerRevision: plain.triggerRevision,
           sourceSelectorId: plain.sourceSelectorId,
         }],
       },
@@ -897,10 +910,12 @@ describe('adopted definition set Account-currentness cost', () => {
       const owner = createAutomationEventAdoptedDefinitionSetHostV1({
         credentials,
         caller,
+        immutableGenerationId,
         transport: { kind: 'checkpointedPull' },
         generationSignal: new AbortController().signal,
         isGenerationCurrent: () => true,
         revalidateCallerMaterialization: async () => true,
+        revalidateCallerImmutableGeneration: async () => true,
         readStoredDefinitions: async (): Promise<AutomationEventStoredDefinitionsReadResultV1> => ({
           kind: 'page',
           revision: '7',

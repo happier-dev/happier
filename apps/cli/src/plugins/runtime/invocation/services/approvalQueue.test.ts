@@ -101,6 +101,8 @@ describe('stable plugin approval queue owner', () => {
             expect.objectContaining({ actionId: 'session.list', actionArgs: {} }),
             expect.objectContaining({
                 defaultSessionId: 'session-1',
+                surface: 'plugin',
+                authority: 'account_automation',
                 actionCaller: {
                     kind: 'plugin',
                     pluginId: 'acme.plugin',
@@ -109,7 +111,6 @@ describe('stable plugin approval queue owner', () => {
                 },
             }),
         );
-        expect(execute.mock.calls[0]?.[2]).not.toHaveProperty('surface');
     });
 
     it('uses one stamped caller for a plugin-bound approval input and its Action dispatch', async () => {
@@ -209,12 +210,30 @@ describe('stable plugin approval queue owner', () => {
             input: {
                 requestId: 'permission-1',
                 decision: 'allow',
+            },
+        })).resolves.toEqual({ approvalRequestId: 'approval-1' });
+        expect(approvalsCreate).toHaveBeenLastCalledWith(expect.objectContaining({
+            request: expect.objectContaining({
+                actionId: 'session.permission.respond',
+                actionArgs: {
+                    sessionId: 'session-1',
+                    requestId: 'permission-1',
+                    decision: 'allow',
+                },
+            }),
+        }));
+
+        await expect(queue.request({
+            actionId: 'session.permission.respond',
+            input: {
+                requestId: 'permission-1',
+                decision: 'allow',
                 updatedPermissions: { mode: 'forged' },
             },
         } as never)).rejects.toMatchObject({
-            code: 'action_disabled',
+            code: 'plugin_action_input_schema_invalid',
         });
-        expect(approvalsCreate).toHaveBeenCalledTimes(1);
+        expect(approvalsCreate).toHaveBeenCalledTimes(2);
     });
 
     it('projects canonical artifacts into the curated public approval DTOs', async () => {

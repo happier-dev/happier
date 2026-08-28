@@ -22,6 +22,7 @@ import {
     spawnSupervisedPluginProcess,
     type SupervisedPluginProcess,
 } from '../../exec/processSupervisor';
+import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
 import {
     PluginExecClientError,
     createPluginExecClientExitError,
@@ -46,6 +47,56 @@ const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
     object,
     WeakMap<object, ResolvedPluginExecutable>
 >();
+
+/**
+ * Host-internal native-custody installs, keyed by the exact spawn request.
+ * When present for a request, `launchProcess` starts the custody helper as the
+ * command and passes the authorized target launch through it, so the helper
+ * establishes the job containment before the target's first instruction while
+ * command/args/cwd/env and stdio stay exactly the authorized ones.
+ */
+const INTERNAL_MANAGED_PROCESS_CUSTODY = new WeakMap<
+    ExecService,
+    WeakMap<object, ProcessCustodySpawnSpec>
+>();
+
+export function installManagedProcessCustodyForHost(
+    service: Pick<ExecService, 'spawn' | 'run'>,
+    request: Parameters<ExecService['spawn']>[0],
+    custody: ProcessCustodySpawnSpec,
+): Readonly<{ dispose(): void }> {
+    let authorizations = INTERNAL_MANAGED_PROCESS_CUSTODY.get(service);
+    if (!authorizations) {
+        authorizations = new WeakMap();
+        INTERNAL_MANAGED_PROCESS_CUSTODY.set(service, authorizations);
+    }
+    if (authorizations.has(request)) {
+        fail(
+            'plugin_exec_preauthorization_unavailable',
+            'Process custody is already installed for this exact spawn request',
+        );
+    }
+    authorizations.set(request, custody);
+    return Object.freeze({
+        dispose() {
+            if (authorizations.get(request) === custody) {
+                authorizations.delete(request);
+            }
+        },
+    });
+}
+
+function readInstalledManagedProcessCustody(
+    service: ExecService,
+    request: Parameters<ExecService['spawn']>[0],
+): ProcessCustodySpawnSpec | null {
+    const custody = INTERNAL_MANAGED_PROCESS_CUSTODY.get(service)?.get(request) ?? null;
+    if (custody) {
+        // Custody installs are single-use: they govern exactly one spawn.
+        INTERNAL_MANAGED_PROCESS_CUSTODY.get(service)?.delete(request);
+    }
+    return custody;
+}
 
 export function installPreauthorizedPluginExecSpawnForHost(
     service: Pick<ExecService, 'spawn' | 'run'>,
@@ -609,6 +660,7 @@ export function createStablePluginExecService(params: Readonly<{
         transformProtocolClientEnvironment = false,
     ): Promise<SupervisedPluginProcess> {
         const launch = await authorizeLaunch(request, options);
+        const managedCustody = readInstalledManagedProcessCustody(service, request);
         let supervised: ReturnType<typeof spawnSupervisedPluginProcess>;
         try {
             const environment = transformProtocolClientEnvironment
@@ -618,8 +670,19 @@ export function createStablePluginExecService(params: Readonly<{
                 )
                 : launch.env;
             supervised = spawnSupervisedPluginProcess({
-                command: launch.command,
-                args: launch.args,
+                command: managedCustody
+                    ? managedCustody.executablePath
+                    : launch.command,
+                args: managedCustody
+                    ? Object.freeze([
+                        'run',
+                        `--job=${managedCustody.jobName}`,
+                        `--handshake=${managedCustody.handshakePath}`,
+                        '--',
+                        launch.command,
+                        ...launch.args,
+                    ])
+                    : launch.args,
                 ...(launch.cwd ? { cwd: launch.cwd } : {}),
                 env: environment,
                 ...(launch.stdin ? { stdin: launch.stdin } : {}),
@@ -627,14 +690,19 @@ export function createStablePluginExecService(params: Readonly<{
                 ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
                 ...(launch.maxStderrBytes === undefined ? {} : { maxStderrBytes: launch.maxStderrBytes }),
                 signals: options?.signal ? [options.signal] : [],
+                ...(managedCustody ? { processCustody: managedCustody } : {}),
                 spawnOptions: {
                     // A dedicated POSIX process group lets the canonical supervisor
                     // terminate the complete plugin tree immediately without first
                     // enumerating every process on the host. Windows remains attached
-                    // and uses taskkill's tree semantics.
+                    // and terminates through the named job containment.
                     detached: process.platform !== 'win32',
-                    windowsVerbatimArguments:
-                        launch.windowsVerbatimArguments,
+                    // Under custody the helper's own argv is built here and must
+                    // use the standard quoting contract so the helper can decode
+                    // and re-render the target command line losslessly.
+                    ...(managedCustody
+                        ? {}
+                        : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
                 },
                 ...(params.recordRuntimeLimitMeasurement
                     ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
@@ -647,6 +715,7 @@ export function createStablePluginExecService(params: Readonly<{
         const retire = () => {
             void supervised.dispose('generationRetired');
         };
+
         params.signal.addEventListener('abort', retire, { once: true });
         void supervised.handle.wait().finally(() => {
             params.signal.removeEventListener('abort', retire);
@@ -661,7 +730,6 @@ export function createStablePluginExecService(params: Readonly<{
     ): Promise<PluginProcessHandle> {
         return (await launchProcess(request, options, true)).handle;
     }
-
     async function spawnJsonRpcClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
         options?: { signal?: AbortSignal },

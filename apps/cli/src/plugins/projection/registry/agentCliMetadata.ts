@@ -1,10 +1,14 @@
 import type {
+    ConnectedAccountServiceKey,
     ConnectedServiceId,
     PluginAgentContributionV2,
     PluginAgentCliMetadata,
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
-import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol';
+import {
+    buildQualifiedPluginContributionKey,
+    isPluginAgentCliAuthBackgroundCheckSafe,
+} from '@happier-dev/protocol';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
@@ -126,7 +130,7 @@ export function createNativeAgentCliAuthStaticProbe(
         ? { state: 'unknown', reason: 'unsupported' }
         : { state: 'logged_out', reason: 'missing_credentials' };
     return Object.freeze({
-        readPresentCredential: () => {
+        readPresentCredential: (): CliAuthStatusDraft | null => {
             if (hasEnvironmentCredential(environmentVariables)) {
                 return { state: 'logged_in', method: 'api_key_env', source: 'env' };
             }
@@ -159,6 +163,21 @@ export function createNativeAgentCliAuthSpec(cli: PluginAgentCliMetadata): CliAu
 
 const NO_LEGACY_CONNECTED_SERVICE_IDS: readonly ConnectedServiceId[] = Object.freeze([]);
 
+function resolveManifestAgentConnectedAccountServiceIds(params: Readonly<{
+    definition: PluginAgentContributionV2;
+    pluginId: string;
+}>): readonly ConnectedAccountServiceKey[] {
+    const ids = new Set<ConnectedAccountServiceKey>();
+    for (const declaration of params.definition.connectedAccounts ?? []) {
+        const service: QualifiedConnectedAccountRef['service'] =
+            typeof declaration.service === 'string'
+                ? { pluginId: params.pluginId, localId: declaration.service }
+                : declaration.service;
+        ids.add(buildQualifiedPluginContributionKey(service));
+    }
+    return Object.freeze([...ids]);
+}
+
 /**
  * Legacy service-keyed Connected Service ids are the host-private compatibility
  * input for the retained bundled first-party adapters: they route an Agent
@@ -181,9 +200,8 @@ function resolveManifestAgentConnectedServiceIds(params: Readonly<{
             typeof declaration.service === 'string'
                 ? { pluginId: params.pluginId, localId: declaration.service }
                 : declaration.service;
-        const legacyServiceId =
-            resolveFirstPartyLegacyAgentConnectedAccountServiceId(service);
-        if (legacyServiceId) ids.add(legacyServiceId);
+        const serviceId = resolveFirstPartyLegacyAgentConnectedAccountServiceId(service);
+        if (serviceId) ids.add(serviceId);
     }
     return Object.freeze([...ids]);
 }
@@ -196,9 +214,13 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
     provenance: ResolvedContributionProvenance;
 }>): ResolvedCatalogEntry | null {
     const sessionCapabilities = readAgentSessionCapabilities(params.definition);
-    if (!sessionCapabilities) return null;
+    const executionRunCapabilities = 'executionRuns' in params.definition.capabilities
+        ? params.definition.capabilities.executionRuns
+        : undefined;
+    if (!sessionCapabilities && !executionRunCapabilities) return null;
     const cli = params.cli;
     const connectedServiceIds = resolveManifestAgentConnectedServiceIds(params);
+    const connectedAccountServiceIds = resolveManifestAgentConnectedAccountServiceIds(params);
     const toolDelivery = 'tools' in params.definition.capabilities
         ? params.definition.capabilities.tools?.delivery
         : undefined;
@@ -209,13 +231,14 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
         // Inferred default only. An Agent that declares `catalog.vendorResume`
         // overrides this through the catalog-entry hook family, which is the
         // only way to express `experimental`.
-        vendorResumeSupport: sessionCapabilities.open.includes('resume')
+        vendorResumeSupport: sessionCapabilities?.open.includes('resume') === true
             ? 'supported'
             : 'unsupported',
         ...(toolDelivery
             ? { toolDelivery }
             : {}),
         ...(connectedServiceIds.length > 0 ? { connectedServiceIds } : {}),
+        ...(connectedAccountServiceIds.length > 0 ? { connectedAccountServiceIds } : {}),
         ...(cli
             ? {
                 getCliDetect: async () => ({

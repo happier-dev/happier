@@ -5,6 +5,8 @@ import type { Credentials, StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import {
   ProviderConnectionIdSchema,
+  PluginAgentContributionV2Schema,
+  PluginBackendDefinitionV1Schema,
   SessionCreationCorrespondenceV1Schema,
   deriveSessionCreationTagV1,
   type ProviderBoundModelRef,
@@ -16,6 +18,10 @@ import {
 } from './session';
 import { buildPluginHostSessionRuntimeOptions, buildPluginSessionBindingInput } from './sessionLaunch';
 import { decorateRuntimeTurnOperationsWithMetadata } from './sessionMetadata';
+import type {
+  ResolvedAgentContribution,
+  ResolvedAgentRuntimeContribution,
+} from '@/plugins/projection/registry/types';
 
 const releasedCacheMocks = vi.hoisted(() => ({
   resolve: vi.fn(),
@@ -46,7 +52,12 @@ const tokenOnlyCredentials = {
   encryption: null,
 } satisfies StoredCredentials;
 
-function createBackendFixture() {
+function createBackendFixture(): ResolvedAgentRuntimeContribution {
+  const definition = PluginBackendDefinitionV1Schema.parse({
+    id: 'acme.sample.backend',
+    agentId: 'acme.sample.provider',
+    catalogAgentId: 'claude',
+  });
   return {
     id: 'acme.sample.backend',
     agentId: 'acme.sample.provider',
@@ -55,38 +66,55 @@ function createBackendFixture() {
     runtimeKind: 'native',
     richDefinition: {
       provenance: 'external',
-      definition: {
-        catalogAgentId: 'claude',
-      },
+      definition,
     },
     definition: {
+      kindVersion: 1,
       id: 'acme.sample.backend',
       agentId: 'acme.sample.provider',
-      catalogAgentId: 'claude',
     },
-  } as never;
+  };
 }
 
-function createAgentFixture() {
+function createAgentFixture(): ResolvedAgentContribution {
+  const definition = PluginAgentContributionV2Schema.parse({
+    id: 'sample-provider',
+    title: 'Acme Sample Provider',
+    runtime: { kind: 'custom' },
+    primary: 'sessions',
+    capabilities: {
+      sessions: {
+        open: ['create'],
+        delivery: ['newTurn'],
+        cancel: true,
+      },
+    },
+  });
   return {
     id: 'acme.sample.provider',
     provenance: 'external',
     source: { kind: 'path' },
     runtimeSpec: {
+      id: 'acme.sample.provider',
       title: 'Acme Sample Provider',
+      binaryName: 'acme-sample-provider',
+      knownUserBinDirSuffixes: null,
+      sourcePreferenceDefault: 'system-first',
+      managedInstall: null,
+      manualInstallKind: 'none',
+      manualInstallRecipes: null,
+      acceptsJavaScriptFileOverride: false,
     },
     richDefinition: {
       provenance: 'external',
-      definition: {
-        catalogAgentId: 'claude',
-      },
+      definition,
     },
     definition: {
+      kindVersion: 1,
       id: 'acme.sample.provider',
       ownedBackendIds: ['acme.sample.backend'],
-      catalogAgentId: 'claude',
     },
-  } as never;
+  };
 }
 
 function createRuntimeTurnOperations(): RuntimeTurnOperations & Readonly<{
@@ -170,7 +198,7 @@ describe('plugin session runtime adapters', () => {
       richDefinition: {
         provenance: 'external',
         definition: {
-          catalogAgentId: 'claude',
+          ...createAgentFixture().richDefinition!.definition,
           providerRequirements,
         },
       },
@@ -777,8 +805,15 @@ describe('plugin session runtime adapters', () => {
       richDefinition: {
         provenance: 'external',
         definition: {
-          catalogAgentId: 'claude',
-          capabilities: { sessions: { runtimeActivitySnapshots: true } },
+          ...createAgentFixture().richDefinition!.definition,
+          capabilities: {
+            sessions: {
+              open: ['create'],
+              delivery: ['newTurn'],
+              cancel: true,
+              runtimeActivitySnapshots: true,
+            },
+          },
         },
       },
     } as never;
@@ -837,8 +872,15 @@ describe('plugin session runtime adapters', () => {
       richDefinition: {
         provenance: 'external',
         definition: {
-          catalogAgentId: 'claude',
-          capabilities: { sessions: { runtimeActivitySnapshots: true } },
+          ...createAgentFixture().richDefinition!.definition,
+          capabilities: {
+            sessions: {
+              open: ['create'],
+              delivery: ['newTurn'],
+              cancel: true,
+              runtimeActivitySnapshots: true,
+            },
+          },
         },
       },
     } as never;

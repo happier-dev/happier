@@ -434,7 +434,10 @@ export function createQualifiedExternalSessionHookIngress(
                 || !agentId
                 || !pluginId
                 || !localId
-                || false
+                || !agentRoutingIdAddressesContributionIdentityV1(
+                    agentId,
+                    { pluginId, localId },
+                )
                 || !variantId
                 || !eventId
                 || !pluginGeneration

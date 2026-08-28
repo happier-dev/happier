@@ -2606,9 +2606,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
     expect(prepareRuntime).toHaveBeenCalledTimes(3);
 
     await expect(service.requestPluginChange({
-      kind: 'uninstall',
+      kind: 'uninstallAndDeleteData',
       pluginId: 'acme.descriptor',
-      allowAlreadyAbsent: true,
       actorEvidence: { kind: 'authenticatedLocalUser', interactionId: 'retry', occurredAtMs: 2 },
     })).resolves.toEqual({
       kind: 'committed',
@@ -2616,6 +2615,10 @@ describe('createDaemonPathPluginChangePreparer', () => {
       desiredGeneration: null,
       appliedGeneration: null,
       pendingSurfaces: [],
+      dataRemoval: {
+        alreadyUninstalled: true,
+        removedData: { daemonStorage: false, secrets: false },
+      },
     });
     expect(prepareRuntime).toHaveBeenCalledTimes(3);
   });
@@ -2689,6 +2692,183 @@ describe('createDaemonPathPluginChangePreparer', () => {
         },
       },
     });
+  });
+
+  it('owns destructive uninstall cleanup and returns an idempotent typed partial outcome', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-destructive-uninstall-'));
+    roots.push(happyHomeDir);
+    const pluginId = 'acme.removed';
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const daemonStoragePath = join(paths.storageDir, pluginId);
+    const secretsPath = join(paths.secretsDir, pluginId);
+    await mkdir(daemonStoragePath, { recursive: true });
+    await mkdir(secretsPath, { recursive: true });
+    await writeFile(join(daemonStoragePath, 'daemon.v1.json'), '{}', 'utf8');
+    await writeFile(join(secretsPath, 'secrets.v1.json'), '{}', 'utf8');
+
+    let failSecrets = true;
+    const removeDirectory = vi.fn(async (directoryPath: string) => {
+      if (failSecrets && directoryPath === secretsPath) {
+        const error = new Error('injected secrets removal failure') as Error & { code: string };
+        error.code = 'EIO';
+        throw error;
+      }
+      await rm(directoryPath, { recursive: true, force: true });
+    });
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        removePluginDataDirectory: removeDirectory,
+      }),
+    });
+    const request = {
+      kind: 'uninstallAndDeleteData' as const,
+      pluginId,
+      actorEvidence: {
+        kind: 'authenticatedLocalUser' as const,
+        interactionId: 'confirmed-delete',
+        occurredAtMs: 1,
+      },
+    };
+
+    await expect(service.requestPluginChange(request)).resolves.toEqual({
+      kind: 'dataRemovalPartial',
+      pluginId,
+      completed: ['uninstall', 'daemonStorage'],
+      pending: ['secrets'],
+      causeCode: 'EIO',
+    });
+    await expect(lstat(daemonStoragePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(secretsPath)).resolves.toBeDefined();
+
+    failSecrets = false;
+    await expect(service.requestPluginChange(request)).resolves.toEqual({
+      kind: 'committed',
+      pluginId,
+      desiredGeneration: null,
+      appliedGeneration: null,
+      pendingSurfaces: [],
+      dataRemoval: {
+        alreadyUninstalled: true,
+        removedData: { daemonStorage: false, secrets: true },
+      },
+    });
+    await expect(lstat(secretsPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await service.shutdown();
+  });
+
+  it('refuses an absent reserved destructive namespace before preparing any deletion', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-destructive-reserved-'));
+    roots.push(happyHomeDir);
+    const removePluginDataDirectory = vi.fn(async () => undefined);
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+        removePluginDataDirectory,
+      }),
+    });
+
+    await expect(service.requestPluginChange({
+      kind: 'uninstallAndDeleteData',
+      pluginId: 'happier.unowned',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser',
+        interactionId: 'confirmed-reserved-delete',
+        occurredAtMs: 1,
+      },
+    })).resolves.toMatchObject({
+      kind: 'failed',
+      code: 'plugin_data_removal_ownership_unsupported',
+    });
+    expect(removePluginDataDirectory).not.toHaveBeenCalled();
+    await service.shutdown();
+  });
+
+  it('keeps same-plugin mutation exclusion until destructive namespace deletion settles', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-destructive-exclusion-'));
+    roots.push(happyHomeDir);
+    const pluginRoot = await createDescriptorPlugin();
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const daemonStoragePath = join(paths.storageDir, 'acme.descriptor');
+    await mkdir(daemonStoragePath, { recursive: true });
+    let releaseRemoval!: () => void;
+    const removalMaySettle = new Promise<void>((resolve) => { releaseRemoval = resolve; });
+    let markRemovalStarted!: () => void;
+    const removalStarted = new Promise<void>((resolve) => { markRemovalStarted = resolve; });
+    let markSecondRemovalStarted!: () => void;
+    const secondRemovalStarted = new Promise<void>((resolve) => { markSecondRemovalStarted = resolve; });
+    const removePluginDataDirectory = vi.fn(async (directoryPath: string) => {
+      if (removePluginDataDirectory.mock.calls.length === 2) markSecondRemovalStarted();
+      markRemovalStarted();
+      await removalMaySettle;
+      await rm(directoryPath, { recursive: true, force: true });
+    });
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async (candidate) => ({
+            abort: async () => undefined,
+            adopt: async () => Object.freeze(Object.fromEntries(
+              candidate.changedPluginIds.map((pluginId) => [
+                pluginId,
+                candidate.installationState.plugins[pluginId]?.enabled === true
+                  ? candidate.pluginGenerations[pluginId]?.immutableGenerationId ?? null
+                  : null,
+              ]),
+            )),
+          }),
+        },
+        removePluginDataDirectory,
+      }),
+      createPendingChangeId: () => 'pending-destructive-exclusion',
+    });
+    const install = await service.requestPluginChange({
+      kind: 'installPath',
+      locator: pluginRoot,
+      development: false,
+    });
+    if (install.kind !== 'reviewRequired') throw new Error('Expected review');
+    await service.decidePluginChange({
+      pendingChangeId: install.pendingChangeId,
+      decision: 'installAndTrust',
+      actorEvidence: { kind: 'authenticatedLocalUser', interactionId: 'install', occurredAtMs: 1 },
+    });
+    const request = {
+      kind: 'uninstallAndDeleteData' as const,
+      pluginId: 'acme.descriptor',
+      actorEvidence: {
+        kind: 'authenticatedLocalUser' as const,
+        interactionId: 'confirmed-delete',
+        occurredAtMs: 2,
+      },
+    };
+
+    const first = service.requestPluginChange(request);
+    await removalStarted;
+    const second = service.requestPluginChange(request);
+    const secondBeforeRelease = await Promise.race([
+      second.then((result) => ({ kind: 'settled' as const, result })),
+      secondRemovalStarted.then(() => ({ kind: 'secondRemovalStarted' as const })),
+    ]);
+    const removalCallsBeforeRelease = removePluginDataDirectory.mock.calls.length;
+    releaseRemoval();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(removalCallsBeforeRelease).toBe(1);
+    expect(secondBeforeRelease).toEqual({
+      kind: 'settled',
+      result: { kind: 'busy', pluginId: 'acme.descriptor' },
+    });
+    expect(firstResult).toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
+    expect(secondResult).toEqual({ kind: 'busy', pluginId: 'acme.descriptor' });
+    await service.shutdown();
   });
 
   it('reports outcomeUnknown when desired state may be durable but adoption cannot be confirmed', async () => {

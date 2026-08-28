@@ -96,7 +96,7 @@ describe('Agent daemon spawn-hook lease', () => {
         expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
     });
 
-    it('turns a plugin hook failure into a typed spawn result without throwing through the daemon', async () => {
+    it('fails closed when environment augmentation throws instead of silently dropping the required environment', async () => {
         const registry = createTargetAgentRuntimeRegistry({
             agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
             activationTargets: [target()],
@@ -129,7 +129,32 @@ describe('Agent daemon spawn-hook lease', () => {
             reasonCode: 'plugin_spawn_hook_failed',
             errorMessage: 'Agent daemon spawn prerequisite hook failed.',
         });
-        expect(daemonSpawnHooks.augmentEnv({})).toEqual({});
+        expect(() => daemonSpawnHooks.augmentEnv({})).toThrow(
+            'Agent daemon spawn environment hook failed.',
+        );
+    });
+
+    it('fails closed when environment augmentation returns a non-string value', () => {
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
+            activationTargets: [target()],
+            targetRegistrations: [registration({
+                augmentEnv: () => ({ REQUIRED_ENV: 42 }),
+            })],
+            isGenerationActive: () => true,
+            retirementSignal: new AbortController().signal,
+            onDuplicate: vi.fn(),
+        });
+        const augmentEnv = (registry.get('spawn-agent') as unknown as {
+            daemonSpawnHooks?: Readonly<{
+                augmentEnv?: (selection: unknown) => Record<string, string>;
+            }>;
+        } | undefined)?.daemonSpawnHooks?.augmentEnv;
+
+        expect(augmentEnv).toBeTypeOf('function');
+        expect(() => augmentEnv?.({})).toThrow(
+            'Agent daemon spawn environment hook returned an invalid environment.',
+        );
     });
 
     it('returns the typed cancellation result when the spawn caller aborts', async () => {

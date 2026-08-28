@@ -46,6 +46,7 @@ import type {
     PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { readPluginActionInputParser } from '@happier-dev/plugin-sdk/host/registration';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -199,6 +200,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no matching resolved Action projection`);
             }
             const hostAccessIds = readStringArray(actionDefinition.hostAccess);
+            const inputParser = readPluginActionInputParser(capturedHandler);
             expectedActionKeys.delete(`${entry.pluginId}\u0000${entry.registration.localId}`);
             return [{
                 family: 'actions',
@@ -224,6 +226,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                         ...(hostAccessIds ? { requestIds: hostAccessIds } : {}),
                     }),
                 },
+                ...(inputParser === undefined ? {} : { inputParser }),
                 handler: (input: JsonValue, context: PluginInvocationContext) => invokeCapturedDaemonActionHandler(
                     capturedHandler,
                     input,

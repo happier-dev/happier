@@ -7,6 +7,7 @@ import {
     PLUGIN_ACCOUNT_SETTINGS_ACCOUNT_SCOPED_BLOB_KIND_V1,
     PluginAccountSettingsMutationResponseV1Schema,
     PluginAccountSettingsReadResponseV1Schema,
+    PluginAccountSettingsStorageUnavailableV1Schema,
     PluginAccountSettingsValuesV1Schema,
     sealAccountScopedBlobCiphertext,
     type AccountScopedCryptoMaterial,
@@ -70,6 +71,10 @@ function unavailableRead(): PluginAccountSettingsRecordRead {
 
 function unavailableWrite(): PluginAccountSettingsRecordWriteResult {
     return Object.freeze({ status: 'unavailable' as const });
+}
+
+function outcomeUnknownWrite(): PluginAccountSettingsRecordWriteResult {
+    return Object.freeze({ status: 'outcomeUnknown' as const });
 }
 
 function accountSettingsRecordError(message: string): PluginError {
@@ -206,6 +211,7 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
         } catch {
             throw accountSettingsRecordError('Account plugin settings values exceed their canonical record bounds');
         }
+        let issued = false;
         try {
             const modeResponse = await http.get(
                 `${resolveBaseUrl()}/v1/account/encryption`,
@@ -226,19 +232,28 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                         randomBytes,
                     }),
                 };
+            issued = true;
             const response = await http.post(
                 `${resolveBaseUrl()}/v1/account/plugin-settings/${encodePluginId(model.identity.pluginId)}`,
                 { expectedRevision: request.expectedRevision, content },
                 requestConfig(credentials, options?.signal),
             );
             if (!isStillCurrent(credentials, options?.signal)) return unavailableWrite();
-            if (response.status < 200 || response.status >= 300) return unavailableWrite();
             const parsed = PluginAccountSettingsMutationResponseV1Schema.safeParse(response.data);
-            return parsed.success ? parsed.data : unavailableWrite();
+            if (parsed.success) return parsed.data;
+            if (
+                response.status === 503
+                && PluginAccountSettingsStorageUnavailableV1Schema.safeParse(response.data).success
+            ) {
+                return unavailableWrite();
+            }
+            return outcomeUnknownWrite();
         } catch (error) {
             options?.signal?.throwIfAborted();
             if (isPluginError(error)) throw error;
-            return unavailableWrite();
+            return issued && isStillCurrent(credentials, options?.signal)
+                ? outcomeUnknownWrite()
+                : unavailableWrite();
         }
     }
 

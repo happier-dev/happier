@@ -31,6 +31,7 @@ import {
     type ActionId,
 } from '@happier-dev/protocol/actions';
 import {
+    arePluginMachineMaterializationRefsEqual,
     readExecutionRunStartRunCreation,
     pluginJsonValuesEqual,
     readPluginActionFailureAuthorPayload,
@@ -454,9 +455,7 @@ function hasCurrentContributedActionCaller(
     return currentCaller !== null
         && currentMaterialization !== undefined
         && callerMaterialization !== undefined
-        && currentMaterialization.pluginId === callerMaterialization.pluginId
-        && currentMaterialization.machineId === callerMaterialization.machineId
-        && currentMaterialization.materializationId === callerMaterialization.materializationId
+        && arePluginMachineMaterializationRefsEqual(currentMaterialization, callerMaterialization)
         && currentCaller.immutableGenerationId === caller.immutableGenerationId;
 }
 
@@ -729,6 +728,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const result = await actionExecutor.execute(actionId, parsedPluginInput.data, {
             ...(params.seed.session ? { defaultSessionId: params.seed.session.id } : {}),
             surface: 'plugin',
+            authority: 'account_automation',
             actionCaller,
             signal,
             ...(actionRequestId ? { actionRequestId } : {}),

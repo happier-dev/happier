@@ -216,41 +216,51 @@ export function createInvocationVoiceRawCredentialAccess(input: Readonly<{
   isCurrent(): boolean;
 }>): VoiceRawCredentialAccess {
   let expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
+  // The revision basis belongs to the whole provider callback, not to one
+  // individual materialization. Serialize only this invocation's calls so two
+  // concurrent first reads cannot both admit a null basis and return different
+  // credential revisions. A rejected call is deliberately absorbed by the tail
+  // so later calls can still prove the already-captured basis.
+  let materializationTail: Promise<void> = Promise.resolve();
   const assertInvocationCurrent = () => {
     if (input.signal.aborted || !input.isCurrent()) throw unavailable();
   };
   return Object.freeze({
     async materialize(request, options = {}) {
-      assertInvocationCurrent();
-      const signal = options.signal && options.signal !== input.signal
-        ? AbortSignal.any([input.signal, options.signal])
-        : input.signal;
-      let capturedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
-      try {
-        signal.throwIfAborted();
-        const result = await input.materializer.materialize(request, {
-          signal,
-          credentialRevisionBasis: Object.freeze({
-            expectedCredentialRevision,
-            captureCredentialRevision(credentialRevision) {
-              capturedCredentialRevision = credentialRevision;
-            },
-          }),
-        });
+      const operation = materializationTail.then(async () => {
         assertInvocationCurrent();
-        options.signal?.throwIfAborted();
-        if (capturedCredentialRevision === null) throw unavailable();
-        if (
-          expectedCredentialRevision !== null
-          && capturedCredentialRevision !== expectedCredentialRevision
-        ) throw unavailable();
-        expectedCredentialRevision = capturedCredentialRevision;
-        return result;
-      } catch (error) {
-        assertInvocationCurrent();
-        options.signal?.throwIfAborted();
-        throw error;
-      }
+        const signal = options.signal && options.signal !== input.signal
+          ? AbortSignal.any([input.signal, options.signal])
+          : input.signal;
+        let capturedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
+        try {
+          signal.throwIfAborted();
+          const result = await input.materializer.materialize(request, {
+            signal,
+            credentialRevisionBasis: Object.freeze({
+              expectedCredentialRevision,
+              captureCredentialRevision(credentialRevision) {
+                capturedCredentialRevision = credentialRevision;
+              },
+            }),
+          });
+          assertInvocationCurrent();
+          options.signal?.throwIfAborted();
+          if (capturedCredentialRevision === null) throw unavailable();
+          if (
+            expectedCredentialRevision !== null
+            && capturedCredentialRevision !== expectedCredentialRevision
+          ) throw unavailable();
+          expectedCredentialRevision = capturedCredentialRevision;
+          return result;
+        } catch (error) {
+          assertInvocationCurrent();
+          options.signal?.throwIfAborted();
+          throw error;
+        }
+      });
+      materializationTail = operation.then(() => undefined, () => undefined);
+      return await operation;
     },
   });
 }

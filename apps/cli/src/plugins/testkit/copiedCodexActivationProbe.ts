@@ -102,7 +102,11 @@ async function main(): Promise<void> {
           backendId: 'codex',
           sourceKind: 'built_in',
         },
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'appServer' },
+        },
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: null,

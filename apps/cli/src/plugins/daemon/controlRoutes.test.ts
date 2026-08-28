@@ -27,6 +27,55 @@ import {
 import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 
 describe('registerDaemonPluginChangeRoutes', () => {
+  it('admits destructive uninstall only through the authenticated daemon change route', async () => {
+    const app = fastify();
+    const requestPluginChange = vi.fn(async () => ({
+      kind: 'committed' as const,
+      pluginId: 'acme.example',
+      desiredGeneration: null,
+      appliedGeneration: null,
+      pendingSurfaces: [],
+      dataRemoval: {
+        alreadyUninstalled: false,
+        removedData: { daemonStorage: true, secrets: true },
+      },
+    }));
+    const requireAuth = vi.fn(async () => undefined);
+    registerDaemonPluginChangeRoutes(app, {
+      service: {
+        requestPluginChange,
+        decidePluginChange: vi.fn(),
+        statusPluginChange: async () => ({ kind: 'expired' }),
+        listPendingPluginChanges: async () => ({ changes: [] }),
+        shutdown: async () => undefined,
+      },
+      requireAuth,
+    });
+    const actorEvidence = {
+      kind: 'authenticatedLocalUser',
+      interactionId: 'destructive-uninstall',
+      occurredAtMs: 1,
+    } as const;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/plugins/change/request',
+      payload: {
+        kind: 'uninstallAndDeleteData',
+        pluginId: 'acme.example',
+        actorEvidence,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(requireAuth).toHaveBeenCalledOnce();
+    expect(requestPluginChange).toHaveBeenCalledWith({
+      kind: 'uninstallAndDeleteData',
+      pluginId: 'acme.example',
+      actorEvidence,
+    });
+  });
+
   it('projects a daemon-owned pending change status without creating another request', async () => {
     const app = fastify();
     const statusPluginChange = vi.fn(async () => ({

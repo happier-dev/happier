@@ -238,6 +238,64 @@ describe('plugin invocation SCM actions', () => {
         expect(prepareReviewWorkspace).not.toHaveBeenCalled();
     });
 
+    it('refuses an outside verification target before invoking the SCM backend', async () => {
+        const selectedRoot = mkdtempSync(join(tmpdir(), 'happier-scm-review-selected-'));
+        const outsideRoot = mkdtempSync(join(tmpdir(), 'happier-scm-review-outside-'));
+        const verifyPreparedReviewWorkspace = vi.fn(async () => ({
+            success: true as const,
+            verification: {
+                targetPath: outsideRoot,
+                sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+            },
+        }));
+        const registry = createScmBackendRegistry([{
+            id: 'git',
+            kind: 'git',
+            selection: {
+                modeSelectionScores: { '.git': 200 },
+                preferenceAllowedModes: ['.git'],
+            },
+            detectRepo: async ({ cwd }: Parameters<NonNullable<ScmBackend['detectRepo']>>[0]) => ({
+                isRepo: true,
+                rootPath: cwd,
+                mode: '.git',
+            }),
+            workspaceIntegration: {
+                inspectWorkspaceLocation: async () => null,
+                verifyPreparedReviewWorkspace,
+            },
+        } as unknown as ScmBackend]);
+
+        try {
+            await expect(executeScmActionOperation({
+                actionId: 'scm.reviewWorkspace.materializePrepared',
+                input: {
+                    cwd: selectedRoot,
+                    displayName: 'feature-auth',
+                    sourceTip: {
+                        repository: {
+                            kind: 'github',
+                            deployment: 'https://github.com',
+                            repository: 'contributor/repository',
+                        },
+                        cloneUrl: 'https://github.com/contributor/repository.git',
+                        branch: 'feature/auth',
+                        sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                        fetchRef: 'refs/heads/feature/auth',
+                    },
+                    verification: { targetPath: outsideRoot },
+                },
+                workingDirectory: selectedRoot,
+                accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
+                registry,
+            })).resolves.toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+            expect(verifyPreparedReviewWorkspace).not.toHaveBeenCalled();
+        } finally {
+            rmSync(selectedRoot, { recursive: true, force: true });
+            rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    });
+
     it('dispatches every plugin-visible scm.* ActionSpec through the real ActionsService and ActionExecutor', async () => {
         const scmActionExecute = vi.fn<ScmActionExecute>(async () => ({
             ok: false as const,

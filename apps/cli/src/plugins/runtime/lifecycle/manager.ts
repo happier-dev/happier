@@ -157,11 +157,11 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
         pluginIds: readonly string[],
     ) => Promise<readonly PluginActivationDemandResult[]>;
     /**
-     * Records a readiness rejection that arrives after this plugin's activation
-     * fact was already produced — a rejected daemon database preparation or
-     * primary Agent runtime construction. The plugin leaves the activated set,
-     * its one activation fact becomes `unavailable`, and the reason is carried
-     * by exactly one typed `plugin_activation_failed` diagnostic.
+     * Records a host-owned terminal availability failure that arrives after
+     * this plugin's activation fact was produced — readiness rejection or an
+     * unexpectedly settled generation-long background service. The plugin
+     * leaves the activated set, its one activation fact becomes `unavailable`,
+     * and the reason uses the existing activation diagnostic owner.
      */
     recordPluginActivationFailure: (pluginId: string, message: string) => void;
     startAdoptedBackgroundServices: () => void;
@@ -590,6 +590,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             });
         }
     }
+    const terminalBackgroundServicePluginIds = new Set<string>();
     const backgroundServiceRunnerHost = createBackgroundServiceRunnerHost({
         registrations: params.invocationServices ? backgroundServiceRegistrations : Object.freeze([]),
         createContext(input) {
@@ -679,6 +680,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                         plugin: seed.plugin,
                         contribution: seed.contribution,
                         surface: 'background' as const,
+                        invokedAtMs: lifetime.invokedAtMs,
                         signal: seed.signal,
                         services,
                         ui: createPluginInvocationPresentation({
@@ -705,6 +707,26 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                     : {}),
                 ...(event.code === 'background_service_unavailable' ? { reason: event.reason } : {}),
             });
+        },
+        onUnexpectedSettlement(event) {
+            // Background services are generation-long required contributions.
+            // Once one stops while its generation is current, the existing
+            // activation fact is the canonical availability owner: retire the
+            // plugin's active projection there and invalidate its readers. A
+            // watchdog/restart loop would contradict the background-service
+            // lifecycle contract and conceal the provider's stopped observer.
+            if (terminalBackgroundServicePluginIds.has(event.pluginId)) return;
+            terminalBackgroundServicePluginIds.add(event.pluginId);
+            const detail = event.outcome === 'rejected'
+                ? projectPluginFailureText(event.error)
+                : event.outcome === 'unavailable'
+                    ? `${event.reason?.code ?? 'background_service_unavailable'} (${event.reason?.hostAccessId ?? 'unknown'})`
+                    : 'runner resolved while its generation remained current';
+            recordPluginActivationFailure(
+                event.pluginId,
+                `Background service '${event.localId}' stopped: ${detail}`,
+            );
+            params.onTerminalActivationFailure?.(event.pluginId);
         },
     });
     let backgroundServicesStarted = false;
@@ -809,16 +831,38 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     );
     const lazyActivationPromisesByPluginId = new Map<string, Promise<PluginActivationDemandResult>>();
     const lazyActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
+    const projectedActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
+    const componentRegistries = (): readonly ActivatedPluginRuntimeRegistry[] => Object.freeze([
+        ...(params.retainedRegistries ?? []),
+        ...projectedActivatedRegistries,
+    ]);
+    const backgroundServiceRegistries = (): readonly ActivatedPluginRuntimeRegistry[] => Object.freeze([
+        ...(params.retainedRegistries ?? []),
+        ...lazyActivatedRegistries,
+    ]);
 
-    // A readiness step that runs after the activation loop — daemon database
-    // preparation, primary Agent runtime construction — can reject a plugin the
-    // loop already reported as active. Its rejection is represented exactly like
-    // an activation-time one so every reader keeps a single meaning of "ready":
-    // one `unavailable` activation fact carrying one typed diagnostic.
+    // A host-owned failure after the activation loop — readiness preparation or
+    // unexpected generation-long background-service settlement — can invalidate
+    // a plugin the loop already reported as active. It is represented exactly
+    // like an activation-time failure so every reader keeps one meaning of
+    // "ready": one `unavailable` fact carrying one typed diagnostic.
     function recordPluginActivationFailure(pluginId: string, message: string): void {
         const target = activationTargets.find((candidate) => candidate.pluginId === pluginId);
         if (!target) {
             throw new Error(`Plugin '${pluginId}' is not an activation target of this runtime registry`);
+        }
+        const localIndex = targetActivationFacts.findIndex((fact) => fact.pluginId === pluginId);
+        if (localIndex < 0) {
+            const component = componentRegistries().find((registry) => (
+                registry.targetActivationFacts.some((fact) => fact.pluginId === pluginId)
+            ));
+            if (component) {
+                component.recordPluginActivationFailure(pluginId, message);
+                mergeDiagnosticsFromRegistry(component, pluginId);
+                activatedPluginIds.delete(pluginId);
+                failedActivationPluginIds.add(pluginId);
+                return;
+            }
         }
         const diagnostic: PluginCompatibilityDiagnostic = {
             code: 'plugin_activation_failed',
@@ -827,8 +871,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         appendDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
         activatedPluginIds.delete(pluginId);
         failedActivationPluginIds.add(pluginId);
-        const index = targetActivationFacts.findIndex((fact) => fact.pluginId === pluginId);
-        const existing = index < 0 ? null : targetActivationFacts[index]!;
+        const existing = localIndex < 0 ? null : targetActivationFacts[localIndex]!;
         // Exactly one fact per plugin, and an inactive target may never keep
         // publishing bound contributions.
         const fact: PluginTargetActivationFact = Object.freeze({
@@ -848,8 +891,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             bound: Object.freeze([]),
             diagnostics: Object.freeze([...(existing?.diagnostics ?? []), diagnostic]),
         });
-        if (index < 0) targetActivationFacts.push(fact);
-        else targetActivationFacts[index] = fact;
+        if (localIndex < 0) targetActivationFacts.push(fact);
+        else targetActivationFacts[localIndex] = fact;
     }
 
     const addRuntimeDisposable = (pluginId: string, disposable: PluginDisposable): PluginDisposable => {
@@ -923,7 +966,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             params.adoptActivationComponent?.(Object.freeze({ pluginId, registry }));
         }
         targetRegistrations.push(...registry.targetRegistrations);
-        targetActivationFacts.push(...registry.targetActivationFacts);
+        projectedActivatedRegistries.push(registry);
         mergeHandlerMaps(registry);
         mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
         mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
@@ -954,7 +997,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
 
     function mergeRetainedRegistry(registry: ActivatedPluginRuntimeRegistry): void {
         targetRegistrations.push(...registry.targetRegistrations);
-        targetActivationFacts.push(...registry.targetActivationFacts);
         mergeHandlerMaps(registry);
         mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
         mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
@@ -1078,10 +1120,21 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeRetainedRegistry(retained);
     }
 
-    const backgroundServiceRegistries = (): readonly ActivatedPluginRuntimeRegistry[] => Object.freeze([
-        ...(params.retainedRegistries ?? []),
-        ...lazyActivatedRegistries,
+    const readCurrentTargetActivationFacts = (): readonly PluginTargetActivationFact[] => Object.freeze([
+        ...targetActivationFacts,
+        ...componentRegistries().flatMap((registry) => registry.targetActivationFacts),
     ]);
+    const readCurrentFailedActivationPluginIds = (): ReadonlySet<string> => new Set([
+        ...failedActivationPluginIds,
+        ...componentRegistries().flatMap((registry) => [...registry.failedActivationPluginIds]),
+    ]);
+    const readCurrentActivatedPluginIds = (): ReadonlySet<string> => {
+        const failed = readCurrentFailedActivationPluginIds();
+        return new Set([
+            ...activatedPluginIds,
+            ...componentRegistries().flatMap((registry) => [...registry.activatedPluginIds]),
+        ].filter((pluginId) => !failed.has(pluginId)));
+    };
 
     function startAdoptedBackgroundServices(): void {
         if (backgroundServicesStarted || lifecycleState !== 'active') return;
@@ -1140,7 +1193,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     return {
         generation: params.generation,
         targetRegistrations,
-        targetActivationFacts,
+        // Component registries retain the lifecycle owner for their required
+        // contributions. Read their current facts instead of copying a startup
+        // snapshot that would keep advertising a background runner after it
+        // terminally settles.
+        get targetActivationFacts() {
+            return readCurrentTargetActivationFacts();
+        },
         agentRuntimesByAgentId,
         scmHostingProvidersById,
         scmBackendsById,
@@ -1156,8 +1215,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         commands,
         hookHandlersByHookId,
         pluginDiagnosticsByPluginId: diagnosticsByPluginId,
-        activatedPluginIds,
-        failedActivationPluginIds,
+        get activatedPluginIds() {
+            return readCurrentActivatedPluginIds();
+        },
+        get failedActivationPluginIds() {
+            return readCurrentFailedActivationPluginIds();
+        },
         retryableActivationPreparationPluginIds,
         activateContributionsOnDemand,
         activatePluginsForValidation,

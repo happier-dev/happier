@@ -21,6 +21,10 @@ import { describe,
 
 import { scaffoldLocalPlugin } from './scaffold';
 import { packLocalPlugin } from '../packaging/pack';
+import {
+  resolveNativeTypeScriptBin,
+  runPluginAuthorToolchain,
+} from '../authoring/toolchain';
 
 async function readJsonFile<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path,
@@ -40,6 +44,18 @@ async function linkPublicSdk(targetDir: string): Promise<void> {
   'plugin-sdk'),
   'dir',
   );
+}
+
+async function copyPublicSdk(targetDir: string): Promise<void> {
+  const packageScope = join(targetDir, 'node_modules', '@happier-dev');
+  const source = fileURLToPath(new URL('../../../../../packages/plugin-sdk', import.meta.url));
+  const destination = join(packageScope, 'plugin-sdk');
+  await mkdir(packageScope, { recursive: true });
+  await cp(source, destination, {
+    recursive: true,
+    filter: (entry) => !entry.split('/').includes('node_modules'),
+  });
+  await symlink(join(source, 'node_modules'), join(destination, 'node_modules'), 'dir');
 }
 
 async function linkPublicPluginUi(targetDir: string): Promise<void> {
@@ -78,6 +94,13 @@ async function linkInstalledDependency(
   );
 }
 
+async function copyInstalledDependency(targetDir: string, packageName: string): Promise<void> {
+  const source = fileURLToPath(new URL(`../../../../../node_modules/${packageName}`, import.meta.url));
+  const destination = join(targetDir, 'node_modules', ...packageName.split('/'));
+  await mkdir(join(destination, '..'), { recursive: true });
+  await cp(source, destination, { recursive: true });
+}
+
 /**
  * Type-checks the generated plugin and materializes the built output the
  * scaffold's own `entrypoints.daemon` and generated test suite expect.
@@ -107,6 +130,32 @@ async function compileGeneratedPlugin(targetDir: string): Promise<readonly ts.Di
     await cp(compilerOutDir, join(targetDir, 'dist'), { recursive: true });
   }
   return diagnostics;
+}
+
+async function runRealGeneratedPluginTest(targetDir: string) {
+  return await runPluginAuthorToolchain({ operation: 'test', projectRoot: targetDir }, {
+    ensureManagedPnpmCommand: async () => null,
+    managedPnpmBinPath: () => '',
+    buildManagedPnpmEnvironment: (environment = {}) => environment,
+    ensureManagedJavaScriptRuntimeCommand: async () => process.execPath,
+    managedJavaScriptRuntimeBinPath: () => process.execPath,
+    resolveNativeTypeScriptBin,
+    spawn: async (input) => {
+      const result = spawnSync(input.command, [...input.args], {
+        cwd: input.cwd,
+        env: input.env,
+        encoding: 'utf8',
+      });
+      if (result.error) throw result.error;
+      return {
+        exitCode: result.status,
+        signal: result.signal as NodeJS.Signals | null,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    },
+    processEnv: process.env,
+  });
 }
 
 function generatedUiDeclarationPropertyNames(source: string): readonly string[] {
@@ -300,9 +349,12 @@ describe('scaffoldLocalPlugin',
     expect(skill).toContain('happier plugins change status <pendingChangeId>');
     expect(skill).toContain('same daemon lifetime');
     expect(skill).toContain('outcome_unknown');
-    expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-producer/');
-    expect(skill).toContain('Confirm the relevant rows are `available` in `capability-matrix.json`');
+    expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/operation-only-channel-provider/');
+    expect(skill).toContain('@happier-dev/channels-protocol/v1');
+    expect(skill).toContain('does not declare a target, descriptor, or surface');
+    expect(skill).toContain('the same public contracts serve external and bundled plugins');
     expect(skill).not.toContain('externally supported author product remains operation-only');
+    expect(skill).not.toContain('first-party Preview product');
     expect(skill).not.toContain('defineContributionProtocol');
     expect(skill).not.toContain('protocol.operations');
     expect(skill).not.toMatch(/(?:^|[^A-Za-z])(?:apps|packages)\//mu);
@@ -691,14 +743,28 @@ describe('scaffoldLocalPlugin',
     expect(testSource).toContain("surface: 'ui'");
     expect(testSource).toContain('createPluginUiTestkit');
     expect(testSource).toContain('createSurfaceContextFixture');
-    expect(testSource).toContain("import('../dist/ui/index.js')");
+    expect(testSource).toContain("import('../node_modules/.cache/happier/plugin-author-test/ui/index.js')");
     expect(testSource).toContain('bootstrapHostedWebSurface');
     expect(testSource).toContain('adapter:');
     expect(testSource).not.toMatch(/(?:apps|packages)\//u);
     expect(testSource).not.toContain('react-test-renderer');
 
+    await copyPublicSdk(targetDir);
+    await copyInstalledDependency(targetDir, '@typescript/native');
+    await copyInstalledDependency(
+      targetDir,
+      `@typescript/typescript-${process.platform}-${process.arch}`,
+    );
+    await linkInstalledDependency(targetDir, '@types/node');
+    await linkInstalledDependency(targetDir, 'typescript');
     await linkInstalledDependency(targetDir, 'vite');
-    expect(await compileGeneratedPlugin(targetDir)).toEqual([]);
+    const toolchainResult = await runRealGeneratedPluginTest(targetDir);
+    expect(toolchainResult, JSON.stringify(toolchainResult, null, 2))
+      .toMatchObject({ ok: true, operation: 'test', projectRoot: targetDir });
+    await expect(readFile(
+      join(targetDir, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'),
+      'utf8',
+    )).resolves.toContain('main-renderer');
     const hostedWebModule = await import(pathToFileURL(join(targetDir, 'dist', 'index.js')).href) as {
       manifest: unknown;
     };
@@ -737,17 +803,7 @@ describe('scaffoldLocalPlugin',
     expect(uiBuildConfigModule.default.targets).toEqual([
       { rendererId: 'main-renderer', entry: 'src/ui/index.ts', kind: 'hostedWeb' },
     ]);
-    const generatedSuite = spawnSync(
-      process.execPath,
-      ['--test', 'test/index.test.mjs'],
-      { cwd: targetDir, encoding: 'utf8' },
-    );
-    expect(
-      generatedSuite.status,
-      `${generatedSuite.stdout}\n${generatedSuite.stderr}`,
-    ).toBe(0);
-
-  });
+  }, 180_000);
 
   it('emits a semantic React Native surface and every declared Preview artifact', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-rn-'));

@@ -1,11 +1,11 @@
 import {
   AutomationEventActionHttpRequestSchemasV1,
   AutomationSourceSelectorIdV1Schema,
+  AutomationTriggerIdSchema,
+  deriveAutomationOccurrenceKeyV1,
   createActionExecutor,
   ingestPluginManifestV2,
-  parseAutomationRunExecutionRecipeV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
-  serializeAutomationRunExecutionRecipeV1,
   type ActionExecutorDeps,
   type AutomationEventActionHttpRequestByIdV1,
   type AutomationEventActionIdV1,
@@ -47,7 +47,8 @@ const BACKGROUND_SERVICE_ID = 'ledger-source-observer';
  */
 const IMMUTABLE_GENERATION_ID = 'external-ledger-immutable-generation';
 const AUTOMATION_ID = 'automation-external-ledger';
-const TEMPLATE_VERSION = 2;
+const TRIGGER_ID = AutomationTriggerIdSchema.parse('trigger-external-ledger');
+const TRIGGER_REVISION = 4;
 const ADOPTED_REVISION = '11';
 
 const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
@@ -95,28 +96,6 @@ function readLoadedExternalPlugin(manifest: unknown): LoadedPlugin {
       resolvedVersion: canonical.version,
     },
   };
-}
-
-function buildExecutionRecipe(): string {
-  const serialized = serializeAutomationRunExecutionRecipeV1({
-    v: 1,
-    templateVersion: TEMPLATE_VERSION,
-    template: { t: 'plain', v: { v: 1, prompt: 'Triage the new ledger entry' } },
-    triggerEvidence: null,
-    target: {
-      kind: 'newSession',
-      spawn: {
-        executionTarget: { serverId: 'server-external-source', machineId: 'machine-1' },
-        directory: '/tmp/external-automation-source',
-        agentTarget: {
-          kind: 'agent',
-          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-        },
-      },
-    },
-  });
-  if (serialized.kind !== 'available') throw new Error('fixture recipe must be valid');
-  return serialized.serialized;
 }
 
 /**
@@ -232,7 +211,12 @@ describe('External plugin as a first-class Automation Event source', () => {
     });
     await expect(testkit.invokeAction(
       'reset-ledger-baseline',
-      { automationId: AUTOMATION_ID, templateVersion: TEMPLATE_VERSION, sourceSelectorId },
+      {
+        automationId: AUTOMATION_ID,
+        triggerId: TRIGGER_ID,
+        triggerRevision: TRIGGER_REVISION,
+        sourceSelectorId,
+      },
       { surface: 'plugin' },
     )).resolves.toEqual({ kind: 'baselined' });
 
@@ -256,7 +240,8 @@ describe('External plugin as a first-class Automation Event source', () => {
 
     const storedDefinition = {
       automationId: AUTOMATION_ID,
-      templateVersion: TEMPLATE_VERSION,
+      triggerId: TRIGGER_ID,
+      triggerRevision: TRIGGER_REVISION,
       eventRef,
       sourceSelectorId,
       sourceContractVersion: 1,
@@ -269,7 +254,8 @@ describe('External plugin as a first-class Automation Event source', () => {
         binding: {
           v: 1,
           automationId: AUTOMATION_ID,
-          templateVersion: TEMPLATE_VERSION,
+          triggerId: TRIGGER_ID,
+          triggerRevision: TRIGGER_REVISION,
           triggerKind: 'pluginEvent',
           eventRef,
           sourceSelectorId,
@@ -283,7 +269,6 @@ describe('External plugin as a first-class Automation Event source', () => {
           maximumObservationAgeMs: null,
         },
       }),
-      executionRecipe: buildExecutionRecipe(),
       payloadSchema: {
         type: 'object',
         additionalProperties: false,
@@ -297,10 +282,12 @@ describe('External plugin as a first-class Automation Event source', () => {
     const adoptedSet = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller: callerFixture.materialization,
+      immutableGenerationId: IMMUTABLE_GENERATION_ID,
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => (input.knownRevision === ADOPTED_REVISION
         ? { kind: 'unchanged', revision: ADOPTED_REVISION, eventDeclarationRelease }
         : {
@@ -321,6 +308,7 @@ describe('External plugin as a first-class Automation Event source', () => {
     // 5. The real host Action pipeline: generic executor -> Automation Event
     //    executor -> adopted definitions -> one strict admission request.
     const transportRequests: AutomationEventActionHttpRequestByIdV1['automation.event.admit'][] = [];
+    const statusRequests: AutomationEventActionHttpRequestByIdV1['automation.event.source.status.report'][] = [];
     const automationEventAction = createAutomationEventActionExecutor({
       credentials,
       resolveAccountId: async () => 'account-external-source',
@@ -336,6 +324,12 @@ describe('External plugin as a first-class Automation Event source', () => {
           actionId: TActionId,
           request: AutomationEventActionHttpRequestByIdV1[TActionId],
         ) => {
+          if (actionId === 'automation.event.source.status.report') {
+            statusRequests.push(
+              request as AutomationEventActionHttpRequestByIdV1['automation.event.source.status.report'],
+            );
+            return {};
+          }
           if (actionId !== 'automation.event.admit') return {};
           transportRequests.push(
             request as AutomationEventActionHttpRequestByIdV1['automation.event.admit'],
@@ -434,25 +428,57 @@ describe('External plugin as a first-class Automation Event source', () => {
     expect(request.input.eventRef).toEqual(eventRef);
     expect(request.input.definitions).toEqual([{
       automationId: AUTOMATION_ID,
-      templateVersion: TEMPLATE_VERSION,
+      triggerId: TRIGGER_ID,
+      triggerRevision: TRIGGER_REVISION,
       sourceSelectorId,
     }]);
-    expect(logInfo).toHaveBeenCalledWith('automation_event_source.admitted', {
+    expect(statusRequests).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          kind: 'catalogReconciliation',
+          state: 'current',
+        }),
+      }),
+      expect.objectContaining({
+        input: expect.objectContaining({
+          kind: 'source',
+          automationId: AUTOMATION_ID,
+          triggerId: TRIGGER_ID,
+          triggerRevision: TRIGGER_REVISION,
+          state: 'observing',
+        }),
+      }),
+    ]);
+    expect(logInfo).toHaveBeenCalledWith('automation_event_source.settled', {
       occurrenceId: 'entry-1',
-      results: [{ kind: 'admitted', runId: 'run-external-1', checkpointSafe: true }],
+      disposition: { kind: 'checkpointSafe' },
     });
 
-    // 7. The Run the external source produced carries the external plugin's
-    //    own execution recipe, so the fired Automation is genuinely its own.
-    const recipe = parseAutomationRunExecutionRecipeV1(storedDefinition.executionRecipe);
-    expect(recipe.kind).toBe('available');
-
-    // 8. The committed Run lifecycle reaches the same external plugin: the
+    // 7. The committed Run lifecycle reaches the same external plugin: the
     //    daemon worker's invalidation owner and the plugin's own subscription.
     const lifecyclePayload = Object.freeze({
       runId: 'run-external-1',
       automationId: AUTOMATION_ID,
-      originKind: 'pluginEvent',
+      runCause: {
+        kind: 'trigger',
+        triggerId: TRIGGER_ID,
+        triggerRevision: TRIGGER_REVISION,
+        triggerKind: 'pluginEvent',
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+          triggerId: TRIGGER_ID,
+          evidence: {
+            v: 1,
+            kind: 'pluginEvent',
+            eventRef,
+            sourceSelectorId,
+            occurrenceId: 'entry-1',
+            occurredAt: 1_725_000_000_000,
+            payload: { entryId: 'entry-1' },
+          },
+        }),
+        occurredAt: 1_725_000_000_000,
+        evidence: { eventRef, sourceSelectorId },
+      },
       previousState: 'claimed',
       currentState: 'running',
       transitionedAt: 1_725_000_000_500,

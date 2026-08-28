@@ -80,6 +80,11 @@ const admittedSurfaceInputSchema = defineProtocolObject({
     entryId: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' });
 const admittedSurfaceInputValidation = preparePluginJsonSchema(admittedSurfaceInputSchema.jsonSchema);
+const admittedSurfaceTargetProtocol = Object.freeze({
+    role: 'detail',
+    inputSchema: admittedSurfaceInputSchema,
+    presentation: 'content' as const,
+});
 const admittedSurfaceProtocol = defineContributionProtocol({
     id: 'example-admitted-surface',
     version: 1,
@@ -465,6 +470,7 @@ describe('targeted contribution observation service', () => {
                         role: 'detail',
                         inputSchema: admittedSurfaceInputSchema.jsonSchema,
                         inputValidation: admittedSurfaceInputValidation,
+                        targetProtocol: admittedSurfaceTargetProtocol,
                         presentation: 'content' as const,
                         rendererChain: Object.freeze([]),
                         contributor: firstContributor,
@@ -479,6 +485,7 @@ describe('targeted contribution observation service', () => {
                         role: 'detail',
                         inputSchema: admittedSurfaceInputSchema.jsonSchema,
                         inputValidation: admittedSurfaceInputValidation,
+                        targetProtocol: admittedSurfaceTargetProtocol,
                         presentation: 'content' as const,
                         rendererChain: Object.freeze([]),
                         contributor: secondContributor,
@@ -555,6 +562,7 @@ describe('targeted contribution observation service', () => {
                         role: 'detail',
                         inputSchema: admittedSurfaceInputSchema.jsonSchema,
                         inputValidation: admittedSurfaceInputValidation,
+                        targetProtocol: admittedSurfaceTargetProtocol,
                         presentation: 'content' as const,
                         rendererChain: Object.freeze([]),
                         contributor: descriptorContributor,
@@ -579,6 +587,7 @@ describe('targeted contribution observation service', () => {
                         role: 'detail',
                         inputSchema: admittedSurfaceInputSchema.jsonSchema,
                         inputValidation: admittedSurfaceInputValidation,
+                        targetProtocol: admittedSurfaceTargetProtocol,
                         presentation: 'content' as const,
                         rendererChain: Object.freeze([]),
                         contributor: pointContributor,
@@ -890,6 +899,7 @@ describe('targeted contribution observation service', () => {
                     role: 'detail',
                     inputSchema: admittedSurfaceInputSchema.jsonSchema,
                     inputValidation: admittedSurfaceInputValidation,
+                    targetProtocol: admittedSurfaceTargetProtocol,
                     presentation: 'content' as const,
                     rendererChain: Object.freeze([]),
                     contributor,
@@ -981,6 +991,7 @@ describe('targeted contribution observation service', () => {
                     role: 'detail',
                     inputSchema: admittedSurfaceInputSchema.jsonSchema,
                     inputValidation: admittedSurfaceInputValidation,
+                    targetProtocol: admittedSurfaceTargetProtocol,
                     presentation: 'content' as const,
                     rendererChain: Object.freeze([]),
                     contributor,

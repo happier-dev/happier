@@ -4,21 +4,21 @@ import {
   AutomationEventAdmitEncryptedHostEvidenceV1Schema,
   AutomationEventAdmitInputV1Schema,
   buildAutomationPluginEventOccurrenceEvidenceV1,
+  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
   deriveAutomationOccurrenceKeyV1,
   type AutomationEventSourcesListInputV1,
   type AutomationEventSourcesListResultV1,
   type AutomationEventAdmitHttpRequestV1,
   AutomationSourceSelectorIdV1Schema,
+  AutomationTriggerIdSchema,
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
   type PluginMachineMaterializationRefV1,
   type PluginWebhookInvocationReferenceV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
   isAutomationTriggerEvidenceCiphertextV1,
-  parseAutomationRunExecutionRecipeV1,
   sealAccountScopedBlobCiphertext,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
-  serializeAutomationRunExecutionRecipeV1,
 } from '@happier-dev/protocol';
 
 const transportMocks = vi.hoisted(() => ({
@@ -62,10 +62,33 @@ const callerMaterialization = {
   machineId: 'machine-caller',
   materializationId: 'materialization-caller',
 } as const;
+const immutableGenerationId = 'github-immutable-generation-a';
+const actionCaller = {
+  kind: 'plugin' as const,
+  pluginId: callerMaterialization.pluginId,
+  materialization: callerMaterialization,
+  immutableGenerationId,
+};
+const httpCaller = {
+  pluginId: callerMaterialization.pluginId,
+  materialization: callerMaterialization,
+  immutableGenerationId,
+};
 const eventDeclarationRelease = {
   release: { pluginId: callerMaterialization.pluginId, version: '1.0.0' },
   archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
 } as const;
+
+const triggerIdFor = (automationId: string) => AutomationTriggerIdSchema.parse(
+  `trigger-${automationId}`,
+);
+const triggerRevision = 3;
+const selectorFor = (automationId: string, selectorId = sourceSelectorId) => ({
+  automationId,
+  triggerId: triggerIdFor(automationId),
+  triggerRevision,
+  sourceSelectorId: selectorId,
+});
 
 type AutomationEventPublicProjectionOwner = AutomationEventAdoptedDefinitionSetV1 & Readonly<{
   listPublicProjection(params: Readonly<{
@@ -81,6 +104,8 @@ type AutomationEventActionExecutorWithAdoptedSet = Parameters<
 >[0] & Readonly<{
   resolveAdoptedDefinitionSet(
     caller: PluginMachineMaterializationRefV1,
+    immutableGenerationId: string,
+    transport: AutomationEventSourcesListInputV1['transport'],
   ): AutomationEventPublicProjectionOwner | null;
 }>;
 
@@ -429,7 +454,8 @@ describe('createAutomationEventActionExecutor', () => {
       revision: '7',
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
         sourceInstanceId: 'repository-1',
         sourceSelectorId,
@@ -459,6 +485,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet,
     };
@@ -468,11 +495,7 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.sources.list',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toMatchObject({
       kind: 'page',
       revision: '7',
@@ -480,6 +503,7 @@ describe('createAutomationEventActionExecutor', () => {
     });
     expect(resolveAdoptedDefinitionSet).toHaveBeenCalledWith(
       callerMaterialization,
+      immutableGenerationId,
       { kind: 'checkpointedPull' },
     );
     expect(listPublicProjection).toHaveBeenCalledWith({
@@ -506,6 +530,7 @@ describe('createAutomationEventActionExecutor', () => {
     const executor = createAutomationEventActionExecutor({
       credentials,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -530,11 +555,7 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.sources.list',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       ok: false,
       errorCode: 'automation_event_adopted_definitions_unavailable',
@@ -551,11 +572,7 @@ describe('createAutomationEventActionExecutor', () => {
       await expect(executor({
         actionId: 'automation.event.sources.list',
         input,
-        caller: {
-          kind: 'plugin',
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: actionCaller,
       })).resolves.toEqual({
         kind: 'page',
         revision: '7',
@@ -596,6 +613,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     };
@@ -608,7 +626,8 @@ describe('createAutomationEventActionExecutor', () => {
       payload: { action: 'opened' },
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         sourceSelectorId,
       }],
     });
@@ -616,20 +635,13 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.admit',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }],
     });
     expect(execute).toHaveBeenCalledWith('automation.event.admit', {
       v: 1,
-      caller: {
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: httpCaller,
       input,
       hostEvidence: {
         v: 1,
@@ -660,7 +672,8 @@ describe('createAutomationEventActionExecutor', () => {
     };
     const storedDefinition = {
       automationId: 'automation-1',
-      templateVersion: 3,
+      triggerId: triggerIdFor('automation-1'),
+      triggerRevision,
       eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
       sourceSelectorId,
       sourceContractVersion: 1,
@@ -675,7 +688,8 @@ describe('createAutomationEventActionExecutor', () => {
         binding: {
           v: 1,
           automationId: 'automation-1',
-          templateVersion: 3,
+          triggerId: triggerIdFor('automation-1'),
+          triggerRevision,
           triggerKind: 'pluginEvent',
           eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
           sourceSelectorId,
@@ -689,35 +703,6 @@ describe('createAutomationEventActionExecutor', () => {
           maximumObservationAgeMs: null,
         },
       }),
-      executionRecipe: (() => {
-        const serialized = serializeAutomationRunExecutionRecipeV1({
-          v: 1,
-          templateVersion: 3,
-          template: {
-            t: 'encrypted',
-            c: sealAccountScopedBlobCiphertext({
-              kind: 'automation_template_payload',
-              material: snapshot.material,
-              payload: { v: 1, prompt: 'private template' },
-              randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 3),
-            }),
-          },
-          triggerEvidence: null,
-          target: {
-            kind: 'newSession',
-            spawn: {
-              executionTarget: { serverId: 'server-e2ee-admission', machineId: 'machine-caller' },
-              directory: '/tmp/e2ee-admission',
-              agentTarget: {
-                kind: 'agent',
-                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-              },
-            },
-          },
-        });
-        if (serialized.kind !== 'available') throw new Error('fixture recipe must be valid');
-        return serialized.serialized;
-      })(),
       payloadSchema: {
         type: 'object',
         properties: { action: { type: 'string' } },
@@ -728,10 +713,12 @@ describe('createAutomationEventActionExecutor', () => {
     const adoptedSet = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials,
       caller: callerMaterialization,
+      immutableGenerationId: 'github-immutable-generation-a',
       transport: { kind: 'checkpointedPull' },
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '7'
         ? { kind: 'unchanged', revision: '7', eventDeclarationRelease }
         : {
@@ -766,6 +753,7 @@ describe('createAutomationEventActionExecutor', () => {
     const executor = createAutomationEventActionExecutor({
       credentials,
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
       randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
@@ -778,7 +766,8 @@ describe('createAutomationEventActionExecutor', () => {
       payload: { action: 'opened' },
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         sourceSelectorId,
       }],
     });
@@ -786,11 +775,7 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.admit',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       results: [{ kind: 'rejoined', runId: 'run-1', checkpointSafe: true }],
     });
@@ -807,6 +792,20 @@ describe('createAutomationEventActionExecutor', () => {
     expect(JSON.stringify(request)).not.toContain('private-repository-source');
     expect(JSON.stringify(request)).not.toContain('private-source-config');
 
+    const expectedOccurrenceEvidence = buildAutomationPluginEventOccurrenceEvidenceV1({
+      eventRef: input.eventRef,
+      sourceSelectorId,
+      occurrenceId: input.occurrenceId,
+      occurredAt: input.occurredAt,
+      payload: input.payload,
+    });
+    const expectedEqualityTag = deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
+      material: snapshot.material,
+      accountId: 'account-1',
+      automationId: 'automation-1',
+      triggerId: triggerIdFor('automation-1'),
+      evidence: expectedOccurrenceEvidence,
+    });
     expect(request.hostEvidence).toEqual({
       v: 1,
       t: 'encrypted',
@@ -820,18 +819,16 @@ describe('createAutomationEventActionExecutor', () => {
       eventDeclarationRelease,
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         sourceSelectorId,
         sourceContractVersion: 1,
         observationTransport: 'checkpointedPull',
         occurrenceKey: expect.any(String),
         occurredAt: 1,
         triggerEvidenceEnvelope: { t: 'encrypted', c: expect.any(String) },
-        occurrenceEvidenceEqualityTag: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
-        outcome: {
-          kind: 'matched',
-          executionRecipe: expect.any(String),
-        },
+        occurrenceEvidenceEqualityTag: expectedEqualityTag,
+        outcome: { kind: 'matched' },
       }],
     });
     if (request.hostEvidence.t !== 'encrypted') return;
@@ -853,20 +850,13 @@ describe('createAutomationEventActionExecutor', () => {
       'outcome',
       'sourceContractVersion',
       'sourceSelectorId',
-      'templateVersion',
       'triggerEvidenceEnvelope',
+      'triggerId',
+      'triggerRevision',
     ]);
     expect(isAutomationTriggerEvidenceCiphertextV1(
       request.hostEvidence.definitions[0]!.triggerEvidenceEnvelope.c,
     )).toBe(true);
-    const recipe = parseAutomationRunExecutionRecipeV1(
-      request.hostEvidence.definitions[0]!.outcome.kind === 'matched'
-        ? request.hostEvidence.definitions[0]!.outcome.executionRecipe
-        : null,
-    );
-    expect(recipe.kind).toBe('available');
-    if (recipe.kind !== 'available' || recipe.recipe.triggerEvidence?.t !== 'encrypted') return;
-    expect(isAutomationTriggerEvidenceCiphertextV1(recipe.recipe.triggerEvidence.c)).toBe(true);
   });
 
   it('passes a custom E2 transport the complete E3 E2EE body without raw plugin Event input', async () => {
@@ -896,11 +886,15 @@ describe('createAutomationEventActionExecutor', () => {
       eventDeclarationRelease,
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         sourceSelectorId,
         sourceContractVersion: 1,
         observationTransport: 'checkpointedPull',
-        occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+          triggerId: triggerIdFor('automation-1'),
+          evidence: occurrenceEvidence,
+        }),
         occurredAt: 1,
         triggerEvidenceEnvelope: { t: 'encrypted', c: encryptedTriggerEvidence },
         occurrenceEvidenceEqualityTag: 'A'.repeat(43),
@@ -925,6 +919,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -941,15 +936,12 @@ describe('createAutomationEventActionExecutor', () => {
         },
         definitions: [{
           automationId: 'automation-1',
-          templateVersion: 3,
+          triggerId: triggerIdFor('automation-1'),
+          triggerRevision,
           sourceSelectorId,
         }],
       }),
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       results: [{ kind: 'skipped', reason: 'filtered', checkpointSafe: true }],
     });
@@ -957,10 +949,7 @@ describe('createAutomationEventActionExecutor', () => {
     const body = execute.mock.calls.at(-1)?.[1];
     expect(body).toEqual({
       v: 1,
-      caller: {
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: httpCaller,
       hostEvidence: encryptedHostEvidence,
     });
     expect(body).not.toHaveProperty('input');
@@ -995,9 +984,7 @@ describe('createAutomationEventActionExecutor', () => {
       observationReceivedAt: 2,
       payload: { action: 'opened' },
       definitions: ['automation-a', 'automation-b', 'automation-c', 'automation-d'].map((automationId) => ({
-        automationId,
-        templateVersion: 3,
-        sourceSelectorId,
+        ...selectorFor(automationId),
       })),
     });
     const occurrenceEvidence = buildAutomationPluginEventOccurrenceEvidenceV1({
@@ -1015,16 +1002,20 @@ describe('createAutomationEventActionExecutor', () => {
     });
     const evidenceFor = (automationId: string, outcome: 'matched' | 'skipped') => ({
       automationId,
-      templateVersion: 3,
+      triggerId: triggerIdFor(automationId),
+      triggerRevision,
       sourceSelectorId,
       sourceContractVersion: 1,
       observationTransport: 'durablePush' as const,
-      occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({
+        triggerId: triggerIdFor(automationId),
+        evidence: occurrenceEvidence,
+      }),
       occurredAt: 1,
       triggerEvidenceEnvelope: { t: 'encrypted' as const, c: triggerEvidence },
       occurrenceEvidenceEqualityTag: 'A'.repeat(43),
       outcome: outcome === 'matched'
-        ? { kind: 'matched' as const, executionRecipe: '{"v":1}' }
+        ? { kind: 'matched' as const }
         : { kind: 'skipped' as const, reason: 'filtered' as const },
     });
     const hostEvidenceFor = (definitions: readonly typeof input.definitions[number][]) =>
@@ -1050,12 +1041,12 @@ describe('createAutomationEventActionExecutor', () => {
     const preparedCalls = [
       {
         v: 1 as const,
-        caller: { pluginId: 'com.acme.github', materialization: callerMaterialization },
+        caller: httpCaller,
         hostEvidence: hostEvidenceFor(input.definitions.slice(0, 2)),
       },
       {
         v: 1 as const,
-        caller: { pluginId: 'com.acme.github', materialization: callerMaterialization },
+        caller: httpCaller,
         hostEvidence: hostEvidenceFor(input.definitions.slice(2)),
       },
     ] as const;
@@ -1082,6 +1073,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -1095,11 +1087,7 @@ describe('createAutomationEventActionExecutor', () => {
       await expect(executor({
         actionId: 'automation.event.admit',
         input,
-        caller: {
-          kind: 'plugin',
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: actionCaller,
       })).resolves.toEqual({
         results: [
           { kind: 'rejoined', runId: 'run-a', checkpointSafe: true },
@@ -1122,7 +1110,7 @@ describe('createAutomationEventActionExecutor', () => {
     expect(prepareAdmission).toHaveBeenCalledTimes(1);
     expect(prepareAdmission).toHaveBeenCalledWith(expect.objectContaining({
       accountId: 'account-1',
-      caller: { pluginId: 'com.acme.github', materialization: callerMaterialization },
+      caller: httpCaller,
       input,
     }));
     expect(prepareAdmission.mock.calls[0]?.[0]).not.toHaveProperty('startDefinitionIndex');
@@ -1144,8 +1132,8 @@ describe('createAutomationEventActionExecutor', () => {
       observationReceivedAt: 2,
       payload: { action: 'opened' },
       definitions: [
-        { automationId: 'automation-a', templateVersion: 3, sourceSelectorId },
-        { automationId: 'automation-b', templateVersion: 3, sourceSelectorId: secondSourceSelectorId },
+        selectorFor('automation-a'),
+        selectorFor('automation-b', secondSourceSelectorId),
       ],
     });
     const hostEvidence = {
@@ -1178,6 +1166,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -1185,11 +1174,7 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.admit',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       results: [
         { kind: 'admitted', runId: 'run-a', checkpointSafe: true },
@@ -1227,9 +1212,7 @@ describe('createAutomationEventActionExecutor', () => {
       observationReceivedAt: 2,
       payload: { action: 'opened' },
       definitions: ['automation-a', 'automation-b', 'automation-c'].map((automationId) => ({
-        automationId,
-        templateVersion: 3,
-        sourceSelectorId,
+        ...selectorFor(automationId),
       })),
     });
     const hostEvidence = {
@@ -1275,6 +1258,7 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
@@ -1289,11 +1273,7 @@ describe('createAutomationEventActionExecutor', () => {
       await expect(executor({
         actionId: 'automation.event.admit',
         input,
-        caller: {
-          kind: 'plugin',
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: actionCaller,
         signal: callerCancellation.signal,
       })).resolves.toEqual({
         results: [
@@ -1355,7 +1335,8 @@ describe('createAutomationEventActionExecutor', () => {
       payload: { action: 'opened' },
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: triggerIdFor('automation-1'),
+        triggerRevision,
         sourceSelectorId,
       }],
     });
@@ -1379,8 +1360,9 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
-      resolveAdoptedDefinitionSet: (_caller, transport) => (
+      resolveAdoptedDefinitionSet: (_caller, _immutableGenerationId, transport) => (
         transport.kind === 'durablePush' ? adoptedSet : null
       ),
     });
@@ -1394,11 +1376,7 @@ describe('createAutomationEventActionExecutor', () => {
       await expect(executor({
         actionId: 'automation.event.admit',
         input,
-        caller: {
-          kind: 'plugin',
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: actionCaller,
       })).resolves.toEqual({
         results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }],
       });
@@ -1408,10 +1386,7 @@ describe('createAutomationEventActionExecutor', () => {
       'automation.event.admit',
       {
         v: 1,
-        caller: {
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: httpCaller,
         input,
         hostEvidence: expect.objectContaining({
           webhookInvocationReference,
@@ -1431,11 +1406,7 @@ describe('createAutomationEventActionExecutor', () => {
       await expect(executor({
         actionId: 'automation.event.admit',
         input,
-        caller: {
-          kind: 'plugin',
-          pluginId: 'com.acme.github',
-          materialization: callerMaterialization,
-        },
+        caller: actionCaller,
     })).resolves.toEqual({
       ok: false,
       errorCode: 'automation_event_host_evidence_unavailable',
@@ -1447,11 +1418,7 @@ describe('createAutomationEventActionExecutor', () => {
     await expect(executor({
       actionId: 'automation.event.admit',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     })).resolves.toEqual({
       ok: false,
       errorCode: 'automation_event_adopted_definitions_unavailable',
@@ -1488,9 +1455,7 @@ describe('createAutomationEventActionExecutor', () => {
       observationReceivedAt: 2,
       payload: { action: 'opened' },
       definitions: automationIds.map((automationId) => ({
-        automationId,
-        templateVersion: 3,
-        sourceSelectorId,
+        ...selectorFor(automationId),
       })),
     });
     const firstBatch = admitInput(['automation-b', 'automation-safe']);
@@ -1515,17 +1480,14 @@ describe('createAutomationEventActionExecutor', () => {
       credentials,
       transport: { execute },
       revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
       resolveAdoptedDefinitionSet: () => adoptedSet,
     });
     const executeAdmission = async (input: typeof firstBatch) => await executor({
       actionId: 'automation.event.admit',
       input,
-      caller: {
-        kind: 'plugin',
-        pluginId: 'com.acme.github',
-        materialization: callerMaterialization,
-      },
+      caller: actionCaller,
     });
     const { lease, ...referenceWithoutLease } = webhookInvocationReference;
 

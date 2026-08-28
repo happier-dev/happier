@@ -5,6 +5,7 @@ import {
     DaemonPluginReactNativeCrashBindingTokenV1Schema,
     DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema,
     DaemonPluginReactNativeCrashFailureV1Schema,
+    deriveDaemonPluginReactNativeCrashMountKeyV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginReactNativeCrashMountV1,
@@ -117,6 +118,13 @@ function cloneMount(mount: DaemonPluginReactNativeCrashMountV1): DaemonPluginRea
             role: mount.role,
         };
     }
+    if (mount.kind === 'automationEventSetupSurface') {
+        return {
+            kind: 'automationEventSetupSurface',
+            contribution: { ...mount.contribution },
+            immutableGenerationId: mount.immutableGenerationId,
+        };
+    }
     return {
             kind: 'targetedSurface',
             target: { ...mount.target },
@@ -146,6 +154,10 @@ function sameMount(
         return sameQualifiedIdentity(left.contribution, right.contribution)
             && left.immutableGenerationId === right.immutableGenerationId
             && left.role === right.role;
+    }
+    if (left.kind === 'automationEventSetupSurface' && right.kind === 'automationEventSetupSurface') {
+        return sameQualifiedIdentity(left.contribution, right.contribution)
+            && left.immutableGenerationId === right.immutableGenerationId;
     }
     if (left.kind !== 'targetedSurface' || right.kind !== 'targetedSurface') return false;
     return left.target.pluginId === right.target.pluginId
@@ -198,32 +210,8 @@ export function createReactNativeCrashStateBindingKey(input: Readonly<{
     mount: DaemonPluginReactNativeCrashBindingTokenV1['mount'];
     renderer: DaemonPluginReactNativeCrashBindingTokenV1['renderer'];
 }>): string {
-    const mountKey = input.mount.kind === 'destination'
-        ? [
-            input.mount.kind,
-            input.mount.destination.pluginId,
-            input.mount.destination.localId,
-        ]
-        : input.mount.kind === 'composer'
-            ? [
-                input.mount.kind,
-                input.mount.contribution.pluginId,
-                input.mount.contribution.localId,
-                input.mount.role,
-            ]
-            : [
-            input.mount.kind,
-            input.mount.target.pluginId,
-            input.mount.point.pointId,
-            input.mount.point.protocol.id,
-            input.mount.point.protocol.version,
-            input.mount.contributor.pluginId,
-            input.mount.contributor.contributionId,
-            input.mount.role,
-            input.mount.presentation,
-        ];
     return JSON.stringify([
-        ...mountKey,
+        deriveDaemonPluginReactNativeCrashMountKeyV1(input.mount),
         input.renderer.pluginId,
         input.renderer.localId,
     ]);

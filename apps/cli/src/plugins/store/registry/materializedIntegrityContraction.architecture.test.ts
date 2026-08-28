@@ -25,6 +25,8 @@ const RETIRED_MATERIALIZED_INTEGRITY_TERMS = Object.freeze([
   'runtimeBindingDigest',
   'runtimeDigest',
   'runnerManagedServiceSupervisionGrantIdentity',
+  'RETIRED_BUNDLED_IMMUTABLE_GENERATION_IDS_BY_IDENTITY',
+  'sameBundledSourceArtifactIntegrity',
   'supervisionGrantIdentity',
   'verifyGenerationRootFiles',
   'verifyPredecessorPersistedGeneration',
@@ -40,6 +42,7 @@ const PRODUCTION_ROOTS = Object.freeze([
   join(REPOSITORY_ROOT, 'apps/cli/src/plugins'),
   join(REPOSITORY_ROOT, 'apps/cli/src/daemon'),
   join(REPOSITORY_ROOT, 'apps/cli/src/agent/runtime'),
+  join(REPOSITORY_ROOT, 'apps/cli/src/session'),
   join(REPOSITORY_ROOT, 'packages/plugins'),
   join(REPOSITORY_ROOT, 'packages/agents/src'),
   join(REPOSITORY_ROOT, 'packages/protocol/src'),
@@ -131,5 +134,33 @@ describe('plugin generation materialized-integrity contraction', () => {
     expect(operatorEntrypoint).toContain(
       "../src/plugins/store/registry/unpublishedV1Reconciliation",
     );
+  });
+
+  it('keeps bundled package integrity at the build boundary, outside runtime generation authority', async () => {
+    const productionSources = (await readAllProductionSources()).filter(isShippedRuntimeSource);
+    const runtimeIntegrityReaders = productionSources.filter(({ source }) => (
+      source.includes('BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES')
+    ));
+    expect(runtimeIntegrityReaders).toEqual([]);
+
+    const generatorSource = await readFile(
+      join(
+        REPOSITORY_ROOT,
+        'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts',
+      ),
+      'utf8',
+    );
+    const assignmentStart = generatorSource.indexOf(
+      'function assignBundledImmutableArtifactGenerationIds(',
+    );
+    const assignmentEnd = generatorSource.indexOf(
+      'function createCanonicalWorkspacePackageRootsReader(',
+      assignmentStart,
+    );
+    expect(assignmentStart).toBeGreaterThanOrEqual(0);
+    expect(assignmentEnd).toBeGreaterThan(assignmentStart);
+    const assignmentSource = generatorSource.slice(assignmentStart, assignmentEnd);
+    expect(assignmentSource).not.toContain('sourceArtifactIntegrity');
+    expect(assignmentSource).not.toContain('digest');
   });
 });

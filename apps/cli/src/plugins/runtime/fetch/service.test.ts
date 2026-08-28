@@ -23,6 +23,7 @@ import {
     type CreatePluginHttpServiceParams,
     type PluginRequestInterceptorRegistryV1,
 } from './service';
+import type { PluginWebSocketRuntimeOptions } from './webSocket';
 
 // The private-network decision now reaches DNS, the one system boundary this
 // owner touches. Every fixture host resolves to a public address unless a test
@@ -405,6 +406,122 @@ describe('createPluginHttpService', () => {
         expect(adapterInput).toEqual({ url: 'wss://gateway.example.test/socket' });
         await expect(service.openWebSocket(null as unknown as Parameters<HttpService['openWebSocket']>[0]))
             .rejects.toMatchObject({ code: 'plugin_websocket_invalid_url' });
+    });
+
+    it('pins the WebSocket transport to the exact address set admitted after currentness checks', async () => {
+        const connection: PluginWebSocketConnection = Object.freeze({
+            url: 'wss://gateway.example.test/socket',
+            protocol: '',
+            closed: Promise.resolve(Object.freeze({ kind: 'remote' as const, wasClean: true })),
+            send: async () => undefined,
+            receive: async () => Object.freeze({ kind: 'closed' as const, close: {
+                kind: 'remote' as const,
+                wasClean: true,
+            } }),
+            close: () => undefined,
+            dispose: () => undefined,
+        });
+        let adapterOptions: PluginWebSocketRuntimeOptions | undefined;
+        const currentness = vi.fn(() => true);
+        const host = createProductionStablePluginHttpHost({
+            resolveNetworkAddresses: async () => ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'],
+            adapter: Object.freeze({
+                request: async () => createResponse('unexpected HTTP request'),
+                async openWebSocket(_input, options) {
+                    adapterOptions = options;
+                    return connection;
+                },
+            }),
+        });
+        const seed = Object.freeze({
+            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
+            contribution: Object.freeze({ id: 'pin', qualifiedId: 'caller.plugin/actions/pin' }),
+            generation: 'generation-websocket-pin',
+            correlationId: 'correlation-websocket-pin',
+            surface: 'agent' as const,
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        });
+        const binding = Object.freeze({
+            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+                'generation-websocket-pin',
+                'binding-websocket-pin',
+                [{
+                    required: true,
+                    request: PluginHostAccessRequestV2Schema.parse({
+                        id: 'gateway',
+                        capability: 'network.client',
+                        reason: 'Maintain the declared gateway connection',
+                        scope: {
+                            targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
+                            transports: ['websocket'],
+                        },
+                    }),
+                }],
+            ),
+            networkCurrentness: currentness,
+        });
+
+        await expect(host.bind(seed, binding).openWebSocket({
+            url: 'wss://gateway.example.test/socket',
+        })).resolves.toBe(connection);
+
+        expect(currentness).toHaveBeenCalledTimes(3);
+        expect(adapterOptions?.validatedAddresses).toEqual([
+            '2606:2800:220:1:248:1893:25c8:1946',
+            '93.184.216.34',
+        ]);
+    });
+
+    it('refuses a WebSocket when its exact binding retires after DNS and before transport', async () => {
+        const adapter = Object.freeze({
+            request: async () => createResponse('unexpected HTTP request'),
+            openWebSocket: vi.fn(async (): Promise<never> => {
+                throw new Error('transport must not open');
+            }),
+        });
+        let currentnessReads = 0;
+        const host = createProductionStablePluginHttpHost({
+            adapter,
+            resolveNetworkAddresses: async () => ['93.184.216.34'],
+        });
+        const seed = Object.freeze({
+            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
+            contribution: Object.freeze({ id: 'retire', qualifiedId: 'caller.plugin/actions/retire' }),
+            generation: 'generation-websocket-retire-after-dns',
+            correlationId: 'correlation-websocket-retire-after-dns',
+            surface: 'agent' as const,
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        });
+        const binding = Object.freeze({
+            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+                'generation-websocket-retire-after-dns',
+                'binding-websocket-retire-after-dns',
+                [{
+                    required: true,
+                    request: {
+                        id: 'gateway',
+                        capability: 'network.client' as const,
+                        reason: 'Maintain the declared gateway connection',
+                        scope: {
+                            targets: [{ kind: 'fixedOrigin' as const, origin: 'https://gateway.example.test' }],
+                            transports: ['websocket' as const],
+                            privateNetwork: false,
+                        },
+                    },
+                }],
+            ),
+            networkCurrentness: () => {
+                currentnessReads += 1;
+                return currentnessReads === 1;
+            },
+        });
+
+        await expect(host.bind(seed, binding).openWebSocket({
+            url: 'wss://gateway.example.test/socket',
+        })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+        expect(adapter.openWebSocket).not.toHaveBeenCalled();
     });
 
     it('maps exact configured-origin revocation during a pending socket open to the canonical retirement error', async () => {
@@ -1187,6 +1304,53 @@ describe('createPluginHttpService', () => {
         expect(transportedAddressSets).toEqual(admittedAddressSets);
     });
 
+    it('refuses HTTP when its exact selected binding retires after DNS and before transport', async () => {
+        const adapter = vi.fn(async () => createResponse('must not dispatch'));
+        let currentnessReads = 0;
+        const host = createStablePluginHttpHost({
+            adapter,
+            resolveNetworkAddresses: async () => ['93.184.216.34'],
+        });
+        const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+            'generation-http-retire-after-dns',
+            'binding-http-retire-after-dns',
+            [{
+                required: true,
+                request: {
+                    id: 'api',
+                    capability: 'network',
+                    reason: 'API access',
+                    scope: {
+                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
+                        methods: ['GET'],
+                    },
+                },
+            }],
+        );
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+            generation: 'generation-http-retire-after-dns',
+            correlationId: 'http-retire-after-dns',
+            surface: 'agent',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, Object.freeze({
+            ...baseBinding,
+            networkCurrentness: () => {
+                currentnessReads += 1;
+                return currentnessReads === 1;
+            },
+        }));
+
+        await expect(service.request({
+            url: 'https://api.example.test/status',
+            method: 'GET',
+            redirect: 'error',
+        })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
     it('revalidates connected-account configuration currentness before every retry attempt', async () => {
         const adapter = vi.fn(async () => {
             throw Object.assign(new Error('temporarily unavailable'), { code: 'ETIMEDOUT' });
@@ -1216,7 +1380,9 @@ describe('createPluginHttpService', () => {
             ...baseBinding,
             networkCurrentness: () => {
                 currentnessChecks += 1;
-                return currentnessChecks === 1;
+                // First attempt: before and after DNS. The retry then retires
+                // at its own pre-DNS check and never reaches the adapter.
+                return currentnessChecks <= 2;
             },
         }) as typeof baseBinding;
         const service = host.bind({
@@ -1234,7 +1400,7 @@ describe('createPluginHttpService', () => {
             method: 'GET',
             redirect: 'error',
         })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-        expect(currentnessChecks).toBe(2);
+        expect(currentnessChecks).toBe(3);
         expect(adapter).toHaveBeenCalledTimes(1);
     });
 

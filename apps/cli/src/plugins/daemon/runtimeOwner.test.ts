@@ -235,6 +235,13 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(ownerMocks.stateStoreParams?.retainedCurrentHostGenerationIds).toEqual(
       expectedGenerationIds,
     );
+    expect(ownerMocks.stateStoreParams?.bundledArtifacts).toEqual(
+      expect.arrayContaining(expectedGenerationIds.map((immutableGenerationId) => (
+        expect.objectContaining({
+          record: expect.objectContaining({ immutableGenerationId }),
+        })
+      ))),
+    );
   });
 
   it('publishes the initial registry before gating its one-time background activation', async () => {

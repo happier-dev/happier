@@ -60,12 +60,10 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-plugin-'));
         const localAgentId = 'declarative-agent';
-        const agentId = provenance === 'first_party'
-            ? localAgentId
-            : buildQualifiedPluginContributionKey({
-                pluginId,
-                localId: localAgentId,
-            });
+        const agentId = buildQualifiedPluginContributionKey({
+            pluginId,
+            localId: localAgentId,
+        });
         let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
         try {
             const agentDefinition = {

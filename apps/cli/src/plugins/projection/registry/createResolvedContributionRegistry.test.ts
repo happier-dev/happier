@@ -19,6 +19,11 @@ import {
   PluginContributesV2Schema,
   createPluginContributionIdentity,
 } from '@happier-dev/protocol';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
+import {
+  PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+  PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+} from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { ResolvedActivatedHookRegistration } from './types';
@@ -213,6 +218,11 @@ describe('getResolvedContributionRegistry', () => {
       );
       expect(registry.catalogEntriesById[agentId]?.id).toBe(agentId);
     }
+
+    // A manifest-local CLI command may intentionally differ from the host's
+    // canonical Agent identity. The registry keys by catalog id; it must not
+    // rewrite or reject the independently authored command spelling.
+    expect(registry.catalogEntriesById.ohMyPi?.cliSubcommand).toBe('ohmypi');
 
     expect(registry).not.toHaveProperty('agentRuntimes');
     expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
@@ -452,7 +462,12 @@ describe('getResolvedContributionRegistry', () => {
   });
 
   it('derives only current, exact plugin Event setup Actions without activating a plugin', () => {
-    const action = (pluginId: string, id: string, title: string) => ({
+    const action = (
+      pluginId: string,
+      id: string,
+      title: string,
+      contract: 'setup' | 'historyGapReset' = 'setup',
+    ) => ({
       provenance: 'external' as const,
       source: { kind: 'path' as const },
       pluginId,
@@ -481,19 +496,15 @@ describe('getResolvedContributionRegistry', () => {
         },
         execution: { target: 'daemon' },
         inputHints: null,
-        inputSchema: { type: 'object', additionalProperties: false },
-        outputSchema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-          properties: {
-            v: { type: 'integer', const: 1 },
-            sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-            sourceContractVersion: { type: 'integer', const: 1 },
-            sourceConfig: { type: 'object', additionalProperties: false },
-            displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-          },
-        },
+        inputSchema: contract === 'historyGapReset'
+          ? PluginEventAutomationHistoryGapResetActionInputV1JsonSchema
+          : { type: 'object', additionalProperties: false },
+        outputSchema: contract === 'historyGapReset'
+          ? PluginEventAutomationHistoryGapResetActionResultV1JsonSchema
+          : createPluginEventAutomationSetupResultV1JsonSchema(
+            1,
+            { type: 'object', additionalProperties: false },
+          ),
       },
     });
     const event = (
@@ -535,13 +546,13 @@ describe('getResolvedContributionRegistry', () => {
       agents: [],
       actions: [
         action('alpha.plugin', 'configure-source', 'Alpha setup'),
-        action('alpha.plugin', 'baseline-history-gap', 'Resume source'),
+        action('alpha.plugin', 'baseline-history-gap', 'Resume source', 'historyGapReset'),
         action('beta.plugin', 'configure-source', 'Beta setup'),
       ],
       events: [
         event('alpha.plugin', 'repository/updated', 'configure-source', 'baseline-history-gap'),
         event('beta.plugin', 'repository/updated', 'configure-source'),
-        event('alpha.plugin', 'valid-but-not-composer-eligible'),
+        event('alpha.plugin', 'valid-but-not-composer-eligible', 'missing-setup-action'),
       ],
       immutableGenerationIdsByPluginId: {
         'alpha.plugin': 'alpha-immutable-generation',

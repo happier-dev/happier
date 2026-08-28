@@ -3380,6 +3380,67 @@ describe('managed-services SVC09 owner', () => {
         expect(releaseFiles).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps process custody retryable when private stop reports incomplete termination', async () => {
+        const harness = createHarness();
+        harness.legacyHandle.stop
+            .mockResolvedValueOnce(Object.freeze({
+                status: 'termination_incomplete' as const,
+            }))
+            .mockResolvedValueOnce(Object.freeze({
+                status: 'stopped' as const,
+            }));
+        const releaseFiles = vi.fn(async () => undefined);
+        const services = harness.owner.bindScope(harness.scope, exec, {
+            connectedAccounts: createConnectedAccounts(vi.fn(async () => Object.freeze({
+                kind: 'files' as const,
+                files: Object.freeze({ config: new Uint8Array([1]) }),
+            }))),
+            credentialFiles: Object.freeze({
+                materialize: vi.fn(async ({ retainCleanup }) => {
+                    const lease = Object.freeze({
+                        pathsByFileId: Object.freeze({ config: '/private/config' }),
+                        dispose: releaseFiles,
+                    });
+                    retainCleanup(lease);
+                    return lease;
+                }),
+            }),
+        });
+        const handle = await services.supervise({
+            id: 'incomplete-termination',
+            credentialBindings: [{
+                purpose: 'provider.inference',
+                request: { kind: 'files', fileIds: ['config'] },
+                injection: {
+                    kind: 'files',
+                    pathsByFileId: {
+                        config: { environmentKey: 'UPSTREAM_CONFIG' },
+                    },
+                },
+            }],
+            mode: {
+                kind: 'spawn',
+                launch: { executable: {} as never },
+                endpoint: {
+                    kind: 'assignAndInject',
+                    port: { kind: 'fixed', port: 4312 },
+                },
+            },
+        });
+
+        await expect(handle.stop()).rejects.toMatchObject({
+            code: 'plugin_managed_service_establishment_failed',
+        });
+        expect(harness.legacyHandle.stop).toHaveBeenCalledTimes(1);
+        expect(releaseFiles).toHaveBeenCalledTimes(1);
+        expect(harness.owner.readRetainedSemanticCustodyCount()).toBe(1);
+
+        await expect(handle.stop()).resolves.toEqual({ status: 'stopped' });
+        expect(harness.legacyHandle.stop).toHaveBeenCalledTimes(2);
+        expect(releaseFiles).toHaveBeenCalledTimes(1);
+        expect(harness.owner.readRetainedSemanticCustodyCount()).toBe(0);
+    });
+
     it('cancels shared establishment only after its last waiter aborts', async () => {
         let establishmentSignal: AbortSignal | undefined;
         const supervise = vi.fn<ManagedServiceProcessSupervisor['supervise']>(

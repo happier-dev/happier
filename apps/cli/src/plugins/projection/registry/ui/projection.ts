@@ -28,7 +28,10 @@ import {
     type PluginUiDestinationBindingV1,
     type PluginUiSurfaceBindingV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui';
+import {
+    createPluginSessionInfoSectionRendererIdV1,
+    type PluginUiViewDestinationBindingV2,
+} from '@happier-dev/protocol/plugins/contributions/ui';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { createReactNativeCrashStateBindingKey } from '@/plugins/runtime/ui/reactNativeCrashDisableState';
@@ -771,9 +774,18 @@ function projectSurfaceAvailability<TEntry extends Readonly<Record<string, unkno
     });
 }
 
+function isDestinationUiViewDefinition(
+    definition: ResolvedUiViewV2Contribution['definition'],
+): definition is PluginUiViewDestinationBindingV2 {
+    return definition.container !== 'sessionSubagentLaunch'
+        && definition.container !== 'sessionSubagentDetails';
+}
+
 function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Record<string, unknown>> {
-    const title = view.definition.title;
-    const badge = view.definition.badge;
+    const definition = view.definition;
+    const destinationDefinition = isDestinationUiViewDefinition(definition) ? definition : null;
+    const title = definition.title;
+    const badge = destinationDefinition?.badge;
     const projectedBadge = badge === undefined
         ? undefined
         : Object.freeze(typeof badge.label === 'string'
@@ -787,10 +799,14 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
                 ...(badge.tone === undefined ? {} : { tone: badge.tone }),
             });
     const presentationDefaults = {
-        ...(view.definition.icon === undefined ? {} : { iconToken: view.definition.icon }),
+        ...(definition.icon === undefined ? {} : { iconToken: definition.icon }),
         ...(projectedBadge === undefined ? {} : { badge: projectedBadge }),
-        ...(view.definition.groupHint === undefined ? {} : { groupHint: view.definition.groupHint }),
-        ...(view.definition.rankHint === undefined ? {} : { rankHint: view.definition.rankHint }),
+        ...(destinationDefinition?.groupHint !== undefined
+            ? { groupHint: destinationDefinition.groupHint }
+            : {}),
+        ...(destinationDefinition?.rankHint !== undefined
+            ? { rankHint: destinationDefinition.rankHint }
+            : {}),
     };
     if (typeof title === 'string') {
         return Object.freeze({
@@ -813,7 +829,7 @@ function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Reco
 
 function projectGeneratedPageHeaderActions(
     pluginId: string,
-    headerActions: ResolvedUiViewV2Contribution['definition']['headerActions'],
+    headerActions: PluginUiViewDestinationBindingV2['headerActions'],
 ): readonly Readonly<Record<string, unknown>>[] {
     const projected: Readonly<Record<string, unknown>>[] = [];
     for (const headerAction of headerActions ?? []) {
@@ -1197,7 +1213,7 @@ function projectGeneratedUiViews(
             candidate.renderer.definition.id === selectedBinding.renderer.localId
         )) ?? primaryCandidate;
         const display = generatedViewDisplay(view);
-        const headerActions = selectedBinding.kind === 'destination'
+        const headerActions = isDestinationUiViewDefinition(view.definition)
             ? projectGeneratedPageHeaderActions(pluginId, view.definition.headerActions)
             : Object.freeze([]);
         const rightSidebar = selectedBinding.kind === 'destination'

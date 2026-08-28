@@ -302,6 +302,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
 
         try {
             const startupActivatedPluginIds = new Set([
+                'happier.posthog',
                 'happier.scm.forge.github',
             ]);
             for (const pluginId of pluginIds) {
@@ -309,6 +310,20 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                     startupActivatedPluginIds.has(pluginId),
                 );
             }
+
+            const codexCatalogEntry = await runtime.acquireAgentCatalogEntry?.('codex');
+            await expect(
+                codexCatalogEntry?.getConnectedServiceStateSharingDescriptor?.(),
+            ).resolves.toMatchObject({
+                providerId: 'codex',
+                providerSupportStatus: 'supported',
+            });
+            await expect(
+                codexCatalogEntry?.getConnectedServiceRuntimeAuthAdapter?.(),
+            ).resolves.toMatchObject({
+                classifyRuntimeAuthFailure: expect.any(Function),
+                canHotApply: expect.any(Function),
+            });
 
             const leases = [];
             for (const service of services) {
@@ -362,7 +377,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             for (const lease of leases) {
                 expect(lease.isCurrent()).toBe(false);
                 await expect(
-                    lease.runtime.status({} as never),
+                    runtime.resolveConnectedAccountRuntime?.(lease.ref),
                 ).rejects.toBeInstanceOf(
                     ConnectedAccountRuntimeInvocationNotStartedError,
                 );
@@ -542,6 +557,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             ).toEqual({
                 getBinding: purposeOwner.getBinding,
                 materialize: purposeOwner.materialize,
+                watch: purposeOwner.watch,
             });
             runtime.retireConsumers();
             expect(

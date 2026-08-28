@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol';
+import {
+    AutomationRunStateChangedHostEventV1Schema,
+    type ParsedPluginEventContributionV1,
+} from '@happier-dev/protocol';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { type PluginContributionRef } from '@happier-dev/plugin-sdk';
 
@@ -627,15 +630,23 @@ describe('stable invocation events service', () => {
             listener: runtimeObserver,
             isCurrent: () => true,
         });
-        const payload = {
+        const payload = AutomationRunStateChangedHostEventV1Schema.parse({
             runId: 'run-1',
             automationId: 'automation-1',
-            originKind: 'scheduled',
+            runCause: {
+                kind: 'trigger',
+                triggerId: 'trigger-schedule-1',
+                triggerRevision: 1,
+                triggerKind: 'schedule',
+                occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                occurredAt: 1,
+                evidence: { scheduledFor: 1 },
+            },
             previousState: null,
             currentState: 'queued',
             transitionedAt: 1,
             claimedByMachineId: null,
-        } as const;
+        });
 
         broker.publishHostEventEnvelope({
             eventId: '@happier/automation/run-state-changed',

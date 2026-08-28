@@ -608,10 +608,10 @@ describe('CLI scaffold development flow', () => {
       expect(isCanonicalAbsolutePathInsideRoot(workspaceRoot, resolvedInstalledSdkRoot)).toBe(false);
       expect(await readFile(join(installedSdkRoot, 'API.md'), 'utf8'))
         .toContain('> Generated from `api-surface.json`. Do not hand-edit.');
-      // Cold development prepares once. Focused typecheck/build/test and doctor
-      // all reuse the already materialized author root instead of running four
-      // redundant package-manager installs.
-      expect(managedPnpmCalls).toHaveLength(1);
+      // Cold development prepares the author root once. The daemon separately
+      // prepares its isolated candidate copy; focused typecheck/build/test and
+      // doctor must not reinstall the root the author is editing.
+      expect(managedPnpmCalls.filter((call) => call.cwd === targetDir)).toHaveLength(1);
       await expect(lstat(join(targetDir, 'pnpm-workspace.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });
       for (const materializedSdkRoot of materializedSdkRoots) {
         await expect(lstat(materializedSdkRoot)).rejects.toMatchObject({ code: 'ENOENT' });

@@ -122,9 +122,8 @@ const PluginChangeRequestSchema = z.union([
   )),
   z.object({ kind: z.literal('uninstall'), pluginId: PluginIdSchema }).strict(),
   z.object({
-    kind: z.literal('uninstall'),
+    kind: z.literal('uninstallAndDeleteData'),
     pluginId: PluginIdSchema,
-    allowAlreadyAbsent: z.literal(true),
     actorEvidence: AuthenticatedUserInteractionSchema,
   }).strict(),
 ]);

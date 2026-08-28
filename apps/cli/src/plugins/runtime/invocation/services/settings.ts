@@ -77,7 +77,11 @@ export type StablePluginSettingsRecordStore = Readonly<{
     update<T>(
         model: StablePluginSettingsModel,
         operation: (current: unknown | null) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
-        options?: Readonly<{ signal?: AbortSignal }>,
+        options?: Readonly<{
+            signal?: AbortSignal;
+            /** Pure postcondition projection after one ambiguous Account write readback. */
+            settleOutcomeUnknown?(current: CanonicalPluginSettingsRecord): T | undefined;
+        }>,
     ): Promise<T>;
     watch?(
         model: StablePluginSettingsModel,
@@ -372,6 +376,7 @@ export type PluginAccountSettingsRecordRead =
 export type PluginAccountSettingsRecordWriteResult =
     | Readonly<{ status: 'updated'; revision: number }>
     | Readonly<{ status: 'conflict'; revision: number }>
+    | Readonly<{ status: 'outcomeUnknown' }>
     | Readonly<{ status: 'unavailable' }>;
 
 export type PluginAccountSettingsRecordAdapter = Readonly<{
@@ -529,6 +534,19 @@ export function createAccountSettingsBackedSettingsRecordStore(
                     'plugin_settings_revision_conflict',
                     'Plugin settings revision does not match the current Account revision',
                     { currentRevision: String(response.revision) },
+                );
+            }
+            if (response.status === 'outcomeUnknown') {
+                const readback = await readAccountPluginSettingsRecord(model, adapter, options)
+                    .catch(() => null);
+                const settled = readback
+                    ? options?.settleOutcomeUnknown?.(readback.record)
+                    : undefined;
+                if (settled !== undefined) return settled;
+                throw settingsError(
+                    'plugin_settings_outcome_unknown',
+                    'Account plugin settings may have been updated, but the result is unknown',
+                    { lastKnownRevision: String(readback?.record.revision ?? current.record.revision) },
                 );
             }
             if (response.revision !== record.revision) {
@@ -701,6 +719,21 @@ function visibleValues(
     return Object.freeze(values);
 }
 
+function recordSatisfiesSettingsPostcondition(
+    record: CanonicalPluginSettingsRecord,
+    input: Readonly<{
+        values?: Readonly<Record<string, JsonValue>>;
+        absentIds?: readonly string[];
+    }>,
+): boolean {
+    if (input.absentIds?.some((id) => record.values[id] !== undefined)) return false;
+    return Object.entries(input.values ?? {}).every(([id, expected]) => {
+        const observed = record.values[id];
+        return observed !== undefined
+            && containsEquivalentPluginJsonValue([expected], observed);
+    });
+}
+
 function validateRecordForModel(
     model: StablePluginSettingsModel,
     record: CanonicalPluginSettingsRecord,
@@ -772,6 +805,15 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     );
                 }
             }
+            const settlePatchReadback = (record: CanonicalPluginSettingsRecord) => {
+                if (!recordSatisfiesSettingsPostcondition(record, { values: patch })) return undefined;
+                return Object.freeze({
+                    scope: settingsScopeRef(model),
+                    revision: String(record.revision),
+                    changedIds: Object.freeze(changedIds),
+                    values: visibleValues(model, record),
+                });
+            };
             const change = await params.recordStore.update(model, (raw) => {
                 assertCurrent(seed, input.signal);
                 const record = validateRecordForModel(model, parseCanonicalPluginSettingsRecord(raw));
@@ -795,7 +837,12 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                         values: visibleValues(model, next),
                     }),
                 });
-            }, { signal: input.signal });
+            }, {
+                signal: input.signal,
+                ...(input.expectedRevision === undefined
+                    ? { settleOutcomeUnknown: settlePatchReadback }
+                    : {}),
+            });
             assertCurrent(seed, input.signal);
             await params.broker.emit({
                 event: {
@@ -868,6 +915,17 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                         `Plugin setting '${field.qualifiedId}' failed schema validation`,
                     );
                 }
+                const settleMutationReadback = (record: CanonicalPluginSettingsRecord) => {
+                    if (!recordSatisfiesSettingsPostcondition(record, input.reset
+                        ? { absentIds: [input.id] }
+                        : { values: { [input.id]: normalizedValue! } })) return undefined;
+                    return Object.freeze({
+                        scope: settingsScopeRef(model),
+                        revision: String(record.revision),
+                        changedIds: Object.freeze([input.id]),
+                        values: visibleValues(model, record),
+                    });
+                };
                 const change = await params.recordStore.update(model, (raw) => {
                     assertCurrent(seed, input.signal);
                     const record = validateRecordForModel(model, parseCanonicalPluginSettingsRecord(raw));
@@ -900,7 +958,12 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                             values: visibleValues(model, next),
                         }),
                     });
-                }, { signal: input.signal });
+                }, {
+                    signal: input.signal,
+                    ...(input.expectedRevision === undefined
+                        ? { settleOutcomeUnknown: settleMutationReadback }
+                        : {}),
+                });
                 // Plugin events are daemon-local and non-durable. Persistence remains authoritative
                 // when transient broker backpressure prevents this at-most-once notification.
                 await params.broker.emit({

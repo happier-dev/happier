@@ -69,6 +69,7 @@ describe('managed server durability owner', () => {
     it('retains exact managed-child custody when termination cannot be verified', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-'));
         const terminated: number[] = [];
+        const observeProcessGroupPresence = vi.fn(async () => 'alive' as const);
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
             observeProcessStartIdentity: async (pid) => (
@@ -80,6 +81,7 @@ describe('managed server durability owner', () => {
                 terminated.push(pid);
                 throw new Error('tree termination returned without proof');
             },
+            observeProcessGroupPresence,
         });
         const live = endpointProjection(record('live-child', 41));
         const recycled = endpointProjection(record('recycled-pid', 42));
@@ -109,6 +111,7 @@ describe('managed server durability owner', () => {
         // PID belongs to someone else and is safe to forget; the attached server has no child
         // custody to retain.
         expect(terminated).toEqual([41]);
+        expect(observeProcessGroupPresence).not.toHaveBeenCalled();
         const remaining = (await readdir(join(root, 'endpoint-projections')))
             .filter((entry) => entry.endsWith('.json'));
         const remainingInstanceIds = await Promise.all(remaining.map(async (entry) => (
@@ -138,6 +141,37 @@ describe('managed server durability owner', () => {
         await expect(owner.retireSessionRunnerOwnedProjections({
             sessionId: 'session-one',
         })).resolves.toEqual([41]);
+        expect(
+            (await readdir(join(root, 'endpoint-projections')))
+                .filter((entry) => entry.endsWith('.json')),
+        ).toEqual([]);
+    });
+
+    it('retires a surviving POSIX process group after its launcher root exits', async () => {
+        if (process.platform === 'win32') return;
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-group-'));
+        let groupPresent = true;
+        const terminateProcessTree = vi.fn(async () => {
+            groupPresent = false;
+        });
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async () => null,
+            observeProcessGroupPresence: async () => groupPresent ? 'alive' : 'absent',
+            terminateProcessTree,
+        });
+        await owner.publishEndpointProjection(endpointProjection(record(
+            'surviving-process-group',
+            41,
+        )));
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([41]);
+        expect(terminateProcessTree).toHaveBeenCalledWith({
+            pid: 41,
+            exitCode: 0,
+        });
         expect(
             (await readdir(join(root, 'endpoint-projections')))
                 .filter((entry) => entry.endsWith('.json')),
@@ -195,6 +229,13 @@ describe('managed server durability owner', () => {
 
     it('distinguishes confirmed process absence from unavailable start-identity observation', async () => {
         const readProcessIdentityByPidFn = vi.fn(async () => null);
+
+        await expect(observeManagedServiceProcessStartIdentity(42, {
+            readProcessIdentityByPidFn: async () => ({
+                pid: 4_321,
+                processStartTimeMs: 12_345,
+            }),
+        })).resolves.toBe('42:12345');
 
         await expect(observeManagedServiceProcessStartIdentity(42, {
             readProcessIdentityByPidFn,
@@ -609,6 +650,69 @@ describe('managed server durability owner', () => {
         })).resolves.toBeNull();
     });
 
+    it('resolves the live managed-spawn endpoint for one exact Session contribution', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-current-session-'));
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async (pid) => `start-${pid}`,
+        });
+        await owner.publishEndpointProjection({
+            ...endpointProjection(record('session-one-runner', 41)),
+            contributionId: 'opencode/agents/opencode',
+        });
+        await owner.publishEndpointProjection({
+            ...endpointProjection(record('session-two-runner', 42)),
+            sessionId: 'session-two',
+            contributionId: 'opencode/agents/opencode',
+        });
+
+        const exactQuery = {
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            contributionId: 'opencode/agents/opencode',
+            selector: { kind: 'currentSessionManagedSpawn' as const },
+        };
+        await expect(owner.resolveEndpointProjection(exactQuery)).resolves.toMatchObject({
+            instanceId: 'session-one-runner',
+            endpoint: { baseUrl: 'http://127.0.0.1:4312' },
+            custodyOwner: 'sessionRunner',
+            mode: 'managedSpawn',
+        });
+        await expect(owner.resolveEndpointProjection({
+            ...exactQuery,
+            sessionId: 'session-missing',
+        })).resolves.toBeNull();
+        await expect(owner.resolveEndpointProjection({
+            ...exactQuery,
+            contributionId: 'opencode/agents/other',
+        })).resolves.toBeNull();
+        await expect(owner.resolveEndpointProjection({
+            ...exactQuery,
+            immutableGenerationId: 'unexpected-generation',
+        })).resolves.toBeNull();
+    });
+
+    it('rejects and reaps a stale exact-Session managed-spawn endpoint', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-stale-session-'));
+        const publisher = createManagedServiceDurabilityOwner({ rootDir: root });
+        await publisher.publishEndpointProjection({
+            ...endpointProjection(record('stale-session-runner', 41)),
+            contributionId: 'opencode/agents/opencode',
+        });
+        const resolver = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async () => null,
+        });
+
+        await expect(resolver.resolveEndpointProjection({
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            contributionId: 'opencode/agents/opencode',
+            selector: { kind: 'currentSessionManagedSpawn' },
+        })).resolves.toBeNull();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(0);
+    });
+
     it('does not remove a same-instance replacement published during stale-process observation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-runner-reaper-race-'));
         const publisher = createManagedServiceDurabilityOwner({ rootDir: root });
@@ -697,5 +801,240 @@ describe('managed server durability owner', () => {
         const persisted = await readFile(capture.path);
         expect(persisted.byteLength).toBeLessThanOrEqual(128);
         expect(persisted.toString('utf8')).not.toContain('xy');
+    });
+
+    // A Darwin `ps lstart` record truncates the birthday to whole seconds, so a pid replaced
+    // inside that same second cannot be told apart from the recorded child. That ambiguity must
+    // fence custody — the record is retained and unadoptable, the replacement is never signalled,
+    // and nothing is reaped until better evidence arrives.
+    it('fences a same-second pid replacement recorded in a legacy identity instead of reaping or signalling it', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-darwin-same-second-'));
+        const terminateProcessTree = vi.fn(async () => undefined);
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'darwin',
+            observeProcessStartIdentity: async () => '41:1754041400000',
+            terminateProcessTree,
+        });
+        await owner.publishEndpointProjection({
+            ...endpointProjection(record('same-second-child', 41)),
+            custodyOwner: 'sessionRunner' as const,
+            process: { pid: 41, startIdentity: '41:1754041400000' },
+        });
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+        expect(terminateProcessTree).not.toHaveBeenCalled();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+
+        await expect(owner.resolveEndpointProjection({
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            selector: { kind: 'currentSessionManagedSpawn' as const },
+        })).resolves.toBeNull();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+    });
+
+    it('reaps a legacy identity after a different-second observation proves reuse without signalling the replacement', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-darwin-different-second-'));
+        const terminateProcessTree = vi.fn(async () => undefined);
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'darwin',
+            observeProcessStartIdentity: async () => '41:1754041401000',
+            terminateProcessTree,
+        });
+        await owner.publishEndpointProjection({
+            ...endpointProjection(record('stale-second-child', 41)),
+            custodyOwner: 'sessionRunner' as const,
+            process: { pid: 41, startIdentity: '41:1754041400000' },
+        });
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+        expect(terminateProcessTree).not.toHaveBeenCalled();
+        expect(await readdir(join(root, 'endpoint-projections'))).toEqual([]);
+    });
+
+    it('fences a Darwin predecessor record when its root is absent but a same-number group exists', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-darwin-root-absent-'));
+        const terminateProcessTree = vi.fn(async () => undefined);
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'darwin',
+            observeProcessStartIdentity: async () => null,
+            observeProcessGroupPresence: async () => 'alive',
+            terminateProcessTree,
+        });
+        await owner.publishEndpointProjection({
+            ...endpointProjection(record('darwin-root-absent', 41)),
+            custodyOwner: 'sessionRunner' as const,
+            process: { pid: 41, startIdentity: '41:1754041400000' },
+        });
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+        expect(terminateProcessTree).not.toHaveBeenCalled();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+    });
+
+    it('keeps the live-process probe contract when the process identity is unavailable', async () => {
+        const readProcessIdentityByPidFn = vi.fn(async () => null);
+
+        await expect(observeManagedServiceProcessStartIdentity(42, {
+            readProcessIdentityByPidFn,
+            signalProcessFn: () => {
+                throw Object.assign(new Error('process not found'), { code: 'ESRCH' });
+            },
+        })).resolves.toBeNull();
+        await expect(observeManagedServiceProcessStartIdentity(42, {
+            readProcessIdentityByPidFn,
+            signalProcessFn: () => undefined,
+        })).rejects.toThrow('observation is unavailable');
+    });
+
+    it('keeps predecessor Windows projections fenced without atomic process-tree containment', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-win32-fenced-'));
+        const terminateProcessTree = vi.fn(async () => undefined);
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'win32',
+            observeProcessStartIdentity: async () => '42:1000',
+            terminateProcessTree,
+        });
+        await owner.publishEndpointProjection(endpointProjection({
+            ...record('win32-predecessor', 42),
+            processStartIdentity: '42:1000',
+        }));
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+        expect(terminateProcessTree).not.toHaveBeenCalled();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+    });
+
+    it('observes and retires tagged Windows job custody through the job, never the pid', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-win32-job-'));
+        const terminateProcessTree = vi.fn(async () => undefined);
+        let jobLive = true;
+        let terminationProven = true;
+        const observeProcessCustodyJob = vi.fn(async () => (jobLive ? 'live' : 'absent') as 'live' | 'absent');
+        const terminateProcessCustodyJob = vi.fn(async () => {
+            if (terminationProven) jobLive = false;
+            return terminationProven;
+        });
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'win32',
+            observeProcessStartIdentity: async () => {
+                throw new Error('job custody never asks for a pid birth witness');
+            },
+            observeProcessCustodyJob,
+            terminateProcessCustodyJob,
+            terminateProcessTree,
+        });
+        const jobIdentity = 'winjob:Local\\happier-svc09-fixture';
+        await owner.publishEndpointProjection(endpointProjection({
+            ...record('win32-job-child', 42),
+            processStartIdentity: jobIdentity,
+        }));
+
+        // A live job is live root custody; resolution adopts it, and the pid
+        // witness is never consulted for a job-owned record.
+        await expect(owner.resolveEndpointProjection({
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            selector: { kind: 'currentSessionManagedSpawn' },
+        })).resolves.toMatchObject({
+            process: { pid: 42, startIdentity: jobIdentity },
+        });
+        expect(observeProcessCustodyJob).toHaveBeenCalledWith('Local\\happier-svc09-fixture');
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([42]);
+        expect(terminateProcessCustodyJob).toHaveBeenCalledWith('Local\\happier-svc09-fixture');
+        expect(terminateProcessTree).not.toHaveBeenCalled();
+        expect(await readdir(join(root, 'endpoint-projections'))).toEqual([]);
+
+        // Retry custody: an unproven job termination retains the projection.
+        await owner.publishEndpointProjection(endpointProjection({
+            ...record('win32-job-retry', 43),
+            processStartIdentity: jobIdentity,
+        }));
+        terminationProven = false;
+        jobLive = true;
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([]);
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+    });
+
+    it('resolves a tagged Windows record through job absence and fences an unprovable job', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-win32-job-query-'));
+        const observeProcessCustodyJob = vi.fn(async () => 'unknown' as const);
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'win32',
+            observeProcessStartIdentity: async () => null,
+            observeProcessCustodyJob,
+        });
+        await owner.publishEndpointProjection(endpointProjection({
+            ...record('win32-job-unknown', 42),
+            processStartIdentity: 'winjob:Local\\happier-svc09-unknown',
+        }));
+
+        await expect(owner.resolveEndpointProjection({
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            selector: { kind: 'currentSessionManagedSpawn' },
+        })).resolves.toBeNull();
+        expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
+
+        const absentOwner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            platform: 'win32',
+            observeProcessStartIdentity: async () => null,
+            observeProcessCustodyJob: async () => 'absent',
+        });
+        await expect(absentOwner.resolveEndpointProjection({
+            pluginId: 'opencode',
+            sessionId: 'session-one',
+            selector: { kind: 'currentSessionManagedSpawn' },
+        })).resolves.toBeNull();
+        expect(await readdir(join(root, 'endpoint-projections'))).toEqual([]);
+    });
+
+    it('captures the tagged Darwin native identity when the witness proves it and falls back to legacy otherwise', async () => {
+        const resolveProcessCustodyRuntimeExecutableFn = vi.fn(() => '/staged/happier-process-custody');
+        const observeNativeDarwinProcessStartIdentityFn = vi.fn(async () => ({ sec: 1754041400, usec: 123456 }));
+        await expect(observeManagedServiceProcessStartIdentity(41, {
+            platform: 'darwin',
+            resolveProcessCustodyRuntimeExecutableFn,
+            observeNativeDarwinProcessStartIdentityFn,
+            readProcessIdentityByPidFn: async () => {
+                throw new Error('native witness present: ps must not be consulted');
+            },
+        })).resolves.toBe('darwin-proc:41:1754041400:123456');
+
+        const helperUnavailable = vi.fn(() => null);
+        const readProcessIdentityByPidFn = vi.fn(async () => ({
+            pid: 41,
+            processStartTimeMs: 1754041400000,
+            command: 'server',
+        }));
+        await expect(observeManagedServiceProcessStartIdentity(41, {
+            platform: 'darwin',
+            resolveProcessCustodyRuntimeExecutableFn: helperUnavailable,
+            observeNativeDarwinProcessStartIdentityFn: vi.fn(async () => {
+                throw new Error('helper unavailable: no witness call');
+            }),
+            readProcessIdentityByPidFn,
+        })).resolves.toBe('41:1754041400000');
+        expect(observeNativeDarwinProcessStartIdentityFn).not.toHaveBeenCalled();
     });
 });

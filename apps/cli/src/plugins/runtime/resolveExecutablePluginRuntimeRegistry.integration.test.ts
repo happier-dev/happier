@@ -27,9 +27,6 @@ import {
     resolveMergedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
-    createAgentRuntimeCatalogEntryHooks,
-} from '@/plugins/projection/registry/agentCatalogEntryHooks';
-import {
     projectLoadedPluginContributes,
     resolvePluginContributes,
 } from '@/plugins/projection/registry/resolvePluginContributions';
@@ -2103,7 +2100,14 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         },
                         backend: backendContribution,
                         agent: agentContribution,
-                        hostRuntimeParams,
+                        hostSession: {
+                            session: hostRuntimeParams.session,
+                            machineId: hostRuntimeParams.machineId,
+                            ...(hostRuntimeParams.accountSettings !== undefined
+                                ? { accountSettings: hostRuntimeParams.accountSettings }
+                                : {}),
+                            permissionHandler: hostRuntimeParams.permissionHandler,
+                        },
                         sessionId: 'session-1',
                         directory: pluginRoot,
                         signal: new AbortController().signal,
@@ -3486,16 +3490,20 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                             },
                         },
                         providerCliAttach: {
-                            resolveTarget({ metadata }) {
-                                const providerSessionId = typeof metadata.providerSessionId === 'string'
-                                    ? metadata.providerSessionId
+                            resolveTarget({ metadata, fallbackServerBaseUrl }) {
+                                const agent = metadata.runtimeDescriptorV1?.agent;
+                                const providerSessionId = typeof agent?.providerSessionId === 'string'
+                                    ? agent.providerSessionId
                                     : null;
-                                return providerSessionId
+                                const baseUrl = typeof agent?.serverBaseUrl === 'string'
+                                    ? agent.serverBaseUrl
+                                    : fallbackServerBaseUrl;
+                                return providerSessionId && baseUrl
                                     ? {
                                         ok: true,
-                                        value: { providerSessionId },
+                                        value: { providerSessionId, baseUrl },
                                     }
-                                    : { ok: false, reason: 'Expected provider session metadata.' };
+                                    : { ok: false, reason: 'Expected provider session and server metadata.' };
                             },
                             createArgs(target) {
                                 return ['attach', '--session', target.providerSessionId];
@@ -3541,7 +3549,13 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 },
             });
 
-            runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+            const resolveManagedServiceSessionBaseUrl = vi.fn(async () => (
+                'http://127.0.0.1:49196'
+            ));
+            runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir,
+                resolveManagedServiceSessionBaseUrl,
+            });
             expect(runtimeRegistry.pluginDiagnosticsByPluginId[SAMPLE_PLUGIN_ID] ?? []).toEqual([]);
             expect(
                 runtimeRegistry.agentRuntimesByAgentId
@@ -3567,28 +3581,25 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await expect(attach?.evaluateAvailability?.({
                 operation: 'attach',
                 sessionId: 'external-agent-session',
-                metadata: { providerSessionId: 'provider-session-1' },
+                metadata: {
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: SAMPLE_PLUGIN_PROVIDER_ID,
+                        agent: { providerSessionId: 'provider-session-1' },
+                    },
+                },
                 depth: 'metadata',
+                hasLocalAttachmentInfo: true,
             })).resolves.toEqual({ available: true });
+            expect(resolveManagedServiceSessionBaseUrl).toHaveBeenCalledWith({
+                pluginId: SAMPLE_PLUGIN_ID,
+                sessionId: 'external-agent-session',
+                contributionId: `${SAMPLE_PLUGIN_ID}/agents/sample-provider`,
+            });
             if (!catalogEntry?.getDaemonSpawnHooks) return;
             const externalHooks = await catalogEntry.getDaemonSpawnHooks();
             expect(externalHooks).toBeDefined();
             if (!externalHooks) return;
-
-            const bundledHooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'bundled-spawn-hook-fixture' as never,
-                packageName: '@happier-dev/plugins-bundled-fixture',
-                contribution: {
-                    daemonSpawnHooks: {
-                        augmentEnv: () => ({ BUNDLED_AGENT_SPAWN_HOOK: 'projected' }),
-                    },
-                },
-            })();
-            expect(bundledHooks.getDaemonSpawnHooks).toBeTypeOf('function');
-            const bundledDaemonSpawnHooks = await bundledHooks.getDaemonSpawnHooks?.();
-            expect(bundledDaemonSpawnHooks?.augmentEnv?.({})).toEqual({
-                BUNDLED_AGENT_SPAWN_HOOK: 'projected',
-            });
 
             const result = await resolveSpawnChildEnvironment({
                 options: {
@@ -3627,6 +3638,164 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             });
         } finally {
             await runtimeRegistry?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        {
+            caseName: 'connectedAccountFileEnvironmentUses',
+            catalogEntryPatch: {
+                connectedAccountServiceIds: ['acme-account'],
+                connectedAccountFileEnvironmentUses: [{
+                    purpose: 'legacy-account-file',
+                    fileId: 'credentials',
+                    environmentKey: 'ACME_ACCOUNT_FILE',
+                }],
+            },
+            connectedAccountLaunch: {
+                environmentUses: [{
+                    purpose: 'current-account-value',
+                    environmentKey: 'ACME_ACCOUNT_VALUE',
+                }],
+                switchContinuity: { continuityMode: 'restart_same_home' },
+            },
+            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' has competing private and activation-registered connected-account launch owners`,
+        },
+        {
+            caseName: 'connectedAccountEnvironmentUses',
+            catalogEntryPatch: {
+                connectedAccountServiceIds: ['acme-account'],
+                connectedAccountEnvironmentUses: [{
+                    purpose: 'legacy-account-value',
+                    environmentKey: 'ACME_ACCOUNT_VALUE',
+                }],
+            },
+            connectedAccountLaunch: {
+                environmentUses: [{
+                    purpose: 'current-account-value',
+                    environmentKey: 'ACME_ACCOUNT_VALUE',
+                }],
+                switchContinuity: { continuityMode: 'restart_same_home' },
+            },
+            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' has competing private and activation-registered connected-account launch owners`,
+        },
+        {
+            caseName: 'switch continuity without manifest-owned services',
+            catalogEntryPatch: {},
+            connectedAccountLaunch: {
+                switchContinuity: { continuityMode: 'restart_same_home' },
+            },
+            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' registers connected-account switch continuity without a manifest-owned Connected Account service`,
+        },
+        {
+            caseName: 'state-sharing service outside manifest-owned services',
+            catalogEntryPatch: {
+                connectedAccountServiceIds: ['acme-account'],
+            },
+            connectedAccountLaunch: {
+                switchContinuity: {
+                    continuityMode: 'restart_shared_state_required',
+                    providerStateSharingRequired: {
+                        serviceIds: ['other-account'],
+                        supportedTransitions: ['native_to_connected'],
+                    },
+                },
+            },
+            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' connected-account switch continuity requires undeclared service 'other-account'`,
+        },
+    ])('rejects $caseName ownership mismatch', async ({
+        catalogEntryPatch,
+        connectedAccountLaunch,
+        expectedError,
+    }) => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-connected-account-collision-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-agent-connected-account-collision-plugin-'));
+        try {
+            await materializeSamplePluginFixture(pluginRoot);
+            const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+            const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+                hostAccess: {
+                    required: unknown[];
+                    optional: unknown[];
+                };
+            };
+            manifest.hostAccess.required = [{
+                id: 'connected-account-environment',
+                capability: 'environment',
+                reason: 'Expose the selected account to the Agent process.',
+                scope: { keys: ['ACME_ACCOUNT_VALUE'] },
+            }];
+            await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+            await writeFile(join(pluginRoot, 'daemon.mjs'), `
+                import { sampleAgentRuntimeFactory } from './agentRuntime.mjs';
+                export function activate(api) {
+                    api.agents.register('sample-provider', sampleAgentRuntimeFactory, {
+                        sessionRunnerFactory: {
+                            module: './agentRuntime.mjs',
+                            export: 'sampleAgentRuntimeFactory',
+                            runtimeApiVersion: 1,
+                        },
+                        connectedAccountLaunch: ${JSON.stringify(connectedAccountLaunch)},
+                    });
+                }
+            `, 'utf8');
+            await writeCommittedLocalPathPluginFixture({
+                happyHomeDir,
+                pluginId: SAMPLE_PLUGIN_ID,
+                sourceRootPath: pluginRoot,
+                plugin: {
+                    source: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                        resolvedPath: pluginRoot,
+                        manifestPath,
+                    },
+                    compatibility: { status: 'unknown', diagnostics: [] },
+                    install: await createTrustedLocalLinkInstall({
+                        pluginId: SAMPLE_PLUGIN_ID,
+                        sourceRootPath: pluginRoot,
+                        manifestVersion: '1.0.0',
+                    }),
+                    state: { enabled: true },
+                },
+            });
+
+            const loaded = projectLoadedPluginContributes({
+                loadResult: await loadInstalledPlugins({ happyHomeDir }),
+                provenance: 'external',
+                existingAgentIds: new Set(),
+            });
+            const merged = createMergedContributionRegistry(loaded, {});
+            const contributes: ResolvedContributionRegistry = Object.freeze({
+                ...merged,
+                agents: Object.freeze(merged.agents.map((agent) => agent.id === SAMPLE_PLUGIN_PROVIDER_ID
+                    ? Object.freeze({
+                        ...agent,
+                        catalogEntry: Object.freeze({
+                            ...agent.catalogEntry,
+                            ...catalogEntryPatch,
+                        }),
+                    })
+                    : agent)),
+            });
+            const generationAuthority = await readCurrentCommittedPluginGenerations(
+                resolvePluginStorePaths({ happyHomeDir }),
+                { bundledArtifacts: [] },
+            );
+            if (!generationAuthority) {
+                throw new Error('Expected current Agent collision generation authority');
+            }
+
+            await expect(resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir,
+                contributes,
+                generationAuthority,
+            })).rejects.toThrow(expectedError);
+        } finally {
             await rm(happyHomeDir, { recursive: true, force: true });
             await rm(pluginRoot, { recursive: true, force: true });
         }

@@ -1051,8 +1051,13 @@ async function stopInvalidatedManagedService(
 ): Promise<void> {
     let stopFailure: unknown;
     try {
-        await handle.stop();
-        return;
+        const result = await handle.stop();
+        if (result.status !== 'termination_incomplete') return;
+        stopFailure = new PluginError({
+            code: 'plugin_managed_server_termination_incomplete',
+            message: 'Managed server termination could not be verified',
+            retryable: true,
+        });
     } catch (error) {
         stopFailure = error;
     }
@@ -1499,7 +1504,20 @@ function wrapHandle(
         }
         const attempt = Promise.resolve()
             .then(operation)
-            .then(() => undefined);
+            .then((result) => {
+                if (
+                    result !== null
+                    && typeof result === 'object'
+                    && 'status' in result
+                    && result.status === 'termination_incomplete'
+                ) {
+                    throw new PluginError({
+                        code: 'plugin_managed_server_termination_incomplete',
+                        message: 'Managed server termination could not be verified',
+                        retryable: true,
+                    });
+                }
+            });
         underlyingCleanupPromise = attempt;
         try {
             await attempt;
@@ -1513,14 +1531,7 @@ function wrapHandle(
     const runWithFinalization = async (
         operation: () => Promise<unknown>,
     ): Promise<void> => {
-        markTerminal();
-        let observationError: unknown;
-        try {
-            detachTerminalObservation();
-        } catch (error) {
-            observationError = error;
-        }
-        signal?.removeEventListener('abort', abort);
+        requestLifetime.abort('Managed-service cleanup is in progress');
         let operationError: unknown;
         try {
             await runUnderlyingCleanup(operation);
@@ -1532,6 +1543,17 @@ function wrapHandle(
             await cleanup();
         } catch (error) {
             cleanupError = error;
+        }
+        let observationError: unknown;
+        if (
+            operationError === undefined
+            && cleanupError === undefined
+        ) {
+            try {
+                detachTerminalObservation();
+            } catch (error) {
+                observationError = error;
+            }
         }
         const failures = [
             observationError,
@@ -1553,6 +1575,8 @@ function wrapHandle(
         if (cleanupError !== undefined) {
             return translateError(cleanupError);
         }
+        signal?.removeEventListener('abort', abort);
+        markTerminal();
     };
     abort = (): void => {
         void runWithFinalization(
@@ -2492,6 +2516,8 @@ export function createManagedServicesOwner(input: Readonly<{
         ManagedServicesScope | null;
 }>): ManagedServicesInvocationOwner & Readonly<{
     dispose(): Promise<void>;
+    /** Host-private visibility for bounded custody diagnostics and owner-level tests. */
+    readRetainedSemanticCustodyCount(): number;
     bindScope(
         scope: ManagedServicesScope,
         exec: ExecService,
@@ -2674,6 +2700,7 @@ export function createManagedServicesOwner(input: Readonly<{
                 throw error;
             }
             await handle.dispose();
+            removeSemanticEntry(entry);
         })();
         entry.retirement = retirement;
         try {
@@ -3271,6 +3298,7 @@ export function createManagedServicesOwner(input: Readonly<{
                             scope.signal,
                             () => {
                                 entry.terminal = true;
+                                removeSemanticEntry(entry);
                                 const operation =
                                     explicitStartOperationForScope(scope);
                                 if (!operation || operation.terminal) return;
@@ -3343,6 +3371,7 @@ export function createManagedServicesOwner(input: Readonly<{
         } satisfies ManagedServices);
     };
     return Object.freeze({
+        readRetainedSemanticCustodyCount: () => semanticEntries.size,
         isAvailable({ generation, contributionQualifiedId }) {
             return input.resolveScope({
                 generation,

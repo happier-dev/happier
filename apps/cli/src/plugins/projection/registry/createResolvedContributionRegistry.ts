@@ -287,7 +287,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const catalogEntriesById: Record<string, ResolvedCatalogEntry> = {};
 
     for (const catalogEntry of standaloneCatalogEntries) {
-        assertCatalogEntryAligned(catalogEntry);
         if (catalogEntriesById[catalogEntry.id]) {
             throw new Error(`Duplicate catalog entry contribution '${catalogEntry.id}'`);
         }
@@ -644,7 +643,6 @@ function deriveAutomationEligibleEvents(params: Readonly<{
         if (
             !pluginId
             || !localId
-            || !setupActionRef
             || setupActionRef.pluginId !== pluginId
             || !immutableGenerationId
         ) {
@@ -1057,15 +1055,6 @@ function assertAgentContributionAligned(agent: ResolvedAgentContribution): void 
     }
     if (agent.catalogEntry && agent.catalogEntry.id !== agent.id) {
         throw new Error(`catalog entry id mismatch for agent contribution '${agent.id}'`);
-    }
-    if (agent.catalogEntry && agent.catalogEntry.cliSubcommand !== agent.id) {
-        throw new Error(`catalog entry cliSubcommand mismatch for agent contribution '${agent.id}'`);
-    }
-}
-
-function assertCatalogEntryAligned(catalogEntry: ResolvedCatalogEntry): void {
-    if (catalogEntry.id !== catalogEntry.cliSubcommand) {
-        throw new Error(`Catalog entry id/cliSubcommand mismatch for catalog entry contribution '${catalogEntry.id}'`);
     }
 }
 

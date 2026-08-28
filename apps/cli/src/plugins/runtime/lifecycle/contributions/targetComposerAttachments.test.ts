@@ -42,6 +42,7 @@ function invocationContext(
       qualifiedId: `${ATTACHMENT.pluginId}/composerAttachments/${ATTACHMENT.localId}`,
     }),
     surface: 'cli',
+    invokedAtMs: 1,
     signal,
     services: Object.freeze({
       logger: Object.freeze({

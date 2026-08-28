@@ -82,13 +82,13 @@ function qualifiedProjectionKey(pluginId: string, localId: string): string {
 
 function readAgentTitle(agent: ResolvedAgentContribution): string | undefined {
     const rich = agent.richDefinition;
-    if (!rich || rich.provenance !== 'external') return undefined;
+    if (!rich) return undefined;
     return readLocalizedText(rich.definition.title);
 }
 
 function readAgentSubtitle(agent: ResolvedAgentContribution): string | undefined {
     const rich = agent.richDefinition;
-    if (!rich || rich.provenance !== 'external') return undefined;
+    if (!rich) return undefined;
     return readLocalizedText(rich.definition.description);
 }
 
@@ -586,6 +586,15 @@ function buildAgentsById(
         const externalSessions = projectAgentExternalSessions(agent, generation);
         const capabilities = projectAgentCapabilities(agent);
         const connectedServiceIds = agent.catalogEntry?.connectedServiceIds ?? [];
+        const connectedAccounts = agent.richDefinition?.definition.connectedAccounts?.map((declaration) => ({
+            ...declaration,
+            service: typeof declaration.service === 'string'
+                ? createPluginContributionIdentity({
+                    pluginId: identity.pluginId,
+                    localId: declaration.service,
+                })
+                : declaration.service,
+        })) ?? [];
         const uiBehavior = projectAgentUiBehavior(agent);
         agentsById[agent.id] = {
             id: agent.id,
@@ -600,6 +609,7 @@ function buildAgentsById(
             ...(connectedServiceIds.length > 0
                 ? { connectedServiceIds: [...connectedServiceIds] }
                 : {}),
+            ...(connectedAccounts.length > 0 ? { connectedAccounts } : {}),
             providerOwnedEnvironmentKeys: [...readAgentProviderOwnedEnvironmentKeys(projectionDefinition)],
             ...(capabilities ? { capabilities } : {}),
             ...(agent.cliMetadata ? { cli: agent.cliMetadata } : {}),

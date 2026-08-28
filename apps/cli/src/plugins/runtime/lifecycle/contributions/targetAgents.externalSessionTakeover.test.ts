@@ -268,6 +268,31 @@ describe('target Agent External Session takeover lease', () => {
             .rejects.toThrow(/serialized-byte limit/u);
     });
 
+    it('measures the accepted canonical DTO rather than the plugin-owned object', async () => {
+        const raw = Object.assign(Object.create(null), {
+            ok: true as const,
+            value: Object.assign(Object.create(null), {
+                directory: '/takeover/workspace',
+            }),
+        });
+        const stringify = vi.spyOn(JSON, 'stringify');
+        const takeover = registry({
+            takeover: Object.freeze({ resolveLaunch: async () => raw }),
+        }).get('assistant')?.externalSessionTakeover;
+        if (!takeover) throw new Error('Expected takeover lease');
+
+        await expect(takeover.resolveLaunch(request())).resolves.toEqual({
+            ok: true,
+            value: { directory: '/takeover/workspace' },
+        });
+        const measured = stringify.mock.calls.at(-1)?.[0];
+        expect(measured).not.toBe(raw);
+        expect(measured).toEqual({
+            ok: true,
+            value: { directory: '/takeover/workspace' },
+        });
+    });
+
     it.each(['cancelled', 'retired'] as const)(
         'rejects late callback settlement after the invocation is %s',
         async (terminal) => {

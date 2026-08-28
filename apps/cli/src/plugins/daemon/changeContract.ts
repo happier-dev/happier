@@ -85,11 +85,10 @@ export type PluginChangeRequest =
       sdkRegistryOrigin?: string;
     }>
   | Readonly<{ kind: 'enable' | 'disable' | 'rollback' | 'forgetTrust'; pluginId: string }>
-  | Readonly<{ kind: 'uninstall'; pluginId: string; allowAlreadyAbsent?: false }>
+  | Readonly<{ kind: 'uninstall'; pluginId: string }>
   | Readonly<{
-      kind: 'uninstall';
+      kind: 'uninstallAndDeleteData';
       pluginId: string;
-      allowAlreadyAbsent: true;
       actorEvidence: AuthenticatedUserInteraction;
     }>;
 
@@ -469,10 +468,28 @@ export type PluginChangeSuccess = Readonly<{
   desiredGeneration: string | null;
   appliedGeneration: string | null;
   pendingSurfaces: readonly PluginChangePendingSurface[];
+  dataRemoval?: Readonly<{
+    alreadyUninstalled: boolean;
+    removedData: Readonly<{
+      daemonStorage: boolean;
+      secrets: boolean;
+    }>;
+  }>;
+}>;
+
+export type PluginDataRemovalStep = 'uninstall' | 'daemonStorage' | 'secrets';
+
+export type PluginDataRemovalPartial = Readonly<{
+  kind: 'dataRemovalPartial';
+  pluginId: string;
+  completed: readonly PluginDataRemovalStep[];
+  pending: readonly PluginDataRemovalStep[];
+  causeCode: string;
 }>;
 
 export type PluginChangeApplyResult =
   | PluginChangeSuccess
+  | PluginDataRemovalPartial
   | Readonly<{ kind: 'unavailable'; code: string }>
   | Readonly<{ kind: 'conflict'; pluginId: string }>
   | Readonly<{ kind: 'failed'; code: string; message?: string }>

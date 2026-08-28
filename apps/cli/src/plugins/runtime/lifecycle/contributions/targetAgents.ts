@@ -14,6 +14,7 @@ import type {
     AgentRuntime,
     AgentRuntimeFactoryContext,
     AgentSessionStartupContributionV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
@@ -179,6 +180,7 @@ type AgentRuntimeRegistrationLeaseBase = Readonly<{
     cliAuth?: AgentCliAuthContributionV1;
     connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
     preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+    terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
     sessionStartup?: AgentSessionStartupContributionV1;
     vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
     retirementSignal: AbortSignal;
@@ -369,28 +371,35 @@ function createGenerationBoundAgentDaemonSpawnHooks(params: Readonly<{
                 selection,
                 retirementSignal: params.retirementSignal,
             });
-            if (readGenerationBoundDaemonSpawnHookFailure({
+            const unavailableBefore = readGenerationBoundDaemonSpawnHookFailure({
                 isGenerationActive: params.isGenerationActive,
                 retirementSignal: params.retirementSignal,
                 signal: bound.signal,
-            })) {
-                return {};
+            });
+            if (unavailableBefore) {
+                throw new Error(unavailableBefore.errorMessage);
             }
+            let rawEnvironment: unknown;
             try {
-                const environment = readDaemonSpawnHookEnvironment(
-                    params.contribution.augmentEnv!(bound.selection),
-                );
-                if (!environment || readGenerationBoundDaemonSpawnHookFailure({
-                    isGenerationActive: params.isGenerationActive,
-                    retirementSignal: params.retirementSignal,
-                    signal: bound.signal,
-                })) {
-                    return {};
-                }
-                return environment;
+                rawEnvironment = params.contribution.augmentEnv!(bound.selection);
             } catch {
-                return {};
+                throw new Error('Agent daemon spawn environment hook failed.');
             }
+            const unavailableAfter = readGenerationBoundDaemonSpawnHookFailure({
+                isGenerationActive: params.isGenerationActive,
+                retirementSignal: params.retirementSignal,
+                signal: bound.signal,
+            });
+            if (unavailableAfter) {
+                throw new Error(unavailableAfter.errorMessage);
+            }
+            const environment = readDaemonSpawnHookEnvironment(rawEnvironment);
+            if (!environment) {
+                throw new TypeError(
+                    'Agent daemon spawn environment hook returned an invalid environment.',
+                );
+            }
+            return environment;
         }
         : undefined;
     return Object.freeze({
@@ -419,6 +428,9 @@ function assertValidAgentRuntime(value: AgentRuntime): AgentRuntime {
         && typeof executionRuns.open === 'function';
     if (!hasSessions && !hasExecutionRuns) {
         throw new Error('Agent factory returned an invalid Agent runtime without a session or execution-run factory');
+    }
+    if (hasSessions && hasExecutionRuns) {
+        throw new Error('Session-capable Agent runtimes must not register a competing execution-run lifecycle; the host derives finite Runs from sessions');
     }
     return value;
 }
@@ -621,6 +633,7 @@ function createGenerationBoundExternalSessionObservation(params: Readonly<{
             let disposalPromise: Promise<void> | undefined;
             let boundedDisposalPromise: Promise<void> | undefined;
             let disposalStarted = false;
+            let cleanupTimedOut = false;
             const disposeOnce = (): Promise<void> => {
                 if (disposalPromise) return disposalPromise;
                 if (!acquired) return Promise.resolve();
@@ -648,6 +661,7 @@ function createGenerationBoundExternalSessionObservation(params: Readonly<{
             };
             const disposeWithinObservationDeadline = (): Promise<void> => {
                 if (!acquired) return Promise.resolve();
+                if (cleanupTimedOut) return Promise.resolve();
                 if (boundedDisposalPromise) return boundedDisposalPromise;
 
                 const timeoutError = new Error(
@@ -675,10 +689,17 @@ function createGenerationBoundExternalSessionObservation(params: Readonly<{
                                 'external_session.observation_physical_dispose',
                                 error,
                             );
-                            // Unfinished cleanup keeps its custody: release the cached
-                            // bounded attempt so the next owned retirement re-arms a
-                            // deadline over the same physical disposal instead of
-                            // replaying a settled rejection forever.
+                            // A callback rejection is retryable and disposeOnce has
+                            // already released its failed physical attempt. A timeout
+                            // is the host's terminal bounded wait over the one still
+                            // in-flight physical callback. Remember that disposition
+                            // so a later lifecycle owner does not start an endless
+                            // sequence of fresh deadlines over the same
+                            // non-cooperative call; the original promise closure still
+                            // retains the physical callback until it settles.
+                            if (error === timeoutError) {
+                                cleanupTimedOut = true;
+                            }
                             if (boundedDisposalPromise === boundedAttempt) {
                                 boundedDisposalPromise = undefined;
                             }
@@ -1180,7 +1201,7 @@ function createGenerationBoundExternalSessionTakeover(params: Readonly<{
                     validateAgentExternalSessionTakeoverResolveLaunchResult(
                         rawResult,
                     );
-                if (serializedBytes(rawResult) > maxSerializedBytes) {
+                if (serializedBytes(result) > maxSerializedBytes) {
                     throw new TypeError(
                         "Agent External Session takeover 'resolveLaunch' result exceeds its serialized-byte limit",
                     );
@@ -1246,6 +1267,7 @@ function createLease(params: Readonly<{
         cwd: string;
         happierSessionId?: string;
     }>): Promise<PluginInvocationContext> => {
+        const invokedAtMs = Date.now();
         assertCurrent();
         if (input.signal.aborted) {
             throw input.signal.reason instanceof Error
@@ -1266,6 +1288,7 @@ function createLease(params: Readonly<{
             plugin,
             contribution,
             surface: 'agent',
+            invokedAtMs,
             ...(input.happierSessionId ? { session: Object.freeze({ id: input.happierSessionId }) } : {}),
             signal: input.signal,
             services,
@@ -1437,6 +1460,12 @@ function createLease(params: Readonly<{
         ...(params.registration.preflightSessionControls
             ? { preflightSessionControls: params.registration.preflightSessionControls }
             : {}),
+        ...(params.registration.terminalPromptSubmitVerification
+            ? {
+                terminalPromptSubmitVerification:
+                    params.registration.terminalPromptSubmitVerification,
+            }
+            : {}),
         ...(params.registration.sessionStartup
             ? { sessionStartup: params.registration.sessionStartup }
             : {}),
@@ -1491,6 +1520,31 @@ function createLease(params: Readonly<{
             loadMode: validatedSessionRunnerFactory.loadMode,
         })
         : undefined);
+    let runtimePromise: Promise<AgentRuntime> | null = null;
+    const awaitRuntime = async (
+        promise: Promise<AgentRuntime>,
+        signal: AbortSignal,
+    ): Promise<AgentRuntime> => {
+        if (signal.aborted) {
+            throw signal.reason instanceof Error
+                ? signal.reason
+                : new Error(`Agent runtime '${params.agentId}' operation was cancelled`);
+        }
+        let onAbort: (() => void) | null = null;
+        const aborted = new Promise<never>((_resolve, reject) => {
+            onAbort = () => reject(
+                signal.reason instanceof Error
+                    ? signal.reason
+                    : new Error(`Agent runtime '${params.agentId}' operation was cancelled`),
+            );
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
+        try {
+            return await Promise.race([promise, aborted]);
+        } finally {
+            if (onAbort) signal.removeEventListener('abort', onAbort);
+        }
+    };
     return Object.freeze({
         ...common,
         hasPrimaryRuntime: true as const,
@@ -1502,14 +1556,19 @@ function createLease(params: Readonly<{
             : {}),
         async createRuntime({ signal }) {
             assertCurrent();
-            const context: AgentRuntimeFactoryContext = Object.freeze({
-                plugin: Object.freeze({ id: params.pluginId, version: params.pluginVersion }),
-                agent: Object.freeze({ id: params.localAgentId }),
-                signal,
-            });
-            const runtime = await factory(context);
+            runtimePromise ??= (async () => {
+                const context: AgentRuntimeFactoryContext = Object.freeze({
+                    plugin: Object.freeze({ id: params.pluginId, version: params.pluginVersion }),
+                    agent: Object.freeze({ id: params.localAgentId }),
+                    signal: params.retirementSignal,
+                });
+                const runtime = await factory(context);
+                assertCurrent();
+                return assertValidAgentRuntime(runtime);
+            })();
+            const runtime = await awaitRuntime(runtimePromise, signal);
             assertCurrent();
-            return assertValidAgentRuntime(runtime);
+            return runtime;
         },
     });
 }
@@ -1615,12 +1674,88 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
     return registry;
 }
 
+type AgentAuxiliaryRuntimeRegistration = Omit<
+    AgentContributionRuntimeRegistration,
+    'factory' | 'providerBinding' | 'sessionRunnerFactory'
+>;
+
+const AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS = Object.freeze([
+    'daemonSpawnHooks',
+    'providerCliAttach',
+    'cliSessionCommand',
+    'cliAuth',
+    'connectedAccountLaunch',
+    'preflightSessionControls',
+    'terminalPromptSubmitVerification',
+    'sessionStartup',
+    'vendorResumeSupport',
+    'externalSessions',
+    'externalSessionHooks',
+    'externalSessionObservation',
+    'externalSessionTakeover',
+] as const satisfies readonly (keyof AgentAuxiliaryRuntimeRegistration)[]);
+
+type MissingAgentAuxiliaryRuntimeRegistrationKey = Exclude<
+    keyof AgentAuxiliaryRuntimeRegistration,
+    (typeof AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS)[number]
+>;
+const AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS_ARE_EXHAUSTIVE:
+    MissingAgentAuxiliaryRuntimeRegistrationKey extends never ? true : never = true;
+void AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS_ARE_EXHAUSTIVE;
+
+function retainAgentAuxiliaryRuntimeFacets(
+    existing: AgentRuntimeRegistrationLease | undefined,
+): Readonly<{
+    registration: AgentAuxiliaryRuntimeRegistration;
+    boundedLeaseFacets: Readonly<{
+        boundedExternalSessions?: BoundedAgentExternalSessionsContribution;
+        boundedExternalSessionHooks?: GenerationBoundExternalSessionHooks;
+        boundedExternalSessionObservation?: GenerationBoundExternalSessionObservation;
+        boundedExternalSessionTakeover?: GenerationBoundExternalSessionTakeover;
+        boundedDaemonSpawnHooks?: AgentDaemonSpawnHooks;
+    }>;
+}> {
+    if (!existing) {
+        return Object.freeze({
+            registration: Object.freeze({}),
+            boundedLeaseFacets: Object.freeze({}),
+        });
+    }
+    const source = existing as unknown as Readonly<Record<string, unknown>>;
+    const registration: Record<string, unknown> = {};
+    for (const key of AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS) {
+        const value = source[key];
+        if (value !== undefined) registration[key] = value;
+    }
+    return Object.freeze({
+        registration: Object.freeze(registration) as AgentAuxiliaryRuntimeRegistration,
+        boundedLeaseFacets: Object.freeze({
+            ...(existing.externalSessions
+                ? { boundedExternalSessions: existing.externalSessions }
+                : {}),
+            ...(existing.externalSessionHooks
+                ? { boundedExternalSessionHooks: existing.externalSessionHooks }
+                : {}),
+            ...(existing.externalSessionObservation
+                ? { boundedExternalSessionObservation: existing.externalSessionObservation }
+                : {}),
+            ...(existing.externalSessionTakeover
+                ? { boundedExternalSessionTakeover: existing.externalSessionTakeover }
+                : {}),
+            ...(existing.daemonSpawnHooks
+                ? { boundedDaemonSpawnHooks: existing.daemonSpawnHooks }
+                : {}),
+        }),
+    });
+}
+
 export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
     agents: readonly ResolvedAgentContribution[];
     registered: ReadonlyMap<string, AgentRuntimeRegistrationLease>;
     generation: string;
     immutableGenerationIdsByPluginId?: ReadonlyMap<string, string>;
     isGenerationActive(): boolean;
+    createAgentInvocationServices?: CreateAgentInvocationServices;
 }> & AgentRuntimeRetirementOwner): Map<string, AgentRuntimeRegistrationLease> {
     const registry = new Map(params.registered);
     const declarations = params.agents
@@ -1650,18 +1785,10 @@ export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
         const runtime = normalizePluginDeclarativeAcpRuntime(
             declaration.runtime,
         );
+        const retainedFacets = retainAgentAuxiliaryRuntimeFacets(existing);
         const registration: AgentContributionRuntimeRegistration = Object.freeze({
             factory: createHostDeclarativeAcpAgentRuntimeFactory(runtime),
-            ...(existing?.externalSessions ? { externalSessions: existing.externalSessions } : {}),
-            ...(existing?.externalSessionHooks
-                ? { externalSessionHooks: existing.externalSessionHooks }
-                : {}),
-            ...(existing?.externalSessionObservation
-                ? { externalSessionObservation: existing.externalSessionObservation }
-                : {}),
-            ...(existing?.externalSessionTakeover
-                ? { externalSessionTakeover: existing.externalSessionTakeover }
-                : {}),
+            ...retainedFacets.registration,
         });
         const pluginVersion = existing?.pluginVersion
             ?? declaration.agent.sourceSpec?.resolvedVersion
@@ -1712,20 +1839,12 @@ export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
                         ? { registrySignal: params.retirementSignal }
                         : {}),
                 }),
-            ...(existing?.externalSessions
-                ? { boundedExternalSessions: existing.externalSessions }
-                : {}),
-            ...(existing?.externalSessionHooks
-                ? { boundedExternalSessionHooks: existing.externalSessionHooks }
-                : {}),
-            ...(existing?.externalSessionObservation
-                ? { boundedExternalSessionObservation: existing.externalSessionObservation }
-                : {}),
-            ...(existing?.externalSessionTakeover
-                ? { boundedExternalSessionTakeover: existing.externalSessionTakeover }
-                : {}),
-            ...(existing?.daemonSpawnHooks
-                ? { boundedDaemonSpawnHooks: existing.daemonSpawnHooks }
+            ...retainedFacets.boundedLeaseFacets,
+            ...(params.createAgentInvocationServices
+                ? {
+                    createAgentInvocationServices:
+                        params.createAgentInvocationServices,
+                }
                 : {}),
         }));
     }

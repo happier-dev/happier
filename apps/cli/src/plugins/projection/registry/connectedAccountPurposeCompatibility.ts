@@ -1,6 +1,8 @@
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     ConnectedServiceIdSchema,
+    parseQualifiedPluginContributionKey,
+    readBuiltInLegacyConnectedServiceIdForQualifiedService,
     type ConnectedServiceId,
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
@@ -41,6 +43,41 @@ export function resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServic
         ? resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
             parsed.data,
         )
+        : null;
+}
+
+/**
+ * Sole service-identity ingress translation for consumers that need the V4
+ * qualified service ref from either released scalar ids or canonical qualified
+ * keys. Qualified keys project directly; released bundled scalars project
+ * through the generated compatibility owner; anything else has no group
+ * authority.
+ */
+export function resolveQualifiedConnectedAccountServiceForIngressServiceId(
+    serviceId: unknown,
+): QualifiedConnectedAccountRef['service'] | null {
+    if (typeof serviceId === 'string' && serviceId.includes('/')) {
+        const parsed = parseQualifiedPluginContributionKey(serviceId.trim());
+        return parsed
+            ? { pluginId: parsed.pluginId, localId: parsed.localId }
+            : null;
+    }
+    return resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput(serviceId);
+}
+
+/**
+ * Bounded reverse seam for inputs that still consume the released V2/V3 scalar
+ * service id (sealed credential resolution and the scalar-session materialization
+ * identity). Only first-party bundled services have a scalar identity; novel
+ * external qualified services deliberately resolve to null and their consumers
+ * must use the qualified owner (V4 API or contribution-keyed runtime) instead.
+ */
+export function resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+    serviceKey: unknown,
+): ConnectedServiceId | null {
+    const service = parseQualifiedPluginContributionKey(serviceKey);
+    return service
+        ? readBuiltInLegacyConnectedServiceIdForQualifiedService(service)
         : null;
 }
 

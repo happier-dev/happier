@@ -271,14 +271,26 @@ describe('Discord Channels as a first-class Automation Event source', () => {
       }),
       openWebSocket: vi.fn(async () => socket),
     };
+    const observationIngests: unknown[] = [];
+    const coreActionIds: string[] = [];
+    const testkitActions = {
+      execute: vi.fn(async (action: Readonly<{ pluginId: string; localId: string }>) => {
+        if (
+          action.pluginId === CHANNELS_CORE_PLUGIN_ID
+          && action.localId === 'provider/connections-list-v1'
+        ) {
+          coreActionIds.push(action.localId);
+          return { 'connection-1': connectionSnapshot };
+        }
+        throw new Error(`Unexpected setup Action ${action.pluginId}/${action.localId}`);
+      }),
+    };
     const testkit = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
       module: { activate },
-      services: { http, connectedAccounts } as never,
+      services: { http, connectedAccounts, actions: testkitActions } as never,
     });
     const invocationController = new AbortController();
-    const observationIngests: unknown[] = [];
-    const coreActionIds: string[] = [];
 
     let pluginActions: ReturnType<typeof createPluginInvocationActionsService>;
     pluginActions = createPluginInvocationActionsService({
@@ -286,7 +298,7 @@ describe('Discord Channels as a first-class Automation Event source', () => {
         plugin: { id: PLUGIN_ID, version: '0.0.0' },
         contribution: {
           id: BACKGROUND_SERVICE_ID,
-          qualifiedId: `${PLUGIN_ID}/${BACKGROUND_SERVICE_ID}`,
+          qualifiedId: `${PLUGIN_ID}/backgroundServices/${BACKGROUND_SERVICE_ID}`,
         },
         generation: 'discord-generation',
         immutableGenerationId: IMMUTABLE_GENERATION_ID,
@@ -297,7 +309,7 @@ describe('Discord Channels as a first-class Automation Event source', () => {
         isGenerationCurrent: () => true,
       },
       actionExecutor: createActionExecutor(createUnrelatedActionExecutorDeps()),
-      invokeContributedAction: async ({ action, input, signal }) => {
+      invokeContributedAction: async ({ action, input, signal, caller }) => {
         const executed = (value: unknown) => ({
           status: 'executed' as const,
           value: StrictJsonValueSchema.parse(value),
@@ -319,15 +331,19 @@ describe('Discord Channels as a first-class Automation Event source', () => {
           }
         }
         if (action.pluginId === PLUGIN_ID && action.localId === GATEWAY_WORKER_ATTEMPT_ACTION_ID) {
-          return executed(await testkit.invokeAction(
-            GATEWAY_WORKER_ATTEMPT_ACTION_ID,
-            input as never,
-            {
-              surface: 'plugin',
-              ...(signal === undefined ? {} : { signal }),
-              services: { http, connectedAccounts, actions: pluginActions } as never,
+          const workerAttempt = testkit.registration('actions', GATEWAY_WORKER_ATTEMPT_ACTION_ID);
+          if (!workerAttempt) throw new Error('the Discord plugin must register its Gateway worker Action');
+          return executed(await workerAttempt(input as never, {
+            plugin: { id: PLUGIN_ID, version: '0.0.0' },
+            contribution: {
+              id: GATEWAY_WORKER_ATTEMPT_ACTION_ID,
+              qualifiedId: `${PLUGIN_ID}/actions/${GATEWAY_WORKER_ATTEMPT_ACTION_ID}`,
             },
-          ));
+            caller,
+            surface: 'plugin',
+            signal,
+            services: { http, connectedAccounts, actions: pluginActions },
+          } as never));
         }
         throw new Error(`Unexpected contributed Action ${action.pluginId}/${action.localId}`);
       },
@@ -353,7 +369,7 @@ describe('Discord Channels as a first-class Automation Event source', () => {
           plugin: { id: PLUGIN_ID, version: '0.0.0' },
           contribution: {
             id: BACKGROUND_SERVICE_ID,
-            qualifiedId: `${PLUGIN_ID}/${BACKGROUND_SERVICE_ID}`,
+            qualifiedId: `${PLUGIN_ID}/backgroundServices/${BACKGROUND_SERVICE_ID}`,
           },
           surface: 'background',
           signal,

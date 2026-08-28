@@ -419,6 +419,7 @@ describe('plugin invocation ActionsService', () => {
             expect.objectContaining({
                 defaultSessionId: 'session-1',
                 surface: 'plugin',
+                authority: 'account_automation',
                 actionCaller: {
                     kind: 'plugin',
                     pluginId: 'acme.memory',

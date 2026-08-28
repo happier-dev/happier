@@ -11,6 +11,7 @@ import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '../projection/registry/
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import { projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
 import {
     projectAgentCliAuthCatalogEntry,
     projectAgentCliSessionCommandCatalogEntry,
@@ -26,12 +27,14 @@ import {
     dropTargetedContributionAdmissionDiagnostics,
 } from '../projection/registry/targetedContributions';
 import type {
+    ResolvedCatalogEntry,
     ResolvedContributionRegistry,
     ResolvedManagedProviderRuntime,
     ResolvedProviderCatalogParsers,
 } from '../projection/registry/types';
 import {
     buildQualifiedPluginContributionKey,
+    arePluginMachineMaterializationRefsEqual,
     createPluginContributionIdentity,
     evaluatePluginFinalPolicy,
     isDynamicPluginResourceContributionV2,
@@ -97,6 +100,9 @@ import {
 import type {
     AgentExternalSessionsManagedEndpointReadHost,
 } from '@/session/external/agentExternalSessionsInvocation';
+import type {
+    ManagedServiceSessionBaseUrlResolver,
+} from './invocation/services/managedServiceEndpointProjection';
 import type {
     ExternalSessionPluginAdmissionOwner,
 } from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
@@ -281,6 +287,9 @@ import {
     createManagedServiceCredentialFileOwner,
 } from './invocation/services/managedServiceCredentialFileOwner';
 import type {
+    ManagedServiceCredentialFileOwner,
+} from './invocation/services/managedServicesAdapter';
+import type {
     ManagedProviderOperationAuthority,
 } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
@@ -332,6 +341,7 @@ import {
     prepareImmutablePluginGeneration,
     persistValidatedAgentSessionRunnerFactories,
     readCurrentCommittedPluginGenerations,
+    readCurrentPluginHardRevocationRevision,
     readPreparedImmutablePluginGeneration,
 } from '../store/registry/generationStore';
 import {
@@ -712,6 +722,12 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     resolveServerFeaturesSnapshot?(): CliServerFeaturesSnapshot | undefined;
     activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
     activateContributionsOnDemand: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activateContributionsOnDemand'];
+    /**
+     * Activates one declared Agent through the canonical target owner and
+     * returns its generation-fenced internal catalog projection. This avoids
+     * publishing a second mutable catalog for daemon compatibility consumers.
+     */
+    acquireAgentCatalogEntry?(agentId: string): Promise<ResolvedCatalogEntry | null>;
     /** Host-private exact-demand acquisition for a managed Provider runtime.
      * Partial consumer fixtures may omit it until they consume managed Providers. */
     acquireManagedProviderRuntime?(
@@ -777,7 +793,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     resolveQualifiedConnectedAccountEstablishedRuntimeOwner?():
         Pick<QualifiedConnectedAccountEstablishedRuntimeOwner, 'invoke'> | null;
     resolveConnectedAccountPurposeBindingOwner?():
-        Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize'> | null;
+        Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'materialize' | 'watch'> | null;
+    /** Host-private credential-file custody shared by managed services and Agent launch. */
+    resolveManagedServiceCredentialFileOwner?(): ManagedServiceCredentialFileOwner | null;
     managedDependencies?: StablePluginManagedDependenciesHost;
     /**
      * Retained-runner custody entry point. It attests the exact G declaration
@@ -839,6 +857,15 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         signal: AbortSignal;
     }>): Promise<ResolvedMcpEndpointDiscoveryResult>;
     createAgentInvocationServices: CreateAgentInvocationServices;
+    /** Exact retained-G structural declarations for daemon-replacement recovery. */
+    acquireRetainedRunnerAgentPurposeContributions?(params: Readonly<{
+        binding: AgentSessionRunnerBindingV1;
+        pluginHardRevocationRevision: number;
+    }>): Promise<Readonly<{
+        contributes: ResolvedContributionRegistry;
+        isCurrent(): boolean;
+        release(): Promise<void>;
+    }> | null>;
     createRetainedRunnerAgentInvocationServices?(
         params: Readonly<{
             binding: AgentSessionRunnerBindingV1;
@@ -1129,6 +1156,7 @@ function mergeActivatedContributes(
     activated: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>,
     immutableGenerationIdsByPluginId: ReadonlyMap<string, string>,
     isPluginRuntimeCurrent: (pluginId: string) => boolean,
+    resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver,
 ): ResolvedContributionRegistry {
     const activationTargets = base.activationTargets ?? Object.freeze([]);
     const contributionKey = (contribution: Readonly<{ pluginId?: string; definition: Readonly<{ id: string }> }>): string => (
@@ -1218,12 +1246,40 @@ function mergeActivatedContributes(
             runtime.connectedAccountLaunch
             && (
                 agent.catalogEntry.connectedAccountRequestAuthUses
+                || agent.catalogEntry.connectedAccountFileEnvironmentUses
+                || agent.catalogEntry.connectedAccountEnvironmentUses
+                || agent.catalogEntry.connectedAccountSwitchContinuity
                 || agent.catalogEntry.getConnectedServiceStateSharingDescriptor
+                || agent.catalogEntry.getConnectedServiceRuntimeAuthAdapter
+                || agent.catalogEntry.verifyResumeReachable
             )
         ) {
             throw new Error(
                 `Agent '${agent.id}' has competing private and activation-registered connected-account launch owners`,
             );
+        }
+        const switchContinuity = runtime.connectedAccountLaunch?.switchContinuity;
+        if (switchContinuity) {
+            const declaredServiceIds = agent.catalogEntry.connectedAccountServiceIds ?? [];
+            if (declaredServiceIds.length === 0) {
+                throw new Error(
+                    `Agent '${agent.id}' registers connected-account switch continuity without a manifest-owned Connected Account service`,
+                );
+            }
+            const undeclaredStateSharingServiceId =
+                switchContinuity.providerStateSharingRequired?.serviceIds?.find(
+                    (serviceId) => !declaredServiceIds.includes(
+                        buildQualifiedPluginContributionKey({
+                            pluginId: agentPluginId,
+                            localId: serviceId,
+                        }),
+                    ),
+                );
+            if (undeclaredStateSharingServiceId) {
+                throw new Error(
+                    `Agent '${agent.id}' connected-account switch continuity requires undeclared service '${undeclaredStateSharingServiceId}'`,
+                );
+            }
         }
         if (runtime.preflightSessionControls && agent.catalogEntry.getPreflightSessionControlsProbeAdapter) {
             throw new Error(
@@ -1249,20 +1305,28 @@ function mergeActivatedContributes(
                 ...(runtime.providerCliAttach
                     ? projectAgentProviderCliAttachCatalogEntry({
                         agentId: agent.id,
+                        pluginId: runtime.pluginId,
+                        localAgentId: runtime.localAgentId,
                         providerCliAttach: runtime.providerCliAttach,
+                        ...(resolveManagedServiceSessionBaseUrl
+                            ? { resolveManagedServiceSessionBaseUrl }
+                            : {}),
                     })
                     : {}),
                 ...(runtime.cliSessionCommand
                     ? projectAgentCliSessionCommandCatalogEntry({
                         agentId: agent.id,
                         cliSessionCommand: runtime.cliSessionCommand,
+                        isCurrent: runtime.isCurrent,
                     })
                     : {}),
-                ...(runtime.cliAuth
+                ...(runtime.cliAuth && agent.cliMetadata
                     ? projectAgentCliAuthCatalogEntry({
                         agentId: agent.id,
+                        pluginId: runtime.pluginId,
                         cliAuth: runtime.cliAuth,
-                        cli: agent.cliMetadata ?? null,
+                        cli: agent.cliMetadata,
+                        runtimeSpec: agent.runtimeSpec,
                         systemTools: systemToolsByPluginId.get(runtime.pluginId) ?? [],
                         agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
                         hostAccess: agent.hostAccess,
@@ -1273,12 +1337,15 @@ function mergeActivatedContributes(
                     ? projectAgentConnectedAccountLaunchCatalogEntry({
                         agentId: agent.id,
                         connectedAccountLaunch: runtime.connectedAccountLaunch,
+                        hostAccess: agent.hostAccess,
+                        isCurrent: runtime.isCurrent,
                     })
                     : {}),
                 ...(runtime.preflightSessionControls
                     ? projectAgentPreflightSessionControlsCatalogEntry({
                         agentId: agent.id,
                         preflightSessionControls: runtime.preflightSessionControls,
+                        runtimeSpec: agent.runtimeSpec,
                         systemTools: systemToolsByPluginId.get(runtime.pluginId) ?? [],
                         agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
                         retirementSignal: runtime.retirementSignal,
@@ -1288,6 +1355,7 @@ function mergeActivatedContributes(
                 ...(runtime.terminalPromptSubmitVerification
                     ? projectAgentTerminalPromptSubmitVerificationCatalogEntry({
                         terminalPromptSubmitVerification: runtime.terminalPromptSubmitVerification,
+                        isCurrent: runtime.isCurrent,
                     })
                     : {}),
                 ...(runtime.sessionStartup
@@ -1375,6 +1443,11 @@ async function assertCommittedResourceActivationIdentity(params: Readonly<{
     ]);
     for (const pluginId of resourcePluginIds) {
         const committedGeneration = params.committed.generations.get(pluginId)!;
+        if (!committedGeneration.record) {
+            throw new Error(
+                `Committed resource activation generation record is unavailable for '${pluginId}'`,
+            );
+        }
         const admittedPaths = new Set(committedGeneration.record.files.map((file) => file.relativePath));
         const canonicalTargets = params.canonical.activationTargets.filter((target) => target.pluginId === pluginId);
         const candidateTargets = params.candidate.activationTargets.filter((target) => target.pluginId === pluginId);
@@ -1496,6 +1569,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Controller-lifetime target-local observer owner; never generation-local. */
         targetedContributions?: StableTargetedContributionsOwner;
         managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+        resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver;
         externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
         resolveExternalSessionCurrentMachineId?: () => string | null;
         externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
@@ -2112,6 +2186,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             !allRuntimeConsumersRetired
             && !retiredRuntimeConsumerPluginIds.has(pluginId)
         ),
+        params?.resolveManagedServiceSessionBaseUrl,
     );
     const resolveExactActivationTarget = (pluginId: string) => {
         const targets = authoritativeContributes.activationTargets.filter((target) => (
@@ -2346,19 +2421,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ));
         return registered ? materialization : null;
     };
-    const sameMaterialization = (
-        left: PluginMachineMaterializationRefV1,
-        right: PluginMachineMaterializationRefV1,
-    ): boolean => (
-        left.pluginId === right.pluginId
-        && left.machineId === right.machineId
-        && left.materializationId === right.materializationId
-    );
     const revalidatePluginActionCallerMaterialization = async (
         candidate: PluginMachineMaterializationRefV1,
     ): Promise<boolean> => {
         const current = resolveCurrentPluginMaterializationRef(candidate.pluginId);
-        return current !== null && sameMaterialization(current, candidate);
+        return current !== null && arePluginMachineMaterializationRefsEqual(current, candidate);
     };
     const revalidatePluginActionCallerImmutableGeneration = async (
         candidate: Readonly<{ pluginId: string; immutableGenerationId: string }>,
@@ -2385,7 +2452,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (
             !context
             || !afterMaterialization
-            || !sameMaterialization(beforeMaterialization, afterMaterialization)
+            || !arePluginMachineMaterializationRefsEqual(beforeMaterialization, afterMaterialization)
             || context.machineId !== afterMaterialization.machineId
         ) return null;
         const origin = PluginMachineExecutionOriginV1Schema.safeParse({
@@ -2444,7 +2511,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         right: PluginMachineExecutionOriginV1,
     ): boolean => (
         left.serverIdentityId === right.serverIdentityId
-        && sameMaterialization(left.materializationRef, right.materializationRef)
+        && arePluginMachineMaterializationRefsEqual(left.materializationRef, right.materializationRef)
     );
     const resolveExactCurrentCollectionMigrationArtifactDigest = (input: Readonly<{
         pluginId: string;
@@ -2800,6 +2867,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
             promptAssetAdapters.set(assetTypeId, adapter);
         }
     };
+    const createAgentInvocationServices: CreateAgentInvocationServices = async (
+        agentParams,
+    ) => {
+        if (!resolvedRuntimeRegistryOwner) {
+            throw new Error(
+                'Executable plugin runtime registry is not ready for Agent invocation',
+            );
+        }
+        return await resolvedRuntimeRegistryOwner
+            .createAgentInvocationServices(agentParams);
+    };
     const buildAgentRuntimeRegistry = () => createDeclarativeAcpAgentRuntimeRegistry({
         agents: authoritativeContributes.agents,
         registered: createTargetAgentRuntimeRegistry({
@@ -2809,15 +2887,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             immutableGenerationIdsByPluginId,
             isGenerationActive: () => !allRuntimeConsumersRetired,
             resolveGenerationLifecycle: resolveRuntimeConsumerLifecycle,
-            async createAgentInvocationServices(agentParams) {
-                if (!resolvedRuntimeRegistryOwner) {
-                    throw new Error(
-                        'Executable plugin runtime registry is not ready for Agent invocation',
-                    );
-                }
-                return await resolvedRuntimeRegistryOwner
-                    .createAgentInvocationServices(agentParams);
-            },
+            createAgentInvocationServices,
             ...(params?.managedEndpointRead
                 ? { managedEndpointRead: params.managedEndpointRead }
                 : {}),
@@ -2830,6 +2900,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         immutableGenerationIdsByPluginId,
         isGenerationActive: () => !allRuntimeConsumersRetired,
         resolveGenerationLifecycle: resolveRuntimeConsumerLifecycle,
+        createAgentInvocationServices,
     });
     const agentRuntimesByAgentId = buildAgentRuntimeRegistry();
     const refreshAgentRuntimeRegistry = (): void => {
@@ -3241,6 +3312,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     plugin: runtimeSeed.plugin,
                     contribution: runtimeSeed.contribution,
                     surface: runtimeSeed.surface,
+                    invokedAtMs: lifetime.invokedAtMs,
                     ...(runtimeSeed.session ? { session: runtimeSeed.session } : {}),
                     signal: runtimeSeed.signal,
                     services,
@@ -3685,6 +3757,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     });
     let automationEventAdoptedDefinitionOwners: readonly Readonly<{
         caller: PluginMachineMaterializationRefV1;
+        immutableGenerationId: string;
         transport: AutomationEventSourcesListTransportV1;
         owner: AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1;
     }>[] = Object.freeze([]);
@@ -3701,12 +3774,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ));
         const adoptedOwners: Array<Readonly<{
             caller: PluginMachineMaterializationRefV1;
+            immutableGenerationId: string;
             transport: AutomationEventSourcesListTransportV1;
             owner: AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1;
         }>> = [];
         for (const target of sourceTargets) {
             const caller = resolveCurrentPluginMaterializationRef(target.pluginId);
-            if (!caller) continue;
+            const immutableGenerationId = immutableGenerationIdsByPluginId.get(target.pluginId);
+            if (!caller || !immutableGenerationId) continue;
             const lifecycle = resolveRuntimeConsumerLifecycle(target.pluginId);
             const transportKinds = new Set<'checkpointedPull' | 'durablePush'>();
             for (const event of target.manifest.contributes.events ?? []) {
@@ -3722,15 +3797,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 const owner = createAutomationEventAdoptedDefinitionSetHostV1({
                     credentials: sessionCredentials,
                     caller,
+                    immutableGenerationId,
                     transport,
                     generationSignal: lifecycle.retirementSignal,
                     isGenerationCurrent: () => {
                         const current = resolveCurrentPluginMaterializationRef(target.pluginId);
                         return lifecycle.isCurrent()
                             && current !== null
-                            && sameMaterialization(current, caller);
+                            && arePluginMachineMaterializationRefsEqual(current, caller);
                     },
                     revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
+                    revalidateCallerImmutableGeneration: revalidatePluginActionCallerImmutableGeneration,
                 });
                 // Warm the snapshot here, but never gate registration on it.
                 // A transient first catalog read would otherwise drop the one
@@ -3739,7 +3816,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 // recovery short of a restart. The owner hydrates its snapshot
                 // through its own single-flight refresh on first use.
                 await owner.refresh(lifecycle.retirementSignal);
-                adoptedOwners.push(Object.freeze({ caller, transport, owner }));
+                adoptedOwners.push(Object.freeze({ caller, immutableGenerationId, transport, owner }));
             }
         }
         automationEventAdoptedDefinitionOwners = Object.freeze(adoptedOwners);
@@ -3747,12 +3824,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const resolveAutomationEventAdoptedDefinitionSet = automationEventAdoptedDefinitionOwners.length > 0
         ? (
             caller: PluginMachineMaterializationRefV1,
+            immutableGenerationId: string,
             transport: AutomationEventSourcesListTransportV1,
         ): AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 | null => {
             const current = resolveCurrentPluginMaterializationRef(caller.pluginId);
-            if (current === null || !sameMaterialization(current, caller)) return null;
+            if (current === null || !arePluginMachineMaterializationRefsEqual(current, caller)) return null;
             const owner = automationEventAdoptedDefinitionOwners.find((candidate) => (
-                sameMaterialization(candidate.caller, caller)
+                arePluginMachineMaterializationRefsEqual(candidate.caller, caller)
+                && candidate.immutableGenerationId === immutableGenerationId
                 && candidate.transport.kind === transport.kind
             ));
             return owner?.owner ?? null;
@@ -3769,8 +3848,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             request.signal.throwIfAborted();
             if (!request.isCurrent()) return null;
             const caller = resolveCurrentPluginMaterializationRef(request.pluginId);
-            if (!caller) return null;
-            const owner = resolveAutomationEventAdoptedDefinitionSet(caller, {
+            const immutableGenerationId = immutableGenerationIdsByPluginId.get(request.pluginId);
+            if (!caller || !immutableGenerationId) return null;
+            const owner = resolveAutomationEventAdoptedDefinitionSet(caller, immutableGenerationId, {
                 kind: 'checkpointedPull',
             });
             if (!owner) return null;
@@ -3784,7 +3864,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 definition === null
                 || !request.isCurrent()
                 || currentCaller === null
-                || !sameMaterialization(caller, currentCaller)
+                || !arePluginMachineMaterializationRefsEqual(caller, currentCaller)
                 || definition.eventRef.pluginId !== request.pluginId
                 || !request.eventLocalIds.includes(definition.eventRef.localId)
             ) return null;
@@ -4201,6 +4281,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                                 plugin: channelSeed.plugin,
                                 contribution: channelSeed.contribution,
                                 surface: channelSeed.surface,
+                                invokedAtMs: lifetime.invokedAtMs,
                                 ...(channelSeed.session ? { session: channelSeed.session } : {}),
                                 signal: channelSeed.signal,
                                 services,
@@ -4356,6 +4437,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                                 plugin: seed.plugin,
                                 contribution: seed.contribution,
                                 surface: seed.surface,
+                                invokedAtMs: lifetime.invokedAtMs,
                                 ...(seed.session
                                     ? { session: seed.session }
                                     : {}),
@@ -4830,6 +4912,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         plugin: seed.plugin,
                         contribution: seed.contribution,
                         surface: seed.surface,
+                        invokedAtMs: lifetime.invokedAtMs,
                         ...(input.sessionId ? { session: Object.freeze({ id: input.sessionId }) } : {}),
                         signal: seed.signal,
                         services,
@@ -4921,6 +5004,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         plugin: seed.plugin,
                         contribution: seed.contribution,
                         surface: seed.surface,
+                        invokedAtMs: lifetime.invokedAtMs,
                         session: seed.session,
                         signal: seed.signal,
                         services,
@@ -5113,6 +5197,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 plugin: seed.plugin,
                 contribution: seed.contribution,
                 surface: seed.surface,
+                invokedAtMs: lifetime.invokedAtMs,
                 signal: seed.signal,
                 services,
                 ui: createPluginInvocationPresentation({
@@ -5154,6 +5239,27 @@ export async function resolveExecutablePluginRuntimeRegistry(
             refreshPluginDiagnostics(result.pluginId, scmDiagnosticsByPluginId);
         }
         return results;
+    }
+
+    async function acquireAgentCatalogEntry(
+        agentId: string,
+    ): Promise<ResolvedCatalogEntry | null> {
+        const declared = authoritativeContributes.agents.find((agent) => agent.id === agentId);
+        if (!declared?.catalogEntry) return null;
+        if (!declared.identity) return declared.catalogEntry;
+        await activateContributionsOnDemand([{
+            pluginId: declared.identity.pluginId,
+            family: 'agents',
+            localId: declared.identity.localId,
+        }]);
+        const projected = mergeActivatedContributes(
+            contributes,
+            activatedRegistry,
+            immutableGenerationIdsByPluginId,
+            (pluginId) => isPluginConsumerCurrent(pluginId),
+            params?.resolveManagedServiceSessionBaseUrl,
+        );
+        return projected.agents.find((agent) => agent.id === agentId)?.catalogEntry ?? null;
     }
 
     async function activatePluginsForValidation(
@@ -6140,6 +6246,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? Object.freeze({
             getBinding: params.connectedAccounts.getBinding,
             materialize: params.connectedAccounts.materialize,
+            watch: params.connectedAccounts.watch,
         })
         : null;
     // One currentness/generation guard for every live-resource call, so a
@@ -6299,7 +6406,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         contributes: authoritativeContributes,
         durableRevision: committed?.commit?.revision ?? -1,
         generation: activatedRegistry.generation,
-        targetActivationFacts: activatedRegistry.targetActivationFacts,
+        // Background-service settlement changes the existing activation fact
+        // in place at the lifecycle owner. Do not freeze the startup snapshot
+        // into the resolved registry or an invalidated daemon projection would
+        // still advertise the stopped runner as active.
+        get targetActivationFacts() {
+            return activatedRegistry.targetActivationFacts;
+        },
         targetActionInvocations: committedTargetActionInvocations,
         resolveActionPresentUserGatePolicy,
         ...(authoritativeContributes.readAdmittedTargetedContributions
@@ -6346,8 +6459,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ?? Object.freeze([]);
         },
         ...(resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot } : {}),
-        activatedPluginIds: activatedRegistry.activatedPluginIds,
+        get activatedPluginIds() {
+            return activatedRegistry.activatedPluginIds;
+        },
         activateContributionsOnDemand,
+        acquireAgentCatalogEntry,
         acquireManagedProviderRuntime,
         acquireProviderCatalogParsers,
         runManagedProviderExplicitStart,
@@ -6374,6 +6490,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveConnectedAccountPurposeBindingOwner() {
             return !allRuntimeConsumersRetired
                 ? connectedAccountPurposeBindingOwner
+                : null;
+        },
+        resolveManagedServiceCredentialFileOwner() {
+            return !allRuntimeConsumersRetired
+                ? managedServiceCredentialFiles
                 : null;
         },
         managedDependencies,
@@ -6689,6 +6810,66 @@ export async function resolveExecutablePluginRuntimeRegistry(
             );
             const services = invocationServiceOwners.createServices(seed, binding);
             return services.availability('events').status === 'available' ? services.events.plugin : null;
+        },
+        async acquireRetainedRunnerAgentPurposeContributions(input) {
+            const paths = resolvePluginStorePaths({
+                happyHomeDir: params?.happyHomeDir,
+            });
+            const readHardRevocationRevision = async () =>
+                await readCurrentPluginHardRevocationRevision({
+                    paths,
+                    pluginId: input.binding.pluginId,
+                });
+            if (
+                await readHardRevocationRevision()
+                    !== input.pluginHardRevocationRevision
+            ) return null;
+            const verified =
+                await verifyRetainedRunnerAgentServiceBinding(
+                    input.binding,
+                    'plugin_services_retained_generation_untrusted',
+                );
+            if (
+                await readHardRevocationRevision()
+                    !== input.pluginHardRevocationRevision
+            ) return null;
+
+            const provenance = verified.manifestAuthority
+                === 'bundled_first_party'
+                ? 'first_party' as const
+                : 'external' as const;
+            const retainedAgent = projectManifestAgentContribution({
+                definition: verified.declaredAgent,
+                provenance,
+                source: {
+                    kind: provenance === 'first_party'
+                        ? 'bundled'
+                        : 'package',
+                },
+                pluginId: verified.binding.pluginId,
+            });
+            if (retainedAgent.id !== verified.binding.agentId) return null;
+            const retainedContributes = createResolvedContributionRegistry({
+                agents: Object.freeze([retainedAgent]),
+                actions: Object.freeze([]),
+                resources: Object.freeze([]),
+                activationTargets: Object.freeze([]),
+                immutableGenerationIdsByPluginId: Object.freeze({
+                    [verified.binding.pluginId]:
+                        verified.binding.immutableGenerationId,
+                }),
+            });
+            let released = false;
+            return Object.freeze({
+                contributes: retainedContributes,
+                // The Session marker/authority document retains G. Current H/I
+                // may move without invalidating G; hard revocation is fenced by
+                // the daemon authority owner and the double revision read above.
+                isCurrent: () => !released,
+                async release() {
+                    released = true;
+                },
+            });
         },
         async createRetainedRunnerAgentCurrentGlobalActionsService(
             agentParams,

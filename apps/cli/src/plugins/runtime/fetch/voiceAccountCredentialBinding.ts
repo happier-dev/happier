@@ -51,6 +51,7 @@ type VoiceAccountOperationExecute = Parameters<
  */
 type VoiceAccountOperationAuthority = Readonly<{
     isCurrent(): boolean;
+    isCredentialCurrent(): boolean;
     isCancelled(): boolean;
 }>;
 
@@ -131,6 +132,7 @@ function retired(): PluginError {
 function assertCurrent(authority: VoiceAccountOperationAuthority): void {
     if (!authority.isCurrent()) throw retired();
     if (authority.isCancelled()) throw cancelled();
+    if (!authority.isCredentialCurrent()) throw credentialUnavailable();
 }
 
 function seedAuthority(input: Readonly<{
@@ -139,6 +141,7 @@ function seedAuthority(input: Readonly<{
 }>): VoiceAccountOperationAuthority {
     return Object.freeze({
         isCurrent: () => input.seed.isGenerationCurrent(),
+        isCredentialCurrent: () => true,
         isCancelled: () => input.seed.signal.aborted || input.signal?.aborted === true,
     });
 }
@@ -304,6 +307,7 @@ function projectJsonResponseMaterial(
 function sanitizeFailure(error: unknown, authority: VoiceAccountOperationAuthority): PluginError {
     if (!authority.isCurrent()) return retired();
     if (authority.isCancelled()) return cancelled();
+    if (!authority.isCredentialCurrent()) return credentialUnavailable();
     if (
         error instanceof Error
         && (error as Error & { code?: unknown }).code === 'credential_unavailable'
@@ -595,6 +599,7 @@ export function createVoiceAccountOperationService(params: Readonly<{
     phase: VoiceCredentialAccessPhase;
     credentialResolver: VoiceCredentialResolver;
     isCurrent(): boolean;
+    isCredentialCurrent?(): boolean;
     signal: AbortSignal;
     /**
      * Host-owned transport. These phases are ones the host itself calls, so
@@ -608,6 +613,7 @@ export function createVoiceAccountOperationService(params: Readonly<{
         async request(request) {
             const authority: VoiceAccountOperationAuthority = Object.freeze({
                 isCurrent: () => params.isCurrent(),
+                isCredentialCurrent: () => params.isCredentialCurrent?.() ?? true,
                 isCancelled: () => params.signal.aborted || request.signal.aborted,
             });
             assertCurrent(authority);

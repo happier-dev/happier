@@ -1,3 +1,5 @@
+import { isReservedHappierPluginId } from '@happier-dev/protocol';
+
 import {
   resolveLocalPathPluginSource,
   type ResolvedLocalPathPluginSourceSuccess,
@@ -44,8 +46,11 @@ import {
   type PluginUiArtifactBuildResult,
 } from '@/plugins/authoring/toolchain';
 import { prefixPluginDiagnosticSourceLocation } from '@/plugins/validation/diagnostics/sourceLocation';
+import { preparePluginStorageDataRemoval } from '@/plugins/runtime/context/storage';
+import { preparePluginSecretsDataRemoval } from '@/plugins/runtime/context/secrets';
 
 import type {
+  PluginDataRemovalStep,
   PluginChangeRequest,
   PreparedDaemonPluginChange,
 } from './changeContract';
@@ -211,6 +216,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   runManagedPluginPnpm?: RunManagedPluginPnpmBoundary;
   runPluginUiArtifactBuild?: RunPluginUiArtifactBuildBoundary;
+  removePluginDataDirectory?: (directoryPath: string) => Promise<void>;
 }>): (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange> {
   const prepare = async (
     request: InternalPluginChangeRequest,
@@ -333,6 +339,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       || request.kind === 'disable'
       || request.kind === 'rollback'
       || request.kind === 'uninstall'
+      || request.kind === 'uninstallAndDeleteData'
       || request.kind === 'forgetTrust'
     ) {
       const stateRequest = request;
@@ -341,13 +348,52 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         runtimeLifecycle: params.runtimeLifecycle,
       });
       const existing = (await store.read()).plugins[stateRequest.pluginId];
-      const allowsAlreadyAbsent = stateRequest.kind === 'uninstall'
-        && stateRequest.allowAlreadyAbsent === true
-        && !existing;
+      const allowsAlreadyAbsent = stateRequest.kind === 'uninstallAndDeleteData' && !existing;
       if (!existing && !allowsAlreadyAbsent) throw new Error(`Unknown plugin id: ${stateRequest.pluginId}`);
-      if (stateRequest.kind === 'uninstall' && existing?.source.kind === 'bundled') {
+      if (
+        (stateRequest.kind === 'uninstall' || stateRequest.kind === 'uninstallAndDeleteData')
+        && existing?.source.kind === 'bundled'
+      ) {
         throw new Error(`Bundled first-party plugin '${stateRequest.pluginId}' cannot be uninstalled`);
       }
+      if (
+        stateRequest.kind === 'uninstallAndDeleteData'
+        && !existing
+        && isReservedHappierPluginId(stateRequest.pluginId)
+      ) {
+        throw new DaemonPluginChangePreparationError(
+          'plugin_data_removal_ownership_unsupported',
+          'Destructive data removal is unavailable for an unowned Happier plugin namespace',
+        );
+      }
+
+      const dataRemoval = stateRequest.kind === 'uninstallAndDeleteData'
+        ? await (async () => {
+            const paths = resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir });
+            try {
+              const storage = await preparePluginStorageDataRemoval({
+                pluginId: stateRequest.pluginId,
+                paths,
+                ...(params.removePluginDataDirectory
+                  ? { removeDirectory: params.removePluginDataDirectory }
+                  : {}),
+              });
+              const secrets = await preparePluginSecretsDataRemoval({
+                pluginId: stateRequest.pluginId,
+                paths,
+                ...(params.removePluginDataDirectory
+                  ? { removeDirectory: params.removePluginDataDirectory }
+                  : {}),
+              });
+              return Object.freeze({ storage, secrets });
+            } catch (error) {
+              throw new DaemonPluginChangePreparationError(
+                'plugin_data_removal_preflight_failed',
+                projectPluginFailureText(error),
+              );
+            }
+          })()
+        : null;
 
       return Object.freeze({
         pluginId: stateRequest.pluginId,
@@ -357,7 +403,9 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             happyHomeDir: params.happyHomeDir,
             runtimeLifecycle: params.runtimeLifecycle,
             onApplied: (record) => {
-              control?.onApplied();
+              // Ordinary registry changes may release after the serving swap.
+              // Destructive uninstall keeps exclusion through both owned-directory steps.
+              if (stateRequest.kind !== 'uninstallAndDeleteData') control?.onApplied();
               params.onRegistryApplied?.(record);
             },
           });
@@ -372,7 +420,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             transaction = (await store.setEnabledWithResult(stateRequest.pluginId, enabled))?.transaction ?? null;
           } else if (stateRequest.kind === 'rollback') {
             transaction = (await store.rollbackWithResult(stateRequest.pluginId)).transaction;
-          } else if (stateRequest.kind === 'uninstall') {
+          } else if (
+            stateRequest.kind === 'uninstall'
+            || stateRequest.kind === 'uninstallAndDeleteData'
+          ) {
             transaction = existing
               ? (await store.uninstallWithResult(stateRequest.pluginId))?.transaction ?? null
               : null;
@@ -382,10 +433,47 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           const generation = transaction
             ? transaction.record.pluginGenerations[stateRequest.pluginId]?.immutableGenerationId ?? null
             : generationBeforeMutation;
-          return projectPluginTransactionChangeResult({
+          const registryResult = projectPluginTransactionChangeResult({
             pluginId: stateRequest.pluginId,
             desiredGeneration: generation,
             transaction,
+          });
+          if (!dataRemoval || registryResult.kind !== 'committed') return registryResult;
+
+          const completed: PluginDataRemovalStep[] = ['uninstall'];
+          const steps = [
+            { id: 'daemonStorage' as const, run: dataRemoval.storage.removeDaemon },
+            { id: 'secrets' as const, run: dataRemoval.secrets.remove },
+          ];
+          for (const [index, step] of steps.entries()) {
+            try {
+              await step.run();
+              completed.push(step.id);
+            } catch (error) {
+              const descriptor = error && typeof error === 'object'
+                ? Object.getOwnPropertyDescriptor(error, 'code')
+                : undefined;
+              const causeCode = descriptor && 'value' in descriptor && typeof descriptor.value === 'string'
+                ? descriptor.value
+                : 'plugin_data_removal_step_failed';
+              return Object.freeze({
+                kind: 'dataRemovalPartial' as const,
+                pluginId: stateRequest.pluginId,
+                completed: Object.freeze([...completed]),
+                pending: Object.freeze(steps.slice(index).map(({ id }) => id)),
+                causeCode,
+              });
+            }
+          }
+          return Object.freeze({
+            ...registryResult,
+            dataRemoval: Object.freeze({
+              alreadyUninstalled: !existing,
+              removedData: Object.freeze({
+                daemonStorage: dataRemoval.storage.hadDaemonData,
+                secrets: dataRemoval.secrets.hadSecrets,
+              }),
+            }),
           });
         },
         cleanup: async () => undefined,

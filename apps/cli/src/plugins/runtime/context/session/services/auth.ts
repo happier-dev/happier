@@ -17,6 +17,7 @@ import {
 } from '@/agent/catalog/ids';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
+import { projectConnectedServiceRuntimeAuthSelection } from '@/daemon/connectedServices/runtimeAuth/projectRuntimeAuthTargetInput';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from '@/agent/runtime/session/errors/connectedServiceRuntimeAuthRecoveryContext';
 import { requestDaemonSessionConnectedServiceRuntimeAuthRefresh } from '@/daemon/controlClient';
@@ -168,18 +169,15 @@ async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | und
 function withSelectionHints(
     selection: unknown,
     request: SessionRuntimeAuthRefreshRequest,
-): unknown {
+): Readonly<Record<string, unknown>> {
     if (!isRecord(selection)) {
-        return selection;
+        return Object.freeze({ serviceId: request.serviceId });
     }
     const next: Record<string, unknown> = { ...selection };
     if (!Object.prototype.hasOwnProperty.call(next, 'serviceId')) {
         next.serviceId = request.serviceId;
     }
-    if (request.planType && !Object.prototype.hasOwnProperty.call(next, 'planType')) {
-        next.planType = request.planType;
-    }
-    return Object.freeze(next);
+    return projectConnectedServiceRuntimeAuthSelection(next);
 }
 
 async function reportRecoveryIfPossible(
@@ -215,16 +213,6 @@ function buildRefreshInput(
             ...(request.targetId ? { targetId: request.targetId } : {}),
         }),
         selection: withSelectionHints(request.selection, request),
-        ...(request.targetMaterializedEnv ? { targetMaterializedEnv: request.targetMaterializedEnv } : {}),
-        ...(request.materializedEnv ? { materializedEnv: request.materializedEnv } : {}),
-        ...(request.env ? { env: request.env } : {}),
-        ...(request.failingAccessTokenFingerprint
-            ? { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }
-            : {}),
-        ...(request.expectedCredentialRevision
-            ? { expectedCredentialRevision: request.expectedCredentialRevision }
-            : {}),
-        ...(request.reason ? { reason: request.reason } : {}),
     });
 }
 

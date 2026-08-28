@@ -3,9 +3,12 @@ import { chmod, link, lstat, open, mkdir, readdir, rename, rm } from 'node:fs/pr
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-import { PluginError } from '@happier-dev/plugin-sdk';
 import {
-    createManagedServiceEndpointProjectionV1,
+    probeProcessGroupLiveness,
+    type ProcessLiveness,
+} from '@happier-dev/cli-common/process';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createManagedServiceEndpointProjectionV1,
     managedServiceEndpointProjectionFileName,
     parseManagedServiceEndpointProjectionV1,
     readManagedServiceEndpointProjectionCandidates,
@@ -18,7 +21,15 @@ import {
     replacePrivateBearerFile,
 } from '@/daemon/privateBearerFile';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
-import { readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { readProcessIdentityByPid, compareProcessGenerationIdentities } from '@/daemon/processIdentity';
+import {
+    formatDarwinNativeStartIdentity,
+    observeNativeDarwinProcessStartIdentity,
+    parseProcessCustodyStartIdentity,
+    queryProcessCustodyJob,
+    resolveProcessCustodyRuntimeExecutable,
+    terminateProcessCustodyByJob,
+} from '@/subprocess/supervision/processCustody';
 import {
     MANAGED_SERVICE_NUMERIC_CONTRACT,
 } from './managedServiceSpecNormalization';
@@ -81,12 +92,37 @@ const DEFAULT_MAX_LOG_BYTES = 8 * 1024 * 1024;
 export async function observeManagedServiceProcessStartIdentity(
     pid: number,
     dependencies: Readonly<{
+        platform?: NodeJS.Platform;
         readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
         signalProcessFn?: (pid: number, signal: 0) => void;
+        resolveProcessCustodyRuntimeExecutableFn?: typeof resolveProcessCustodyRuntimeExecutable;
+        observeNativeDarwinProcessStartIdentityFn?: typeof observeNativeDarwinProcessStartIdentity;
     }> = {},
 ): Promise<string | null> {
+    const platform = dependencies.platform ?? process.platform;
+    if (platform === 'darwin') {
+        // The native subsecond witness decides what `ps lstart` never can:
+        // two generations of one pid inside one wall-clock second. Absence of
+        // the helper silently falls back to the legacy whole-second witness,
+        // whose equal comparisons stay fenced downstream.
+        const executablePath = (
+            dependencies.resolveProcessCustodyRuntimeExecutableFn
+            ?? resolveProcessCustodyRuntimeExecutable
+        )('darwin');
+        if (executablePath) {
+            const witness = await (
+                dependencies.observeNativeDarwinProcessStartIdentityFn
+                ?? observeNativeDarwinProcessStartIdentity
+            )({ executablePath, pid });
+            if (witness) {
+                return formatDarwinNativeStartIdentity(pid, witness);
+            }
+        }
+    }
     const readIdentity = dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid;
-    const identity = await readIdentity(pid);
+    const identity = await readIdentity(pid, {
+        ...(dependencies.platform ? { platform: dependencies.platform } : {}),
+    });
     if (identity?.processStartTimeMs !== undefined) {
         return `${pid}:${identity.processStartTimeMs}`;
     }
@@ -210,9 +246,23 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
     maxEndpointProjections?: number;
     maxLogBytes?: number;
     observeProcessStartIdentity?: (pid: number) => Promise<string | null>;
+    /** POSIX process-group witness for detached managed spawns; injected only by tests. */
+    observeProcessGroupPresence?: (processGroupId: number) => Promise<ProcessLiveness>;
+    /** Windows job-custody witness; injected only by tests. */
+    observeProcessCustodyJob?: (jobName: string) => Promise<'absent' | 'live' | 'unknown'>;
+    /** Windows job-custody terminator; injected only by tests. */
+    terminateProcessCustodyJob?: (jobName: string) => Promise<boolean>;
+    /** Native-custody runtime resolution; injected only by tests. */
+    resolveProcessCustodyRuntimeExecutable?: () => string | null;
     /** The canonical cross-platform process-tree terminator; injected only by tests. */
-    terminateProcessTree?: (input: Readonly<{ pid: number }>) => Promise<void>;
+    terminateProcessTree?: (input: Readonly<{
+        pid: number;
+        exitCode?: number | null;
+    }>) => Promise<void>;
+    /** Host platform for the platform-scoped custody branches; injected only by tests. */
+    platform?: NodeJS.Platform;
 }>): ManagedServiceDurabilityOwner {
+    const platform = params.platform ?? process.platform;
     const endpointProjectionsDir = join(params.rootDir, 'endpoint-projections');
     const logsDir = join(params.rootDir, 'logs');
     const maxEndpointProjections = resolvePositiveBound(
@@ -295,19 +345,91 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         }
     }
 
+    async function observeWindowsJobCustody(jobName: string): Promise<'absent' | 'live' | 'unknown'> {
+        const executablePath = (
+            params.resolveProcessCustodyRuntimeExecutable
+            ?? resolveProcessCustodyRuntimeExecutable
+        )('win32');
+        if (!executablePath) return 'unknown';
+        return await queryProcessCustodyJob({ executablePath, jobName });
+    }
+
+    async function terminateWindowsJobCustody(jobName: string): Promise<boolean> {
+        const executablePath = (
+            params.resolveProcessCustodyRuntimeExecutable
+            ?? resolveProcessCustodyRuntimeExecutable
+        )('win32');
+        if (!executablePath) return false;
+        return await terminateProcessCustodyByJob({ executablePath, jobName }) === 'absent';
+    }
+
     async function observeManagedSpawnProjectionState(
         projection: ManagedServiceEndpointProjectionV1,
-    ): Promise<'live' | 'stale' | 'unknown'> {
+    ): Promise<'live_root' | 'live_group' | 'stale' | 'unknown'> {
         if (
             projection.mode !== 'managedSpawn'
             || !params.observeProcessStartIdentity
         ) return 'unknown';
+        if (platform === 'win32') {
+            // Windows recovery acts on the named job containment, never on a
+            // pid birth comparison. Tagged records query the job; predecessor
+            // records stay fenced exactly as before: root PID evidence alone
+            // must never authorize signalling or forgetting an unprovable
+            // surviving tree.
+            const tagged = parseProcessCustodyStartIdentity(projection.process.startIdentity);
+            if (tagged?.kind !== 'win32-job') return 'unknown';
+            const jobState = await (
+                params.observeProcessCustodyJob
+                ?? observeWindowsJobCustody
+            )(tagged.jobName);
+            return jobState === 'live'
+                ? 'live_root'
+                : jobState === 'absent'
+                    ? 'stale'
+                    : 'unknown';
+        }
         try {
             const currentStartIdentity = await params
                 .observeProcessStartIdentity(projection.process.pid);
-            return currentStartIdentity === projection.process.startIdentity
-                ? 'live'
-                : 'stale';
+            if (currentStartIdentity !== null) {
+                const comparison = compareProcessGenerationIdentities(
+                    projection.process.startIdentity,
+                    currentStartIdentity,
+                    platform,
+                );
+                if (comparison === 'same') return 'live_root';
+                if (comparison === 'ambiguous') {
+                    // A whole-second legacy record cannot exclude a same-second pid
+                    // replacement, and a degraded observer cannot upgrade the pair
+                    // either. Fence the record: retain it for a later, better-evidenced
+                    // pass; this evidence never authorizes signaling and never reaps.
+                    return 'unknown';
+                }
+                // A different non-null incarnation proves PID reuse. Never
+                // reinterpret the replacement's same-number process group as
+                // custody inherited from the retired process.
+                return 'stale';
+            }
+            if (platform === 'darwin') {
+                // Darwin predecessor records carry only a whole-second `ps lstart`
+                // birthday. Once their root is absent, a same-number process group
+                // cannot prove it is the original owned containment rather than a
+                // later recycled group. Retain custody without signalling.
+                return 'unknown';
+            }
+            // POSIX managed spawns are launched in a dedicated process
+            // group whose id is the root pid. Root turnover is not stale while
+            // that owned containment still has descendants.
+            const observeGroup = params.observeProcessGroupPresence
+                ?? (async (processGroupId: number): Promise<ProcessLiveness> => (
+                    probeProcessGroupLiveness(processGroupId)
+                ));
+            const groupLiveness = await observeGroup(projection.process.pid);
+            return groupLiveness === 'alive'
+                ? 'live_group'
+                : groupLiveness === 'absent'
+                    ? 'stale'
+                    : 'unknown';
         } catch {
             return 'unknown';
         }
@@ -392,6 +514,14 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                 || query.immutableGenerationId === undefined
             )
         ) return null;
+        if (
+            query.selector.kind === 'currentSessionManagedSpawn'
+            && (
+                query.sessionId === undefined
+                || query.contributionId === undefined
+                || query.immutableGenerationId !== undefined
+            )
+        ) return null;
         return await runExclusive(async () => {
             await ensureDirs();
             const readMatches = () => readManagedServiceEndpointProjectionCandidates(params.rootDir)
@@ -433,7 +563,10 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                 await removeEndpointProjectionIfCurrent(projection);
                 return null;
             }
-            if (observedState !== 'live') return null;
+            if (
+                observedState !== 'live_root'
+                && observedState !== 'live_group'
+            ) return null;
             const current = await readEndpointProjection(projection.instanceId);
             return current?.projectionToken === projection.projectionToken
                 ? projection
@@ -542,21 +675,43 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                 .filter((projection) => projection.custodyOwner === 'sessionRunner');
             for (const projection of owned) {
                 if (projection.mode === 'managedSpawn') {
-                    // `live` proves this exact pid is still the process the runner started;
+                    // `live_root` proves this exact pid is still the process the runner started;
+                    // `live_group` proves only that its POSIX containment survives root turnover;
                     // `stale` means the pid was recycled and must not be signalled. `unknown`
                     // leaves the record alone rather than guessing at somebody else's process.
                     const state = await observeManagedSpawnProjectionState(projection);
                     if (state === 'unknown') continue;
-                    if (state === 'live') {
-                        await (params.terminateProcessTree
-                            ?? ((target: Readonly<{ pid: number }>) =>
-                                killProcessTree(target)))({
-                            pid: projection.process.pid,
-                        }).catch(() => undefined);
+                    if (state === 'live_root' || state === 'live_group') {
+                        // Windows tagged records terminate through the named
+                        // job itself: taskkill against the root pid would
+                        // neither reach descendants that outlived the root
+                        // nor respect a recycled pid fence.
+                        const taggedCustody = platform === 'win32'
+                            ? parseProcessCustodyStartIdentity(projection.process.startIdentity)
+                            : null;
+                        const terminated = taggedCustody?.kind === 'win32-job'
+                            ? await (params.terminateProcessCustodyJob ?? terminateWindowsJobCustody)(
+                                taggedCustody.jobName,
+                            ).catch(() => false)
+                            : await (params.terminateProcessTree
+                                ?? ((target: Readonly<{
+                                    pid: number;
+                                    exitCode?: number | null;
+                                }>) =>
+                                    killProcessTree(target)))({
+                                pid: projection.process.pid,
+                                ...(state === 'live_group'
+                                    ? { exitCode: 0 }
+                                    : {}),
+                            }).then(
+                                () => true,
+                                () => false,
+                            );
+                        if (!terminated) continue;
                         // A successful terminator return is not a process-terminal
-                        // fact: it may have signalled only a parent or raced an
-                        // uncooperative child. Forget this projection only after
-                        // the exact pid/birthday is absent or has been recycled.
+                        // fact on POSIX unless the dedicated process group is
+                        // also absent. Forget this projection only after that
+                        // containment proof settles stale.
                         const postTerminationState =
                             await observeManagedSpawnProjectionState(projection);
                         if (postTerminationState !== 'stale') continue;

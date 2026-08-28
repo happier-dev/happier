@@ -304,8 +304,8 @@ describe('external Agent catalog-entry hook routing', () => {
 
     // Runtime Activity was the widest bundled-only Agent capability left: the host
     // binds a Session's agent-runtime Activity slot only when the catalog entry
-    // says `supported`, and the sole declaration seam was the private bundled
-    // `AgentRuntimeContribution.runtimeActivityApplicability` key. The public
+    // says `supported`; historically the only live seam was a bundled-private
+    // runtime applicability key. The public
     // `capabilities.sessions.runtimeActivitySnapshots` declaration an external
     // author can already type had no reader anywhere, so an external Agent that
     // emits the public SDK's `runtime-activity-snapshot` runtime event could never

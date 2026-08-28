@@ -4,7 +4,10 @@ import { createPluginInvocationLifetime } from './lifetime';
 
 describe('plugin invocation lifetime', () => {
     it('separates context settlement from diagnostic cleanup and completes idempotently', () => {
+        const beforeAdmission = Date.now();
         const lifetime = createPluginInvocationLifetime();
+        expect(lifetime.invokedAtMs).toBeGreaterThanOrEqual(beforeAdmission);
+        expect(lifetime.invokedAtMs).toBeLessThanOrEqual(Date.now());
         lifetime.settleContext();
         expect(lifetime.signal.aborted).toBe(true);
         expect(lifetime.redactionLifetimeSignal.aborted).toBe(false);

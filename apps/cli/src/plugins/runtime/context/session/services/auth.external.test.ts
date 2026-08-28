@@ -20,7 +20,6 @@ function createRuntimeAuthAdapter(
         materializeActiveProfile: async () => ({}),
         canHotApply: () => ({}),
         hotApply: async () => ({}),
-        recoverAfterRuntimeAuthSwitch: async () => ({}),
         probeQuota: async () => ({}),
         refreshActiveProfile,
     };

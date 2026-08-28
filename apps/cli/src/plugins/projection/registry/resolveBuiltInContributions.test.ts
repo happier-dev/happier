@@ -17,7 +17,6 @@ import {
   getAgentCliRuntimeSpec,
 } from '@happier-dev/agents';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import {
@@ -52,7 +51,7 @@ describe('resolveBuiltInContributions', () => {
     const pluginContributionResolverSource = readPluginContributionResolverSource();
 
     expect(resolverSource).toContain(
-      "import { BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS } from './sources/generatedBundledPlugins';",
+      "import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from './sources/generatedBundledPlugins';",
     );
     expect(resolverSource).toContain(
       "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';",
@@ -216,36 +215,16 @@ describe('resolveBuiltInContributions', () => {
       ]));
   });
 
-  it('binds every statically projected first-party Agent runtime contribution from its lightweight catalog leaf', () => {
+  it('keeps bundled Agent registration metadata data-only', () => {
     const generatedSource = readFileSync(
       new URL('./sources/generatedBundledPlugins.ts', import.meta.url),
       'utf8',
     );
 
-    const agentPackages = [
-      'antigravity',
-      'auggie',
-      'claude',
-      'codex',
-      'cursor',
-      'gemini',
-      'grok',
-      'kilo',
-      'kimi',
-      'kiro',
-      'ohmypi',
-      'opencode',
-      'pi',
-    ] as const;
-
-    for (const packageId of agentPackages) {
-      expect(generatedSource).toContain(
-        `@happier-dev/plugins-${packageId}/agent/contributions/catalog`,
-      );
-      expect(generatedSource).not.toContain(
-        `@happier-dev/plugins-${packageId}/agent/contributions/runtime`,
-      );
-    }
+    expect(generatedSource).toContain('BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS');
+    expect(generatedSource).not.toMatch(/plugins-[^'"\s]+\/agent\/contributions/u);
+    expect(generatedSource).not.toContain('createAgentRuntimeCatalogEntryHooks');
+    expect(generatedSource).not.toContain('implementation:');
   });
 
   it('does not project Codex external-session factories from app-local host adapters', () => {
@@ -420,41 +399,14 @@ describe('resolveBuiltInContributions', () => {
     const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
     expect(opencodeAgent?.catalogEntry).not.toHaveProperty('getManagedServerShutdownCleanup');
     expect(opencodeAgent?.catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeUndefined();
-    expect(opencodeAgent?.catalogEntry?.resolveSessionRuntimePreferences).toBeTypeOf('function');
-    expect(opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor).toBeTypeOf('function');
-    const opencodeRecordExtractor = await opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor?.();
-    expect(opencodeRecordExtractor?.({
-      agentId: 'opencode',
-      remoteSessionId: 'oc-session-1',
-      exportJsonBase64: Buffer.from(JSON.stringify({ id: 'oc-session-1' }), 'utf8').toString('base64'),
-    })).toEqual([{ id: 'oc-session-1' }]);
+    expect(opencodeAgent?.catalogEntry).not.toHaveProperty('getSessionHandoffAgentBundleRecordExtractor');
 
     const claudeAgent = contributes.agents.find((agent) => agent.id === 'claude');
-    expect(claudeAgent?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
-    expect(claudeAgent?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
-    expect(claudeAgent?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
-    expect(claudeAgent?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+    expect(claudeAgent?.catalogEntry).not.toHaveProperty('getConnectedServicesMaterializer');
+    expect(claudeAgent?.catalogEntry).not.toHaveProperty('getConnectedServiceRuntimeAuthAdapter');
 
     const qwenAgent = contributes.agents.find((agent) => agent.id === 'qwen');
     expect(qwenAgent?.catalogEntry?.getCliCommandHandler).toBeTypeOf('function');
-
-    const kimiAgent = contributes.agents.find((agent) => agent.id === 'kimi');
-    const resolveKimiSessionPreferences = kimiAgent?.catalogEntry?.resolveSessionRuntimePreferences;
-    expect(resolveKimiSessionPreferences).toBeTypeOf('function');
-    expect(await resolveKimiSessionPreferences?.({
-      settings: { kimiAcpPythonSelector: 'poll' },
-      environment: {},
-      startOrigin: 'terminal',
-      isExplicitCliSubcommand: true,
-      parsed: { agentArgs: [] },
-    })).toEqual({ environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'poll' } });
-    expect(await resolveKimiSessionPreferences?.({
-      settings: { kimiAcpPythonSelector: 'poll' },
-      environment: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' },
-      startOrigin: 'terminal',
-      isExplicitCliSubcommand: true,
-      parsed: { agentArgs: [] },
-    })).toEqual({ environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' } });
 
     const activationTargets = contributes.activationTargets;
     expect(activationTargets).toBeDefined();
@@ -482,91 +434,13 @@ describe('resolveBuiltInContributions', () => {
         expect(activationEventsByPluginId.get('happier.review.coderabbit')).toEqual([]);
     });
 
-    it('projects Codex connected-service runtime control hooks from the plugin contribution', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-runtime-contribution-'));
-        try {
-            const contributes = resolveBuiltInContributions();
-            const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
-            const codexOauthRecord = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                kind: 'oauth',
-                oauth: {
-                    accessToken: 'access-token',
-                    refreshToken: 'refresh-token',
-                    idToken: 'id-token',
-                    providerAccountId: 'account-1',
-                    providerEmail: 'codex@example.com',
-                    scope: 'openid profile',
-                    tokenType: 'Bearer',
-                },
-            });
-            const openAiTokenRecord = buildConnectedServiceCredentialRecord({
-                now: 1,
-                serviceId: 'openai',
-                profileId: 'api',
-                kind: 'token',
-                token: {
-                    token: 'sk-test',
-                    providerAccountId: null,
-                    providerEmail: null,
-                },
-            });
+    it('keeps activation-owned Codex callbacks out of the cold bundled projection', () => {
+        const codexAgent = resolveBuiltInContributions().agents.find((agent) => agent.id === 'codex');
 
-            expect(codexAgent?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry).not.toHaveProperty('materializeConnectedServiceRuntimeAuthSelection');
-            expect(codexAgent?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry?.verifyResumeReachable).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry?.resolveConnectedServiceCandidatePersistedSessionFile).toBeTypeOf('function');
-            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionGoalControlAdapter');
-            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionCatalogControlAdapter');
-            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionUsageLimitRecoveryControlAdapter');
-            expect(codexAgent?.catalogEntry?.getVendorResumeSupport).toBeTypeOf('function');
-            const codexVendorResumeSupport = await codexAgent?.catalogEntry?.getVendorResumeSupport?.();
-            expect(codexVendorResumeSupport?.({ codexBackendMode: 'appServer' })).toBe(true);
-    const supportsRawCodexVendorResumeInput = codexVendorResumeSupport as
-        | ((params: Readonly<{ codexBackendMode?: unknown }>) => boolean)
-        | undefined;
-    expect(supportsRawCodexVendorResumeInput?.({ codexBackendMode: 'unknown' })).toBe(false);
-    const materializer = await codexAgent?.catalogEntry?.getConnectedServicesMaterializer?.();
-            const oauthResult = await materializer?.({
-                materializationKey: 'mat-1',
-                activeServerDir: root,
-                baseDir: root,
-                rootDir: root,
-                connectedAccountMaterializationAuthority: {
-                    kind: 'legacy_unfenced_one_shot',
-                },
-                recordsByServiceId: new Map([['openai-codex', codexOauthRecord]]),
-                processEnv: { HOME: join(root, 'home') },
-            });
-            expect(oauthResult?.env).toEqual({
-                CODEX_HOME: expect.stringContaining('codex-home'),
-                CODEX_SQLITE_HOME: expect.stringContaining(join('home', '.codex')),
-            });
-            await expect(readFile(join(String(oauthResult?.env.CODEX_HOME), 'auth.json'), 'utf8')).resolves.toContain('access-token');
-
-            const tokenResult = await materializer?.({
-                materializationKey: 'mat-2',
-                activeServerDir: root,
-                baseDir: root,
-                rootDir: root,
-                connectedAccountMaterializationAuthority: {
-                    kind: 'legacy_unfenced_one_shot',
-                },
-                recordsByServiceId: new Map([['openai', openAiTokenRecord]]),
-                processEnv: { HOME: join(root, 'home') },
-            });
-            expect(tokenResult?.env).toEqual({
-                OPENAI_API_KEY: 'sk-test',
-                CODEX_SQLITE_HOME: expect.stringContaining(join('home', '.codex')),
-            });
-        } finally {
-            await rm(root, { recursive: true, force: true });
-        }
+        expect(codexAgent?.catalogEntry).not.toHaveProperty('getConnectedServicesMaterializer');
+        expect(codexAgent?.catalogEntry).not.toHaveProperty('getConnectedServiceRuntimeAuthAdapter');
+        expect(codexAgent?.catalogEntry).not.toHaveProperty('verifyResumeReachable');
+        expect(codexAgent?.catalogEntry).not.toHaveProperty('getVendorResumeSupport');
     });
 
     it('projects Codex CLI auth through the plugin runtime contribution', async () => {

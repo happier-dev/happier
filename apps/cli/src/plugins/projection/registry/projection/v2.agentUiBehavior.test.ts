@@ -29,6 +29,85 @@ function emptyRegistry(): ResolvedContributionRegistry {
 }
 
 describe('external Agent UI-behavior descriptor projection', () => {
+    it('projects manifest identity text equally for bundled and external Agents', () => {
+        const definition = PluginContributesV2Schema.parse({
+            agents: [{
+                id: 'acme-bundled',
+                title: 'Acme Bundled',
+                description: 'Bundled through the same public manifest contract.',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: {
+                    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                },
+            }],
+        }).agents[0]!;
+        const registry = {
+            ...emptyRegistry(),
+            agents: [{
+                id: definition.id,
+                identity: createPluginContributionIdentity({
+                    pluginId: 'acme.bundled',
+                    localId: definition.id,
+                }),
+                provenance: 'first_party' as const,
+                source: { kind: 'bundled' as const },
+                pluginId: 'acme.bundled',
+                definition: { kindVersion: 1 as const, id: definition.id, ownedBackendIds: [] },
+                richDefinition: { provenance: 'first_party' as const, definition },
+            }],
+        } satisfies ResolvedContributionRegistry;
+
+        expect(buildPluginProjectionV2({ registry, generation: 20 }).agentsById['acme-bundled'])
+            .toMatchObject({
+                title: 'Acme Bundled',
+                subtitle: 'Bundled through the same public manifest contract.',
+            });
+    });
+
+    it('qualifies public Connected Account purposes through the Agent package identity', () => {
+        const definition = PluginContributesV2Schema.parse({
+            agents: [{
+                id: 'acme-account-agent',
+                title: 'Acme Account Agent',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                connectedAccounts: [{
+                    purpose: 'primary',
+                    service: 'account',
+                    required: false,
+                }],
+                capabilities: {
+                    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                },
+            }],
+        }).agents[0]!;
+        const registry = {
+            ...emptyRegistry(),
+            agents: [{
+                id: definition.id,
+                identity: createPluginContributionIdentity({
+                    pluginId: 'acme.accounts',
+                    localId: definition.id,
+                }),
+                provenance: 'external' as const,
+                source: { kind: 'path' as const },
+                pluginId: 'acme.accounts',
+                definition: { kindVersion: 1 as const, id: definition.id, ownedBackendIds: [] },
+                richDefinition: { provenance: 'external' as const, definition },
+            }],
+        } satisfies ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({ registry, generation: 23 });
+        expect(projection.agentsById['acme-account-agent']?.connectedAccounts).toEqual([{
+            purpose: 'primary',
+            service: { pluginId: 'acme.accounts', localId: 'account' },
+            required: false,
+        }]);
+        expect(PluginProjectionV2Schema.parse(projection).agentsById['acme-account-agent']?.connectedAccounts)
+            .toEqual(projection.agentsById['acme-account-agent']?.connectedAccounts);
+    });
+
     it('carries a declared UI-behavior descriptor from the manifest onto the projection', () => {
         const definition = PluginContributesV2Schema.parse({
             agents: [{
@@ -55,11 +134,30 @@ describe('external Agent UI-behavior descriptor projection', () => {
                         },
                         newSession: { transcriptStorageModes: ['persisted', 'direct'] },
                     },
+                    session: {
+                        providerBehavior: {
+                            kind: 'session.providerBehavior.v1',
+                            participants: {
+                                sidechainIds: {
+                                    kind: 'toolCallInputString',
+                                    toolNames: ['AcmeWorker'],
+                                    inputKey: 'workerId',
+                                },
+                            },
+                        },
+                        visibleMessages: {
+                            kind: 'session.visibleMessages.v1',
+                            subagentKinds: ['acme_worker'],
+                            fallbackToolNames: ['AcmeWorker'],
+                            excludeJsonEventTypes: ['acme_internal'],
+                        },
+                    },
                 },
             }],
         }).agents[0]!;
 
         expect(definition.ui?.behavior).toBeDefined();
+        expect(definition.ui?.session).toBeDefined();
 
         const registry = {
             ...emptyRegistry(),

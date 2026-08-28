@@ -8,7 +8,9 @@ import { createResolvedContributionRegistry } from './createResolvedContribution
 import { buildPluginContributionRegistry } from './normalize/package';
 import { buildPluginProjectionV2 } from './projection/v2';
 import {
+    projectDaemonEmbeddedPluginUiRenderer,
     projectDaemonComposerSurfaceCatalog,
+    readCurrentAutomationEventSetupReactNativeCrashStateBindings,
     readCurrentComposerReactNativeCrashStateBindings,
 } from './composer';
 import { projectLoadedPluginContributes } from './resolvePluginContributions';
@@ -105,6 +107,39 @@ function loadedComposerPlugin(): LoadedPlugin {
 }
 
 describe('composer contribution projection families', () => {
+    it('refuses an embedded renderer request outside the registry current immutable generation', () => {
+        const pluginId = 'acme.composer';
+        const renderer = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId,
+            pluginVersion: '1.0.0',
+            identity: { pluginId, localId: 'setup' },
+            manifestPath: '/fixtures/acme.composer/plugin.json',
+            definition: {
+                id: 'setup',
+                kind: 'declarative',
+                root: { kind: 'text', text: 'Setup' },
+            },
+        } as const satisfies ResolvedUiRendererV2Contribution;
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+            uiRenderersV2: [renderer],
+            immutableGenerationIdsByPluginId: { [pluginId]: 'generation-current' },
+            activationTargets: [],
+        });
+
+        expect(projectDaemonEmbeddedPluginUiRenderer({
+            registry,
+            projection: buildPluginProjectionV2({ registry, generation: 27 }),
+            pluginUiHostRuntime: {},
+            modelsByRendererKey: {},
+            contributor: { pluginId, localId: 'event' },
+            immutableGenerationId: 'generation-retired',
+            renderer: { renderer: 'setup' },
+        })).toBeNull();
+    });
+
     it('normalizes omitted Composer families to empty arrays at the contribution-registry owner', () => {
         const populated = loadedComposerPlugin();
         const plugin: LoadedPlugin = {
@@ -426,6 +461,35 @@ describe('composer contribution projection families', () => {
             composerRegions: [region],
             uiRenderersV2: [renderer],
             immutableGenerationIdsByPluginId: { [pluginId]: immutableGenerationId },
+            automationEligibleEvents: [{
+                event: {
+                    id: `${pluginId}/repository-updated`,
+                    identity: { pluginId, localId: 'repository-updated' },
+                    immutableGenerationId,
+                    title: 'Repository updated',
+                    description: null,
+                    automation: {
+                        v: 1,
+                        eligible: true,
+                        source: {
+                            sourceContractVersion: 1,
+                            supportedObservationTransports: ['checkpointedPull'],
+                            sourceConfigSchema: { type: 'object', additionalProperties: false },
+                            setupActionRef: { pluginId, localId: 'configure-source' },
+                            setupSurface: { renderer: rendererId },
+                        },
+                    },
+                },
+                setupAction: {
+                    id: `${pluginId}/configure-source`,
+                    identity: { pluginId, localId: 'configure-source' },
+                    immutableGenerationId,
+                    title: 'Configure source',
+                    description: null,
+                    inputSchema: { type: 'object', additionalProperties: false },
+                    inputHints: null,
+                },
+            }],
         };
         const mount = {
             kind: 'composer' as const,
@@ -484,6 +548,82 @@ describe('composer contribution projection families', () => {
             renderer: renderer.identity,
             artifactDigest: crashState.token.artifactDigest,
         }]);
+
+        const automationMount = {
+            kind: 'automationEventSetupSurface' as const,
+            contribution: { pluginId, localId: 'repository-updated' },
+            immutableGenerationId,
+        };
+        expect(readCurrentAutomationEventSetupReactNativeCrashStateBindings({ registry, projection })).toEqual([{
+            mount: automationMount,
+            renderer: renderer.identity,
+            artifactDigest: crashState.token.artifactDigest,
+        }]);
+
+        const automationCrashState = {
+            ...crashState,
+            token: { ...crashState.token, mount: automationMount },
+        };
+        expect(projectDaemonEmbeddedPluginUiRenderer({
+            registry,
+            projection,
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    crashStatesByBindingKey: {
+                        [createReactNativeCrashStateBindingKey({ mount: automationMount, renderer: renderer.identity })]: automationCrashState,
+                    },
+                },
+            },
+            modelsByRendererKey: {},
+            contributor: automationMount.contribution,
+            immutableGenerationId,
+            renderer: { renderer: rendererId },
+            crashMount: automationMount,
+        })?.selectedRenderer).toMatchObject({
+            identity: renderer.identity,
+            availability: { state: 'disabled', reason: 'crash_disabled' },
+            crashState: automationCrashState,
+        });
+        const missingExactState = projectDaemonEmbeddedPluginUiRenderer({
+            registry,
+            projection,
+            pluginUiHostRuntime: { reactNativeBundles: { crashStatesByBindingKey: {} } },
+            modelsByRendererKey: {},
+            contributor: automationMount.contribution,
+            immutableGenerationId,
+            renderer: { renderer: rendererId },
+            crashMount: automationMount,
+        });
+        expect(missingExactState?.selectedRenderer).toMatchObject({
+            availability: { state: 'fallback', reason: 'crash_state_unavailable' },
+        });
+        expect(missingExactState?.selectedRenderer).not.toHaveProperty('crashState');
+
+        const retiredGenerationMount = {
+            ...automationMount,
+            immutableGenerationId: 'immutable-retired',
+        } as const;
+        expect(projectDaemonEmbeddedPluginUiRenderer({
+            registry,
+            projection,
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    crashStatesByBindingKey: {
+                        [createReactNativeCrashStateBindingKey({
+                            mount: retiredGenerationMount,
+                            renderer: renderer.identity,
+                        })]: { ...automationCrashState, token: { ...automationCrashState.token, mount: retiredGenerationMount } },
+                    },
+                },
+            },
+            modelsByRendererKey: {},
+            contributor: automationMount.contribution,
+            immutableGenerationId,
+            renderer: { renderer: rendererId },
+            crashMount: automationMount,
+        })?.selectedRenderer).toMatchObject({
+            availability: { state: 'fallback', reason: 'crash_state_unavailable' },
+        });
 
         const catalog = projectDaemonComposerSurfaceCatalog({
             registry,

@@ -155,11 +155,63 @@ describe('bundled PluginApi parity', () => {
             expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
             expect(activated.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
         }
+        for (const [pluginId, localId] of [
+            ['happier.scm.forge.github', 'triage/verify-github-review-workspace'],
+            ['happier.scm.forge.github', 'github/pull-request/submit-review'],
+            ['happier.scm.forge.github', 'github/pull-request/review-comment-create'],
+            ['happier.scm.forge.github', 'github/pull-request/thread-reply'],
+            ['happier.scm.forge.github', 'github/issue/comment'],
+            ['happier.scm.forge.gitlab', 'triage/verify-gitlab-review-workspace'],
+            ['happier.scm.forge.gitlab', 'triage/read-gitlab-raw-diff'],
+            ['happier.scm.forge.gitlab', 'gitlab/merge-request/submit-review'],
+            ['happier.scm.forge.gitlab', 'gitlab/merge-request/review-comment-create'],
+            ['happier.scm.forge.gitlab', 'gitlab/merge-request/thread-reply'],
+            ['happier.scm.forge.gitlab', 'gitlab/issue/comment'],
+            ['happier.scm.forge.bitbucket', 'triage-verify-review-workspace'],
+            ['happier.scm.forge.bitbucket', 'pull-request-submit-review'],
+            ['happier.scm.forge.bitbucket', 'pull-request-review-comment-create'],
+            ['happier.scm.forge.bitbucket', 'pull-request-review-comment-reply'],
+            ['happier.scm.forge.azure-devops', 'triage-verify-review-workspace'],
+            ['happier.scm.forge.azure-devops', 'pull-request-submit-review'],
+            ['happier.scm.forge.azure-devops', 'pull-request-thread-comment-create'],
+            ['happier.scm.forge.azure-devops', 'pull-request-thread-reply'],
+        ] as const) {
+            expect(activated.targetRegistrations).toContainEqual(expect.objectContaining({
+                pluginId,
+                registration: expect.objectContaining({ family: 'actions', localId }),
+            }));
+        }
+        expect(activated.targetRegistrations).not.toContainEqual(expect.objectContaining({
+            pluginId: 'happier.scm.forge.github',
+            registration: expect.objectContaining({
+                family: 'actions',
+                localId: 'triage/list-github-comments',
+            }),
+        }));
+
+        await activated.activateContributionsOnDemand([
+            { pluginId: 'happier.sentry', family: 'actions', localId: 'sentry/get-issue' },
+            { pluginId: 'happier.posthog', family: 'actions', localId: 'posthog/get' },
+        ]);
+        for (const [pluginId, localId] of [
+            ['happier.sentry', 'sentry/list-issue-events'],
+            ['happier.posthog', 'posthog/issue-activity'],
+            ['happier.posthog', 'posthog/code-variables'],
+        ] as const) {
+            expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
+            expect(activated.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
+            expect(activated.targetRegistrations).toContainEqual(expect.objectContaining({
+                pluginId,
+                registration: expect.objectContaining({ family: 'actions', localId }),
+            }));
+        }
 
         // A bundled Composer attachment is reached the same way: its plugin is
         // cold until the exact staged attachment is demanded.
         const attachment = (contributes.composerAttachments ?? []).find((entry) => (
-            entry.definition.runtime !== undefined
+            entry.pluginId === 'happier.triage'
+            && entry.identity.localId === 'entry'
+            && entry.definition.runtime !== undefined
         ));
         expect(attachment?.pluginId).toBeDefined();
         if (!attachment?.pluginId) {
@@ -175,7 +227,14 @@ describe('bundled PluginApi parity', () => {
 
         expect(activated.activatedPluginIds.has(attachment.pluginId)).toBe(true);
         expect(activated.pluginDiagnosticsByPluginId[attachment.pluginId] ?? []).toEqual([]);
+        expect(activated.targetRegistrations).toContainEqual(expect.objectContaining({
+            pluginId: 'happier.triage',
+            registration: expect.objectContaining({
+                family: 'actions',
+                localId: 'sessions/start-pull-request-review-v1',
+            }),
+        }));
 
         await activated.dispose();
-    });
+    }, 120_000);
 });

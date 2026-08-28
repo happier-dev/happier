@@ -49,6 +49,7 @@ type ExecuteAutomationConversationAction = NonNullable<ActionExecutorDeps['autom
 type AutomationConversationActionCallerFrame = Readonly<{
   pluginId: string;
   contributionLocalId: string;
+  immutableGenerationId: string;
   materialization: PluginMachineMaterializationRefV1;
 }>;
 
@@ -163,13 +164,41 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
     if (!materialization.success || materialization.data.pluginId !== args.caller.pluginId) {
       return failure('automation_conversation_caller_materialization_unavailable');
     }
+    const immutableGenerationId = args.caller.immutableGenerationId;
+    if (immutableGenerationId === undefined || !revalidateCallerImmutableGeneration) {
+      return failure('automation_conversation_caller_generation_unavailable');
+    }
+    if (!revalidateCallerMaterialization) {
+      return failure('automation_conversation_caller_materialization_unavailable');
+    }
     const caller: AutomationConversationActionCallerFrame = {
       pluginId: args.caller.pluginId,
       contributionLocalId,
+      immutableGenerationId,
       materialization: materialization.data,
+    };
+    const revalidateCaller = createPluginActionCallerCurrentnessCheck({
+      caller: {
+        pluginId: args.caller.pluginId,
+        immutableGenerationId,
+        materialization: materialization.data,
+      },
+      revalidateMaterialization: revalidateCallerMaterialization,
+      revalidateImmutableGeneration: revalidateCallerImmutableGeneration,
+    });
+    const callerNoLongerCurrent = async (): Promise<
+      Readonly<{ ok: false; errorCode: string; error: string }> | null
+    > => {
+      const currentness = await revalidateCaller();
+      if (currentness.kind === 'current') return null;
+      return failure(currentness.kind === 'generationUnavailable'
+        ? 'automation_conversation_caller_generation_unavailable'
+        : 'automation_conversation_caller_materialization_unavailable');
     };
 
     if (args.actionId === 'automation.conversation.targets.list') {
+      const staleCaller = await callerNoLongerCurrent();
+      if (staleCaller) return staleCaller;
       return await transport.execute(args.actionId, {
         v: 1,
         caller,
@@ -177,6 +206,8 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
       }, args.signal);
     }
     if (args.actionId === 'automation.conversation.target.verify') {
+      const staleCaller = await callerNoLongerCurrent();
+      if (staleCaller) return staleCaller;
       return await transport.execute(args.actionId, {
         v: 1,
         caller,
@@ -189,35 +220,9 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
     // crypto materialization, evidence construction and sealing can all await,
     // and the outer dispatcher rechecks the caller only after this host Action
     // returns — already past the server write. The exact stamped caller is
-    // therefore reproven immediately before every admission request. The reads
-    // above are not durable and do not acquire this write-effect fence.
-    const revalidateCaller = revalidateCallerMaterialization
-      ? createPluginActionCallerCurrentnessCheck({
-        caller: {
-          pluginId: args.caller.pluginId,
-          ...(args.caller.immutableGenerationId === undefined
-            ? {}
-            : { immutableGenerationId: args.caller.immutableGenerationId }),
-          materialization: materialization.data,
-        },
-        revalidateMaterialization: revalidateCallerMaterialization,
-        ...(revalidateCallerImmutableGeneration
-          ? { revalidateImmutableGeneration: revalidateCallerImmutableGeneration }
-          : {}),
-      })
-      : null;
-    const admissionCallerNoLongerCurrent = async (): Promise<
-      Readonly<{ ok: false; errorCode: string; error: string }> | null
-    > => {
-      // A host that cannot prove the exact stamped caller is still current
-      // must not make the durable write at all.
-      const currentness = await revalidateCaller?.()
-        ?? { kind: 'materializationUnavailable' as const };
-      if (currentness.kind === 'current') return null;
-      return failure(currentness.kind === 'generationUnavailable'
-        ? 'automation_conversation_caller_generation_unavailable'
-        : 'automation_conversation_caller_materialization_unavailable');
-    };
+    // therefore reproven immediately before every admission request. The read
+    // operations above use the same exact-generation check at their own HTTP
+    // boundary rather than relying on a later outer-dispatcher check.
     const accountEncryption = await resolveAccountEncryption(args.signal);
     if (accountEncryption === null) {
       return failure('automation_conversation_account_encryption_unavailable');
@@ -247,13 +252,12 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
             replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
               mode: 'plain',
               correspondence: { automationId: input.automationId, occurrenceKey },
-              templateVersion: input.templateVersion,
               opaqueContext: input.resultDelivery.opaqueContext,
             }),
           };
         })();
-      const callerNoLongerCurrent = await admissionCallerNoLongerCurrent();
-      if (callerNoLongerCurrent) return callerNoLongerCurrent;
+      const staleCaller = await callerNoLongerCurrent();
+      if (staleCaller) return staleCaller;
       return await transport.execute(
         'automation.conversation.admit',
         {
@@ -292,7 +296,6 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
           material,
           randomBytes,
           correspondence: { automationId: input.automationId, occurrenceKey },
-          templateVersion: input.templateVersion,
           opaqueContext: input.resultDelivery.opaqueContext,
         }),
       };
@@ -304,7 +307,6 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
         t: 'encrypted',
         accountCurrentness: accountEncryption.witness,
         automationId: input.automationId,
-        templateVersion: input.templateVersion,
         occurrenceKey,
         occurredAt: input.occurredAt,
         triggerEvidenceEnvelope: sealAutomationOccurrenceTriggerEvidenceEnvelopeV1({
@@ -329,8 +331,8 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
         ...(replyHandoff === undefined ? {} : { replyHandoff }),
       },
     });
-    const callerNoLongerCurrent = await admissionCallerNoLongerCurrent();
-    if (callerNoLongerCurrent) return callerNoLongerCurrent;
+    const staleCaller = await callerNoLongerCurrent();
+    if (staleCaller) return staleCaller;
     return await transport.execute('automation.conversation.admit', request, args.signal);
   };
 }

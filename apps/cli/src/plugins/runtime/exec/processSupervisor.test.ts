@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,6 +9,41 @@ import {
 } from './processSupervisor';
 
 describe('spawnSupervisedPluginProcess', () => {
+    it('terminates the owned POSIX process group after its launcher root exits', async () => {
+        if (process.platform === 'win32') return;
+        const directory = mkdtempSync(join(tmpdir(), 'happier-supervised-tree-'));
+        const childPidPath = join(directory, 'child.pid');
+        const supervised = spawnSupervisedPluginProcess({
+            command: process.execPath,
+            args: ['-e', [
+                'const { spawn } = require("node:child_process");',
+                'const fs = require("node:fs");',
+                'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+                `fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
+            ].join('\n')],
+            env: {},
+            spawnOptions: { detached: true },
+        });
+        let childPid: number | null = null;
+        try {
+            await supervised.handle.wait();
+            await vi.waitFor(() => expect(existsSync(childPidPath)).toBe(true));
+            childPid = Number.parseInt(readFileSync(childPidPath, 'utf8'), 10);
+            expect(Number.isSafeInteger(childPid)).toBe(true);
+            expect(() => process.kill(childPid!, 0)).not.toThrow();
+
+            await expect(supervised.dispose('hostShutdown')).resolves.toBeUndefined();
+            await vi.waitFor(() => {
+                expect(() => process.kill(childPid!, 0)).toThrow();
+            }, { timeout: 3_000 });
+        } finally {
+            if (childPid) {
+                try { process.kill(childPid, 'SIGKILL'); } catch { /* already gone */ }
+            }
+            rmSync(directory, { recursive: true, force: true });
+        }
+    }, 10_000);
+
     it('keeps process identity host-private without narrowing semantic handle operations', async () => {
         const supervised = spawnSupervisedPluginProcess({
             command: process.execPath,
@@ -139,12 +177,13 @@ describe('spawnSupervisedPluginProcess', () => {
     });
 
     it('bounds disposal after exit observation even when close reconciliation never arrives', async () => {
+        const terminateProcessTree = vi.fn(async () => undefined);
         const supervised = spawnSupervisedPluginProcess({
             command: process.execPath,
             args: ['-e', 'setInterval(() => {}, 1000)'],
             env: {},
             terminationJoinTimeoutMs: 20,
-            terminateProcessTree: async () => undefined,
+            terminateProcessTree,
         });
         const dispose = (() => {
             supervised.child.emit('exit', 0, null);
@@ -164,6 +203,7 @@ describe('spawnSupervisedPluginProcess', () => {
                     requestedBy: { kind: 'none' },
                 },
             });
+            expect(terminateProcessTree).toHaveBeenCalledOnce();
         } finally {
             supervised.child.kill('SIGKILL');
             await dispose;

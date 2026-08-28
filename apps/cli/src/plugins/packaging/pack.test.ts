@@ -845,87 +845,44 @@ describe('packLocalPlugin', () => {
     }
   });
 
-  it('keeps one-file authoring simple and packs a package-root Session Agent with a distinct named runner leaf', async () => {
+  it('packs the maintained public Session Agent example with its distinct named runner leaf', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-code-defined-session-agent-pack-'));
     const root = join(parent, 'plugin');
     const archivePath = join(parent, 'session-agent.tgz');
     const extractedRoot = join(parent, 'extracted');
     try {
-      await mkdir(join(root, 'agent'), { recursive: true });
-      await writeFile(join(root, 'package.json'), JSON.stringify({
-        name: 'happier-plugin-acme-session-agent',
-        version: '1.0.0',
-        type: 'module',
-        keywords: ['happier-plugin'],
-        happier: { manifest: '.happier-plugin/plugin.json' },
-        files: ['index.ts', 'agent/runtime.ts'],
-      }, null, 2), 'utf8');
-      await writeFile(join(root, 'agent', 'runtime.ts'), [
-        'export const createSessionAgentRuntime = () => ({',
-        '  sessions: { open() { throw new Error("unused"); } },',
-        '});',
-        '',
-      ].join('\n'), 'utf8');
-      const activationSource = [
-        "import { createSessionAgentRuntime } from './agent/runtime.js';",
-        'export const manifest = {',
-        "  version: '1.0.0', id: 'acme.session-agent', schemaVersion: 2,",
-        "  displayName: 'Session Agent', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },",
-        "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
-        '  contributes: { agents: [{',
-        "    id: 'session-agent', title: 'Session Agent', runtime: { kind: 'custom' }, primary: 'sessions',",
-        "    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },",
-        '  }] },',
-        '};',
-        'export function activate(api) {',
-        "  api.agents.register('session-agent', createSessionAgentRuntime, {",
-        '    sessionRunnerFactory: {',
-        "      module: './agent/runtime.js', export: 'createSessionAgentRuntime', runtimeApiVersion: 1,",
-        '    },',
-        '  });',
-        '}',
-        '',
-      ].join('\n');
-      await writeFile(join(root, 'index.ts'), activationSource, 'utf8');
-
-      const singleFileResult = await packLocalPlugin({
-        locator: join(root, 'index.ts'),
-        outPath: join(parent, 'single-file-session-agent.tgz'),
-      });
-      expect(singleFileResult).toMatchObject({ ok: false });
-
-      const wrongExportRoot = join(parent, 'wrong-export-plugin');
-      await cp(root, wrongExportRoot, { recursive: true });
-      await writeFile(
-        join(wrongExportRoot, 'index.ts'),
-        activationSource.replace(
-          "export: 'createSessionAgentRuntime'",
-          "export: 'missingSessionAgentRuntime'",
-        ),
+      const maintainedExampleRoot = fileURLToPath(new URL(
+        '../../../../../packages/plugin-sdk/examples/session-agent/',
+        import.meta.url,
+      ));
+      await cp(maintainedExampleRoot, root, { recursive: true });
+      const activationSource = await readFile(join(root, 'index.ts'), 'utf8');
+      const runnerSource = await readFile(
+        join(root, 'agent', 'deterministicSessionAgent.ts'),
         'utf8',
       );
-      const wrongExportResult = await packLocalPlugin({
-        locator: wrongExportRoot,
-        outPath: join(parent, 'wrong-export-session-agent.tgz'),
-      });
-      expect(wrongExportResult).toMatchObject({
-        ok: false,
-        diagnostics: [expect.objectContaining({
-          message: expect.stringMatching(/runner factory export.*does not match/u),
-        })],
-      });
+
+      expect(activationSource).toContain("from '@happier-dev/plugin-sdk'");
+      expect(activationSource).toContain('definePlugin({');
+      expect(activationSource).not.toContain('api.agents.register');
+      expect(runnerSource).toContain("from '@happier-dev/plugin-sdk/agents/runtime'");
+      expect(activationSource).toContain("open: ['create', 'resume']");
+      expect(activationSource).toContain('cancel: true');
+
       const result = await packLocalPlugin({ locator: root, outPath: archivePath });
 
       expect(result, result.ok ? '' : result.diagnostics.map((entry) => entry.message).join('\n'))
-        .toMatchObject({ ok: true, pluginId: 'acme.session-agent' });
+        .toMatchObject({ ok: true, pluginId: 'examples.session-agent' });
       await mkdir(extractedRoot);
       await tar.x({ file: archivePath, cwd: extractedRoot });
       const packagedRoot = join(extractedRoot, 'package');
       const activationModule = await import(pathToFileURL(join(packagedRoot, 'dist', 'index.js')).href) as Readonly<{
         activate(api: Readonly<{ agents: Readonly<{ register(id: string, factory: unknown): void }> }>): void;
       }>;
-      const runnerModule = await import(pathToFileURL(join(packagedRoot, 'dist', 'agent', 'runtime.js')).href) as Readonly<{
-        createSessionAgentRuntime: unknown;
+      const runnerModule = await import(pathToFileURL(
+        join(packagedRoot, 'dist', 'agent', 'deterministicSessionAgent.js'),
+      ).href) as Readonly<{
+        createDeterministicSessionAgentRuntime: unknown;
       }>;
       let registeredFactory: unknown;
       activationModule.activate({
@@ -935,15 +892,75 @@ describe('packLocalPlugin', () => {
           },
         },
       });
-      expect(registeredFactory).toBe(runnerModule.createSessionAgentRuntime);
+      expect(registeredFactory).toBe(runnerModule.createDeterministicSessionAgentRuntime);
       const packagedPackageJson = JSON.parse(
         await readFile(join(packagedRoot, 'package.json'), 'utf8'),
       ) as { files?: unknown };
-      expect(packagedPackageJson.files).toContain('dist/agent/runtime.js');
+      expect(packagedPackageJson.files).toContain('dist/agent/deterministicSessionAgent.js');
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
+
+  it('rejects the maintained Session Agent when addressed as a one-file plugin', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-single-file-session-agent-pack-'));
+    const root = join(parent, 'plugin');
+    try {
+      await cp(fileURLToPath(new URL(
+        '../../../../../packages/plugin-sdk/examples/session-agent/',
+        import.meta.url,
+      )), root, { recursive: true });
+
+      const result = await packLocalPlugin({
+        locator: join(root, 'index.ts'),
+        outPath: join(parent, 'single-file-session-agent.tgz'),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          message: expect.stringMatching(/distinct named runner leaf/u),
+        })],
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('rejects a maintained Session Agent whose runner export no longer corresponds', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-wrong-export-session-agent-pack-'));
+    const root = join(parent, 'plugin');
+    try {
+      await cp(fileURLToPath(new URL(
+        '../../../../../packages/plugin-sdk/examples/session-agent/',
+        import.meta.url,
+      )), root, { recursive: true });
+      const activationPath = join(root, 'index.ts');
+      const activationSource = await readFile(activationPath, 'utf8');
+      await writeFile(
+        activationPath,
+        activationSource.replace(
+          "export: 'createDeterministicSessionAgentRuntime'",
+          "export: 'missingSessionAgentRuntime'",
+        ),
+        'utf8',
+      );
+
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'wrong-export-session-agent.tgz'),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostics: [expect.objectContaining({
+          message: expect.stringMatching(/runner factory export.*does not match/u),
+        })],
+      });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it('packs and stages a dependency-closed external Voice provider artifact', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-packed-voice-'));
@@ -977,16 +994,17 @@ describe('packLocalPlugin', () => {
       if (!staged.ok) return;
       expect(staged.candidate.manifest.value.entrypoints).toEqual({
         daemon: './dist/daemon.js',
+        development: './src/voiceDaemon.ts',
       });
       expect(staged.candidate.inventory.map(({ path }) => path)).toEqual(expect.arrayContaining([
         'dist/daemon.js',
-        'dist/happier-plugin-ui/react-native/voice-runtime-web/index.js',
+        'dist/happier-plugin-ui/react-native-web/voice-runtime-web/entry.mjs.bundle',
       ]));
       const packedExecutableSources = await Promise.all([
         readFile(join(staged.candidate.rootPath, 'dist/daemon.js'), 'utf8'),
         readFile(join(
           staged.candidate.rootPath,
-          'dist/happier-plugin-ui/react-native/voice-runtime-web/index.js',
+          'dist/happier-plugin-ui/react-native-web/voice-runtime-web/entry.mjs.bundle',
         ), 'utf8'),
       ]);
       expect(packedExecutableSources.join('\n')).not.toMatch(

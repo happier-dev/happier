@@ -85,6 +85,79 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('passes one executable-parser-normalized input to host admission and the handler', async () => {
+        const inputParser = vi.fn((input: unknown) => Object.freeze({
+            success: true as const,
+            data: Object.freeze({
+                value: String((input as Readonly<Record<string, unknown>>).value),
+            }),
+        }));
+        const revalidateConnectedAccountActionFormInput = vi.fn(async () => null);
+        const handler = vi.fn(async (input: Readonly<{ value: string }>) => ({ echoed: input.value }));
+        const registry = createRegistry({
+            revalidateConnectedAccountActionFormInput,
+            actions: [{
+                ...action({
+                    inputSchema: {
+                        type: 'object',
+                        properties: { value: { type: 'string' } },
+                        required: ['value'],
+                        additionalProperties: true,
+                    },
+                }),
+                inputParser,
+                handler,
+            }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'normalized', ignored: true },
+            surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'normalized' } });
+
+        expect(inputParser).toHaveBeenCalledOnce();
+        expect(revalidateConnectedAccountActionFormInput).toHaveBeenCalledWith(expect.objectContaining({
+            input: { value: 'normalized' },
+        }));
+        expect(handler).toHaveBeenCalledWith(
+            { value: 'normalized' },
+            expect.any(Object),
+        );
+        registry.dispose();
+    });
+
+    it('stamps one stable host clock value on the admitted Action context', async () => {
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_777_777_777_777);
+        const handler = vi.fn(async (_input, context: PluginInvocationContext) => ({
+            first: context.invokedAtMs,
+            second: context.invokedAtMs,
+        }));
+        const registry = createRegistry({ actions: [{
+            ...action({
+                resultSchema: {
+                    type: 'object',
+                    properties: {
+                        first: { type: 'number' },
+                        second: { type: 'number' },
+                    },
+                    required: ['first', 'second'],
+                    additionalProperties: false,
+                },
+            }),
+            handler,
+        }] });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+        })).resolves.toEqual({
+            status: 'executed',
+            value: { first: 1_777_777_777_777, second: 1_777_777_777_777 },
+        });
+        now.mockRestore();
+    });
+
     it('requires current intent before a safe handler when the host stamps Action-settings approval', async () => {
         const handler = vi.fn(async () => ({ echoed: 'approved' }));
         const registry = createRegistry({ actions: [{ ...action(), handler }] });

@@ -229,6 +229,8 @@ export function createStablePluginApprovalQueueOwner(
                 assertInvocationCurrent(seed, signal);
                 const result = await executor.execute(actionId, boundInput, {
                     signal,
+                    surface: 'plugin',
+                    authority: 'account_automation',
                     actionCaller,
                     placement: null,
                     defaultSessionId: seed.session?.id ?? null,
