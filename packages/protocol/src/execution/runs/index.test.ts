@@ -113,21 +113,13 @@ describe('executionRuns protocol', () => {
     });
   });
 
-  it('accepts the bounded undeployed dev user-transcript commit alias without admitting mixed vocabulary', () => {
-    // Temporary alias provenance:
-    // dev@877ee97a0df346a1daaa541632dc42643d533120 dirty/current
-    // packages/protocol/src/execution/runs/index.ts
-    expect(ExecutionRunUserTranscriptCommitRequestSchema.parse({
+  it('rejects the undeployed text/displayText draft and mixed transcript vocabularies', () => {
+    expect(ExecutionRunUserTranscriptCommitRequestSchema.safeParse({
       runId: 'run_current_dev',
       text: 'Provider-facing text',
       displayText: 'User-visible text',
       localId: 'current-dev-local-id',
-    })).toMatchObject({
-      runId: 'run_current_dev',
-      text: 'Provider-facing text',
-      displayText: 'User-visible text',
-      localId: 'current-dev-local-id',
-    });
+    }).success).toBe(false);
 
     expect(ExecutionRunUserTranscriptCommitRequestSchema.safeParse({
       runId: 'run_mixed',

@@ -9,12 +9,24 @@ import {
   measurePluginJsonUtf8Bytes,
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../plugins/contributions/strictJsonValue.js';
+import {
+  EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH,
+  EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1,
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+} from './externalActionLimits.js';
+
+export {
+  EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH,
+  EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1,
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+};
 
 /** Shared finite HTTP request ceiling for both public Action API origins. */
 export const EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
-
-/** Maximum serialized UTF-8 bytes for the complete public response envelope. */
-export const EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES = 24_000_000;
 
 /**
  * Minimum Socket.IO capacity for a server-to-daemon Action request. This
@@ -33,8 +45,6 @@ export const EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 = '/v1/actions/' as const;
  * finite scalar bound matches the other external Action identity fields while
  * admission remains exclusively with the target daemon's Action registry.
  */
-export const EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH = 256;
-
 export const ExternalActionActionIdV1Schema = z.string()
   .min(1)
   .max(EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH)
@@ -101,9 +111,9 @@ export function projectExternalActionHttpErrorV1(code: ExternalActionHttpErrorCo
 export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 =
   'daemon.actions.external.dispatch' as const;
 
-const ExternalActionRequestIdV1Schema = z.string()
+export const ExternalActionRequestIdV1Schema = z.string()
   .min(1)
-  .max(128)
+  .max(EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1)
   .refine((value) => value.trim() === value, 'requestId must not have outer whitespace');
 
 const ExternalActionExecutionSuccessV1Schema = z.object({

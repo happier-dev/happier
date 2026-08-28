@@ -1651,6 +1651,36 @@ describe('createActionExecutor (session control)', () => {
     },
   );
 
+  it.each(['api', 'plugin'] as const)(
+    'rejects %s automation from answering a present-user action request',
+    async (surface) => {
+      const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
+      const executor = createExecutor({ sessionUserActionAnswer });
+
+      const res = await executor.execute(
+        'session.user_action.answer' as any,
+        surface === 'plugin'
+          ? { requestId: 'request-1', decision: 'approve' }
+          : { sessionId: 's1', requestId: 'request-1', decision: 'approve' },
+        {
+          surface,
+          authority: 'account_automation',
+          defaultSessionId: surface === 'plugin' ? 's1' : null,
+          ...(surface === 'api'
+            ? { actionCaller: { kind: 'host' } }
+            : { actionCaller: { kind: 'plugin', pluginId: 'acme.test' } }),
+        } as any,
+      );
+
+      expect(res).toEqual({
+        ok: false,
+        errorCode: 'present_user_required',
+        error: 'present_user_required',
+      });
+      expect(sessionUserActionAnswer).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns unsupported_action when session.user_action.answer is not implemented by deps', async () => {
     const executor = createExecutor({ sessionUserActionAnswer: undefined as any });
 

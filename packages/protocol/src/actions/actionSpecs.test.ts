@@ -935,16 +935,25 @@ describe('Action Spec Registry', () => {
 
   it('classifies every current ActionSpec explicitly for API and plugin invocation', () => {
     for (const spec of listActionSpecs()) {
+      const isClientPlaced = spec.executionPlacement === 'client';
       expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'api')).toBe(true);
       expect(typeof spec.surfaces.api).toBe('boolean');
       expect(spec.surfaces.api, spec.id).toBe(
-        !isInternalActionId(spec.id) && !isPluginProvenanceOnlyActionId(spec.id),
+        !isClientPlaced
+          && !isInternalActionId(spec.id)
+          && !isPluginProvenanceOnlyActionId(spec.id),
       );
       expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'plugin')).toBe(true);
       expect(typeof spec.surfaces.plugin).toBe('boolean');
       expect(spec.surfaces.plugin, spec.id).toBe(
-        !isInternalActionId(spec.id) && !isPluginSurfaceExcludedActionId(spec.id),
+        !isClientPlaced && !isPluginSurfaceExcludedActionId(spec.id),
       );
+      expect(PublicActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.api);
+      expect(PluginInvocableActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.plugin);
+      expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, spec.id), spec.id).toBe(spec.surfaces.api);
+      expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, spec.id), spec.id).toBe(spec.surfaces.api);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, spec.id), spec.id).toBe(spec.surfaces.plugin);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, spec.id), spec.id).toBe(spec.surfaces.plugin);
 
       if (
         spec.requiredAuthority === 'present_user'
@@ -983,10 +992,12 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('daemon.promptRegistry.install').surfaces.plugin).toBe(true);
     expect(getActionSpec('sessions.external.materialize.start').surfaces.plugin).toBe(true);
     // CONTRACTS.md C1: the six-method `SessionsService.external` contextual
-    // service is the author capability. Candidate discovery, link/attach,
+    // service is the author capability. Candidate discovery, linking,
     // transcript page/read-after and raw durable takeover Start stay off the
     // plugin projection: the Action executor serves them only for a host
     // caller, so publishing them would compile for authors and then fail.
+    // Dynamic follow lifetime is exposed only through followTranscript; the
+    // low-level ephemeral lease Actions remain host/RPC compatibility routes.
     expect(
       listActionSpecs()
         .filter((spec) => spec.id.startsWith('sessions.external.') && spec.surfaces.plugin !== true)
@@ -994,12 +1005,28 @@ describe('Action Spec Registry', () => {
         .sort(),
     ).toEqual([
       'sessions.external.candidates.list',
+      'sessions.external.follow',
       'sessions.external.link.ensure',
       'sessions.external.takeover',
       'sessions.external.takeover.start',
       'sessions.external.transcript.page',
       'sessions.external.transcript.readAfter',
+      'sessions.external.unfollow',
     ]);
+    for (const actionId of [
+      'sessions.external.follow',
+      'sessions.external.unfollow',
+    ] as const) {
+      expect(getActionSpec(actionId).surfaces.plugin, actionId).toBe(false);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success, actionId).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId), actionId).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId), actionId).toBe(false);
+    }
+    const durableBackgroundFollowActionId = 'sessions.external.backgroundFollow.set';
+    expect(getActionSpec(durableBackgroundFollowActionId).surfaces.plugin).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse(durableBackgroundFollowActionId).success).toBe(true);
+    expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, durableBackgroundFollowActionId)).toBe(true);
+    expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, durableBackgroundFollowActionId)).toBe(true);
     // Excluding them from the plugin projection never removes the host route
     // the current RPC/API clients already use.
     for (const spec of listActionSpecs()) {
@@ -1051,13 +1078,44 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
 
-  it('keeps permission approval discoverable while present-user authority gates execution', () => {
+  it('keeps permission approval discoverable while binding a strict plugin request to the current Session', async () => {
     const permission = getActionSpec('session.permission.respond');
     const userAction = getActionSpec('session.user_action.answer');
+    expect(permission.requiredAuthority).toBe('present_user');
+    expect(userAction.requiredAuthority).toBe('present_user');
     const permissionInput = permission.surfaceBindings?.plugin?.inputSchema;
     const userActionInput = userAction.surfaceBindings?.plugin?.inputSchema;
 
-    expect(permissionInput).toBeUndefined();
+    expect(permissionInput?.parse({
+      requestId: 'permission-1',
+      decision: 'allow',
+    })).toEqual({
+      requestId: 'permission-1',
+      decision: 'allow',
+    });
+    expect(permissionInput?.safeParse({
+      requestId: 'permission-1',
+      decision: 'allow',
+      updatedPermissions: { mode: 'forged' },
+    }).success).toBe(false);
+    expect(permissionInput?.safeParse({
+      sessionId: 'session-forged',
+      requestId: 'permission-1',
+      decision: 'allow',
+    }).success).toBe(false);
+    expect(await permission.surfaceBindings?.plugin?.bindInput?.({
+      requestId: 'permission-1',
+      decision: 'allow',
+    }, {
+      actionId: permission.id,
+      surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'acme.permissions' },
+      defaultSessionId: 'session-current',
+    })).toEqual({
+      sessionId: 'session-current',
+      requestId: 'permission-1',
+      decision: 'allow',
+    });
     expect(permission.surfaces).toMatchObject({
       ui: true,
       cli: true,
@@ -1188,12 +1246,12 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('projects bounded subagent reads onto the trusted Plugin surface while retaining raw mutations as RPC-only', () => {
-    const rawSubagentActionIds = [
+  it('keeps all raw subagent registry Actions RPC-only', () => {
+    const internalSubagentActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
@@ -1201,24 +1259,19 @@ describe('Action Spec Registry', () => {
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    const pluginReadableActionIds = new Set([
-      'sessions.subagents.list',
-      'sessions.subagents.get',
-      'sessions.subagents.watch',
-    ]);
-
-    for (const actionId of rawSubagentActionIds) {
+    for (const actionId of internalSubagentActionIds) {
       const spec = getActionSpec(actionId);
-      const isPluginReadable = pluginReadableActionIds.has(actionId);
       expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.plugin).toBe(isPluginReadable);
-      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(isPluginReadable);
-      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(isPluginReadable);
-      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(isPluginReadable);
-      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(false);
-      expect(isInternalActionId(actionId)).toBe(
-        !isPluginReadable,
-      );
+      expect(spec.surfaces.api).toBe(false);
+      expect(spec.surfaces.plugin).toBe(false);
+      expect(PublicActionIdSchema.safeParse(actionId).success).toBe(false);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(false);
+      expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, actionId)).toBe(false);
+      expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(false);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
+      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(true);
+      expect(isInternalActionId(actionId)).toBe(true);
     }
 
     const contextualExternalActionId = 'sessions.external.candidates.list';
@@ -1375,7 +1428,6 @@ describe('Action Spec Registry', () => {
 
     for (const actionId of [
       'sessions.external.status.get',
-      'sessions.external.unfollow',
       'sessions.external.backgroundFollow.set',
     ] as const) {
       const spec = getActionSpec(actionId);
@@ -1428,41 +1480,11 @@ describe('Action Spec Registry', () => {
       }).success, actionId).toBe(false);
     }
 
-    // A follow lease is the one External Session result a caller re-requests on
-    // a timer, so its terminal classification is part of the public contract:
-    // the daemon's authored boolean survives the projection while the daemon's
-    // own message never does.
+    // Low-level ephemeral lease Actions retain their domain/RPC schemas but
+    // publish no plugin projection; followTranscript owns author lifetime.
     const follow = getActionSpec('sessions.external.follow');
-    expect(await follow.surfaceBindings?.plugin?.projectOutput?.({
-      ok: false,
-      errorCode: 'agent_unavailable',
-      error: 'external_session_follow_unavailable',
-      retryable: false,
-      providerMessage: 'private provider detail',
-    }, {
-      actionId: follow.id,
-      surface: 'plugin',
-      caller: { kind: 'plugin', pluginId: 'fixture' },
-    })).toEqual({
-      ok: false,
-      errorCode: 'agent_unavailable',
-      error: 'external_session_follow_unavailable',
-      retryable: false,
-    });
-    // A released daemon omits the field; the projection must not invent one.
-    expect(await follow.surfaceBindings?.plugin?.projectOutput?.({
-      ok: false,
-      errorCode: 'machine_offline',
-      error: 'machine_offline',
-    }, {
-      actionId: follow.id,
-      surface: 'plugin',
-      caller: { kind: 'plugin', pluginId: 'fixture' },
-    })).toEqual({
-      ok: false,
-      errorCode: 'machine_offline',
-      error: 'machine_offline',
-    });
+    expect(follow.surfaceBindings?.plugin).toBeUndefined();
+    expect(getActionSpec('sessions.external.unfollow').surfaceBindings?.plugin).toBeUndefined();
     expect(follow.outputSchema?.safeParse({
       ok: false,
       errorCode: 'agent_unavailable',
@@ -1963,10 +1985,12 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('execution.run.wait').surfaces).toMatchObject({ voice: false, plugin: true, api: true });
   });
 
-  it('surfaces action discovery tools on both agent and external mcp', () => {
-    const spec = getActionSpec('action.spec.search');
-    expect(spec.surfaces.agent).toBe(true);
-    expect(spec.surfaces.mcp).toBe(true);
+  it('surfaces Action discovery and machine listing on the credential-aware CLI', () => {
+    for (const actionId of ['action.spec.search', 'action.spec.get', 'machines.list'] as const) {
+      expect(getActionSpec(actionId).surfaces.cli, actionId).toBe(true);
+    }
+    expect(getActionSpec('action.spec.search').surfaces.agent).toBe(true);
+    expect(getActionSpec('action.spec.search').surfaces.mcp).toBe(true);
   });
 
   it('exposes only the MCP-capable session targeting Action outside the voice client', () => {
@@ -2721,6 +2745,36 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.api).toBe(false);
     expect(spec.surfaces.rpc).toBe(false);
     expect(isPluginProvenanceOnlyActionId(spec.id)).toBe(true);
+
+    expect(spec.inputSchema.parse({
+      cwd: '/repo',
+      displayName: 'feature',
+      sourceTip: {
+        repository: {
+          kind: 'github',
+          deployment: 'https://github.com',
+          repository: 'acme/repository',
+        },
+        cloneUrl: 'https://github.com/acme/repository.git',
+        branch: 'feature',
+        sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+        fetchRef: 'refs/heads/feature',
+      },
+      verification: { targetPath: '/repo/.happier/worktrees/feature' },
+    })).toEqual(expect.objectContaining({
+      verification: { targetPath: '/repo/.happier/worktrees/feature' },
+    }));
+    expect(spec.outputSchema.parse({
+      success: true,
+      verification: {
+        targetPath: '/repo/.happier/worktrees/feature',
+        sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+      },
+    })).toEqual(expect.objectContaining({
+      verification: expect.objectContaining({
+        sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+      }),
+    }));
   });
 
   it('projects SCM repository provisioning actions through RPC and SDK surfaces only', () => {
@@ -3030,9 +3084,17 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('execution.run.get').outputSchema).toBe(ExecutionRunGetResponseSchema);
     expect(getActionSpec('execution.run.send').outputSchema).toBe(ExecutionRunSendResponseSchema);
     expect(getActionSpec('execution.run.stop').outputSchema).toBe(ExecutionRunStopResponseSchema);
-    expect(getActionSpec('execution.run.stream.start').outputSchema).toBe(ExecutionRunTurnStreamStartResponseSchema);
-    expect(getActionSpec('execution.run.stream.read').outputSchema).toBe(ExecutionRunTurnStreamReadResponseSchema);
-    expect(getActionSpec('execution.run.stream.cancel').outputSchema).toBe(ExecutionRunTurnStreamCancelResponseSchema);
+    const streamingCases = [
+      ['execution.run.stream.start', ExecutionRunTurnStreamStartResponseSchema],
+      ['execution.run.stream.read', ExecutionRunTurnStreamReadResponseSchema],
+      ['execution.run.stream.cancel', ExecutionRunTurnStreamCancelResponseSchema],
+    ] as const;
+    for (const [actionId, canonicalSchema] of streamingCases) {
+      const projectedSchema = getActionSpec(actionId).outputSchema;
+      expect(projectedSchema, actionId).toBeInstanceOf(z.ZodLazy);
+      if (!(projectedSchema instanceof z.ZodLazy)) throw new Error(`${actionId} must remain cycle-safe`);
+      expect(projectedSchema.unwrap(), actionId).toBe(canonicalSchema);
+    }
   });
 
   it('uses closed Action-definition DTOs for Action discovery results', () => {
@@ -3517,13 +3579,13 @@ describe('Action Spec Registry', () => {
       ['session.checkpoint_code_rollback', 'session.checkpointCodeRollback'],
       ['session.checkpoint', 'session.checkpoint'],
       ['session.restore', 'session.restore'],
-      ['session.handoff', 'daemon.sessionHandoff.start'],
-      ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
-      ['session.handoff.prepare_target.resume', 'daemon.sessionHandoff.prepareTarget.resume'],
-      ['session.handoff.prepare_target_result.get', 'daemon.sessionHandoff.prepareTargetResult.get'],
-      ['session.handoff.commit', 'daemon.sessionHandoff.commit'],
-      ['session.handoff.abort', 'daemon.sessionHandoff.abort'],
-      ['session.handoff.status.get', 'daemon.sessionHandoff.status.get'],
+      ['session.handoff', RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3],
+      ['session.handoff.prepare_target', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3],
+      ['session.handoff.prepare_target.resume', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3],
+      ['session.handoff.prepare_target_result.get', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3],
+      ['session.handoff.commit', RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3],
+      ['session.handoff.abort', RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3],
+      ['session.handoff.status.get', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
       ['session.spawn_new', RPC_METHODS.SESSION_SPAWN_NEW],
     ]);
 
@@ -3535,6 +3597,10 @@ describe('Action Spec Registry', () => {
     }
 
     expect(getActionSpec('session.spawn_new').surfaceBindings?.rpc).toBeDefined();
+    expect(getActionSpec('session.handoff').bindings?.rpcMethodAliases).toEqual([
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
+    ]);
+    expect(getActionSpec('session.handoff.prepare_target.resume').bindings?.rpcMethodAliases).toBeUndefined();
   });
 
   it('binds prepare-target result-get output to its bounded shared response schema', () => {

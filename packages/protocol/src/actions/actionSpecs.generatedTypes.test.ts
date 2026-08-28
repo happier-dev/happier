@@ -370,6 +370,10 @@ describe('ActionSpec-generated plugin action types', () => {
   it('excludes runtime action ids without a real canonical executor', () => {
     expectTypeOf<Extract<PluginInvocableActionId, 'devices.simulator.input.orientation'>>()
       .toEqualTypeOf<never>();
+    expectTypeOf<Extract<PluginInvocableActionId, 'ui.current_context.read'>>()
+      .toEqualTypeOf<never>();
+    expectTypeOf<Extract<PluginInvocableActionId, 'voice_agent.start'>>()
+      .toEqualTypeOf<'voice_agent.start'>();
   });
 
   it('does not degrade any generated plugin row to unknown', () => {
@@ -379,15 +383,21 @@ describe('ActionSpec-generated plugin action types', () => {
 
   it('projects exact API schemas only for public Actions', () => {
     expect(PublicActionIdSchema.parse('session.spawn_new')).toBe('session.spawn_new');
+    expect(PublicActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('sessions.subagents.upsert').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('sessions.external.materialize.start').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('plugins.permissions.grants.revoke').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('devices.simulator.input.orientation').success).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'session.spawn_new')).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.subagents.list')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.subagents.upsert')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.external.materialize.start')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'plugins.permissions.grants.revoke')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'devices.simulator.input.orientation')).toBe(false);
 
     expectTypeOf<Extract<PublicActionId, 'session.spawn_new'>>().toEqualTypeOf<'session.spawn_new'>();
+    expectTypeOf<Extract<PublicActionId, 'sessions.subagents.list'>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'sessions.subagents.upsert'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'sessions.external.materialize.start'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'plugins.permissions.grants.revoke'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'devices.simulator.input.orientation'>>().toEqualTypeOf<never>();
@@ -423,6 +433,20 @@ describe('ActionSpec-generated plugin action types', () => {
     // @ts-expect-error only public API Actions have a generated input schema.
     const unavailableSchema = PUBLIC_ACTION_INPUT_SCHEMAS['sessions.external.materialize.start'];
     expectTypeOf(unavailableSchema).toEqualTypeOf<never>();
+  });
+
+  it('excludes client-placed Actions from public runtime and type projections', () => {
+    expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('ui.current_context.command.invoke').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.read')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.command.invoke')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'voice_agent.start')).toBe(true);
+    expectTypeOf<Extract<PublicActionId, 'ui.current_context.read'>>()
+      .toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'ui.current_context.command.invoke'>>()
+      .toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'voice_agent.start'>>().toEqualTypeOf<'voice_agent.start'>();
   });
 
   it('retains every exact action schema in its single runtime projection map', () => {

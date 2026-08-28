@@ -405,7 +405,7 @@ describe('session.spawn_new canonical execution', () => {
         kind: 'automationRun',
         automationId: 'automation-7',
         runId: 'run-42',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
       },
     });
 
@@ -419,7 +419,7 @@ describe('session.spawn_new canonical execution', () => {
         kind: 'automationRun',
         automationId: 'automation-7',
         runId: 'run-42',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
       },
     }));
   });
@@ -441,7 +441,7 @@ describe('session.spawn_new canonical execution', () => {
         kind: 'automationRun',
         automationId: 'automation-7',
         runId: 'run-42',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
       },
     });
 
@@ -557,7 +557,7 @@ describe('session.spawn_new canonical execution', () => {
       input: {
         ...canonicalInput,
         creationKey: 'approval-artifact:approval-remote-dev-1',
-        initialMessage: predecessorActionArgs.prompt,
+        initialInput: { text: predecessorActionArgs.prompt },
       },
       legacyMetadataLabel: predecessorActionArgs.tag,
     }));

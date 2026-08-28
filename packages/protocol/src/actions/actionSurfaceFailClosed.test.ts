@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
@@ -25,13 +28,33 @@ function createDeps(): ActionExecutorDeps {
 }
 
 describe('Action surface resolution fails closed (INV-1 / DEC-2)', () => {
+  it('keeps the unreleased external invocation surface direct-cut to api', async () => {
+    const sourceFiles = [
+      './metadata.ts',
+      './actionSpecs.ts',
+      './actionSettings.ts',
+      './actionSurfaceAvailability.ts',
+      './actionDefinitionV1.ts',
+      './executor/types.ts',
+    ];
+    const sources = await Promise.all(sourceFiles.map(async (relativePath) => ({
+      relativePath,
+      source: await readFile(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8'),
+    })));
+
+    for (const { relativePath, source } of sources) {
+      expect(source, `${relativePath} must not restore the retired sdk invocation surface`)
+        .not.toMatch(/\bsurface\s*:\s*['"]sdk['"]|\bsdk\s*:\s*(?:true|false)\b/u);
+    }
+  });
+
   it('denies a spec on an unknown or missing surface at the predicate', () => {
     const spec = getActionSpec('machines.list');
 
     // Positive control: the predicate still answers honestly for known surfaces.
     expect(isActionSpecSurfacedOn(spec, 'ui')).toBe(true);
     expect(isActionSpecSurfacedOn(spec, 'agent')).toBe(true);
-    expect(isActionSpecSurfacedOn(spec, 'cli')).toBe(false);
+    expect(isActionSpecSurfacedOn(spec, 'cli')).toBe(true);
 
     // Fail closed: an unattributed caller is not "surfaced everywhere".
     expect(isActionSpecSurfacedOn(spec, null)).toBe(false);
@@ -56,15 +79,18 @@ describe('Action surface resolution fails closed (INV-1 / DEC-2)', () => {
 
     // A surface the spec does not declare is denied (this already held; it keeps the
     // assertion above from passing for the wrong reason).
-    await expect(executor.execute('machines.list', {}, { surface: 'cli' })).resolves.toMatchObject({
+    await expect(executor.execute('machines.list', {}, { surface: 'mcp' })).resolves.toMatchObject({
       ok: false,
       errorCode: 'action_disabled',
     });
 
-    // A real, declared surface still executes.
+    // Real, declared surfaces still execute, including the credential-aware CLI.
+    await expect(executor.execute('machines.list', {}, { surface: 'cli' })).resolves.toMatchObject({
+      ok: true,
+    });
     await expect(executor.execute('machines.list', {}, { surface: 'ui' })).resolves.toMatchObject({
       ok: true,
     });
-    expect(deps.machinesList).toHaveBeenCalledTimes(1);
+    expect(deps.machinesList).toHaveBeenCalledTimes(2);
   });
 });

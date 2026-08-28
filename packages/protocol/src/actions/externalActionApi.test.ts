@@ -11,6 +11,7 @@ import {
   ExternalActionMachineBootstrapListV1Schema,
   ExternalActionResultTooLargeExecutionV1Schema,
   ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionRequestIdV1Schema,
   ExternalActionResponseEnvelopeV1Schema,
   ExternalActionTargetV1Schema,
   createExternalActionDaemonDispatchResponseV1,
@@ -35,6 +36,12 @@ function createDeepExternalActionResult(depth = 12_000): unknown {
 }
 
 describe('External Action API envelope v1', () => {
+  it('owns the opaque request-id grammar used by every external Action client', () => {
+    expect(ExternalActionRequestIdV1Schema.safeParse('corrélation-☃').success).toBe(true);
+    expect(ExternalActionRequestIdV1Schema.safeParse('x'.repeat(129)).success).toBe(false);
+    expect(ExternalActionRequestIdV1Schema.safeParse(' outer-space').success).toBe(false);
+  });
+
   it('keeps the machine-selection bootstrap projection closed and minimal', () => {
     const row = {
       id: 'machine-1',

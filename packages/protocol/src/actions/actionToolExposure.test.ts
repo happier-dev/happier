@@ -206,7 +206,7 @@ describe('actionToolExposure', () => {
     }));
   });
 
-  it('keeps only reasoned exclusions off public Action projections', () => {
+  it('derives public Action projections from reasoned exclusions and reachable execution placement', () => {
     const internalActionIds = new Set(INTERNAL_ACTION_IDS);
     const pluginProvenanceOnlyActionIds = new Set(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS);
     const pluginSurfaceExcludedActionIds = new Set(PLUGIN_SURFACE_EXCLUSION_ACTION_IDS);
@@ -220,19 +220,67 @@ describe('actionToolExposure', () => {
     }
 
     for (const spec of listActionSpecs()) {
+      const isClientPlaced = spec.executionPlacement === 'client';
       if (internalActionIds.has(spec.id)) {
         expect(spec.surfaces.api).toBe(false);
         expect(spec.surfaces.plugin).toBe(false);
       } else {
-        expect(spec.surfaces.api).toBe(!pluginProvenanceOnlyActionIds.has(spec.id));
-        expect(spec.surfaces.plugin).toBe(!pluginSurfaceExcludedActionIds.has(spec.id));
+        expect(spec.surfaces.api, spec.id).toBe(
+          !isClientPlaced && !pluginProvenanceOnlyActionIds.has(spec.id),
+        );
+        expect(spec.surfaces.plugin, spec.id).toBe(
+          !isClientPlaced && !pluginSurfaceExcludedActionIds.has(spec.id),
+        );
       }
     }
 
     expect(getActionSpec('projects.list').surfaces).toEqual(expect.objectContaining({
+      api: false,
+      plugin: false,
+    }));
+    expect(getActionSpec('ui.current_context.read').surfaces).toEqual(expect.objectContaining({
+      voice: true,
+      api: false,
+      plugin: false,
+    }));
+    expect(getActionSpec('ui.current_context.command.invoke').surfaces).toEqual(expect.objectContaining({
+      voice: true,
+      api: false,
+      plugin: false,
+    }));
+    expect(getActionSpec('voice_agent.start').surfaces).toEqual(expect.objectContaining({
       api: true,
       plugin: true,
     }));
+  });
+
+  it('keeps all six raw subagent registry Actions internal', () => {
+    const rawSubagentActionIds = [
+      'sessions.subagents.list',
+      'sessions.subagents.get',
+      'sessions.subagents.watch',
+      'sessions.subagents.upsert',
+      'sessions.subagents.updateStatus',
+      'sessions.subagents.complete',
+    ] as const;
+
+    expect(INTERNAL_ACTION_IDS.filter((actionId) => actionId.startsWith('sessions.subagents.')))
+      .toEqual(rawSubagentActionIds);
+    for (const actionId of rawSubagentActionIds) {
+      expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
+        rpc: true,
+        api: false,
+        plugin: false,
+      }));
+      expect(PLUGIN_SURFACE_EXCLUSION_REASONS[actionId]).toBe(INTERNAL_ACTION_REASONS[actionId]);
+    }
+
+    for (const actionId of ['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start'] as const) {
+      expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
+        api: true,
+        plugin: true,
+      }));
+    }
   });
 
   /**

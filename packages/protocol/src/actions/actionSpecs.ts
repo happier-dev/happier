@@ -163,7 +163,7 @@ import {
   ExecutionRunTurnStreamCancelResponseSchema,
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
-} from '../execution/runs/index.js';
+} from '../execution/runs/streaming.js';
 import {
   ActionDiscoveryDefinitionSummaryV1Schema,
   ActionDiscoveryDefinitionV1Schema,
@@ -1301,7 +1301,8 @@ const SessionSpawnNewInputHints = {
     { path: 'transcriptStorage', title: 'Transcript storage', widget: 'text' },
     { path: 'terminal', title: 'Terminal', widget: 'json' },
     { path: 'checkoutCreationDraft', title: 'Checkout creation', widget: 'json' },
-    { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
+    { path: 'initialInput.text', title: 'Initial message', widget: 'textarea' },
+    { path: 'initialInput.attachments', title: 'Initial attachments', widget: 'json' },
     { path: 'agentSessionStartupInstructionsV1', title: 'Startup instructions', widget: 'json' },
   ],
 } satisfies ActionInputHints;
@@ -1705,6 +1706,14 @@ const SessionPermissionRespondInputSchema = z.object({
   decision: z.enum(['allow', 'deny']),
   requestId: z.string().min(1).optional(),
 }).passthrough();
+
+// A plugin may ask a present user to decide one current permission request,
+// but it cannot select another Session or carry host-only permission updates
+// into the durable approval artifact.
+const SessionPermissionRespondPluginInputSchema = z.object({
+  requestId: z.string().min(1),
+  decision: z.enum(['allow', 'deny']),
+}).strict();
 
 const SessionUserActionAnswerItemSchema = z.object({
   question: z.string().min(1).refine((value) => value.trim().length > 0, {
@@ -3300,39 +3309,6 @@ function projectExternalSessionStatusResult(value: unknown): unknown {
       });
 }
 
-function projectExternalSessionViewerFollowResult(value: unknown): unknown {
-  const response = ExternalSessionAttachResponseSchema.parse(value);
-  return response.ok
-    ? ExternalSessionViewerFollowActionResultV1Schema.parse({
-        ok: true,
-        leaseId: response.leaseId,
-        expiresAtMs: response.expiresAtMs,
-        renewed: response.renewed ?? false,
-        ...(response.acceptedTailCursor === undefined
-          ? {}
-          : { acceptedTailCursor: response.acceptedTailCursor }),
-      })
-    : ExternalSessionViewerFollowActionResultV1Schema.parse({
-        ok: false,
-        errorCode: response.errorCode,
-        error: response.error,
-        ...(response.retryable === undefined
-          ? {}
-          : { retryable: response.retryable }),
-      });
-}
-
-function projectExternalSessionViewerUnfollowResult(value: unknown): unknown {
-  const response = ExternalSessionDetachResponseSchema.parse(value);
-  return ExternalSessionViewerUnfollowActionResultV1Schema.parse(response.ok
-    ? { ok: true, detached: response.detached }
-    : {
-        ok: false,
-        errorCode: response.errorCode,
-        error: response.error,
-      });
-}
-
 function projectExternalSessionBackgroundFollowResult(value: unknown): unknown {
   const response = ExternalSessionFollowPolicySetResponseSchema.parse(value);
   return ExternalSessionBackgroundFollowActionResultV1Schema.parse(response.ok
@@ -3787,7 +3763,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: true,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: false,
     },
     inputHints: {
@@ -3818,7 +3794,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: true,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: false,
     },
     inputHints: {
@@ -4175,7 +4151,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     surfaces: {
       ui: false,
       voice: false,
-      agent: true,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4605,7 +4581,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: ExecutionRunTurnStreamStartResponseSchema,
+    outputSchema: z.lazy(() => ExecutionRunTurnStreamStartResponseSchema),
     inputSchema: ExecutionRunStreamStartInputSchema,
   },
   {
@@ -4634,7 +4610,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'maxEvents', title: 'Max events', widget: 'text' },
       ],
     },
-    outputSchema: ExecutionRunTurnStreamReadResponseSchema,
+    outputSchema: z.lazy(() => ExecutionRunTurnStreamReadResponseSchema),
     inputSchema: ExecutionRunStreamReadInputSchema,
   },
   {
@@ -4661,7 +4637,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
       ],
     },
-    outputSchema: ExecutionRunTurnStreamCancelResponseSchema,
+    outputSchema: z.lazy(() => ExecutionRunTurnStreamCancelResponseSchema),
     inputSchema: ExecutionRunStreamCancelInputSchema,
   },
   {
@@ -4961,7 +4937,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Move the current session to another machine while keeping the same session id.',
     safety: 'safe',
     placements: ['session_action_menu', 'session_info'],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.start', sdkMethod: 'session.handoff.start' },
+    bindings: {
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_START],
+      sdkMethod: 'session.handoff.start',
+    },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","targetMachineId":"{{machineId}}"}' },
     },
@@ -4991,7 +4971,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.sessionHandoff.prepareTarget',
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET],
       sdkMethod: 'session.handoff.prepareTarget.start',
     },
     surfaces: {
@@ -5019,7 +5000,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Read the prepared-target result for an in-progress session handoff.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTargetResult.get' },
+    bindings: {
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET],
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -5041,7 +5025,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Explicitly continue one interrupted prepare-target job at its current durable revision.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTarget.resume' },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3 },
     surfaces: {
       ui: false,
       voice: false,
@@ -5068,7 +5052,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Finalize a prepared session handoff.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.commit' },
+    bindings: {
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT],
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -5090,7 +5077,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Cancel an in-progress session handoff.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.abort' },
+    bindings: {
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT],
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -5115,7 +5105,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     description: 'Read scalar status for an in-progress session handoff.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.sessionHandoff.status.get' },
+    bindings: {
+      rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET],
+    },
     surfaces: {
       ui: false,
       voice: false,
@@ -5164,7 +5157,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       },
     },
     examples: {
-      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":"/workspace/project","agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialMessage":"Help me inspect this workspace."}' },
+      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":"/workspace/project","agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialInput":{"text":"Help me inspect this workspace."}}' },
     },
     surfaces: {
       ui: true,
@@ -5300,7 +5293,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: true,
       agent: true,
       mcp: false,
-      cli: false,
+      cli: true,
       rpc: false,
       },
     inputHints: {
@@ -6365,6 +6358,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'session.permission.respond' },
+    surfaceBindings: {
+      plugin: {
+        inputSchema: SessionPermissionRespondPluginInputSchema,
+        bindInput: bindPluginCurrentSessionInput,
+        projectOutput: projectPluginSessionInteractionResponse,
+      },
+    },
     surfaces: {
       ui: true,
       voice: false,
@@ -7780,10 +7780,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         outputSchema: ExternalSessionAttachResponseSchema,
         encodeOutput: identityActionSurfaceValue,
       },
-      plugin: {
-        inputSchema: ExternalSessionViewerFollowActionInputV1Schema,
-        projectOutput: projectExternalSessionViewerFollowResult,
-      },
     },
     surfaces: {
       ui: false,
@@ -7820,10 +7816,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         decodeInput: identityActionSurfaceValue,
         outputSchema: ExternalSessionDetachResponseSchema,
         encodeOutput: identityActionSurfaceValue,
-      },
-      plugin: {
-        inputSchema: ExternalSessionViewerUnfollowActionInputV1Schema,
-        projectOutput: projectExternalSessionViewerUnfollowResult,
       },
     },
     surfaces: {
@@ -8257,8 +8249,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
   },
   {
     id: 'scm.reviewWorkspace.materializePrepared',
-    title: 'Materialize prepared review workspace',
-    description: 'Materialize prepared checkout facts in one exact selected workspace.',
+    title: 'Materialize or verify prepared review workspace',
+    description: 'Materialize prepared checkout facts or read the local HEAD of an already-prepared path in one exact selected workspace.',
     safety: 'danger',
     placements: [],
     bindings: {
@@ -8281,6 +8273,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'cwd', title: 'Selected workspace root', widget: 'text', required: true },
         { path: 'displayName', title: 'Workspace label', widget: 'text', required: true },
         { path: 'sourceTip', title: 'Provider-authorized source tip', widget: 'json', required: true },
+        { path: 'verification', title: 'Already-prepared path verification', widget: 'json' },
       ],
     },
   },
@@ -8618,8 +8611,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
 /**
  * The only host Actions that are not genuine user operations. Each entry is
  * deliberately small and names the existing owner that keeps the operation
- * private; every other host Action is public on the `api` and trusted-plugin
- * projections by default.
+ * private; every non-client host Action is public on the `api` and
+ * trusted-plugin projections by default. The canonical execution placement
+ * excludes client-only operations because no daemon transport can reach them;
+ * this reason map remains the only additional host-private decision owner.
  */
 export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target': 'Private handoff lifecycle preparation phase; users invoke session.handoff instead.',
@@ -8627,6 +8622,9 @@ export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
   'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
   'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',
+  'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.',
   'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
@@ -8670,7 +8668,26 @@ export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS = Object.freeze({
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS;
-export type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId>;
+
+const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
+  'servers.list',
+  'projects.list',
+  'prompts.invocations.list',
+  'prompts.invocation.resolve',
+  'session.target.primary.set',
+  'session.target.tracked.set',
+  'devices.simulator.input.orientation',
+  ...ACTION_ID_FAMILIES_V1.voice_controls,
+  ...ACTION_ID_FAMILIES_V1.current_ui_context,
+  ...ACTION_ID_FAMILIES_V1.companion_controls,
+] as const satisfies readonly ActionId[];
+
+type ClientExecutionPlacementActionId = (typeof CLIENT_EXECUTION_PLACEMENT_ACTION_IDS)[number];
+
+export type PublicActionId = Exclude<
+  ActionId,
+  InternalActionId | PluginProvenanceOnlyActionId | ClientExecutionPlacementActionId
+>;
 
 export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS = Object.freeze(
   Object.keys(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS) as PluginProvenanceOnlyActionId[],
@@ -8685,8 +8702,10 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
 }
 
 /**
- * The mirror of `PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS` and the only
- * owner of "this Action has no trusted-plugin projection at all". Publishing
+ * The only owner of "this Action has no trusted-plugin projection at all".
+ * Host-internal Actions are composed here by reference so API privacy and
+ * Plugin exclusion share their reason text without a second Plugin decision.
+ * Publishing
  * an Action here that no plugin caller can ever reach would type an author
  * call the executor can only reject, so each entry names why the plugin arm
  * cannot exist. Extend this map rather than adding a second plugin-surface
@@ -8704,8 +8723,11 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
  * serves these only for a host caller.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  ...INTERNAL_ACTION_REASONS,
   'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
   'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
+  'sessions.external.follow': 'Ephemeral viewer lease seam; authors use SessionsService.external.followTranscript, which owns dynamic follow lifetime and cleanup.',
+  'sessions.external.unfollow': 'Ephemeral viewer lease cleanup seam; authors close SessionsService.external.followTranscript rather than invoking a low-level lease Action.',
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.transcript.readAfter': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.takeover.start': 'Raw durable takeover Start; SessionsService.external.takeover privately delegates to it and is the documented author workflow.',
@@ -8731,6 +8753,7 @@ export function isPluginSurfaceExcludedActionId(
 const PRESENT_USER_REQUIRED_ACTION_IDS = new Set<ActionId>([
   'approval.request.decide',
   'session.permission.respond',
+  'session.user_action.answer',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
   'account.apiTokens.create',
@@ -8812,18 +8835,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
 
   // These actions require a present client/runtime and are deliberately not
   // forwarded by the public API, even when their input happens to name a Session.
-  register('client', [
-    'servers.list',
-    'projects.list',
-    'prompts.invocations.list',
-    'prompts.invocation.resolve',
-    'session.target.primary.set',
-    'session.target.tracked.set',
-    'devices.simulator.input.orientation',
-    ...ACTION_ID_FAMILIES_V1.voice_controls,
-    ...ACTION_ID_FAMILIES_V1.current_ui_context,
-    ...ACTION_ID_FAMILIES_V1.companion_controls,
-  ]);
+  register('client', CLIENT_EXECUTION_PLACEMENT_ACTION_IDS);
 
   // A canonical Session resolves its current machine/daemon owner. Execution
   // runs are intentionally absent: detached runs have no Session owner.
@@ -8919,14 +8931,16 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   const isInternal = isInternalActionId(spec.id);
   const isPluginProvenanceOnly = isPluginProvenanceOnlyActionId(spec.id);
   const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
+  const executionPlacement = resolveActionExecutionPlacement(spec);
+  const isClientPlaced = executionPlacement === 'client';
   return {
     ...spec,
     requiredAuthority: resolveActionRequiredAuthority(spec),
-    executionPlacement: resolveActionExecutionPlacement(spec),
+    executionPlacement,
     surfaces: {
       ...spec.surfaces,
-      api: !isInternal && !isPluginProvenanceOnly,
-      plugin: !isInternal && !isPluginSurfaceExcluded,
+      api: !isClientPlaced && !isInternal && !isPluginProvenanceOnly,
+      plugin: !isClientPlaced && !isPluginSurfaceExcluded,
     },
   };
 }
@@ -9081,7 +9095,7 @@ export type CanonicalActionSpecDefinition =
 
 export type PluginInvocableActionId = Exclude<
   ActionId,
-  InternalActionId | PluginSurfaceExcludedActionId
+  InternalActionId | PluginSurfaceExcludedActionId | ClientExecutionPlacementActionId
 >;
 export type PluginInvocableActionSpecDefinition = {
   [TActionId in PluginInvocableActionId]: Extract<
@@ -9325,8 +9339,9 @@ type PluginActionResultRuntimeSchemaMapMustRemainExact = AssertTrue<IsTypeEqual<
 
 /**
  * The authenticated public API is the API-surface projection of the same
- * canonical rows. It excludes only host-internal and plugin-provenance-only
- * Actions, rather than maintaining a second allowlist.
+ * canonical rows. It excludes host-internal and plugin-provenance-only Actions,
+ * rather than maintaining a second allowlist; execution placement is resolved
+ * when an admitted Action runs.
  */
 export type PublicActionSpecDefinition = {
   [TActionId in PublicActionId]: Extract<
@@ -9538,8 +9553,6 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'daemon.promptAssets.delete': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'daemon.promptRegistry.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'transcript.import': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
-  'sessions.external.follow': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
-  'sessions.external.unfollow': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'sessions.external.backgroundFollow.set': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.pullRequest.openOrReuse': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.pullRequest.checkout': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

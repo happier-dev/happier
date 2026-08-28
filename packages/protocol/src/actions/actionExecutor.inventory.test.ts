@@ -1565,22 +1565,14 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
-  it('rejects action.spec.search when it is not surfaced on the current surface', async () => {
+  it('serves action.spec.search on the credential-aware CLI surface', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
     const res = await executor.execute('action.spec.search', { query: '', limit: 5 }, { surface: 'cli' });
 
-    expect(res).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'action_disabled',
-      details: expect.objectContaining({
-        actionId: 'action.spec.search',
-        surface: 'cli',
-        reason: 'unsupported_surface',
-      }),
-    });
+    expect(res.ok).toBe(true);
+    expect((res as any).result.actionSpecs).toBeInstanceOf(Array);
   });
 
   it('rejects executing actions that are not surfaced on the current surface', async () => {

@@ -171,51 +171,17 @@ describe('ActionExecutor subagent registry actions', () => {
     });
   });
 
-  it('lets trusted plugins discover and invoke bounded subagent reads through the canonical Action owner', async () => {
-    const subagentsList = vi.fn(async () => []);
-    const subagentsGet = vi.fn(async () => null);
-    const subagentsWatch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
-    const executor = createActionExecutor(createDeps({
-      subagentsList,
-      subagentsGet,
-      subagentsWatch,
-    }));
-    const context = {
-      surface: 'plugin' as const,
-      actionCaller: {
-        kind: 'plugin' as const,
-        pluginId: 'happier.agent.acme',
-        contributionLocalId: 'acme.sample',
-      },
-    };
-
-    for (const [actionId, input] of [
-      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
-      ['sessions.subagents.get', { id: 'other-subagent', parentSessionId: 'other-session' }],
-      ['sessions.subagents.watch', { id: 'other-subagent', parentSessionId: 'other-session' }],
-    ] as const) {
-      await expect(executor.execute('action.spec.get', { id: actionId }, context)).resolves.toMatchObject({
-        ok: true,
-        result: {
-          actionSpec: {
-            id: actionId,
-            surfaces: { plugin: true },
-          },
-        },
-      });
-      await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({ ok: true });
-    }
-
-    expect(subagentsList).toHaveBeenCalledWith({ parentSessionId: 'other-session' });
-    expect(subagentsGet).toHaveBeenCalledWith({ id: 'other-subagent', parentSessionId: 'other-session' });
-    expect(subagentsWatch).toHaveBeenCalledWith({ id: 'other-subagent', parentSessionId: 'other-session' });
-  });
-
-  it('rejects raw subagent mutations on the Plugin Action surface before their deps', async () => {
+  it('allows subagent reads and rejects lifecycle mutations on the Plugin surface', async () => {
+    const list = vi.fn(async () => []);
+    const get = vi.fn(async () => null);
+    const watch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
     const upsert = vi.fn(async (_args: unknown) => ({}));
     const updateStatus = vi.fn(async (_args: unknown) => ({}));
     const complete = vi.fn(async (_args: unknown) => ({}));
     const executor = createActionExecutor(createDeps({
+      subagentsList: list,
+      subagentsGet: get,
+      subagentsWatch: watch,
       subagentsUpsert: upsert,
       subagentsUpdateStatus: updateStatus,
       subagentsComplete: complete,
@@ -245,6 +211,15 @@ describe('ActionExecutor subagent registry actions', () => {
     };
 
     for (const [actionId, input] of [
+      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
+      ['sessions.subagents.get', { id: 'subagent-1', parentSessionId: 'other-session' }],
+      ['sessions.subagents.watch', { id: 'subagent-1', parentSessionId: 'other-session' }],
+    ] as const) {
+      await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
+        .resolves.toMatchObject({ ok: true });
+    }
+
+    for (const [actionId, input] of [
       ['sessions.subagents.upsert', upsertInput],
       ['sessions.subagents.updateStatus', updateInput],
       ['sessions.subagents.complete', completeInput],
@@ -257,6 +232,9 @@ describe('ActionExecutor subagent registry actions', () => {
         });
     }
 
+    expect(list).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledOnce();
     expect(upsert).not.toHaveBeenCalled();
     expect(updateStatus).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();

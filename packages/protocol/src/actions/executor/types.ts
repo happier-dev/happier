@@ -134,6 +134,7 @@ import type {
 } from '../../auth/accountApiTokens.js';
 import type { PluginMachineMaterializationRefV1 } from '../../plugins/availability/materializationRefV1.js';
 import type { PluginSettingsAdministrationActionIdV1 } from '../../plugins/settingsAdministration.js';
+import type { AutomationRunCause } from '../../automations/automationRunCause.js';
 
 export type {
   ActionExecuteFailure,
@@ -206,7 +207,8 @@ export type ActionAutomationRunCaller = Readonly<{
   kind: 'automationRun';
   runId: string;
   automationId: string;
-  origin: 'schedule' | 'manual' | 'event' | 'conversation';
+  /** Exact immutable provenance frozen by canonical Run admission. */
+  cause: AutomationRunCause;
 }>;
 
 export type ActionCaller =

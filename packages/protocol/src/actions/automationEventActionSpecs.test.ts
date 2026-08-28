@@ -111,7 +111,8 @@ describe('Event Automation ActionSpecs', () => {
       payload: { action: 'opened' },
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId: 'trigger-1',
+        triggerRevision: 3,
         sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
       }],
     };
