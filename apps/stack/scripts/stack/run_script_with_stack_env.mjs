@@ -27,6 +27,7 @@ import { waitForHappierHealthOk } from '../utils/server/server.mjs';
 import { resolveStackOwnedListenPid } from '../utils/server/listener_ownership.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import { resolveDevServerConnection } from '../utils/dev/resolveDevServerConnection.mjs';
+import { resolveDevWatchEnabled } from '../utils/dev/devStartupTopology.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { pruneStackRunnerLogs } from '../utils/stack/runner_log_retention.mjs';
 import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
@@ -767,13 +768,19 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
 
         // Restart semantics (stack mode):
-        // - Preflight source-backed server rebuilds before stopping the old stack.
-        // - Stop stack-owned processes after preflight (runner, daemon, Expo, etc.)
+        // - Non-watch source starts preflight before stopping the old stack.
+        // - Watch starts admit valid prior source outputs first; the dev owner refreshes source in the background.
+        // - Stop stack-owned processes after the selected source admission or preflight (runner, daemon, Expo, etc.)
         // - Never kill arbitrary port listeners
         // - Preserve previous runtime ports in memory so a true restart can reuse them
         if (wantsRestart && !wantsJson) {
           if (scriptPath === 'dev.mjs') {
             const { flags, kv } = parseArgs(args);
+            const admitPriorBuildsImmediately = resolveDevWatchEnabled({
+              watchRequested: flags.has('--watch'),
+              noWatchRequested: flags.has('--no-watch'),
+              interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+            });
             const serverConnection = resolveDevServerConnection({
               flags,
               kv,
@@ -792,6 +799,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               if (shouldPreflightDevRestart({
                 startServer: true,
                 priorRuntimeServer,
+                admitPriorBuildsImmediately,
               })) {
                 const serverDir = getComponentDir(rootDir, serverComponent, env);
                 await preflightDevServerRestart({

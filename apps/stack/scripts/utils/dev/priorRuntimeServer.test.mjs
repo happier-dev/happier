@@ -80,7 +80,7 @@ test('dev prior-runtime admission stays source-only for the full server until ma
   assert.equal(inspected, false);
 });
 
-test('a runnable prior runtime replaces the blocking outer restart preflight', () => {
+test('an admitted prior runtime or source output avoids the blocking outer restart preflight', () => {
   assert.equal(shouldPreflightDevRestart({
     startServer: true,
     priorRuntimeServer: { admitted: true },
@@ -89,6 +89,11 @@ test('a runnable prior runtime replaces the blocking outer restart preflight', (
     startServer: true,
     priorRuntimeServer: { admitted: false },
   }), true);
+  assert.equal(shouldPreflightDevRestart({
+    startServer: true,
+    priorRuntimeServer: { admitted: false },
+    admitPriorBuildsImmediately: true,
+  }), false);
   assert.equal(shouldPreflightDevRestart({
     startServer: false,
     priorRuntimeServer: { admitted: false },

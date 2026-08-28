@@ -5,6 +5,7 @@ function paneToken(name) {
 export function createDevTargetPaneSpecs(targets) {
   if (!Array.isArray(targets) || targets.length === 0) return [];
   return [
+    { id: 'fabric', title: 'execution fabric', visible: true, kind: 'summary' },
     { id: 'mutagen', title: 'mutagen sync', visible: true, kind: 'log' },
     ...targets.map((target) => {
       const name = paneToken(target.name);

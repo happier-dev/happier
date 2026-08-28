@@ -72,6 +72,50 @@ function executorOptions(serverDir, overrides = {}) {
   };
 }
 
+test('proxy reload owner cold-starts after a failed watch admission', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const maintenance = [];
+    const upstreams = [];
+    const children = [];
+    const serverProcRef = { current: null };
+    const executor = createDevServerReloadExecutor({
+      ...executorOptions(serverDir, {
+        children,
+        serverProcRef,
+        stackMode: false,
+        proxyController: {
+          pid: 501,
+          async enterMaintenance(args) {
+            maintenance.push(args);
+            return { targetHost: '127.0.0.1', targetPort: 6101 };
+          },
+          async flipUpstream({ targetPort }) {
+            upstreams.push(targetPort);
+          },
+          async drainConnections() {},
+        },
+      }),
+    }, {
+      ensureSourceServerWorkspacePackagesBuiltImpl: async () => {},
+      preflightDevServerRestartImpl: async () => {},
+      waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+      pmSpawnScriptImpl: async () => ({ pid: 202, exitCode: null, signalCode: null }),
+      waitForServerReadyImpl: async () => {},
+      listListenPidsImpl: async () => [202],
+      getProcessGroupIdImpl: async (pid) => Number(pid),
+      logger: { log() {}, error() {} },
+    });
+
+    const result = await executor.restart({ generation: 1, changedDescriptors: ['server:app'] });
+
+    assert.equal(result.restarted, true);
+    assert.equal(serverProcRef.current?.pid, 202);
+    assert.equal(children.length, 1);
+    assert.equal(maintenance.length, 1);
+    assert.deepEqual(upstreams, [5101]);
+  });
+});
+
 test('failed proxy activation acknowledgement fences a second restart while replacement remains alive', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     let spawnCount = 0;

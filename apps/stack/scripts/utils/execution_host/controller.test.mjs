@@ -94,7 +94,7 @@ test('ordinary delegation requires active mode and stays disabled in recursion, 
   const active = { ...profile, activation: 'active' };
   assert.equal(shouldDelegateToActiveExecutionHost({ profile, argv: ['typecheck'], platform: 'darwin', env: {} }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'darwin', env: {} }), true);
-  assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['host', 'status'], platform: 'darwin', env: {} }), false);
+  assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['dev-vm', 'status'], platform: 'darwin', env: {} }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['mobile'], platform: 'darwin', env: {} }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'linux', env: {} }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'darwin', env: { CI: '1' } }), false);

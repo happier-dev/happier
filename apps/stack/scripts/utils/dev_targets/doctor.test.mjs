@@ -66,6 +66,82 @@ test('dev-target doctor checks Mutagen and each target through passwordless SSH'
   assert.match(decodedPowerShell, /Get-Command corepack/);
 });
 
+test('dev-target doctor retries one transient SSH connect timeout before accepting the target', async () => {
+  let sshAttempts = 0;
+  const result = await runDevTargetsDoctor(
+    { targets: [targets[0]], env: {} },
+    {
+      async runProcess(input) {
+        if (input.command === 'mutagen') return { code: 0 };
+        sshAttempts += 1;
+        return sshAttempts === 1
+          ? { code: 255, stderr: 'ssh: connect to host 100.98.30.76 port 22: Connection timed out' }
+          : { code: 0 };
+      },
+    },
+  );
+
+  assert.equal(sshAttempts, 2);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.targets[0], {
+    name: 'linux',
+    platform: 'posix',
+    ssh: 'happier-stack-linux',
+    ok: true,
+    code: 0,
+  });
+});
+
+test('dev-target doctor retains a typed reason after bounded transient SSH retries are exhausted', async () => {
+  let sshAttempts = 0;
+  const result = await runDevTargetsDoctor(
+    { targets: [targets[0]], env: {} },
+    {
+      async runProcess(input) {
+        if (input.command === 'mutagen') return { code: 0 };
+        sshAttempts += 1;
+        return { code: 255, stderr: 'ssh: connect to host 100.98.30.76 port 22: Connection timed out' };
+      },
+    },
+  );
+
+  assert.equal(sshAttempts, 2);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.targets[0], {
+    name: 'linux',
+    platform: 'posix',
+    ssh: 'happier-stack-linux',
+    ok: false,
+    code: 255,
+    diagnosticReason: 'ssh-connect-timeout',
+  });
+});
+
+test('dev-target doctor does not retry SSH authentication failures', async () => {
+  let sshAttempts = 0;
+  const result = await runDevTargetsDoctor(
+    { targets: [targets[0]], env: {} },
+    {
+      async runProcess(input) {
+        if (input.command === 'mutagen') return { code: 0 };
+        sshAttempts += 1;
+        return { code: 255, stderr: 'Permission denied (publickey).' };
+      },
+    },
+  );
+
+  assert.equal(sshAttempts, 1);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.targets[0], {
+    name: 'linux',
+    platform: 'posix',
+    ssh: 'happier-stack-linux',
+    ok: false,
+    code: 255,
+    diagnosticReason: 'ssh-authentication-failed',
+  });
+});
+
 test('dev-target doctor includes read-only managed Lima lifecycle health before guest SSH health', async () => {
   const calls = [];
   const managedTarget = {

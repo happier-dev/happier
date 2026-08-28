@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { createManagedLimaHostExecutor } from '../managed_lima/host_executor.mjs';
 import { getManagedLimaStatus } from '../managed_lima/lifecycle.mjs';
@@ -70,6 +70,29 @@ function replaceSshConfigDirective(contents, directive, value) {
   return contents.replace(expression, `$1${directive} ${value}`);
 }
 
+function readSshConfigDirective(contents, directive) {
+  const expression = new RegExp(`^\\s*${directive}\\s+(.+?)\\s*$`, 'mi');
+  const match = contents.match(expression);
+  if (!match) throw new Error(`[dev-targets] managed guest SSH config is missing ${directive}`);
+  const value = match[1].trim();
+  const quoted = /^"((?:\\.|[^"\\])*)"$/.exec(value);
+  return quoted ? quoted[1].replace(/\\([\\"])/g, '$1') : value;
+}
+
+function managedGuestKnownHostsPath(configPath, contents) {
+  const knownHostsPath = readSshConfigDirective(contents, 'UserKnownHostsFile');
+  const expectedPath = join(dirname(configPath), 'guest-known-hosts');
+  if (knownHostsPath !== expectedPath) {
+    throw new Error('[dev-targets] managed guest SSH config has an unexpected known-hosts path');
+  }
+  return knownHostsPath;
+}
+
+function isHostKeyVerificationFailure(result) {
+  const detail = `${String(result?.out ?? '')}\n${String(result?.err ?? '')}`;
+  return /REMOTE HOST IDENTIFICATION HAS CHANGED|host key verification failed|no .* host key is known/i.test(detail);
+}
+
 async function writePrivateFile(path, contents) {
   const temporary = `${path}.tmp-${process.pid}`;
   try {
@@ -103,14 +126,14 @@ const INSTALL_CONTROLLER_KEY_SCRIPT = [
 ].join('\n');
 
 export async function reconcileManagedLimaDevTargetSshPublication(
-  { target, sshLocalPort, env = process.env },
+  { target, sshLocalPort, guestVerified = false, env = process.env },
   { runSshProbe = defaultRunSshProbe } = {},
 ) {
   if (target?.managedRuntime?.kind !== 'lima') {
     throw new Error(`[dev-targets] target ${String(target?.name ?? 'unknown')} has no managed Lima runtime`);
   }
   const port = guestSshPort({ sshLocalPort });
-  const configPath = String(target.sshConfigFile ?? '').trim();
+  const configPath = requireAbsolutePath(target.sshConfigFile, 'managed guest SSH config');
   const alias = String(target.ssh ?? '').trim();
   if (!configPath || !alias) throw new Error('[dev-targets] managed guest SSH publication is incomplete');
 
@@ -121,21 +144,32 @@ export async function reconcileManagedLimaDevTargetSshPublication(
     next = next.replace(/^(\s*HostName\s+.*)$/m, `$1\n  HostKeyAlias ${alias}`);
   }
   const changed = next !== original;
-  if (!changed) return { changed: false, port, hostKeyAliasAdded: false };
+  if (!changed && !guestVerified) return { changed: false, port, hostKeyAliasAdded: false };
 
-  if (hostKeyAliasAdded) {
-    await writePrivateFile(configPath, replaceSshConfigDirective(next, 'StrictHostKeyChecking', 'accept-new'));
-    requireProbe(
-      await runSshProbe({ configPath, alias, env }),
-      'managed guest host-key alias enrollment failed',
-    );
+  const strictConfig = replaceSshConfigDirective(next, 'StrictHostKeyChecking', 'yes');
+  await writePrivateFile(configPath, strictConfig);
+  const strictProbe = await runSshProbe({ configPath, alias, env });
+  if (strictProbe?.ok === true || strictProbe?.exitCode === 0) {
+    return { changed, port, hostKeyAliasAdded };
   }
-  await writePrivateFile(configPath, replaceSshConfigDirective(next, 'StrictHostKeyChecking', 'yes'));
+  if (!guestVerified || !isHostKeyVerificationFailure(strictProbe)) {
+    requireProbe(strictProbe, 'managed guest refreshed SSH verification failed');
+  }
+
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(`${String(strictProbe?.out ?? '')}\n${String(strictProbe?.err ?? '')}`)) {
+    await rm(managedGuestKnownHostsPath(configPath, strictConfig), { force: true });
+  }
+  await writePrivateFile(configPath, replaceSshConfigDirective(strictConfig, 'StrictHostKeyChecking', 'accept-new'));
   requireProbe(
     await runSshProbe({ configPath, alias, env }),
-    'managed guest refreshed SSH verification failed',
+    'managed guest host-key enrollment failed',
   );
-  return { changed: true, port, hostKeyAliasAdded };
+  await writePrivateFile(configPath, strictConfig);
+  requireProbe(
+    await runSshProbe({ configPath, alias, env }),
+    'managed guest strict SSH verification failed',
+  );
+  return { changed, port, hostKeyAliasAdded };
 }
 
 export async function provisionManagedLimaDevTarget(
@@ -161,6 +195,7 @@ export async function provisionManagedLimaDevTarget(
     getRuntimeStatus = getManagedLimaStatus,
     runSshProbe = defaultRunSshProbe,
     guestProvisionScriptSource,
+    guestPressureScriptSource,
   } = {},
 ) {
   const targetName = String(name ?? '').trim().toLowerCase();
@@ -205,6 +240,7 @@ export async function provisionManagedLimaDevTarget(
     architecture,
     allowInstall,
     guestProvisionScriptSource,
+    guestPressureScriptSource,
     guestProvisionProfile: 'happier',
   });
   const publicKey = String(await readFile(outer.controllerKey.publicKeyPath, 'utf8')).trim();
@@ -244,14 +280,7 @@ export async function provisionManagedLimaDevTarget(
     outerSshConfigFile: outer.sshConfigFile,
     strictHostKeyChecking,
   });
-  await writePrivateFile(configPath, render('accept-new'));
-  try {
-    requireProbe(await runSshProbe({ configPath, alias, env }), 'managed guest host-key enrollment failed');
-  } finally {
-    await writePrivateFile(configPath, render('yes'));
-  }
-  requireProbe(await runSshProbe({ configPath, alias, env }), 'managed guest strict SSH verification failed');
-  return {
+  const target = {
     name: targetName,
     platform: 'posix',
     ssh: alias,
@@ -273,4 +302,12 @@ export async function provisionManagedLimaDevTarget(
       architecture,
     },
   };
+  await writePrivateFile(configPath, render('yes'));
+  await reconcileManagedLimaDevTargetSshPublication({
+    target,
+    sshLocalPort: status.instance?.sshLocalPort ?? status.instance?.SSHLocalPort,
+    guestVerified: true,
+    env,
+  }, { runSshProbe });
+  return target;
 }

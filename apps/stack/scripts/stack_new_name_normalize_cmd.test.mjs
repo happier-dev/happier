@@ -114,3 +114,33 @@ test('hstack stack new refuses an existing stack without changing its env', asyn
   assert.match(repeated.stderr, /stack already exists/i);
   assert.equal(await fixture.readStackEnv(stackName), before);
 });
+
+test('hstack stack new --if-missing preserves an existing stack without changing its env', async (t) => {
+  const fixture = await setupStackNewMonorepoFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'happier-stack-new-if-missing-',
+  });
+  await fixture.createMonorepoCheckout('main', { includeServerPrisma: true });
+
+  const stackName = 'existing-stack';
+  const created = await fixture.runStackNew([stackName, '--no-copy-auth', '--json']);
+  assert.equal(created.code, 0, `initial stack new failed\nstdout:\n${created.stdout}\nstderr:\n${created.stderr}`);
+
+  const envPath = join(fixture.storageDir, stackName, 'env');
+  await ensureEnvFileUpdated({
+    envPath,
+    updates: [{ key: 'SENTINEL', value: 'preserve-me' }],
+  });
+  const before = await fixture.readStackEnv(stackName);
+
+  const ensured = await fixture.runStackNew([stackName, '--no-copy-auth', '--if-missing', '--json']);
+  assert.equal(ensured.code, 0, `idempotent stack new failed\nstdout:\n${ensured.stdout}\nstderr:\n${ensured.stderr}`);
+  assert.deepEqual(JSON.parse(ensured.stdout), {
+    ok: true,
+    created: false,
+    stackName,
+    envPath,
+  });
+  assert.equal(await fixture.readStackEnv(stackName), before);
+});

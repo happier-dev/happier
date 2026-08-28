@@ -154,6 +154,27 @@ test('waitForServerReady accepts generic ok health payloads for runtime startup 
   }
 });
 
+test('waitForServerReady stops promptly when its lifecycle is cancelled', async () => {
+  const fixture = await listenServer((_req, res) => {
+    res.statusCode = 503;
+    res.end('starting');
+  });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new Error('server readiness cancelled')), 20);
+  try {
+    await assert.rejects(
+      waitForServerReady(fixture.url, {
+        timeoutMs: 250,
+        intervalMs: 25,
+        signal: controller.signal,
+      }),
+      /server readiness cancelled/,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('waitForServerReady fails early when the child process exits before health becomes ready', async () => {
   const child = new EventEmitter();
   child.exitCode = null;

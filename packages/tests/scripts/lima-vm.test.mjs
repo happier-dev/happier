@@ -17,7 +17,7 @@ async function fileExists(path) {
   }
 }
 
-async function runLimaVmHelperTest(hostOs, envOverrides = {}) {
+async function runLimaVmHelperTest(hostOs, envOverrides = {}, { existingVm = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), `hstack-lima-vm-test-${hostOs.toLowerCase()}-`));
   const binDir = join(root, 'bin');
   const homeDir = join(root, 'home');
@@ -31,9 +31,15 @@ async function runLimaVmHelperTest(hostOs, envOverrides = {}) {
   await mkdir(binDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
+  if (existingVm) {
+    const existingLimaDir = join(homeDir, '.lima', 'happy-test');
+    await mkdir(existingLimaDir, { recursive: true });
+    await writeFile(join(existingLimaDir, 'lima.yaml'), 'memory: "4GiB"\n', 'utf-8');
+  }
 
   const npxLog = join(logDir, 'npx.log');
   const limactlLog = join(logDir, 'limactl.log');
+  const guestProvisionLog = join(logDir, 'guest-provision.sh');
 
   const unamePath = join(binDir, 'uname');
   await writeFile(
@@ -98,6 +104,10 @@ async function runLimaVmHelperTest(hostOs, envOverrides = {}) {
       '  fi',
       '  exit 0',
       'fi',
+      'if [[ "$cmd" == "shell" ]]; then',
+      `  if [[ "$*" == *"bash -s -- --profile=happier"* ]]; then cat > ${JSON.stringify(guestProvisionLog)}; fi`,
+      '  exit 0',
+      'fi',
       'exit 0',
     ].join('\n') + '\n',
     'utf-8'
@@ -131,7 +141,7 @@ async function runLimaVmHelperTest(hostOs, envOverrides = {}) {
 
   const limactlOut = await readFile(limactlLog, 'utf-8');
   assert.match(limactlOut, /limactl (create|stop|start)/, 'expected script to invoke limactl');
-  return { limactlOut, stdout: res.stdout };
+  return { limactlOut, stdout: res.stdout, guestProvisionLog };
 }
 
 test('lima VM helper prints tips without executing backticks on macOS', async () => {
@@ -140,6 +150,24 @@ test('lima VM helper prints tips without executing backticks on macOS', async ()
 
 test('lima VM helper prints tips without executing backticks on Linux', async () => {
   await runLimaVmHelperTest('Linux');
+});
+
+test('fresh Lima VM helper provisions the canonical guest script before handing off to smoke flows', async () => {
+  const { limactlOut, guestProvisionLog, stdout } = await runLimaVmHelperTest('Darwin');
+  const startIndex = limactlOut.indexOf('limactl start happy-test');
+  const provisionIndex = limactlOut.indexOf('limactl shell happy-test -- bash -s -- --profile=happier');
+
+  assert.ok(startIndex >= 0, 'expected the fresh VM to start before provisioning');
+  assert.ok(provisionIndex > startIndex, 'expected guest provisioning after the VM starts');
+  assert.match(await readFile(guestProvisionLog, 'utf8'), /Provision an Ubuntu machine with \*dependencies only\*/);
+  assert.match(stdout, /provisioned fresh guest dependencies/);
+});
+
+test('existing Lima VM helper only reconfigures the retained VM without reprovisioning its guest', async () => {
+  const { limactlOut, guestProvisionLog } = await runLimaVmHelperTest('Darwin', {}, { existingVm: true });
+
+  assert.doesNotMatch(limactlOut, /limactl create/);
+  assert.equal(await fileExists(guestProvisionLog), false);
 });
 
 test('lima VM helper can create a bounded mount-free development worker', async () => {

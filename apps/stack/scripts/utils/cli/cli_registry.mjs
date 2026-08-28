@@ -131,10 +131,10 @@ export function gethstackRegistry() {
       description: 'Provision, configure, and use Mutagen-backed remote development targets',
     },
     {
-      name: 'host',
+      name: 'dev-vm',
       kind: 'node',
       scriptRelPath: 'scripts/host.mjs',
-      rootUsage: 'hstack host setup|mirror [status|sync|stop]|status|doctor|start|stop|shell|exec [--json]',
+      rootUsage: 'hstack dev-vm setup|activate|mirror [status|sync|stop]|mount [status|enable|disable]|unmount|backup [status|schedule enable|status|disable]|forward [status|reconcile|stop]|recovery [enable|status|disable|run]|status|doctor [--repair-forwarding]|start|stop|shell|exec [--json]',
       description: 'Manage the optional primary Linux execution host',
     },
     {

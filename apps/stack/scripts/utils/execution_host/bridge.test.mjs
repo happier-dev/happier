@@ -83,10 +83,10 @@ test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', 
   });
 
   assert.equal(result.delegated, true);
-  assert.deepEqual(calls[0].args.slice(-4), [
+  assert.deepEqual(calls[0].args.slice(-5), [
     'node',
     '/home/example/.happier-stack/workspace/0.2/apps/stack/scripts/repo_local.mjs',
-    'tui', '--json',
+    'tui', '--json', '--rescue',
   ]);
 });
 

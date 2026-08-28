@@ -5,6 +5,7 @@ import { prepareRemoteValidationWorkspace } from './remote_validation_preparatio
 
 test('remote validation preparation delegates component dependency outputs to the canonical workspace owner', async () => {
   const calls = [];
+  const publisherCalls = [];
   const result = await prepareRemoteValidationWorkspace({
     repoDir: '/remote/happier',
     componentRelativeDir: 'apps/cli',
@@ -13,6 +14,15 @@ test('remote validation preparation delegates component dependency outputs to th
       ensureWorkspacePackagesBuiltForComponent: async (...args) => {
         calls.push(args);
         return { ok: true, built: ['@happier-dev/plugins-codex'], skipped: [] };
+      },
+    }),
+    loadCliBuildOwner: async () => ({
+      resolveCliBundledWorkspacePackageNames: (options) => {
+        assert.deepEqual(options, { repoRoot: '/remote/happier' });
+        return ['plugins-codex', 'plugins-claude'];
+      },
+      runCanonicalBundledPluginArtifactPublisher: async (options) => {
+        publisherCalls.push(options);
       },
     }),
   });
@@ -26,6 +36,53 @@ test('remote validation preparation delegates component dependency outputs to th
     built: ['@happier-dev/plugins-codex'],
     skipped: [],
   });
+  assert.deepEqual(publisherCalls, [{
+    repoRoot: '/remote/happier',
+    workspaceNames: ['plugins-codex', 'plugins-claude'],
+    env: { TEST_ENV: '1' },
+    mode: 'write',
+  }]);
+});
+
+test('remote validation preparation does not publish CLI projections for unrelated components', async () => {
+  let loadedCliOwner = false;
+  await prepareRemoteValidationWorkspace({
+    repoDir: '/remote/happier',
+    componentRelativeDir: 'packages/protocol',
+    loadWorkspaceBuildOwner: async () => ({
+      ensureWorkspacePackagesBuiltForComponent: async () => ({ ok: true, built: [], skipped: [] }),
+    }),
+    loadCliBuildOwner: async () => {
+      loadedCliOwner = true;
+      throw new Error('unrelated component must not load the CLI publisher');
+    },
+  });
+  assert.equal(loadedCliOwner, false);
+});
+
+test('remote UI validation prepares the complete CLI plugin closure before publishing replica artifacts', async () => {
+  const events = [];
+  await prepareRemoteValidationWorkspace({
+    repoDir: '/remote/happier',
+    componentRelativeDir: 'apps/ui',
+    loadWorkspaceBuildOwner: async () => ({
+      ensureWorkspacePackagesBuiltForComponent: async (componentDir) => {
+        events.push(`prepare:${componentDir}`);
+        return { ok: true, built: [], skipped: [] };
+      },
+    }),
+    loadCliBuildOwner: async () => ({
+      resolveCliBundledWorkspacePackageNames: () => ['plugins-codex'],
+      runCanonicalBundledPluginArtifactPublisher: async () => {
+        events.push('publish');
+      },
+    }),
+  });
+  assert.deepEqual(events, [
+    'prepare:/remote/happier/apps/ui',
+    'prepare:/remote/happier/apps/cli',
+    'publish',
+  ]);
 });
 
 test('remote validation preparation rejects paths outside the synchronized repository', async () => {

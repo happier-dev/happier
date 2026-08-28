@@ -309,6 +309,22 @@ target before applying `fallback=local|error`. Once a command starts, its result
 and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
 independent from allowing local fallback.
 
+Before the selected remote command starts, the launcher flushes that target's named Mutagen session.
+If the flush fails, it releases the dispatch reservation and applies `fallback=local|error` instead
+of running the remote command against an older checkout.
+
+On Linux, recognized typecheck, Vitest, build-like, and direct dependency-install commands share a
+per-target-account admission pool. Its capacity is derived locally as the smaller of one slot per
+four CPUs and one per 12 GiB of RAM (three on a 14-core/72 GiB primary, two on an 8-core/24 GiB
+worker). The launcher reports waiting provenance, pauses new starts for a saturated current run
+queue, less than 10% available memory, or memory PSI `avg10` of 10 or higher, and releases an
+interrupted command's slot for the next waiter. Searches and ordinary control commands keep their
+normal dispatch path.
+
+When a Linux target has a ready systemd user manager and a loaded `happier-jobs.slice`, an admitted
+job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
+configure the slice; targets without that prepared boundary run the same admitted command directly.
+
 The normal scratch floor is 1 GiB. A target whose synchronized checkout has not installed the
 current dependencies needs at least 16 GiB for automatic dependency-backed routing, covering the
 Yarn cache and linked workspace tree. Already-prepared targets keep using the normal floor, and
@@ -338,29 +354,24 @@ status is returned by `hstack`. On `Ctrl-C`/termination, `hstack` cancels the ex
 process tree and then stops its local SSH client. Use `--tty` only for a command that genuinely needs
 an interactive terminal.
 
-Ordinary `exec` does **not** flush Mutagen. It accepts an active scanning, reconciliation, staging,
-transition, saving, or watching state only after that session has completed at least one successful
-cycle and has no error, pause, or conflict. It then runs against the bytes already present in the
-same moving mirror used by remote services. Continuous synchronization remains active while the
-command runs, exactly as it would if the command had been started locally during edits.
+Every routed `exec` first requires a healthy synchronization session and then flushes that existing
+Mutagen session immediately before SSH launch. This makes edits observed by the synchronization
+owner available to the command before it starts, avoiding stale post-edit validation. Continuous
+synchronization remains active while the command runs: the flush does not pause the mirror, create a
+staging tree, or provide an immutable snapshot, so later edits can still arrive during execution.
 
-That availability-first behavior means an ordinary command can briefly observe the previous remote
-tree while a large rename or deletion is still being reconciled. Use the explicit barrier below when
-the result depends on the target having received every local change observed so far. A missing local
-file that still appears in a remote compiler error is a strong signal to run that barrier before
-diagnosing the compiler output as current source.
-
-When a command must start after all changes observed locally so far have reached the target, choose
-one of the explicit barriers:
+The standalone synchronization command remains useful when a caller needs a barrier without starting
+a command. The legacy exact-target `--flush` option is accepted for compatibility and preserves the
+same single pre-launch barrier; it does not add a second flush:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs dev-targets sync linux
 node ./apps/stack/scripts/repo_local.mjs dev-targets exec linux --flush -- corepack yarn test
 ```
 
-A flush is a point-in-time barrier before launch, not a snapshot: later local edits can still arrive
-while the command is running. It is therefore useful for a deliberate integration boundary, but is
-not the default for searches or normal RED/GREEN loops.
+A flush is a point-in-time launch barrier, not a snapshot. Commands that require an immutable source
+tree must use a separate workspace/snapshot mechanism rather than assuming the live Dev Target mirror
+stops changing.
 
 `hstack` does not queue or globally cap `exec` commands. Separate invocations launch in parallel so
 a dedicated target can use all of its CPU and memory. The invoked tools may still contend for their
@@ -439,8 +450,13 @@ machine identity or general settings.
 
 The TUI adds and reports:
 
+- an `execution fabric` pane with cached load/capacity bars, active command reservations, memory
+  headroom, PSI when the target exposes it, sample age, last-hour delegation, and the retained
+  dispatch spread. It reads the scheduler's existing cache and bounded rotating
+  `dev-target-command-load-native/provenance.jsonl` history; opening the TUI does not add another
+  remote probe or telemetry writer;
 - a `mutagen sync` pane for synchronization output and status;
-- one `remote <name>` pane per target for dependency, build, daemon, and reconnect output.
+- one `remote <name>` pane per target for dependency, build, daemon, and reconnect output;
 - service placement plus each remote target's `starting`, `running`, or `retrying` status. Remote
   processes are not represented as local PIDs.
 

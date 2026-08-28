@@ -10,17 +10,18 @@ const BASE_PROFILE = Object.freeze({
   containerd: 'none',
   mountNone: true,
   rosetta: false,
-  portForwards: Object.freeze([
-    Object.freeze({ guestStart: 52005, guestEnd: 54004, hostStart: 52005, hostEnd: 54004 }),
-    Object.freeze({ guestStart: 18081, guestEnd: 20080, hostStart: 18081, hostEnd: 20080 }),
-  ]),
+  // TCP Stack services are owned by execution-host SSH transport. Keeping
+  // their broad ranges in Lima hostagent creates a second, unreliable owner.
+  // The final proto:any ignore rule remains below to prevent implicit Lima
+  // forwarding (including UDP) from claiming arbitrary guest listeners.
+  portForwards: Object.freeze([]),
 });
 
 const PROFILE_SIZES = Object.freeze({
   small: Object.freeze({ cpus: 8, memoryGiB: 16, diskGiB: 160 }),
   balanced: Object.freeze({ cpus: 10, memoryGiB: 24, diskGiB: 160 }),
   performance: Object.freeze({ cpus: 12, memoryGiB: 32, diskGiB: 240 }),
-  heavy: Object.freeze({ cpus: 14, memoryGiB: 48, diskGiB: 320 }),
+  heavy: Object.freeze({ cpus: 14, memoryGiB: 72, diskGiB: 640 }),
   'worker-balanced': Object.freeze({ cpus: 8, memoryGiB: 24, diskGiB: 160 }),
 });
 
@@ -67,6 +68,7 @@ function renderPortForwards(portForwards) {
     ...portForwards.map((entry) => ({
       guestPortRange: [entry.guestStart, entry.guestEnd],
       hostPortRange: [entry.hostStart, entry.hostEnd],
+      hostIP: entry.hostIP,
     })),
     { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', ignore: true },
   ];

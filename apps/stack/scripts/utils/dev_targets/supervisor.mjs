@@ -13,6 +13,7 @@ import {
 import { runDevTargetDependencyBootstrap } from './executor.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
 import { waitForExpoMetroRunning } from '../expo/expo.mjs';
+import { resolveServerReadyTimeoutMs, waitForServerReady as waitForHappierServerReady } from '../server/server.mjs';
 import {
   buildRemoteStackCommand,
   buildRemoteStackStopCommand,
@@ -20,6 +21,8 @@ import {
   buildRemoteEnsureDirectoriesCommand,
   buildRemoteForwardProbeCommand,
   buildRemoteInstallCredentialCommand,
+  buildRemoteStackRetirementProbeCommand,
+  resolveRemoteStackStatePaths,
   buildSshForwardArgs,
   buildSshWorkerArgs,
 } from './remote_commands.mjs';
@@ -28,6 +31,14 @@ const TARGET_SYNC_READY = Symbol('TARGET_SYNC_READY');
 
 function planRunsRuntimeServices(plan) {
   return Object.values(plan?.services ?? {}).some(Boolean);
+}
+
+export function planRequiresRemoteCliWorkspacePreparation(plan) {
+  return plan?.services?.daemon === true || plan?.services?.expo === true;
+}
+
+function planDefersRemoteCompanionPreparation(plan) {
+  return plan?.services?.server === true && planRequiresRemoteCliWorkspacePreparation(plan);
 }
 
 export function resolveDefaultRemoteServerPort({
@@ -99,6 +110,15 @@ async function defaultWaitForExpoReady({ port, env = process.env, signal } = {})
   throw new Error(`timed out waiting for tunneled Expo on localhost:${String(port)} after ${timeoutMs}ms`);
 }
 
+async function defaultWaitForServerReady({ url, env = process.env, signal } = {}) {
+  const timeoutMs = resolveServerReadyTimeoutMs({ env });
+  await waitForHappierServerReady(url, {
+    timeoutMs,
+    intervalMs: 500,
+    signal,
+  });
+}
+
 function resolveDaemonReadinessTimeoutMs(env = process.env) {
   const configured = Number(env.HAPPIER_DEV_TARGET_DAEMON_READY_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : 15 * 60_000;
@@ -123,7 +143,7 @@ async function waitForAbortableDelay(delayMs, signal) {
 
 async function defaultWaitForDaemonReady({
   target,
-  activeServerId,
+  stackName,
   sshArgs,
   runProcess,
   env = process.env,
@@ -131,7 +151,7 @@ async function defaultWaitForDaemonReady({
 } = {}) {
   const timeoutMs = resolveDaemonReadinessTimeoutMs(env);
   const startedAt = Date.now();
-  const command = buildRemoteDaemonReadinessProbeCommand(target, { activeServerId });
+  const command = buildRemoteDaemonReadinessProbeCommand(target, { stackName });
   while (!signal?.aborted && Date.now() - startedAt < timeoutMs) {
     const result = await runProcess({
       label: `remote:${target.name}`,
@@ -167,8 +187,9 @@ function requireSuccessful(result, description) {
   throw new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
 }
 
-function remoteCredentialPaths(target, activeServerId, stackName) {
+function remoteCredentialPaths(target, stackName) {
   const base = String(target.cliHomeDir).replace(/[\\/]+$/, '');
+  const { activeServerId } = resolveRemoteStackStatePaths(target, { stackName });
   const stagedPath = `${base}/.access-key-${stackName}.tmp`;
   const finalPath = `${base}/servers/${activeServerId}/access.key`;
   return { stagedPath, finalPath };
@@ -183,10 +204,13 @@ export async function startStackDevTargets(
     localExpoPort = null,
     publicServerUrl = '',
     expoPublicUrl = '',
+    resolveMobilePublicUrlsOnTarget = false,
     expoListenHost = '127.0.0.1',
     startMobile = false,
     activeServerId,
     credentialPath,
+    remoteServerRuntimeConfig = null,
+    remoteWorkspacePreparation = null,
     targets,
     syncTargets = null,
     targetPlans = null,
@@ -200,6 +224,7 @@ export async function startStackDevTargets(
     stopProcess = defaultStopProcess,
     waitForProcess = defaultWaitForProcess,
     waitForRetry = defaultWaitForRetry,
+    waitForServerReady = defaultWaitForServerReady,
     waitForExpoReady = defaultWaitForExpoReady,
     waitForDaemonReady = defaultWaitForDaemonReady,
     runDependencyBootstrap = runDevTargetDependencyBootstrap,
@@ -243,6 +268,7 @@ export async function startStackDevTargets(
   const tunnelsByTarget = new Map();
   const targetFailuresByTarget = new Map();
   const provisionedTargets = new Set();
+  const deferredCompanionPreparationsByTarget = new Map();
   const lifecycleTasks = [];
   let monitorWorker = null;
   let syncProject = null;
@@ -313,12 +339,83 @@ export async function startStackDevTargets(
     const startTarget = async (plan, index, existingTunnel = null) => {
       const { target, services } = plan;
       const hasServices = Object.values(services).some(Boolean);
+      const deferCompanionPreparation = planDefersRemoteCompanionPreparation(plan);
       let phase = 'prepare';
       let tunnel = existingTunnel;
       let createdTunnel = false;
+      let credentialSeedTask = null;
+      deferredCompanionPreparationsByTarget.delete(target.name);
       const beginPhase = (nextPhase) => {
         phase = nextPhase;
         publishTargetState(plan, 'starting', { phase });
+      };
+      const seedRemoteCredential = async () => {
+        if (!services.daemon) return;
+        beginPhase('credentials');
+        const { stagedPath, finalPath } = remoteCredentialPaths(target, stackName);
+        requireSuccessful(
+          await runProcess({
+            label: `remote:${target.name}`,
+            command: 'scp',
+            args: [
+              '-q',
+              ...openSsh.sshArgs,
+              '-o',
+              'BatchMode=yes',
+              credentialPath,
+              `${target.ssh}:${stagedPath}`,
+            ],
+            env: infraEnv,
+          }),
+          `${target.name} credential transfer`,
+        );
+        requireSuccessful(
+          await runProcess({
+            label: `remote:${target.name}`,
+            command: 'ssh',
+            args: [
+              '-o',
+              'BatchMode=yes',
+              ...openSsh.sshArgs,
+              target.ssh,
+              buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath }),
+            ],
+            env: infraEnv,
+          }),
+          `${target.name} credential installation`,
+        );
+      };
+      const beginCredentialSeed = () => {
+        if (!credentialSeedTask) {
+          credentialSeedTask = seedRemoteCredential();
+          // Deferred targets intentionally seed credentials before server
+          // readiness. Their lifecycle awaits and reports this same task once
+          // companion preparation is admitted, so suppress only an early
+          // unhandled-rejection report here.
+          void credentialSeedTask.catch(() => {});
+        }
+        return credentialSeedTask;
+      };
+      const prepareRemoteServices = async () => {
+        await beginCredentialSeed();
+        beginPhase('bootstrap');
+        if (planRequiresRemoteCliWorkspacePreparation(plan) && remoteWorkspacePreparation) {
+          await remoteWorkspacePreparation;
+        }
+        requireSuccessful(
+          await runDependencyBootstrap({
+            target,
+            stackBaseDir,
+            // Local generated inputs are published immediately before the
+            // supervisor starts. Use the existing explicit Mutagen barrier
+            // once before executing component bootstrap on the replica.
+            syncAlreadyVerified: false,
+            flush: true,
+            env: infraEnv,
+          }),
+          `${target.name} dependency bootstrap`,
+        );
+        provisionedTargets.add(target.name);
       };
       try {
         beginPhase('prepare');
@@ -353,59 +450,12 @@ export async function startStackDevTargets(
               `${target.name} Mutagen resume`,
             );
           }
-          if (hasServices) {
-            beginPhase('bootstrap');
-            requireSuccessful(
-              await runDependencyBootstrap({
-                target,
-                stackBaseDir,
-                // Local generated inputs are published immediately before the
-                // supervisor starts. Use the existing explicit Mutagen barrier
-                // once before executing component bootstrap on the replica.
-                syncAlreadyVerified: false,
-                flush: true,
-                env: infraEnv,
-              }),
-              `${target.name} dependency bootstrap`,
-            );
+          if (deferCompanionPreparation && services.daemon) {
+            beginCredentialSeed();
           }
-
-          if (services.daemon) {
-            beginPhase('credentials');
-            const { stagedPath, finalPath } = remoteCredentialPaths(target, activeServerId, stackName);
-            requireSuccessful(
-              await runProcess({
-                label: `remote:${target.name}`,
-                command: 'scp',
-                args: [
-                  '-q',
-                  ...openSsh.sshArgs,
-                  '-o',
-                  'BatchMode=yes',
-                  credentialPath,
-                  `${target.ssh}:${stagedPath}`,
-                ],
-                env: infraEnv,
-              }),
-              `${target.name} credential transfer`,
-            );
-            requireSuccessful(
-              await runProcess({
-                label: `remote:${target.name}`,
-                command: 'ssh',
-                args: [
-                  '-o',
-                  'BatchMode=yes',
-                  ...openSsh.sshArgs,
-                  target.ssh,
-                  buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath }),
-                ],
-                env: infraEnv,
-              }),
-              `${target.name} credential installation`,
-            );
+          if (hasServices && !deferCompanionPreparation) {
+            await prepareRemoteServices();
           }
-          provisionedTargets.add(target.name);
         }
 
         if (closed) return null;
@@ -452,18 +502,35 @@ export async function startStackDevTargets(
         }
         const remoteStackOptions = {
           services,
+          deferDaemonStartUntilCredentials: deferCompanionPreparation && services.daemon,
           serverUrl: `http://127.0.0.1:${remoteServerPort}`,
           publicServerUrl,
           activeServerId,
           stackName,
           remoteServerPort,
           remoteExpoPort,
+          remoteServerRuntimeConfig,
           expoPublicUrl,
+          resolveServerPublicUrlOnTarget: Boolean(resolveMobilePublicUrlsOnTarget && services.server),
+          resolveExpoPublicUrlOnTarget: Boolean(resolveMobilePublicUrlsOnTarget && services.expo),
           startMobile,
         };
         beginPhase('stop');
-        requireSuccessful(
-          await runProcess({
+        let retirementResult = null;
+        let retirementVerified = (await runProcess({
+          label: `remote:${target.name}`,
+          command: 'ssh',
+          args: [
+            ...openSsh.sshArgs,
+            '-o',
+            'BatchMode=yes',
+            target.ssh,
+            buildRemoteStackRetirementProbeCommand(target, { stackName }),
+          ],
+          env: infraEnv,
+        }))?.code === 0;
+        if (!retirementVerified) {
+          retirementResult = await runProcess({
             label: `remote:${target.name}`,
             command: 'ssh',
             args: [
@@ -474,9 +541,32 @@ export async function startStackDevTargets(
               buildRemoteStackStopCommand(target, remoteStackOptions),
             ],
             env: infraEnv,
-          }),
-          `${target.name} prior Stack retirement`,
-        );
+          });
+          retirementVerified = retirementResult?.code === 0;
+          if (!retirementVerified && Number(retirementResult?.code) === 255) {
+            const retirementProbe = await runProcess({
+              label: `remote:${target.name}`,
+              command: 'ssh',
+              args: [
+                ...openSsh.sshArgs,
+                '-o',
+                'BatchMode=yes',
+                target.ssh,
+                buildRemoteStackRetirementProbeCommand(target, { stackName }),
+              ],
+              env: infraEnv,
+            });
+            retirementVerified = retirementProbe?.code === 0;
+            if (retirementVerified) {
+              logger.warn?.(
+                `[dev-targets] ${target.name} prior Stack retirement SSH transport closed (code=255) after cleanup was verified`,
+              );
+            }
+          }
+        }
+        if (!retirementVerified) {
+          requireSuccessful(retirementResult, `${target.name} prior Stack retirement`);
+        }
         const remoteCommand = buildRemoteStackCommand(target, remoteStackOptions);
         beginPhase('tunnel');
         if (!tunnel) {
@@ -526,9 +616,14 @@ export async function startStackDevTargets(
           env: infraEnv,
         });
         workersByTarget.set(target.name, worker);
-        if (!services.expo && !services.daemon) {
-          targetFailuresByTarget.delete(target.name);
-          publishTargetState(plan, 'running');
+        if (deferCompanionPreparation && !provisionedTargets.has(target.name)) {
+          deferredCompanionPreparationsByTarget.set(target.name, {
+            run: prepareRemoteServices,
+            phase: () => phase,
+          });
+        }
+        if (services.server) {
+          beginPhase('server-readiness');
         } else if (services.expo) {
           beginPhase('expo-readiness');
         } else {
@@ -562,119 +657,164 @@ export async function startStackDevTargets(
         let worker = initialWorker;
         let tunnel = initialTunnel;
         let retryAttempt = 0;
+        let serverReady = !services.server;
+        let companionPreparationReady = !planDefersRemoteCompanionPreparation(plan)
+          || provisionedTargets.has(target.name);
         let expoReady = !services.expo;
         let daemonReady = !services.daemon;
+        const readinessPhase = () => {
+          if (!serverReady) return 'server-readiness';
+          if (!companionPreparationReady) return 'bootstrap';
+          if (!expoReady) return 'expo-readiness';
+          if (!daemonReady) return 'daemon-readiness';
+          return null;
+        };
+        const readinessServiceStatus = (overrides = {}) => ({
+          ...(services.server ? { server: overrides.server ?? (serverReady ? 'running' : 'starting') } : {}),
+          ...(services.expo ? { expo: overrides.expo ?? (expoReady ? 'running' : 'starting') } : {}),
+          ...(services.daemon ? { daemon: overrides.daemon ?? (daemonReady ? 'running' : 'starting') } : {}),
+        });
+        const publishReadiness = () => {
+          if (serverReady && expoReady && daemonReady) {
+            targetFailuresByTarget.delete(target.name);
+            publishTargetState(plan, 'running');
+            return;
+          }
+          publishTargetState(plan, 'starting', {
+            phase: readinessPhase(),
+            serviceStatus: readinessServiceStatus(),
+          });
+        };
+        const waitForReadinessRetry = async () => {
+          const retryOutcome = await Promise.race([
+            waitForRetry({ attempt: 1, delayMs: 5_000, target }).then(() => 'retry'),
+            closeRequested.then(() => 'close'),
+          ]);
+          return retryOutcome !== 'close' && !closed;
+        };
         while (!closed) {
           if (worker && tunnel) {
-            const readinessController = (!expoReady || !daemonReady) ? new AbortController() : null;
+            if (serverReady && !companionPreparationReady) {
+              const deferredPreparation = deferredCompanionPreparationsByTarget.get(target.name);
+              try {
+                if (!deferredPreparation) {
+                  throw new Error(`[dev-targets] ${target.name} deferred companion preparation is unavailable`);
+                }
+                await deferredPreparation.run();
+                companionPreparationReady = true;
+                publishReadiness();
+                continue;
+              } catch (error) {
+                const phase = deferredPreparation?.phase?.() ?? 'bootstrap';
+                const failureMessage = `${target.name} remote companion preparation failed: ${
+                  error instanceof Error ? error.message : String(error)
+                }`;
+                targetFailuresByTarget.set(target.name, {
+                  name: target.name,
+                  phase,
+                  error: new Error(failureMessage),
+                });
+                publishTargetState(plan, 'degraded', {
+                  phase,
+                  error: failureMessage,
+                  serviceStatus: readinessServiceStatus({
+                    ...(services.expo ? { expo: 'degraded' } : {}),
+                    ...(services.daemon ? { daemon: 'degraded' } : {}),
+                  }),
+                });
+                if (!await waitForReadinessRetry()) return;
+                continue;
+              }
+            }
+            const readinessController = (!serverReady || !expoReady || !daemonReady)
+              ? new AbortController()
+              : null;
             const outcomePromises = [
               waitForProcess(worker).then((result) => ({ kind: 'worker-exit', result })),
               waitForProcess(tunnel).then((result) => ({ kind: 'tunnel-exit', result })),
               closeRequested.then(() => ({ kind: 'close' })),
             ];
             if (readinessController) {
-              if (!expoReady) outcomePromises.push(
-                waitForExpoReady({
-                  port: localExpoPort,
-                  target,
-                  env,
-                  signal: readinessController.signal,
-                }).then(
-                  () => ({ kind: 'expo-ready' }),
-                  (error) => ({ kind: 'expo-readiness-failed', error }),
-                ),
-              );
-              if (!daemonReady) outcomePromises.push(
-                waitForDaemonReady({
-                  target,
-                  activeServerId,
-                  sshArgs: openSsh.sshArgs,
-                  runProcess,
-                  env: infraEnv,
-                  signal: readinessController.signal,
-                }).then(
-                  () => ({ kind: 'daemon-ready' }),
-                  (error) => ({ kind: 'daemon-readiness-failed', error }),
-                ),
-              );
+              if (!serverReady) {
+                outcomePromises.push(
+                  waitForServerReady({
+                    url: `http://127.0.0.1:${localServerPort}`,
+                    target,
+                    env,
+                    signal: readinessController.signal,
+                  }).then(
+                    () => ({ kind: 'server-ready' }),
+                    (error) => ({ kind: 'server-readiness-failed', error }),
+                  ),
+                );
+              } else {
+                if (!expoReady) outcomePromises.push(
+                  waitForExpoReady({
+                    port: localExpoPort,
+                    target,
+                    env,
+                    signal: readinessController.signal,
+                  }).then(
+                    () => ({ kind: 'expo-ready' }),
+                    (error) => ({ kind: 'expo-readiness-failed', error }),
+                  ),
+                );
+                if (!daemonReady) outcomePromises.push(
+                  waitForDaemonReady({
+                    target,
+                    stackName,
+                    sshArgs: openSsh.sshArgs,
+                    runProcess,
+                    env: infraEnv,
+                    signal: readinessController.signal,
+                  }).then(
+                    () => ({ kind: 'daemon-ready' }),
+                    (error) => ({ kind: 'daemon-readiness-failed', error }),
+                  ),
+                );
+              }
             }
             const outcome = await Promise.race(outcomePromises);
             readinessController?.abort();
             if (outcome.kind === 'close' || closed) return;
-            if (outcome.kind === 'expo-ready') {
-              expoReady = true;
+            const readyService = outcome.kind === 'server-ready'
+              ? 'server'
+              : outcome.kind === 'expo-ready'
+                ? 'expo'
+                : outcome.kind === 'daemon-ready'
+                  ? 'daemon'
+                  : null;
+            if (readyService) {
+              if (readyService === 'server') serverReady = true;
+              if (readyService === 'expo') expoReady = true;
+              if (readyService === 'daemon') daemonReady = true;
               retryAttempt = 0;
-              if (daemonReady) {
-                targetFailuresByTarget.delete(target.name);
-                publishTargetState(plan, 'running');
-              } else {
-                publishTargetState(plan, 'starting', {
-                  phase: 'daemon-readiness',
-                  serviceStatus: { expo: 'running', daemon: 'starting' },
-                });
-              }
+              publishReadiness();
               continue;
             }
-            if (outcome.kind === 'daemon-ready') {
-              daemonReady = true;
-              retryAttempt = 0;
-              if (expoReady) {
-                targetFailuresByTarget.delete(target.name);
-                publishTargetState(plan, 'running');
-              } else {
-                publishTargetState(plan, 'starting', {
-                  phase: 'expo-readiness',
-                  serviceStatus: { daemon: 'running', expo: 'starting' },
-                });
-              }
-              continue;
-            }
-            if (outcome.kind === 'daemon-readiness-failed') {
-              const failureMessage = `${target.name} remote daemon readiness failed: ${
+            const failedService = outcome.kind === 'server-readiness-failed'
+              ? 'server'
+              : outcome.kind === 'expo-readiness-failed'
+                ? 'expo'
+                : outcome.kind === 'daemon-readiness-failed'
+                  ? 'daemon'
+                  : null;
+            if (failedService) {
+              const phase = `${failedService}-readiness`;
+              const failureMessage = `${target.name} remote ${failedService} readiness failed: ${
                 outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
               }`;
               targetFailuresByTarget.set(target.name, {
                 name: target.name,
-                phase: 'daemon-readiness',
+                phase,
                 error: new Error(failureMessage),
               });
               publishTargetState(plan, 'degraded', {
-                phase: 'daemon-readiness',
+                phase,
                 error: failureMessage,
-                serviceStatus: {
-                  ...(services.expo ? { expo: expoReady ? 'running' : 'starting' } : {}),
-                  daemon: 'degraded',
-                },
+                serviceStatus: readinessServiceStatus({ [failedService]: 'degraded' }),
               });
-              const retryOutcome = await Promise.race([
-                waitForRetry({ attempt: 1, delayMs: 5_000, target }).then(() => 'retry'),
-                closeRequested.then(() => 'close'),
-              ]);
-              if (retryOutcome === 'close' || closed) return;
-              continue;
-            }
-            if (outcome.kind === 'expo-readiness-failed') {
-              const failureMessage = `${target.name} remote Expo readiness failed: ${
-                outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
-              }`;
-              targetFailuresByTarget.set(target.name, {
-                name: target.name,
-                phase: 'expo-readiness',
-                error: new Error(failureMessage),
-              });
-              publishTargetState(plan, 'degraded', {
-                phase: 'expo-readiness',
-                error: failureMessage,
-                serviceStatus: {
-                  expo: 'degraded',
-                  ...(services.daemon ? { daemon: daemonReady ? 'running' : 'starting' } : {}),
-                },
-              });
-              const retryOutcome = await Promise.race([
-                waitForRetry({ attempt: 1, delayMs: 5_000, target }).then(() => 'retry'),
-                closeRequested.then(() => 'close'),
-              ]);
-              if (retryOutcome === 'close' || closed) return;
+              if (!await waitForReadinessRetry()) return;
               continue;
             }
 
@@ -705,6 +845,7 @@ export async function startStackDevTargets(
               `[dev-targets] ${failureMessage}; retrying target lifecycle`,
             );
             worker = null;
+            serverReady = !services.server;
             expoReady = !services.expo;
             daemonReady = !services.daemon;
             if (tunnelExited) {
@@ -728,6 +869,9 @@ export async function startStackDevTargets(
             if (worker === TARGET_SYNC_READY) return;
             tunnel = tunnelsByTarget.get(target.name) ?? null;
             if (worker && tunnel) {
+              serverReady = !services.server;
+              companionPreparationReady = !planDefersRemoteCompanionPreparation(plan)
+                || provisionedTargets.has(target.name);
               expoReady = !services.expo;
               break;
             }

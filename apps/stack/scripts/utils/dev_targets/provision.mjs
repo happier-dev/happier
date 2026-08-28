@@ -204,6 +204,8 @@ export async function provisionPosixDevTarget(
         args: [
           '-F', configPath,
           '-o', 'BatchMode=no',
+          '-o', 'IdentitiesOnly=yes',
+          '-o', 'IdentityAgent=none',
           '-i', publicKeyPath,
           sshAlias,
         ],

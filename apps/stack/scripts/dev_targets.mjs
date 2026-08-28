@@ -183,6 +183,18 @@ function setPlacement(config, surface, destination, options = {}) {
         : { mode: 'prefer-target', target: normalizedDestination, fallback: 'local' };
     return parseDevTargetsConfig({ ...upgraded, commandExecution: placement });
   }
+  if (normalizedSurface === 'daemon' && normalizedDestination === 'local-and-targets') {
+    if (!options.targets?.length) {
+      throw new Error('[dev-targets] daemon local-and-targets placement requires --targets=NAME,...');
+    }
+    return parseDevTargetsConfig({
+      ...upgraded,
+      runtimePlacement: {
+        ...upgraded.runtimePlacement,
+        daemon: { mode: 'local-and-targets', targets: options.targets },
+      },
+    });
+  }
   if (normalizedDestination === 'auto') {
     throw new Error('[dev-targets] automatic least-load placement is supported only for commands');
   }
@@ -245,7 +257,8 @@ async function main() {
         '  hstack dev-targets sync-service stop [--stack=NAME]',
         '  hstack dev-targets exec NAME|auto [--cwd=PATH] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=NAME] -- COMMAND [ARG...]',
         '  hstack dev-targets placement show [--stack=NAME]',
-        '  hstack dev-targets placement set server|expo|daemon local|TARGET [--stack=NAME]',
+        '  hstack dev-targets placement set server|expo local|TARGET [--stack=NAME]',
+        '  hstack dev-targets placement set daemon local|TARGET|local-and-targets [--targets=NAME,...] [--stack=NAME]',
         '  hstack dev-targets placement set commands local|TARGET|auto [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
         '  hstack dev-targets placement clear --downgrade-v1 [--stack=NAME]',
         '  hstack dev-targets add NAME --host=HOST --user=USER [--managed-lima] [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
@@ -480,7 +493,7 @@ async function main() {
         commandArgs: remoteCommandArgs,
         cwd: kv.get('--cwd') ?? '.',
         environment: parseRemoteEnvironment(wrapperArgs),
-        flush: flags.has('--flush'),
+        ...(flags.has('--flush') ? { flush: true } : {}),
         tty: flags.has('--tty'),
         env: process.env,
       });
@@ -560,6 +573,10 @@ async function main() {
           new URL('./provision/linux-ubuntu-provision.sh', import.meta.url),
           'utf8',
         );
+        const guestPressureScriptSource = await readFile(
+          new URL('./provision/linux-guest-pressure.sh', import.meta.url),
+          'utf8',
+        );
         candidate = await provisionManagedLimaDevTarget({
           name,
           host,
@@ -573,7 +590,7 @@ async function main() {
           cliHomeDir: kv.get('--cli-home-dir') ?? null,
           allowInstall: !flags.has('--no-install'),
           env: process.env,
-        }, { guestProvisionScriptSource });
+        }, { guestProvisionScriptSource, guestPressureScriptSource });
       } else {
         if (outerTargetName) {
           throw new Error('[dev-targets] --outer-target requires --managed-lima');

@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 import { scrubHappierStackEnv, STACK_WRAPPER_PRESERVE_KEYS } from './utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { readExecutionHostProfile } from './utils/execution_host/config.mjs';
+import { resolveHostWorkspaceMapping } from './utils/execution_host/delegation.mjs';
 import { ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { ensureEnvFileMutated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
 import {
   resolveRepoStackIdentity,
@@ -207,6 +210,28 @@ function readRuntimeExpoPort(runtimeStatePath) {
   }
 }
 
+function resolveActiveExecutionHostStackIdentity({ repoRoot, invokedCwd, env }) {
+  const profile = readExecutionHostProfile(env);
+  if (profile?.activation !== 'active' || profile.version !== 2) return null;
+  for (const hostPath of [repoRoot, invokedCwd]) {
+    try {
+      const mapping = resolveHostWorkspaceMapping(profile, hostPath);
+      const stackName = String(mapping.workspace.stackName ?? '').trim();
+      if (!stackName) continue;
+      const { baseDir: stackBaseDir } = resolveStackEnvPath(stackName, env);
+      return {
+        stackName,
+        stackBaseDir,
+        runtimeStatePath: join(stackBaseDir, 'stack.runtime.json'),
+      };
+    } catch {
+      // An active named profile may govern another checkout; retain normal
+      // repo-local identity resolution when this invocation is not mapped.
+    }
+  }
+  return null;
+}
+
 async function main() {
   const autoInstallOverride = String(process.env.HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL ?? '').trim();
   const preflightRootOverride = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT ?? '').trim();
@@ -259,7 +284,8 @@ async function main() {
   // so a controlled consumer can select while its checkout is not build-ready.
   const stackIdentity = isRuntimeSnapshotSelection
     ? null
-    : resolveRepoStackIdentity({
+    : resolveActiveExecutionHostStackIdentity({ repoRoot, invokedCwd, env: process.env })
+      ?? resolveRepoStackIdentity({
         repoRoot,
         stacksStorageRoot: resolveStacksStorageRoot(process.env),
         createIfMissing: !dryRun && !isStop,

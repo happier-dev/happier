@@ -18,9 +18,71 @@ import {
 } from './mutagen_runtime.mjs';
 
 export const INDEPENDENT_DEV_TARGET_SYNC_OWNER = 'dev-target-sync-service';
+// The managed guest provisioner owns this unit and its MemoryLow=4G contract.
+// Stack only verifies that published contract before placing a future control
+// process in the existing slice.
+const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
+const HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES = 4 * 1024 * 1024 * 1024;
+const SYSTEMD_USER_CRITICAL_SCOPE_PROBE_TIMEOUT_MS = 1_000;
+
+function hasSystemdUserBus(env) {
+  return process.platform === 'linux'
+    && String(env?.DBUS_SESSION_BUS_ADDRESS ?? '').trim().length > 0;
+}
+
+function parseSystemdProperties(raw) {
+  const properties = new Map();
+  for (const line of String(raw ?? '').split('\n')) {
+    const delimiter = line.indexOf('=');
+    if (delimiter <= 0) continue;
+    properties.set(line.slice(0, delimiter).trim(), line.slice(delimiter + 1).trim());
+  }
+  return properties;
+}
+
+async function resolveDevTargetControlLaunch({ command, args, env }) {
+  if (!hasSystemdUserBus(env)) return { command, args };
+
+  try {
+    const probe = await runCaptureResult('systemctl', [
+      '--user',
+      'show',
+      HAPPIER_CRITICAL_SLICE_NAME,
+      '--property=LoadState',
+      '--property=MemoryLow',
+    ], {
+      env,
+      timeoutMs: SYSTEMD_USER_CRITICAL_SCOPE_PROBE_TIMEOUT_MS,
+    });
+    const properties = parseSystemdProperties(probe.out);
+    if (
+      probe.exitCode !== 0
+      || properties.get('LoadState') !== 'loaded'
+      || properties.get('MemoryLow') !== String(HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES)
+    ) {
+      return { command, args };
+    }
+  } catch {
+    return { command, args };
+  }
+
+  return {
+    command: 'systemd-run',
+    args: [
+      '--user',
+      '--scope',
+      '--quiet',
+      `--slice=${HAPPIER_CRITICAL_SLICE_NAME}`,
+      '--',
+      command,
+      ...args,
+    ],
+  };
+}
 
 export async function runDevTargetControlProcess({ label, command, args, env }) {
-  const result = await runCaptureResult(command, args, { env, streamLabel: label });
+  const launch = await resolveDevTargetControlLaunch({ command, args, env });
+  const result = await runCaptureResult(launch.command, launch.args, { env, streamLabel: label });
   return { ...result, code: result.exitCode };
 }
 
@@ -172,6 +234,12 @@ export async function ensureDevTargetSyncProject(
       release: async () => {},
     };
   }
+  if (borrowingIndependentProject) {
+    throw new Error(
+      '[dev-targets] independent synchronization project configuration differs; '
+        + 'the sync service must reconcile it before Stack startup can borrow it',
+    );
+  }
 
   await mkdir(mutagenRuntime.mutagenDir, { recursive: true });
   await writeFile(mutagenRuntime.projectFile, desiredProject, 'utf8');
@@ -200,7 +268,22 @@ export async function ensureDevTargetSyncProject(
       });
       resumed = result?.code === 0;
     }
-    if (!resumed) {
+    if (ownerId === INDEPENDENT_DEV_TARGET_SYNC_OWNER) {
+      const sessionResult = await runProcess({
+        label: 'sync',
+        command: 'mutagen',
+        args: ['sync', 'list', '--template', MUTAGEN_SYNC_LIST_JSON_TEMPLATE],
+        env: mutagenRuntime.env,
+      });
+      if (sessionResult?.code === 0) {
+        resumed = targets.every((target) => (
+          parseMutagenSyncList(
+            sessionResult.out,
+            resolveMutagenSessionName(target.name),
+          ).state !== 'missing'
+        ));
+      }
+    } else if (!resumed) {
       const sessionResults = await Promise.all(targets.map((target) => runProcess({
         label: `sync:${target.name}`,
         command: 'mutagen',
@@ -213,11 +296,29 @@ export async function ensureDevTargetSyncProject(
         ],
         env: mutagenRuntime.env,
       })));
-      resumed = sessionResults.every((sessionResult) => sessionResult?.code === 0);
+      const sessionStates = sessionResults.map((sessionResult, index) => (
+        sessionResult?.code === 0
+          ? parseMutagenSyncList(
+            sessionResult.out,
+            resolveMutagenSessionName(targets[index].name),
+          ).state
+          : null
+      ));
+      resumed = !sessionStates.includes('missing')
+        && sessionStates.every((state) => state !== null);
     }
   }
   let projectCreated = false;
   if (!resumed) {
+    if (allowIndependentBorrow && ownerId !== INDEPENDENT_DEV_TARGET_SYNC_OWNER) {
+      const current = await readFile(mutagenRuntime.projectFile, 'utf8').catch(() => null);
+      if (isMutagenProjectOwnedBy(current, INDEPENDENT_DEV_TARGET_SYNC_OWNER)) {
+        throw new Error(
+          '[dev-targets] independent synchronization ownership changed during Stack startup; '
+            + 'refusing destructive project replacement',
+        );
+      }
+    }
     await runProcess({
       label: 'mutagen',
       command: 'mutagen',
@@ -265,13 +366,21 @@ export async function releaseIndependentDevTargetSyncProject(
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
   const contents = await readFile(runtime.projectFile, 'utf8').catch(() => null);
   if (!isMutagenProjectOwnedBy(contents, INDEPENDENT_DEV_TARGET_SYNC_OWNER)) return false;
-  requireSuccessful(await runProcess({
+  const releasedContents = withoutMutagenProjectOwner(contents);
+  await writeFile(runtime.projectFile, releasedContents, 'utf8');
+  const result = await runProcess({
     label: 'mutagen',
     command: 'mutagen',
     args: buildMutagenProjectArgs('pause', runtime.projectFile),
     env: runtime.env,
-  }), 'independent Mutagen project pause');
-  await writeFile(runtime.projectFile, withoutMutagenProjectOwner(contents), 'utf8');
+  });
+  try {
+    requireSuccessful(result, 'independent Mutagen project pause');
+  } catch (error) {
+    const current = await readFile(runtime.projectFile, 'utf8').catch(() => null);
+    if (current === releasedContents) await writeFile(runtime.projectFile, contents, 'utf8');
+    throw error;
+  }
   return true;
 }
 

@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
+import { renderMutagenProject } from './mutagen_project.mjs';
+import {
+  ensureDevTargetSyncProject,
+  INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+} from './sync_project.mjs';
 import {
   inspectDevTargetSyncService,
   repairRecoverableDevTargetSyncConflicts,
@@ -15,6 +23,65 @@ const targets = [
   { name: 'mac2' },
 ];
 
+test('detached sync start recreates requested sessions missing from its canonical project', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-service-missing-sessions-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac',
+    repoDir: '/remote/happier',
+  };
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+  const mutagenCalls = [];
+  const syncListCalls = [];
+
+  const result = await startDevTargetSyncService({
+    stackBaseDir: root,
+    sourceDir: '/source/happier',
+    targets: [target],
+    detached: true,
+    env: {},
+  }, {
+    startTargetRuntime: async () => {},
+    ensureReplicaRoots: async () => {},
+    ensureProject: async (options) => ensureDevTargetSyncProject(options, {
+      runProcess: async ({ args }) => {
+        mutagenCalls.push(args.slice(0, 2));
+        if (args[0] === 'sync' && args[1] === 'list') {
+          syncListCalls.push(args);
+          return args[2] === 'happier-mac'
+            ? { code: 1, err: 'specification happier-mac did not match any sessions' }
+            : { code: 0, out: '[]' };
+        }
+        return { code: 0 };
+      },
+    }),
+    resumeSync: async () => {},
+    inspectSync: async () => ({ state: 'ready', sessionName: 'happier-mac' }),
+    writePreparationState: async () => {},
+  });
+
+  assert.equal(result.project.projectCreated, true);
+  assert.deepEqual(syncListCalls.map((args) => args.slice(0, 3)), [
+    ['sync', 'list', '--template'],
+  ]);
+  assert.deepEqual(mutagenCalls, [
+    ['version'],
+    ['project', 'resume'],
+    ['sync', 'list'],
+    ['project', 'terminate'],
+    ['project', 'start'],
+    ['project', 'list'],
+  ]);
+});
+
 test('detached sync start resumes the canonical project and reports every session without a resident wrapper or dependency bootstrap', async () => {
   const calls = [];
   const result = await startDevTargetSyncService({
@@ -24,6 +91,7 @@ test('detached sync start resumes the canonical project and reports every sessio
     detached: true,
     env: {},
   }, {
+    ensureReplicaRoots: async () => {},
     ensureProject: async (options) => {
       calls.push({ kind: 'ensure', options });
       return { ownership: 'owned', env: { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' } };
@@ -74,6 +142,9 @@ test('sync startup makes configured Lima transports ready before Mutagen project
     startTargetRuntime: async ({ target }) => {
       calls.push({ kind: 'runtime', target: target.name });
     },
+    ensureReplicaRoots: async ({ targets: preparedTargets }) => {
+      calls.push({ kind: 'roots', targets: preparedTargets.map((target) => target.name) });
+    },
     ensureProject: async () => {
       calls.push({ kind: 'ensure' });
       return { ownership: 'owned', env: {} };
@@ -83,9 +154,10 @@ test('sync startup makes configured Lima transports ready before Mutagen project
     writePreparationState: async () => {},
   });
 
-  assert.deepEqual(calls.slice(0, 3), [
+  assert.deepEqual(calls.slice(0, 4), [
     { kind: 'runtime', target: 'mac' },
     { kind: 'runtime', target: 'linux' },
+    { kind: 'roots', targets: ['mac', 'linux'] },
     { kind: 'ensure' },
   ]);
 });
@@ -100,6 +172,7 @@ test('sync startup accepts an unpaused reconnecting session when Mutagen resume 
     env: {},
   }, {
     startTargetRuntime: async () => {},
+    ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: {} }),
     resumeSync: async () => { throw new Error('endpoint offline'); },
     inspectSync: async () => ({ state: 'synchronizing', sessionName: 'happier-mac' }),
@@ -123,6 +196,7 @@ test('detached sync start never owns dependency preparation on any sync target',
     detached: true,
     env: {},
   }, {
+    ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: {} }),
     resumeSync: async () => {},
     prepareTarget: async ({ target }) => { prepared.push(target.name); },
@@ -148,6 +222,7 @@ test('POSIX sync startup does not flush or bootstrap the remote checkout', async
     detached: true,
     env: {},
   }, {
+    ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: { TEST_ENV: 'project' } }),
     resumeSync: async () => {},
     syncTarget: async (options) => { calls.push({ kind: 'unexpected-sync', options }); },
@@ -169,6 +244,7 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
     detached: false,
     env: {},
   }, {
+    ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' } }),
     resumeSync: async () => {},
     prepareTarget: async () => {},
@@ -184,6 +260,11 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
   assert.equal(spawned[0].command, 'mutagen');
   assert.deepEqual(spawned[0].args.slice(0, 3), ['sync', 'monitor', '--template']);
   assert.match(spawned[0].args[3], /SuccessfulCycles/);
+  assert.match(
+    spawned[0].args[3],
+    /if \.SessionState/,
+    'the monitor must skip transient Mutagen entries whose embedded session state is nil',
+  );
   assert.deepEqual(spawned[0].args.slice(-2), ['happier-mac', 'happier-mac2']);
   assert.deepEqual(spawned[0].env, { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' });
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), true);
@@ -260,6 +341,7 @@ test('detached sync start records every synchronization observation before rejec
       detached: true,
       env: {},
     }, {
+      ensureReplicaRoots: async () => {},
       ensureProject: async () => ({ ownership: 'owned', env: {} }),
       resumeSync: async () => {},
       prepareTarget: async () => { throw new Error('dependency bootstrap must not run'); },
@@ -324,6 +406,7 @@ test('sync service repairs a deleted source root blocked only by ignored beta ar
     detached: true,
     env: {},
   }, {
+    ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: {} }),
     resumeSync: async () => {},
     inspectSync: async () => conflictStatus,

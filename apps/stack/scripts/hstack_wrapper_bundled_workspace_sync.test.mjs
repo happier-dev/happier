@@ -519,6 +519,58 @@ test('hstack wrapper lets a TUI-owned source-dev child reach its scoped build ow
   }
 });
 
+test('hstack wrapper lets a direct watched stack restart reach its scoped dev owners', async () => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-direct-watch-restart-skip-'));
+  try {
+    const { bundleMarkerPath, loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
+      failPreflight: true,
+      healthResults: [false],
+    });
+    const { stackName, storageDir } = createStackManagementFixture(fixtureDir);
+    const env = bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir });
+    const res = await runNodeCapture(
+      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'dev', stackName, '--watch', '--restart', '--json'],
+      { cwd: rootDir, env },
+    );
+
+    assert.equal(
+      res.code,
+      0,
+      `watched restart must reach the scoped dev owner before bundled publication\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`,
+    );
+    assert.doesNotThrow(() => JSON.parse(res.stdout), `expected watched restart JSON\n${res.stdout}`);
+    assert.equal(existsSync(syncMarkerPath), false, 'watched restart must not synchronize every bundled workspace package');
+    assert.equal(existsSync(bundleMarkerPath), false, 'watched restart must not invoke the global bundled workspace fallback');
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('hstack wrapper keeps direct non-watch stack restart behind bundled workspace publication', async () => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-direct-strict-restart-preflight-'));
+  try {
+    const { bundleMarkerPath, loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
+      failPreflight: true,
+      healthResults: [false],
+    });
+    const { stackName, storageDir } = createStackManagementFixture(fixtureDir);
+    const env = bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir });
+    const res = await runNodeCapture(
+      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'dev', stackName, '--no-watch', '--restart', '--json'],
+      { cwd: rootDir, env },
+    );
+
+    assert.notEqual(res.code, 0, 'non-watch restart must retain the strict bundled workspace preflight');
+    assert.match(res.stderr, /test bundled workspace preflight is unavailable/);
+    assert.equal(existsSync(syncMarkerPath), true, 'non-watch restart must attempt bundled workspace synchronization');
+    assert.equal(existsSync(bundleMarkerPath), true, 'non-watch restart must invoke the bundled workspace fallback');
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('hstack wrapper keeps Stack-local management commands available when bundled workspace preflight is unavailable', async () => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-stack-management-skip-'));

@@ -14,6 +14,8 @@ export function needsAuthSeed({ cliHomeDir, accountCount }) {
 export function shouldSuppressInteractiveStackAuthSetup({ env = process.env } = {}) {
   const isTuiManaged = (env?.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
   if (isTuiManaged) return 'tui_managed';
+  const isDevTargetManaged = (env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').toString().trim() === '1';
+  if (isDevTargetManaged) return 'dev_target_managed';
   return null;
 }
 

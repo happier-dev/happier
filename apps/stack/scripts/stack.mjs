@@ -162,6 +162,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const json = wantsJson(argv, { flags });
+  const ifMissing = flags.has('--if-missing');
   const copyAuth = !(flags.has('--no-copy-auth') || flags.has('--fresh-auth'));
   const copyAuthFrom =
     (kv.get('--copy-auth-from') ?? '').trim() ||
@@ -210,7 +211,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     throw new Error(
       '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
         '[--repo=<owner/...>|<path>|default] [--remote=<name>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] ' +
-        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--non-interactive] [--force-port]'
+        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--if-missing] [--interactive] [--non-interactive] [--force-port]'
     );
   }
   const normalizedName = normalizeStackNameOrNull(stackName);
@@ -232,6 +233,22 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
   }
   if (stackExistsSync(stackName)) {
+    if (ifMissing) {
+      const res = {
+        ok: true,
+        created: false,
+        stackName,
+        envPath: resolveStackEnvPath(stackName).envPath,
+      };
+      if (emit) {
+        printResult({
+          json,
+          data: res,
+          text: `[stack] already exists ${stackName}`,
+        });
+      }
+      return res;
+    }
     throw stackAlreadyExistsError(stackName);
   }
 

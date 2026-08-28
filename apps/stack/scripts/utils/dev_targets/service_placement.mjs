@@ -37,6 +37,16 @@ export function resolveServicePlansAfterTargetPreflight({
   mutagenAvailable,
   reachableTargets,
 }) {
+  const unavailableServerPlan = configured.targets.find((plan) => (
+    plan.services.server
+    && (!mutagenAvailable || !reachableTargets.has(plan.target.name))
+  ));
+  if (unavailableServerPlan) {
+    throw new Error(
+      `[dev-targets] persisted server placement is authoritative and ${unavailableServerPlan.target.name} `
+      + 'is unavailable during target preflight',
+    );
+  }
   const local = { ...configured.local };
   const fallbacks = [];
   const targets = configured.targets.map((plan) => {

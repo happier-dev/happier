@@ -160,11 +160,12 @@ test('relay-host forwarding maps legacy HStack update onto the canonical idempot
   );
 });
 
-test('self-host install-time SQLite migration delegates to the installed canonical server-light binary', async () => {
-  assert.equal(typeof selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime, 'function');
+test('self-host install-time migration delegates to the canonical provider migration plan', async () => {
+  assert.equal(typeof selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime, 'function');
   const calls = [];
   const env = {
     HAPPIER_SQLITE_AUTO_MIGRATE: '0',
+    HAPPIER_DB_PROVIDER: 'sqlite',
     HAPPIER_SQLITE_MIGRATIONS_DIR: '/var/lib/happier/migrations/sqlite',
     DATABASE_URL: 'file:/var/lib/happier/happier-server-light.sqlite',
   };
@@ -173,7 +174,7 @@ test('self-host install-time SQLite migration delegates to the installed canonic
     serverBinaryPath: '/opt/happier/bin/happier-server',
   };
 
-  await selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+  await selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime({
     config,
     env,
     runCommandImpl: (cmd, args, options) => {
@@ -195,15 +196,15 @@ test('self-host install-time SQLite migration delegates to the installed canonic
   ]);
 });
 
-test('self-host install-time SQLite migration preserves canonical binary failure', async () => {
+test('self-host install-time migration preserves canonical binary failure', async () => {
   const failure = new Error('canonical migration exit 23');
   await assert.rejects(
-    selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+    selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime({
       config: {
         installRoot: '/opt/happier',
         serverBinaryPath: '/opt/happier/bin/happier-server',
       },
-      env: { HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
+      env: { HAPPIER_DB_PROVIDER: 'sqlite', HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
       runCommandImpl: () => {
         throw failure;
       },

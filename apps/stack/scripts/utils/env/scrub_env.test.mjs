@@ -115,6 +115,7 @@ test('scrubHappierStackEnv preserves stack wrapper routing and runtime selection
     HAPPIER_STACK_DAEMON: '0',
     HAPPIER_STACK_CLI_HOME_DIR: '/tmp/stack/cli',
     HAPPIER_STACK_CLI_IDENTITY: 'default',
+    HAPPIER_STACK_INVOKED_CWD: '/tmp/plugin-author-root',
     HAPPIER_STACK_SECRET: 'drop-me',
   };
 
@@ -132,6 +133,7 @@ test('scrubHappierStackEnv preserves stack wrapper routing and runtime selection
   assert.equal(scrubbed.HAPPIER_STACK_DAEMON, '0');
   assert.equal(scrubbed.HAPPIER_STACK_CLI_HOME_DIR, '/tmp/stack/cli');
   assert.equal(scrubbed.HAPPIER_STACK_CLI_IDENTITY, 'default');
+  assert.equal(scrubbed.HAPPIER_STACK_INVOKED_CWD, '/tmp/plugin-author-root');
   assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);
 });
 

@@ -514,46 +514,36 @@ export async function runCapture(cmd, args, options = {}) {
     });
     let out = '';
     let err = '';
-    let timedOut = false;
-    let timeoutCleanup = null;
     let settled = false;
+    const rejectTimedOut = () => {
+      const e = new Error(`${cmd} ${args.join(' ')} timed out after ${timeoutMs}ms`);
+      e.code = 'ETIMEDOUT';
+      e.out = out;
+      e.err = err;
+      rejectPromise(e);
+    };
     const t = timeoutEnabled
       ? setTimeout(() => {
-          timedOut = true;
-          timeoutCleanup = killProcessTree(proc, 'SIGKILL', { graceMs: 2_000 }).then(
-            (cleanup) => ({ cleanup, error: null }),
-            (error) => ({ cleanup: null, error }),
-          );
+          if (settled) return;
+          // A kernel-stuck child can never emit close. The deadline belongs to
+          // the caller, while process-tree cleanup remains best-effort.
+          void killProcessTree(proc, 'SIGKILL', { graceMs: 2_000 }).catch(() => {});
+          settled = true;
+          rejectTimedOut();
         }, timeoutMs)
       : null;
     proc.stdout?.on('data', (d) => (out += d.toString()));
     proc.stderr?.on('data', (d) => (err += d.toString()));
     proc.on('error', (error) => {
-      if (timedOut || settled) return;
+      if (settled) return;
       if (t) clearTimeout(t);
       settled = true;
       rejectPromise(error);
     });
-    proc.on('close', async (code, signal) => {
+    proc.on('close', (code, signal) => {
       if (t) clearTimeout(t);
       if (settled) return;
       settled = true;
-      if (timedOut) {
-        const { cleanup, error: cleanupError } = await timeoutCleanup;
-        const e = new Error(`${cmd} ${args.join(' ')} timed out after ${timeoutMs}ms`);
-        e.code = 'ETIMEDOUT';
-        e.out = out;
-        e.err = err;
-        if (cleanupError) {
-          e.cause = cleanupError;
-          e.message += '; process-tree cleanup failed';
-        } else if (!cleanup?.ok) {
-          e.cleanup = cleanup;
-          e.message += `; process-tree cleanup was not confirmed (${cleanup?.reason ?? 'unknown'})`;
-        }
-        rejectPromise(e);
-        return;
-      }
       if (code === 0) {
         resolvePromise(out);
         return;

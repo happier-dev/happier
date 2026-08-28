@@ -10,8 +10,15 @@ import {
   startStackDevTargetsInBackground,
 } from './supervisor.mjs';
 import { renderMutagenProject } from './mutagen_project.mjs';
+import { resolveRemoteStackStatePaths } from './remote_commands.mjs';
 
 const successfulDependencyBootstrap = async () => ({ code: 0 });
+
+const remoteLightSqliteRuntimeConfig = Object.freeze({
+  serverComponentName: 'happier-server-light',
+  dbProvider: 'sqlite',
+  environment: {},
+});
 
 test('background dev target startup never gates the local stack and remains closeable while preparing', async () => {
   let resolveStartup;
@@ -174,8 +181,10 @@ test('dependency bootstrap delegates to the cancellable remote execution owner',
         stackBaseDir: join(root, 'stack'),
         sourceDir: '/source/happier',
         localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
         activeServerId: 'stack_repo-test__id_default',
         credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
         targetPlans: [{
           target,
           commands: true,
@@ -229,16 +238,127 @@ test('remote service startup retires the prior Stack in a visible finite phase b
     repoDir: '/Users/test/happier',
     cliHomeDir: '/Users/test/.happier/mac',
   };
+  let controller = null;
 
   try {
-    const controller = await startStackDevTargets(
+    controller = await startStackDevTargets(
       {
         stackName: 'repo-test',
         stackBaseDir: join(root, 'stack'),
         sourceDir: '/source/happier',
         localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
         activeServerId: 'stack_repo-test__id_default',
         credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: false, daemon: false },
+        }],
+        onTargetStateChange: (state) => targetStates.push(state),
+        env: {},
+      },
+      {
+        runDependencyBootstrap: successfulDependencyBootstrap,
+        runProcess: async ({ label, command, args, env }) => {
+          calls.push({ kind: 'run', label, command, args, env });
+          const remoteCommand = String(args?.at(-1) ?? '');
+          if (command === 'ssh' && remoteCommand.includes('stack.runtime.json')) return { code: 1 };
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env, silent, persistOutput }) => {
+          const child = { label, command, args, env, silent, persistOutput, exitCode: null };
+          calls.push({ kind: 'spawn', label, command, args, env, silent, persistOutput, child });
+          return child;
+        },
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+      },
+    );
+
+    const stopCallIndex = calls.findIndex((call) => (
+      call.kind === 'run'
+      && call.command === 'ssh'
+      && call.args.at(-1)?.includes('stack stop')
+    ));
+    const probeCallIndex = calls.findIndex((call) => (
+      call.kind === 'run'
+      && call.command === 'ssh'
+      && call.args.at(-1)?.includes('stack.runtime.json')
+    ));
+    const workerCallIndex = calls.findIndex((call) => (
+      call.kind === 'spawn'
+      && call.command === 'ssh'
+      && !call.args.includes('-N')
+    ));
+    assert.ok(probeCallIndex >= 0, 'expected a canonical target-state probe before retirement');
+    assert.ok(stopCallIndex > probeCallIndex, 'a present target runtime must be retired after its probe');
+    assert.equal(
+      calls[stopCallIndex].args.some((arg, index, args) => (
+        arg === '-o' && args[index + 1] === 'ControlPath=none'
+      )),
+      false,
+      'prior Stack retirement must retain the target SSH control configuration',
+    );
+    assert.ok(workerCallIndex > stopCallIndex, 'the long-lived worker must start only after retirement completes');
+    assert.doesNotMatch(calls[workerCallIndex].args.at(-1), /stack stop/);
+    assert.match(
+      calls[workerCallIndex].args.at(-1),
+      /stack new .*--if-missing.*stack env .* set.*stack dev/,
+      'the supervisor must launch the public remote command that initializes the target Stack before dev',
+    );
+    const tunnelCall = calls.find((call) => (
+      call.kind === 'spawn'
+      && call.command === 'ssh'
+      && call.args.includes('-N')
+    ));
+    assert.equal(tunnelCall?.silent, true, 'forwarding transport noise must not replace remote service logs');
+    assert.equal(tunnelCall?.persistOutput, false, 'expected forwarding refusals must not pollute the target log');
+    assert.notEqual(calls[workerCallIndex].silent, true, 'remote worker and service logs must remain visible');
+    assert.notEqual(calls[workerCallIndex].persistOutput, false, 'remote worker and service logs must remain persisted');
+    assert.ok(
+      targetStates.some((state) => state.status === 'starting' && state.phase === 'stop'),
+      'runtime observers must distinguish prior Stack retirement from an unexplained worker stall',
+    );
+    assert.ok(
+      targetStates.some((state) => state.status === 'starting' && state.phase === 'server-readiness'),
+      'a remote server must enter readiness before it can be reported running',
+    );
+
+    await controller.close();
+    controller = null;
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an absent prior remote Stack skips its non-idempotent stop before spawning the replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-retire-absent-'));
+  const calls = [];
+  const targetStates = [];
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  let controller = null;
+
+  try {
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
         targetPlans: [{
           target,
           commands: false,
@@ -264,36 +384,359 @@ test('remote service startup retires the prior Stack in a visible finite phase b
       },
     );
 
-    const stopCallIndex = calls.findIndex((call) => (
-      call.kind === 'run'
-      && call.command === 'ssh'
-      && call.args.at(-1)?.includes('stack stop')
+    const probeCallIndex = calls.findIndex((call) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack.runtime.json')
+    ));
+    const tunnelCallIndex = calls.findIndex((call) => (
+      call.kind === 'spawn' && call.command === 'ssh' && call.args.includes('-N')
     ));
     const workerCallIndex = calls.findIndex((call) => (
-      call.kind === 'spawn'
-      && call.command === 'ssh'
-      && !call.args.includes('-N')
+      call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N')
     ));
-    assert.ok(stopCallIndex >= 0, 'expected prior remote Stack retirement to be a finite SSH command');
-    assert.ok(workerCallIndex > stopCallIndex, 'the long-lived worker must start only after retirement completes');
-    assert.doesNotMatch(calls[workerCallIndex].args.at(-1), /stack stop/);
-    const tunnelCall = calls.find((call) => (
-      call.kind === 'spawn'
-      && call.command === 'ssh'
-      && call.args.includes('-N')
-    ));
-    assert.equal(tunnelCall?.silent, true, 'forwarding transport noise must not replace remote service logs');
-    assert.equal(tunnelCall?.persistOutput, false, 'expected forwarding refusals must not pollute the target log');
-    assert.notEqual(calls[workerCallIndex].silent, true, 'remote worker and service logs must remain visible');
-    assert.notEqual(calls[workerCallIndex].persistOutput, false, 'remote worker and service logs must remain persisted');
-    assert.ok(
-      targetStates.some((state) => state.status === 'starting' && state.phase === 'stop'),
-      'runtime observers must distinguish prior Stack retirement from an unexplained worker stall',
+    assert.ok(probeCallIndex >= 0, 'retirement must check canonical state before attempting a stop');
+    assert.equal(
+      calls.some((call) => call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack stop')),
+      false,
+      'an absent target runtime must not run a non-idempotent remote Stack stop',
     );
-    assert.equal(targetStates.at(-1)?.status, 'running');
+    assert.ok(tunnelCallIndex > probeCallIndex, 'verified absence may create one replacement tunnel');
+    assert.ok(workerCallIndex > tunnelCallIndex, 'verified absence may create one replacement worker');
+    assert.equal(
+      targetStates.some((state) => state.status === 'retrying' && state.phase === 'stop'),
+      false,
+      'an already-retired target must not remain retrying',
+    );
 
     await controller.close();
+    controller = null;
   } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('SSH code 255 during prior remote Stack retirement proceeds only after a separate absence probe verifies cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-retire-ssh-255-'));
+  const calls = [];
+  const targetStates = [];
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  let controller = null;
+  let retirementProbeCount = 0;
+
+  try {
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: false, daemon: false },
+        }],
+        onTargetStateChange: (state) => targetStates.push(state),
+        env: {},
+      },
+      {
+        runDependencyBootstrap: successfulDependencyBootstrap,
+        runProcess: async ({ label, command, args, env }) => {
+          calls.push({ kind: 'run', label, command, args, env });
+          const remoteCommand = String(args?.at(-1) ?? '');
+          if (command === 'ssh' && remoteCommand.includes('stack stop')) return { code: 255 };
+          if (command === 'ssh' && remoteCommand.includes('stack.runtime.json')) {
+            retirementProbeCount += 1;
+            return { code: retirementProbeCount === 1 ? 1 : 0 };
+          }
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env, silent, persistOutput }) => {
+          const child = { label, command, args, env, silent, persistOutput, exitCode: null };
+          calls.push({ kind: 'spawn', label, command, args, env, silent, persistOutput, child });
+          return child;
+        },
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+      },
+    );
+
+    const stopCallIndex = calls.findIndex((call) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack stop')
+    ));
+    const probeCallIndexes = calls.flatMap((call, index) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack.runtime.json')
+        ? [index]
+        : []
+    ));
+    const tunnelCallIndex = calls.findIndex((call) => (
+      call.kind === 'spawn' && call.command === 'ssh' && call.args.includes('-N')
+    ));
+    const workerCallIndex = calls.findIndex((call) => (
+      call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N')
+    ));
+    assert.ok(stopCallIndex >= 0, 'expected a finite retirement command');
+    assert.equal(probeCallIndexes.length, 2, 'a present target needs pre-stop and post-255 retirement probes');
+    assert.ok(probeCallIndexes[0] < stopCallIndex, 'the prior target runtime must be checked before stopping');
+    assert.ok(probeCallIndexes[1] > stopCallIndex, 'code 255 must be verified through a fresh read-only transport');
+    assert.ok(tunnelCallIndex > probeCallIndexes[1], 'a verified retirement may create one replacement tunnel');
+    assert.ok(workerCallIndex > tunnelCallIndex, 'a verified retirement may create one replacement worker');
+    assert.equal(
+      targetStates.some((state) => state.status === 'retrying' && state.phase === 'stop'),
+      false,
+      'a verified completed retirement must not leave the target retrying',
+    );
+
+    await controller.close();
+    controller = null;
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a nonzero retirement probe keeps the target retrying and starts no replacement transport', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-retire-probe-failed-'));
+  const calls = [];
+  const targetStates = [];
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  let controller = null;
+
+  try {
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: false, daemon: false },
+        }],
+        onTargetStateChange: (state) => targetStates.push(state),
+        env: {},
+      },
+      {
+        runDependencyBootstrap: successfulDependencyBootstrap,
+        runProcess: async ({ label, command, args, env }) => {
+          calls.push({ kind: 'run', label, command, args, env });
+          const remoteCommand = String(args?.at(-1) ?? '');
+          if (command === 'ssh' && remoteCommand.includes('stack stop')) return { code: 255 };
+          if (command === 'ssh' && remoteCommand.includes('stack.runtime.json')) return { code: 1 };
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env, silent, persistOutput }) => {
+          const child = { label, command, args, env, silent, persistOutput, exitCode: null };
+          calls.push({ kind: 'spawn', label, command, args, env, silent, persistOutput, child });
+          return child;
+        },
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+      },
+    );
+
+    const probeCall = calls.find((call) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack.runtime.json')
+    ));
+    assert.ok(probeCall, 'code 255 must be checked rather than ignored');
+    assert.equal(
+      calls.some((call) => call.kind === 'spawn' && call.command === 'ssh'),
+      false,
+      'a failed probe must not create a replacement tunnel or worker',
+    );
+    assert.ok(
+      targetStates.some((state) => state.status === 'retrying' && state.phase === 'stop'),
+      'a failed probe must preserve the retirement failure',
+    );
+
+    await controller.close();
+    controller = null;
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ordinary prior remote Stack retirement failures remain fatal after a nonzero pre-stop probe', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-retire-ordinary-failure-'));
+  const calls = [];
+  const targetStates = [];
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  let controller = null;
+
+  try {
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: false, daemon: false },
+        }],
+        onTargetStateChange: (state) => targetStates.push(state),
+        env: {},
+      },
+      {
+        runDependencyBootstrap: successfulDependencyBootstrap,
+        runProcess: async ({ label, command, args, env }) => {
+          calls.push({ kind: 'run', label, command, args, env });
+          const remoteCommand = String(args?.at(-1) ?? '');
+          if (command === 'ssh' && remoteCommand.includes('stack.runtime.json')) return { code: 1 };
+          if (command === 'ssh' && remoteCommand.includes('stack stop')) return { code: 1 };
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env, silent, persistOutput }) => {
+          const child = { label, command, args, env, silent, persistOutput, exitCode: null };
+          calls.push({ kind: 'spawn', label, command, args, env, silent, persistOutput, child });
+          return child;
+        },
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+      },
+    );
+
+    const probeCallIndex = calls.findIndex((call) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack.runtime.json')
+    ));
+    const stopCallIndex = calls.findIndex((call) => (
+      call.kind === 'run' && call.command === 'ssh' && String(call.args.at(-1)).includes('stack stop')
+    ));
+    assert.ok(probeCallIndex >= 0, 'every retirement must start with the canonical state probe');
+    assert.ok(stopCallIndex > probeCallIndex, 'a nonzero pre-stop probe must not mask ordinary stop failures');
+    assert.equal(
+      calls.some((call) => call.kind === 'spawn' && call.command === 'ssh'),
+      false,
+      'an ordinary retirement failure must not create a replacement tunnel or worker',
+    );
+    assert.ok(targetStates.some((state) => state.status === 'retrying' && state.phase === 'stop'));
+
+    await controller.close();
+    controller = null;
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('remote server placement is not reported running until its stable tunneled HTTP endpoint is ready', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-server-readiness-'));
+  const targetStates = [];
+  let resolveServerReady;
+  const serverReady = new Promise((resolve) => {
+    resolveServerReady = resolve;
+  });
+  let observedReadiness = null;
+  let notifyRunning;
+  const running = new Promise((resolve) => {
+    notifyRunning = resolve;
+  });
+  const target = {
+    name: 'mac',
+    platform: 'posix',
+    ssh: 'mac-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac',
+  };
+  let controller = null;
+
+  try {
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: false, daemon: false },
+        }],
+        onTargetStateChange: (state) => {
+          targetStates.push(state);
+          if (state.status === 'running') notifyRunning();
+        },
+        env: {},
+      },
+      {
+        runDependencyBootstrap: successfulDependencyBootstrap,
+        runProcess: async () => ({ code: 0 }),
+        spawnProcess: ({ label, command, args, env }) => ({
+          label,
+          command,
+          args,
+          env,
+          exitCode: null,
+        }),
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+        waitForServerReady: async (options) => {
+          observedReadiness = options;
+          await serverReady;
+        },
+      },
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(observedReadiness?.url, 'http://127.0.0.1:3005');
+    assert.equal(
+      targetStates.some((state) => state.status === 'running'),
+      false,
+      'a live remote worker is not evidence that the local tunnel reaches a ready server',
+    );
+    assert.equal(targetStates.at(-1)?.serviceStatus?.server, 'starting');
+
+    resolveServerReady();
+    assert.equal(await Promise.race([
+      running.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 100)),
+    ]), true);
+    assert.equal(targetStates.at(-1)?.serviceStatus?.server, 'running');
+
+    await controller.close();
+    controller = null;
+  } finally {
+    await controller?.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -302,6 +745,8 @@ test('remote daemon placement is not reported running until the daemon readiness
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-daemon-readiness-'));
   const credentialPath = join(root, 'access.key');
   const targetStates = [];
+  const processCalls = [];
+  let daemonReadinessInput = null;
   let resolveDaemonReady;
   const daemonReady = new Promise((resolve) => {
     resolveDaemonReady = resolve;
@@ -341,7 +786,10 @@ test('remote daemon placement is not reported running until the daemon readiness
       },
       {
         runDependencyBootstrap: successfulDependencyBootstrap,
-        runProcess: async () => ({ code: 0 }),
+        runProcess: async (input) => {
+          processCalls.push(input);
+          return { code: 0 };
+        },
         spawnProcess: ({ label, command, args, env }) => ({
           label,
           command,
@@ -352,11 +800,28 @@ test('remote daemon placement is not reported running until the daemon readiness
         stopProcess: async (child) => {
           child.exitCode = 0;
         },
-        waitForDaemonReady: async () => await daemonReady,
+        waitForDaemonReady: async (input) => {
+          daemonReadinessInput = input;
+          return await daemonReady;
+        },
       },
     );
 
     await new Promise((resolve) => setImmediate(resolve));
+    const targetActiveServerId = resolveRemoteStackStatePaths(target, {
+      stackName: 'repo-test',
+    }).activeServerId;
+    const credentialInstallation = processCalls.find(({ command, args }) => (
+      command === 'ssh'
+      && args.some((arg) => String(arg).includes('/access.key'))
+    ));
+    assert.ok(credentialInstallation);
+    assert.match(credentialInstallation.args.at(-1), new RegExp(`/servers/${targetActiveServerId}/access\\.key`));
+    assert.doesNotMatch(
+      credentialInstallation.args.at(-1),
+      /\/servers\/stack_repo-test__id_default\/access\.key/,
+    );
+    assert.equal(daemonReadinessInput?.stackName, 'repo-test');
     assert.equal(
       targetStates.some((state) => state.status === 'running'),
       false,
@@ -691,7 +1156,9 @@ test('an unhealthy command-only independent target does not gate a service assig
         stackBaseDir,
         sourceDir,
         localServerPort: 3005,
+        publicServerUrl: 'http://127.0.0.1:3005',
         activeServerId: 'stack_repo-test__id_default',
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
         syncTargets: [serviceTarget, commandTarget],
         targetPlans: [
           {
@@ -1258,6 +1725,8 @@ test('remote Expo ownership does not launch a competing local workspace publicat
         sourceDir: '/source/happier',
         localServerPort: 3005,
         localExpoPort: 18081,
+        expoPublicUrl: 'http://192.168.5.15:18081',
+        resolveMobilePublicUrlsOnTarget: true,
         expoListenHost: '0.0.0.0',
         startMobile: true,
         activeServerId: 'stack_repo-test__id_default',
@@ -1302,6 +1771,11 @@ test('remote Expo ownership does not launch a competing local workspace publicat
       'remote service output must be retained locally for borrowed-stack TUI panes',
     );
     assert.equal(worker?.env?.HAPPIER_STACK_LOG_TEE_TIMESTAMPS, '1');
+    assert.doesNotMatch(
+      worker?.args.at(-1) ?? '',
+      /EXPO_PACKAGER_PROXY_URL=|192\.168\.5\.15/,
+      'automatic guest addresses must not override the Expo target\'s own host resolution',
+    );
     assert.ok(
       tunnel.args.some((arg) => /^\*:18081:localhost:\d+$/.test(arg)),
       'the tunnel must listen on both IPv4 and IPv6 while resolving remote localhost for Metro',
@@ -1562,6 +2036,354 @@ test('remote worker exit reuses its independent healthy reverse tunnel', async (
   }
 });
 
+test('server-only targets bypass shared daemon or Expo workspace preparation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-scoped-workspace-preparation-'));
+  const calls = [];
+  const spawned = [];
+  const stopped = [];
+  let resolveWorkspacePreparation;
+  let markServerReady;
+  let startup = null;
+  let controller = null;
+  const workspacePreparation = new Promise((resolve) => {
+    resolveWorkspacePreparation = resolve;
+  });
+  const serverReady = new Promise((resolve) => {
+    markServerReady = resolve;
+  });
+  const serverTarget = {
+    name: 'mac-server',
+    platform: 'posix',
+    ssh: 'mac-server-ssh',
+    repoDir: '/Users/test/happier',
+    cliHomeDir: '/Users/test/.happier/mac-server',
+  };
+  const expoTarget = {
+    name: 'guest-expo',
+    platform: 'posix',
+    ssh: 'guest-expo-ssh',
+    repoDir: '/home/test/happier',
+    cliHomeDir: '/home/test/.happier/guest-expo',
+  };
+
+  try {
+    startup = startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        localExpoPort: 8081,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath: null,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        remoteWorkspacePreparation: workspacePreparation,
+        targetPlans: [
+          {
+            target: serverTarget,
+            commands: false,
+            services: { server: true, expo: false, daemon: false },
+          },
+          {
+            target: expoTarget,
+            commands: false,
+            services: { server: false, expo: true, daemon: false },
+          },
+        ],
+        env: {},
+      },
+      {
+        runDependencyBootstrap: async ({ target }) => {
+          calls.push({ kind: 'bootstrap', target: target.name });
+          return { code: 0 };
+        },
+        runProcess: async ({ label, command, args, env }) => {
+          calls.push({ kind: 'run', label, command, args, env });
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env }) => {
+          const child = { label, command, args, env, exitCode: null };
+          calls.push({ kind: 'spawn', ...child });
+          spawned.push(child);
+          return child;
+        },
+        stopProcess: async (child) => {
+          stopped.push(child);
+          child.exitCode = 0;
+        },
+        waitForServerReady: async ({ target }) => {
+          calls.push({ kind: 'server-ready', target: target.name });
+          markServerReady();
+        },
+        waitForExpoReady: async () => {},
+      },
+    );
+
+    await serverReady;
+    assert.ok(calls.some((call) => call.kind === 'bootstrap' && call.target === serverTarget.name));
+    assert.ok(calls.some((call) => (
+      call.kind === 'spawn'
+      && call.label === `remote:${serverTarget.name}`
+      && call.args.includes('-N')
+    )));
+    assert.ok(calls.some((call) => (
+      call.kind === 'spawn'
+      && call.label === `remote:${serverTarget.name}`
+      && !call.args.includes('-N')
+    )));
+    assert.ok(calls.some((call) => call.kind === 'server-ready' && call.target === serverTarget.name));
+    assert.equal(
+      calls.some((call) => call.kind === 'bootstrap' && call.target === expoTarget.name),
+      false,
+      'an Expo plan must wait for the shared local workspace preparation before its flush/bootstrap',
+    );
+    assert.equal(
+      calls.some((call) => call.kind === 'spawn' && call.label === `remote:${expoTarget.name}`),
+      false,
+      'an Expo plan must not start its tunnel or worker before workspace preparation resolves',
+    );
+
+    resolveWorkspacePreparation();
+    controller = await startup;
+    assert.ok(calls.some((call) => call.kind === 'bootstrap' && call.target === expoTarget.name));
+    assert.ok(calls.some((call) => (
+      call.kind === 'spawn'
+      && call.label === `remote:${expoTarget.name}`
+      && !call.args.includes('-N')
+    )));
+
+    await controller.close();
+    controller = null;
+    assert.equal(stopped.length, spawned.length, 'one close must reclaim every supervisor-owned worker and tunnel');
+    assert.ok(spawned.every((child) => child.exitCode === 0));
+  } finally {
+    resolveWorkspacePreparation?.();
+    controller ??= await startup?.catch(() => null);
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a co-located server stays available when deferred daemon or Expo preparation fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-server-first-preparation-'));
+  try {
+    for (const [index, scenario] of [
+      {
+        name: 'workspace rebuild',
+        createWorkspacePreparation: () => Promise.reject(new Error('remote workspace rebuild failed')),
+        bootstrapResult: { code: 0 },
+        expectedBootstrapCalls: 0,
+        expectedCredentialTransfers: 1,
+      },
+      {
+        name: 'dependency bootstrap',
+        createWorkspacePreparation: () => Promise.resolve(),
+        bootstrapResult: { code: 1 },
+        expectedBootstrapCalls: 1,
+        expectedCredentialTransfers: 1,
+      },
+      {
+        name: 'credential transfer',
+        createWorkspacePreparation: () => Promise.resolve(),
+        bootstrapResult: { code: 0 },
+        expectedBootstrapCalls: 0,
+        expectedCredentialTransfers: 1,
+        processResult: ({ command }) => (command === 'scp' ? { code: 1 } : { code: 0 }),
+      },
+    ].entries()) {
+      const spawned = [];
+      const targetStates = [];
+      const processCalls = [];
+      const workspacePreparation = scenario.createWorkspacePreparation();
+      let releaseRetry;
+      const retryGate = new Promise((resolve) => {
+        releaseRetry = resolve;
+      });
+      let serverReadinessCalls = 0;
+      let dependencyBootstrapCalls = 0;
+      let controller = null;
+      const credentialPath = join(root, `${index}.access.key`);
+      const target = {
+        name: `mac-${index}`,
+        platform: 'posix',
+        ssh: `mac-${index}-ssh`,
+        repoDir: '/Users/test/happier',
+        cliHomeDir: `/Users/test/.happier/mac-${index}`,
+      };
+
+      // The caller owns diagnostic reporting for this shared promise. Keep the
+      // test focused on whether its rejection can still gate the server worker.
+      void workspacePreparation.catch(() => {});
+
+      try {
+        await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+        controller = await startStackDevTargets(
+          {
+            stackName: `repo-test-${index}`,
+            stackBaseDir: join(root, `stack-${index}`),
+            sourceDir: '/source/happier',
+            localServerPort: 3005 + index,
+            localExpoPort: 8081 + index,
+            publicServerUrl: `http://127.0.0.1:${3005 + index}`,
+            activeServerId: `stack_repo-test-${index}__id_default`,
+            credentialPath,
+            remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+            remoteWorkspacePreparation: workspacePreparation,
+            targetPlans: [{
+              target,
+              commands: false,
+              services: { server: true, expo: true, daemon: true },
+            }],
+            onTargetStateChange: (state) => targetStates.push(state),
+            env: {},
+          },
+          {
+            runDependencyBootstrap: async () => {
+              dependencyBootstrapCalls += 1;
+              processCalls.push({ command: 'dependency-bootstrap' });
+              return scenario.bootstrapResult;
+            },
+            runProcess: async (input) => {
+              processCalls.push(input);
+              return scenario.processResult?.(input) ?? { code: 0 };
+            },
+            spawnProcess: ({ label, command, args, env }) => {
+              const child = { label, command, args, env, exitCode: null };
+              spawned.push(child);
+              return child;
+            },
+            stopProcess: async (child) => {
+              child.exitCode = 0;
+            },
+            waitForServerReady: async () => {
+              serverReadinessCalls += 1;
+            },
+            waitForRetry: async () => await retryGate,
+            logger: { error() {} },
+          },
+        );
+
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(
+          spawned.filter((child) => child.label === `remote:${target.name}` && !child.args.includes('-N')).length,
+          1,
+          `${scenario.name}: the single remote Stack worker must start before deferred companion preparation can fail`,
+        );
+        assert.equal(serverReadinessCalls, 1, `${scenario.name}: the server must reach its tunneled readiness path first`);
+        assert.equal(dependencyBootstrapCalls, scenario.expectedBootstrapCalls);
+        assert.equal(
+          processCalls.filter(({ command }) => command === 'scp').length,
+          scenario.expectedCredentialTransfers,
+        );
+        const credentialTransferIndex = processCalls.findIndex(({ command }) => command === 'scp');
+        if (credentialTransferIndex >= 0 && dependencyBootstrapCalls > 0) {
+          const dependencyBootstrapIndex = processCalls.findIndex(({ command }) => command === 'dependency-bootstrap');
+          assert.ok(
+            credentialTransferIndex < dependencyBootstrapIndex,
+            `${scenario.name}: daemon authentication must not wait for dependency refresh`,
+          );
+        }
+        assert.ok(
+          targetStates.some((state) => (
+            state.status === 'degraded'
+            && state.serviceStatus?.server === 'running'
+            && state.serviceStatus?.expo === 'degraded'
+            && state.serviceStatus?.daemon === 'degraded'
+          )),
+          `${scenario.name}: preparation failure must degrade only companion services after the server is available`,
+        );
+      } finally {
+        const close = controller?.close();
+        releaseRetry?.();
+        await close;
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a co-located target begins credential seeding before server readiness without starting dependency bootstrap', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-credential-first-'));
+  const spawned = [];
+  const processCalls = [];
+  let dependencyBootstrapCalls = 0;
+  let controller = null;
+  try {
+    const credentialPath = join(root, 'access.key');
+    await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+    const target = {
+      name: 'mac',
+      platform: 'posix',
+      ssh: 'mac-ssh',
+      repoDir: '/Users/test/happier',
+      cliHomeDir: '/Users/test/.happier/mac',
+    };
+
+    controller = await startStackDevTargets(
+      {
+        stackName: 'repo-test',
+        stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier',
+        localServerPort: 3005,
+        localExpoPort: 8081,
+        publicServerUrl: 'http://127.0.0.1:3005',
+        activeServerId: 'stack_repo-test__id_default',
+        credentialPath,
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        remoteWorkspacePreparation: new Promise(() => {}),
+        targetPlans: [{
+          target,
+          commands: false,
+          services: { server: true, expo: true, daemon: true },
+        }],
+        env: {},
+      },
+      {
+        runDependencyBootstrap: async () => {
+          dependencyBootstrapCalls += 1;
+          return { code: 0 };
+        },
+        runProcess: async (input) => {
+          processCalls.push(input);
+          return { code: 0 };
+        },
+        spawnProcess: ({ label, command, args, env }) => {
+          const child = { label, command, args, env, exitCode: null };
+          spawned.push(child);
+          return child;
+        },
+        stopProcess: async (child) => {
+          child.exitCode = 0;
+        },
+        waitForProcess: async () => await new Promise(() => {}),
+        waitForServerReady: async () => await new Promise(() => {}),
+      },
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      spawned.filter((child) => child.label === 'remote:mac' && !child.args.includes('-N')).length,
+      1,
+      'the remote Stack worker must start while readiness remains pending',
+    );
+    assert.equal(
+      processCalls.filter(({ command }) => command === 'scp').length,
+      1,
+      'credential transfer must begin independently of server readiness',
+    );
+    assert.equal(
+      dependencyBootstrapCalls,
+      0,
+      'workspace and dependency preparation must remain deferred until the server is ready',
+    );
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a slow target preparation does not delay another target worker', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-parallel-'));
   const calls = [];
@@ -1809,9 +2631,9 @@ test('dev target supervisor owns Mutagen publication, remote bootstrap, auth see
         'spawn:mutagen',
         'run:remote:linux',
         'run:remote:linux',
+        'run:remote:linux',
+        'run:remote:linux',
         'bootstrap:remote:linux',
-        'run:remote:linux',
-        'run:remote:linux',
         'run:remote:linux',
         'spawn:remote:linux',
         'run:remote:linux',

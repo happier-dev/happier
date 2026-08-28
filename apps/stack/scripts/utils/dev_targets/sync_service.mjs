@@ -20,10 +20,12 @@ import {
 import {
   ensureDevTargetSyncProject,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  prepareDevTargetOpenSsh,
   releaseIndependentDevTargetSyncProject,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
+import { buildRemoteEnsureDirectoriesCommand } from './remote_commands.mjs';
 
 function defaultSpawnMonitor({ command, args, env, lineFilter }) {
   return spawnProc('mutagen', command, args, env, { lineFilter });
@@ -72,6 +74,32 @@ function assertUsableStatus(target, status) {
     `[dev-targets] ${target.name} synchronization is ${status.state}`
       + (detail ? `: ${detail}` : ''),
   );
+}
+
+async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env }) {
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+  const openSsh = await prepareDevTargetOpenSsh({
+    targets,
+    mutagenDir: runtime.mutagenDir,
+    env,
+  });
+  await Promise.all(targets.map(async (target) => {
+    const result = await runDevTargetControlProcess({
+      label: `remote:${target.name}`,
+      command: 'ssh',
+      args: [
+        ...openSsh.sshArgs,
+        '-o',
+        'BatchMode=yes',
+        target.ssh,
+        buildRemoteEnsureDirectoriesCommand(target),
+      ],
+      env,
+    });
+    if (result?.code !== 0) {
+      throw new Error(`[dev-targets] ${target.name} replica directory bootstrap failed`);
+    }
+  }));
 }
 
 export async function repairRecoverableDevTargetSyncConflicts(
@@ -175,6 +203,7 @@ export async function startDevTargetSyncService(
     spawnMonitor = defaultSpawnMonitor,
     repairSync = repairRecoverableDevTargetSyncConflicts,
     startTargetRuntime = startDevTargetRuntime,
+    ensureReplicaRoots = defaultEnsureReplicaRoots,
     writePreparationState = defaultWritePreparationState,
   } = {},
 ) {
@@ -184,6 +213,7 @@ export async function startDevTargetSyncService(
   await Promise.all(targets.map(async (target) => {
     await startTargetRuntime({ target, env });
   }));
+  await ensureReplicaRoots({ targets, stackBaseDir, env });
   const project = await ensureProject({
     stackBaseDir,
     sourceDir,

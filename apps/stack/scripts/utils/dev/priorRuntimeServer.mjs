@@ -1,8 +1,14 @@
 import { inspectActiveRuntimeSnapshot } from '../../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 
-export function shouldPreflightDevRestart({ startServer = false, priorRuntimeServer = null } = {}) {
-  return Boolean(startServer && priorRuntimeServer?.admitted !== true);
+export function shouldPreflightDevRestart({
+  startServer = false,
+  priorRuntimeServer = null,
+  admitPriorBuildsImmediately = false,
+} = {}) {
+  // Source-output admission is validated by startDevServer, which rebuilds only when its retained
+  // outputs are missing or invalid. The outer wrapper must not recreate that freshness gate.
+  return Boolean(startServer && priorRuntimeServer?.admitted !== true && !admitPriorBuildsImmediately);
 }
 
 export async function resolveDevPriorRuntimeServer(
@@ -32,7 +38,9 @@ export async function resolveDevPriorRuntimeServer(
   try {
     const launchSpec = resolveServerRuntimeLaunchSpec({
       serverComponent: serverComponentName,
+      dbProvider: 'sqlite',
       snapshot: inspection.snapshot,
+      migrationsEnabled: false,
     });
     return {
       admitted: true,

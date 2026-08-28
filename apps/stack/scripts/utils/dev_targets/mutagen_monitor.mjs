@@ -1,4 +1,4 @@
-const MUTAGEN_MONITOR_TEMPLATE = '{{range .}}{{printf "%s|%s|%d|%s|%t|%d\\n" .Name .Status .SuccessfulCycles .LastError .Paused (len .Conflicts)}}{{end}}';
+const MUTAGEN_MONITOR_TEMPLATE = '{{range .}}{{if .SessionState}}{{printf "%s|%s|%d|%s|%t|%d\\n" .Name .Status .SuccessfulCycles .LastError .Paused (len .Conflicts)}}{{end}}{{end}}';
 
 export function buildMutagenMonitorArgs(sessionNames) {
   return [

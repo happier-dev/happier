@@ -46,6 +46,31 @@ test('migration terminal success precedes exactly one normal server spawn and th
   assert.deepEqual(children, [server]);
 });
 
+test('in-process and disabled migration modes start without resolving a sidecar', async (t) => {
+  const { spec, serverDir } = await fixture(t);
+  for (const mode of ['in-process', 'disabled']) {
+    const candidate = { ...spec, migration: { mode } };
+    const events = [];
+    const server = { pid: mode === 'in-process' ? 303 : 304 };
+    assert.equal(await spawnRuntimeServerAfterMigration({
+      serverLaunchSpec: candidate,
+      env: {},
+      children: [],
+      spawnProcImpl: (label, command, args, env, options) => {
+        events.push({ label, command, args, env, cwd: options.cwd });
+        return server;
+      },
+    }), server);
+    assert.deepEqual(events, [{
+      label: 'server',
+      command: candidate.command,
+      args: [],
+      env: {},
+      cwd: serverDir,
+    }]);
+  }
+});
+
 test('migration admission failures are typed and never spawn the normal server', async (t) => {
   const { spec, serverDir, command } = await fixture(t);
   const outside = join(serverDir, '..', 'happier-server-migrate');

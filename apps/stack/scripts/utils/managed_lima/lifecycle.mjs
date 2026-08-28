@@ -72,6 +72,7 @@ function rangesEqual(actual, expected) {
   const expectedRangesPresent = expected.every((wanted) => actual.some((entry) => (
     JSON.stringify(entry?.guestPortRange) === JSON.stringify([wanted.guestStart, wanted.guestEnd])
     && JSON.stringify(entry?.hostPortRange) === JSON.stringify([wanted.hostStart, wanted.hostEnd])
+    && entry?.hostIP === wanted.hostIP
     && entry?.static !== true
   )));
   const unmatchedForwardingDisabled = actual.some((entry) => (

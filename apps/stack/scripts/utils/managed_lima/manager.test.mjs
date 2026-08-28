@@ -281,3 +281,65 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
   assert.equal(pressureConfigurations[0].profile.name, 'swap64');
   assert.equal(pressureConfigurations[0].profile.swapGiB, 64);
 });
+
+test('managed Lima runtime setup fails closed when the required guest toolchain is unavailable', async () => {
+  await assert.rejects(
+    setupManagedLimaRuntime({
+      executor: executorWithLimaProbe({ installed: true }),
+      instance: 'happier-agent-primary',
+      profileName: 'small',
+      guestProvisionScriptSource: '#!/usr/bin/env bash\nexit 0\n',
+      provisionGuest: async () => ({ changed: false, version: 'ready' }),
+      configureGuestPressure: async () => ({ changed: false, profile: 'none' }),
+      ensureGuestLoginManager: async () => ({ repaired: false }),
+      inspectGuest: async () => ({ homeDir: '/home/guest', user: 'guest' }),
+      inspectGuestToolchain: async () => ({ ok: false, error: 'required command unavailable: rg' }),
+    }),
+    (error) => error.code === 'MANAGED_LIMA_GUEST_TOOLCHAIN_UNHEALTHY'
+      && /required command unavailable: rg/.test(error.message),
+  );
+});
+
+test('managed Lima doctor keeps a guest unhealthy when ripgrep is unavailable', async () => {
+  const executor = executorWithLimaProbe({ installed: true });
+  const originalCapture = executor.capture.bind(executor);
+  executor.capture = async (command, args) => {
+    if (command === 'limactl' && args[0] === 'list') {
+      return {
+        exitCode: 0,
+        out: `${JSON.stringify({
+          name: 'happier-agent-primary', status: 'Running', vmType: 'vz', arch: 'aarch64',
+          cpus: 8, memory: 16 * 1024 ** 3, disk: 160 * 1024 ** 3,
+          config: {
+            mounts: [],
+            vmOpts: { vz: { diskImageFormat: 'raw', rosetta: { enabled: false, binfmt: false } } },
+            ssh: { forwardAgent: false },
+            containerd: { user: false, system: false },
+            portForwards: [
+              { guestPortRange: [13000, 13999], hostPortRange: [13000, 13999] },
+              { guestPortRange: [18000, 19099], hostPortRange: [18000, 19099] },
+            ],
+          },
+        })}\n`,
+        err: '',
+      };
+    }
+    if (command === 'limactl' && args[0] === 'shell' && args.at(-1).includes('command -v node')) {
+      return { exitCode: 127, out: '', err: 'ripgrep (rg) is required in the managed Lima guest' };
+    }
+    return originalCapture(command, args);
+  };
+
+  const result = await doctorManagedLimaInstance({
+    executor,
+    instance: 'happier-agent-primary',
+    profileName: 'small',
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.guestToolchain, {
+    ok: false,
+    error: 'ripgrep (rg) is required in the managed Lima guest',
+  });
+  assert.equal(executor.calls.some((call) => call.kind === 'run'), false);
+});

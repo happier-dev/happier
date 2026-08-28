@@ -24,6 +24,7 @@ test('uses local server defaults when no remote flags are set', () => {
   assert.equal(out.publicServerUrl, localUrls.publicServerUrl);
   assert.equal(out.uiApiUrl, localUrls.publicServerUrl);
   assert.equal(out.source, 'local');
+  assert.equal(out.publicServerUrlIsExplicit, false);
 });
 
 test('uses one LAN-reachable canonical audience for a local mobile stack server and its clients', () => {
@@ -62,6 +63,7 @@ test('keeps the internal tunnel URL separate from the public URL advertised to E
   assert.equal(out.internalServerUrl, 'http://127.0.0.1:43105');
   assert.equal(out.publicServerUrl, 'https://dev-mac.example.test');
   assert.equal(out.uiApiUrl, 'https://dev-mac.example.test');
+  assert.equal(out.publicServerUrlIsExplicit, true);
 });
 
 test('accepts HAPPIER_PUBLIC_SERVER_URL as the advertised URL for an external server', () => {
@@ -78,6 +80,7 @@ test('accepts HAPPIER_PUBLIC_SERVER_URL as the advertised URL for an external se
   assert.equal(out.internalServerUrl, 'http://127.0.0.1:43105');
   assert.equal(out.publicServerUrl, 'https://phone.example.test');
   assert.equal(out.uiApiUrl, 'https://phone.example.test');
+  assert.equal(out.publicServerUrlIsExplicit, true);
 });
 
 test('uses HAPPIER_SERVER_URL when --no-server is set', () => {

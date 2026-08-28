@@ -12,6 +12,7 @@ test('dev target panes add one Mutagen owner and one pane per configured remote 
   assert.deepEqual(
     createDevTargetPaneSpecs([{ name: 'linux' }, { name: 'windows' }]),
     [
+      { id: 'fabric', title: 'execution fabric', visible: true, kind: 'summary' },
       { id: 'mutagen', title: 'mutagen sync', visible: true, kind: 'log' },
       { id: 'remote-linux', title: 'remote linux', visible: true, kind: 'log' },
       { id: 'remote-windows', title: 'remote windows', visible: true, kind: 'log' },
@@ -66,6 +67,7 @@ test('pane inputs include command-only targets and exclude targets unused by exe
   assert.deepEqual(
     createDevTargetPaneSpecs(plans.targets.map((plan) => plan.target)),
     [
+      { id: 'fabric', title: 'execution fabric', visible: true, kind: 'summary' },
       { id: 'mutagen', title: 'mutagen sync', visible: true, kind: 'log' },
       { id: 'remote-mac', title: 'remote mac', visible: true, kind: 'log' },
     ],

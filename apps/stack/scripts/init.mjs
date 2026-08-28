@@ -347,7 +347,11 @@ async function main() {
     '',
     // Preserve the caller's original working directory so the Node CLI can infer
     // repo/worktree context even if this shim `cd`s into the workspace root.
-    'export HAPPIER_STACK_INVOKED_CWD="${HAPPIER_STACK_INVOKED_CWD:-${PWD:-$HOME}}"',
+    // Each user invocation owns a fresh filesystem scope. Do not inherit an
+    // earlier hstack process's scope (for example after switching workspaces);
+    // Node-level re-exec preserves this freshly captured value without running
+    // the shell shim again.
+    'export HAPPIER_STACK_INVOKED_CWD="${PWD:-$HOME}"',
     '',
     '# Best-effort: if env vars are not exported (common under launchd/SwiftBar),',
     '# read the stable pointer file at CANONICAL_ENV to discover the real dirs.',

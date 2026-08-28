@@ -1,0 +1,193 @@
+---
+title: Development VM
+description: Operate the optional managed Linux VM used by hstack development workflows on macOS.
+---
+
+<Callout type="warn">
+
+`hstack dev-vm` is a development-only, unreleased operator surface. Its setup
+always writes a **candidate** execution-host profile; ordinary hstack commands
+remain on macOS until the execution-host cutover is explicitly activated by the
+development workflow that owns it.
+
+</Callout>
+
+Use `hstack dev-vm` when you need a managed Linux guest for development or
+validation work. The controller manages one Lima VM, can run commands inside
+it, and can expose the guest's complete home directory on macOS through SSHFS.
+
+## Prerequisites
+
+This workflow currently targets an Apple Silicon Mac. Install these host tools
+before setting up the VM:
+
+- Lima (`limactl`)
+- macFUSE, with its filesystem extension approved in macOS System Settings
+- `sshfs-mac` (the `sshfs` command)
+
+Verify the command-line tools before continuing:
+
+```bash
+limactl --version
+sshfs --version
+```
+
+`hstack dev-vm setup` may install Lima through Homebrew when Lima is missing,
+but it does not install or approve macFUSE and `sshfs-mac`.
+
+## Set up and run the VM
+
+From the repository root, setup creates or reconciles the managed Lima instance,
+provisions its Linux guest, and records the candidate configuration:
+
+```bash
+hstack dev-vm setup
+```
+
+The checkout-local Yarn entry point is equivalent:
+
+```bash
+yarn dev-vm -- setup
+```
+
+The default setup uses the `balanced` managed Lima profile. To inspect the
+configuration and guest health:
+
+```bash
+hstack dev-vm status
+hstack dev-vm doctor
+```
+
+`doctor` returns a failing status when the VM, guest toolchain, guest login
+manager, or configured mount is unhealthy. Use
+`hstack dev-vm doctor --repair-forwarding` only when the Lima guest agent's
+forwarding needs an explicit repair.
+
+Start and stop the retained VM with:
+
+```bash
+hstack dev-vm start
+hstack dev-vm stop
+```
+
+Starting also mounts the guest home when `autoMount` is enabled. Stopping
+unmounts it before stopping Lima.
+
+## Activate an execution host
+
+The migration workflow that owns an execution-host cutover must complete its
+own source, data, and authority checks before it activates the prepared
+profile. Its execution-host handoff is:
+
+```bash
+hstack dev-vm activate
+```
+
+Activation first pauses and reads back every execution-host-owned candidate
+Mac-to-guest mirror, including retained legacy candidate state. It makes the
+profile active only when each such mirror is paused or absent; otherwise it
+fails and leaves the profile as a candidate. It does not start, stop, or
+restart the VM, resume a mirror, or change separate guest-to-Mac/Linux
+development-target synchronization.
+
+On an active profile, `hstack dev-vm status` reports retained candidate state
+only as candidate-retirement diagnostics, never as the active authority. This
+command is the execution-host portion of the handoff, not a replacement for
+the cutover workflow's other required checks.
+
+## Run commands in the guest
+
+Open an interactive guest shell (the default working directory is the managed
+guest workspace):
+
+```bash
+hstack dev-vm shell
+```
+
+Set an explicit guest working directory, or run a command without an
+interactive shell:
+
+```bash
+hstack dev-vm shell --guest-cwd=/absolute/path
+hstack dev-vm exec --guest-cwd=/absolute/path -- COMMAND ARG...
+```
+
+The repository-local Yarn form forwards the same arguments after `--`:
+
+```bash
+yarn dev-vm -- exec --guest-cwd=/absolute/path -- COMMAND ARG...
+```
+
+`exec` starts the VM if needed and runs the managed Lima health checks before
+the command. A failed health check stops the command and points to
+`hstack dev-vm doctor`.
+
+## Mount the guest home on macOS
+
+The mount is an SSHFS view of the authenticated Lima user's **entire guest
+home**, not only the repository workspace. This keeps guest workspaces and
+other guest-home state visible through one consistent view. The destination
+is the configured `hostMountDir`; when no directory is configured, hstack uses
+its default VM-home directory under the hstack home.
+
+Inspect the mount without changing it:
+
+```bash
+hstack dev-vm mount status
+```
+
+Enable automatic mounting and choose a destination:
+
+```bash
+hstack dev-vm mount enable --mount-dir=/absolute/path/to/vm-home
+```
+
+`mount enable` mounts immediately and persists both `autoMount=true` and the
+selected `hostMountDir`. A later `hstack dev-vm start` mounts the same guest
+home automatically.
+
+Disable automatic mounting:
+
+```bash
+hstack dev-vm mount disable
+```
+
+This unmounts the guest home and persists `autoMount=false`. To detach a mount
+for only the current run, use:
+
+```bash
+hstack dev-vm unmount
+```
+
+`unmount` does not change the saved `autoMount` setting. A later VM start can
+therefore mount it again when automatic mounting remains enabled.
+
+The mount destination must be an absolute, empty directory. hstack refuses to
+mount over existing files and does not copy the Lima SSH configuration; it
+uses Lima's current generated SSH configuration so lifecycle changes do not
+leave a stale identity behind.
+
+## When it goes wrong
+
+- **macFUSE approval error:** finish the macFUSE installer and approve its
+  filesystem extension in System Settings, then retry `hstack dev-vm mount
+  status`.
+- **SSHFS unavailable:** install `sshfs-mac`, then verify `sshfs --version`.
+- **Missing Lima SSH configuration or guest home:** start the VM first with
+  `hstack dev-vm start`, then retry the mount.
+- **Mount listed but inaccessible:** run `hstack dev-vm unmount`, start the VM,
+  and run `hstack dev-vm mount enable` again. `mount` also repairs a stale
+  inaccessible SSHFS entry before remounting.
+- **Mount directory is not empty:** choose an empty absolute directory with
+  `--mount-dir`; hstack will not mount over existing files.
+
+All commands accept `--json` where the controller returns structured status.
+Run `hstack dev-vm --help` for the full development-only surface, including
+experimental repository-mirror, forwarding, backup, and recovery operations.
+
+## Related
+
+- [hstack CLI reference](/hstack/cli-reference)
+- [Remote development targets](/hstack/dev-targets)
+- [Running (dev vs start)](/hstack/running)
+- [Isolated Linux VM](/hstack/isolated-linux-vm) — a separate clean-VM workflow for `review-pr` validation.

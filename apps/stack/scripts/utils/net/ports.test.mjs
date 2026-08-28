@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   isTcpPortFree,
@@ -10,6 +13,20 @@ import {
   pickNextFreeTcpPort,
   waitForTcpPortFree,
 } from './ports.mjs';
+
+async function waitForProbeProcessPid(path) {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number.parseInt((await readFile(path, 'utf8')).trim(), 10);
+      if (Number.isInteger(pid) && pid > 1) return pid;
+    } catch {
+      // The probe process has not recorded its PID yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for listener probe PID at ${path}`);
+}
 
 test('killPortListeners returns only listeners terminated through incarnation-aware teardown', async () => {
   const calls = [];
@@ -36,6 +53,65 @@ test('listener discovery preserves timeout instead of manufacturing an empty lis
     resolveCommandPathImpl: async () => '/usr/bin/lsof',
     runCaptureImpl: async () => { throw error; },
   });
+
+  assert.deepEqual(result, {
+    status: 'timeout',
+    supported: true,
+    pids: [],
+    reason: 'listener-discovery-timeout',
+  });
+});
+
+test('listener discovery returns a typed timeout when lsof cannot close after its deadline', { timeout: 3_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process-group cleanup contract');
+    return;
+  }
+
+  const root = await mkdtemp(join(tmpdir(), 'happy-listener-timeout-'));
+  const lsofPath = join(root, 'lsof');
+  const pidPath = join(root, 'lsof.pid');
+  const originalKill = process.kill;
+  let lsofPid = null;
+  let pending = null;
+  t.after(async () => {
+    if (Number.isInteger(lsofPid) && lsofPid > 1) {
+      try {
+        originalKill(-lsofPid, 'SIGKILL');
+      } catch {
+        try { originalKill(lsofPid, 'SIGKILL'); } catch {}
+      }
+    }
+    if (pending) {
+      await Promise.race([
+        pending,
+        new Promise((resolve) => setTimeout(resolve, 1_000)),
+      ]);
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+  await writeFile(lsofPath, [
+    '#!/bin/sh',
+    `printf '%s' "$$" > ${JSON.stringify(pidPath)}`,
+    'while :; do sleep 1; done',
+  ].join('\n'), 'utf8');
+  await chmod(lsofPath, 0o755);
+
+  t.mock.method(process, 'kill', (pid, signal) => {
+    if (signal === 0) return originalKill(pid, signal);
+    return true;
+  });
+  pending = listListenPidsWithStatus(34567, {
+    platform: 'darwin',
+    timeoutMs: 150,
+    resolveCommandPathImpl: async () => lsofPath,
+  });
+  lsofPid = await waitForProbeProcessPid(pidPath);
+
+  const result = await Promise.race([
+    pending,
+    new Promise((resolve) => setTimeout(() => resolve({ status: 'still-pending' }), 1_500)),
+  ]);
 
   assert.deepEqual(result, {
     status: 'timeout',

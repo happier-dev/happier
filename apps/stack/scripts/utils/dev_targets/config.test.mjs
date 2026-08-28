@@ -220,6 +220,38 @@ test('version 2 configuration defaults every execution surface to local', () => 
   });
 });
 
+test('disabled dev targets cannot turn persisted remote server placement into a local server', () => {
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets: [
+      { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+    runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'mac' },
+    },
+  });
+
+  assert.throws(
+    () => resolveDevTargetExecutionPolicy(config, {
+      targetsEnabled: false,
+      serverRequested: true,
+    }),
+    /--no-dev-targets.*remote server placement/i,
+  );
+  assert.deepEqual(
+    resolveDevTargetExecutionPolicy(config, {
+      targetsEnabled: false,
+      serverRequested: false,
+    }),
+    {
+      server: { mode: 'local' },
+      expo: { mode: 'local' },
+      daemons: { mode: 'local' },
+      commands: { mode: 'local' },
+    },
+  );
+});
+
 test('configured targets default bounded commands to automatic least-load execution', () => {
   const targets = [
     { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo-mac', cliHomeDir: '/home-mac' },

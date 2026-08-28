@@ -23,158 +23,6 @@ case "$invoked_cwd" in
   *) printf '%s\n' '[preferred-execution] command working directory must stay inside the repository' >&2; exit 1 ;;
 esac
 
-run_local() {
-  case "${1-}" in
-    --script=*)
-      local_script=${1#--script=}
-      shift
-      if [ "${1-}" = "--" ]; then shift; fi
-      if [ -n "${npm_node_execpath-}" ] && [ -n "${npm_execpath-}" ]; then
-        exec "$npm_node_execpath" "$npm_execpath" -s "$local_script" "$@"
-      fi
-      exec corepack yarn -s "$local_script" "$@"
-      ;;
-  esac
-
-  if [ "${1-}" = "--" ]; then shift; fi
-  if [ "$#" -eq 0 ]; then
-    printf '%s\n' '[preferred-execution] provide --script=NAME or COMMAND [ARG...] after --' >&2
-    exit 1
-  fi
-  exec "$@"
-}
-
-if [ "${1-}" = --local ]; then
-  shift
-  run_local "$@"
-fi
-
-storage_root=${HAPPIER_STACK_STORAGE_DIR-}
-if [ -z "$storage_root" ]; then
-  if [ -z "${HOME-}" ]; then run_local "$@"; fi
-  storage_root="$HOME/.happier/stacks"
-else
-  case "$storage_root" in
-    '~')
-      if [ -z "${HOME-}" ]; then run_local "$@"; fi
-      storage_root=$HOME
-      ;;
-    '~/'*)
-      if [ -z "${HOME-}" ]; then run_local "$@"; fi
-      storage_root="$HOME/${storage_root#'~/'}"
-      ;;
-  esac
-fi
-
-repo_token=${repo_root##*/}
-case "$repo_token" in
-  ''|*[!a-z0-9-]*)
-    repo_token=$(printf '%s' "$repo_token" \
-      | LC_ALL=C tr '[:upper:]' '[:lower:]' \
-      | sed 's/[^a-z0-9-][^a-z0-9-]*/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//') || \
-      run_local "$@"
-    ;;
-esac
-[ -n "$repo_token" ] || repo_token=repo
-
-if [ -d "$storage_root" ] && [ ! -r "$storage_root" ]; then
-  run_local "$@"
-fi
-
-config_path=
-projection_path=
-if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
-  candidate_config=$HAPPIER_EXEC_CONFIG_PATH
-  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-  if [ -f "$candidate_config" ] && [ -r "$candidate_projection" ] && [ ! "$candidate_config" -nt "$candidate_projection" ]; then
-    . "$candidate_projection" || run_local "$@"
-    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ]; then
-      node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-      exec "$0" "$@"
-    fi
-    [ "${projection_repo_root-}" = "$repo_root" ] || run_local "$@"
-    config_path=$candidate_config
-    projection_path=$candidate_projection
-  elif [ -f "$candidate_config" ]; then
-    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-    exec "$0" "$@"
-  fi
-fi
-for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
-  [ -z "$projection_path" ] || break
-  [ -f "$candidate_config" ] || continue
-  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-  if [ -r "$candidate_projection" ] && [ ! "$candidate_config" -nt "$candidate_projection" ]; then
-    # The projection is generated from the validated canonical config and is
-    # private to the stack directory. It is data for this native dispatcher.
-    . "$candidate_projection" || run_local "$@"
-    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 2 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
-      config_path=$candidate_config
-      projection_path=$candidate_projection
-      break
-    fi
-  fi
-done
-
-# The first invocation after configuration changes pays one Node configuration
-# parse. It only refreshes this native projection; it never selects or executes.
-if [ -z "$projection_path" ]; then
-  if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] && [ -f "$HAPPIER_EXEC_CONFIG_PATH" ]; then
-    candidate_projection=$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh
-    node "$projection_generator" "$HAPPIER_EXEC_CONFIG_PATH" "$candidate_projection" "$repo_root" || exit $?
-    exec "$0" "$@"
-  fi
-  for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
-    [ -f "$candidate_config" ] || continue
-    candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-    exec "$0" "$@"
-  done
-  run_local "$@"
-fi
-
-if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] ||
-   [ -n "${CI-}" ] ||
-   [ "${command_mode-}" = local ]; then
-  run_local "$@"
-fi
-
-# Command routing is intentionally POSIX-target-only. The Windows launcher is
-# local-only, and Windows remote targets are omitted from the projection.
-if [ "${target_count-0}" -eq 0 ]; then
-  if [ "${fallback_mode-local}" = error ]; then
-    printf '%s\n' '[preferred-execution] no POSIX execution target is configured' >&2
-    exit 1
-  fi
-  run_local "$@"
-fi
-
-case "${1-}" in
-  --script=*)
-    local_script=${1#--script=}
-    shift
-    [ "${1-}" = -- ] && shift
-    set -- corepack yarn -s "$local_script" "$@"
-    ;;
-  --) shift ;;
-esac
-[ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] command is required' >&2; exit 1; }
-requested_command=$1
-requested_command_name=${requested_command##*/}
-command_class=unknown
-primary_only_direct_commands=${primary_only_direct_commands-git}
-case " $primary_only_direct_commands " in
-  *" $requested_command_name "*) run_local -- "$@" ;;
-esac
-requires_remote_dependencies=0
-case " ${dependency_direct_commands-} " in
-  *" $requested_command_name "*) requires_remote_dependencies=1 ;;
-esac
-if [ "$requested_command_name" = corepack ]; then
-  case " ${dependency_corepack_subcommands-} " in
-    *" ${2-} "*) requires_remote_dependencies=1 ;;
-  esac
-fi
 resolve_package_manager_script_family() {
   command_name=${1##*/}
   if [ "$command_name" = corepack ]; then
@@ -193,9 +41,694 @@ resolve_package_manager_script_family() {
     esac
   done
 }
+
+is_bundled_plugin_generator_invocation() {
+  [ "${1##*/}" = node ] || return 1
+  [ "${2-}" = --experimental-strip-types ] || return 1
+  case "${3-}" in
+    scripts/migrations/extensions/generateBundledPluginEntries.ts|./scripts/migrations/extensions/generateBundledPluginEntries.ts|"$repo_root"/scripts/migrations/extensions/generateBundledPluginEntries.ts)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+heavyweight_command_class() {
+  if is_bundled_plugin_generator_invocation "$@"; then
+    printf '%s' validation
+    return 0
+  fi
+  heavyweight_command_name=${1##*/}
+  case "$heavyweight_command_name" in
+    tsc|vitest)
+      printf '%s' validation
+      return 0
+      ;;
+    node)
+      case "${2-}" in
+        scripts/workspaces/runTypeScriptCli.mjs|./scripts/workspaces/runTypeScriptCli.mjs|"$repo_root"/scripts/workspaces/runTypeScriptCli.mjs)
+          printf '%s' validation
+          return 0
+          ;;
+      esac
+      return 1
+      ;;
+    yarn|npm|pnpm|corepack) ;;
+    *) return 1 ;;
+  esac
+  heavyweight_script_family=$(resolve_package_manager_script_family "$@")
+  case "$heavyweight_script_family" in
+    install)
+      printf '%s' dependency-install
+      return 0
+      ;;
+    build|check|test|typecheck|vitest)
+      printf '%s' validation
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+resolve_heavyweight_admission_root() {
+  heavyweight_admission_home=
+  if [ -n "${HOME-}" ]; then
+    heavyweight_admission_home="$HOME/.happier"
+  fi
+  if [ -z "$heavyweight_admission_home" ]; then
+    heavyweight_admission_home=${HAPPIER_STACK_CLI_HOME_DIR-${HAPPIER_HOME_DIR-}}
+  fi
+  [ -n "$heavyweight_admission_home" ] || return 1
+  printf '%s/heavyweight-admission-v1' "${heavyweight_admission_home%/}"
+}
+
+heavyweight_process_token() {
+  heavyweight_token_pid=$1
+  if [ -r "/proc/$heavyweight_token_pid/stat" ]; then
+    heavyweight_token=$(awk '{print $22}' "/proc/$heavyweight_token_pid/stat" 2>/dev/null || true)
+    case "$heavyweight_token" in ''|*[!0-9]*) ;; *) printf '%s' "$heavyweight_token"; return 0 ;; esac
+  fi
+  printf '%s' '-'
+}
+
+heavyweight_process_is_current() {
+  heavyweight_current_pid=$1
+  heavyweight_current_token=$2
+  case "$heavyweight_current_pid" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$heavyweight_current_token" = - ]; then
+    kill -0 "$heavyweight_current_pid" 2>/dev/null
+    return
+  fi
+  [ -r "/proc/$heavyweight_current_pid/stat" ] || return 1
+  heavyweight_observed_token=$(awk '{print $22}' "/proc/$heavyweight_current_pid/stat" 2>/dev/null || true)
+  [ "$heavyweight_observed_token" = "$heavyweight_current_token" ]
+}
+
+run_heavyweight_admission() {
+  heavyweight_admission_root=$1
+  heavyweight_admission_class=$2
+  heavyweight_admission_machine=$3
+  shift 3
+  [ "$#" -gt 0 ] || {
+    printf '%s\n' '[preferred-execution] heavyweight admission requires a command' >&2
+    exit 1
+  }
+
+  # Linux is the only current target that exposes the pressure signals used by
+  # this gate. Darwin and Windows retain their existing local execution path.
+  [ "$(uname -s 2>/dev/null || true)" = Linux ] || exec "$@"
+  [ -n "$heavyweight_admission_root" ] || {
+    printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
+    exit 1
+  }
+
+  umask 077
+  heavyweight_owners_dir="$heavyweight_admission_root/owners"
+  heavyweight_waiters_dir="$heavyweight_admission_root/waiters"
+  heavyweight_lock_path="$heavyweight_admission_root/lock"
+  mkdir -p -- "$heavyweight_owners_dir" "$heavyweight_waiters_dir" || {
+    printf '[preferred-execution] heavyweight admission state is unavailable: %s\n' "$heavyweight_admission_root" >&2
+    exit 1
+  }
+  command -v flock >/dev/null 2>&1 || {
+    printf '[preferred-execution] heavyweight admission requires flock on %s\n' "$heavyweight_admission_machine" >&2
+    exit 1
+  }
+  # The admission gate is Linux-only, so use the kernel's advisory lock owner
+  # instead of deleting a stale identity file. A stale-file check followed by
+  # unlink can remove a successor that acquired the path between those steps.
+  # The stable file is state-free; process exit releases the kernel lock.
+  exec 9>>"$heavyweight_lock_path" || {
+    printf '[preferred-execution] heavyweight admission lock is unavailable on %s\n' "$heavyweight_admission_machine" >&2
+    exit 1
+  }
+
+  heavyweight_pid=$$
+  heavyweight_token=$(heavyweight_process_token "$heavyweight_pid")
+  heavyweight_identity="$heavyweight_pid-$heavyweight_token"
+  heavyweight_waiter_path="$heavyweight_waiters_dir/$heavyweight_identity"
+  heavyweight_owner_path="$heavyweight_owners_dir/$heavyweight_identity"
+  # A failed acquisition can start `ln`, a /proc token `awk`, and `sleep`.
+  # POSIX has no portable shell-builtin delay, so use a PID-jittered two-to-
+  # three-second backoff: even 100 contending waiters stay at or below roughly
+  # 150 external starts/sec while a live lock is held.
+  heavyweight_fast_retry_seconds=$((2 + heavyweight_pid % 2))
+  heavyweight_pressure_retry_seconds=$((3 + heavyweight_pid % 2))
+  printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_waiter_path" || {
+    printf '[preferred-execution] could not register heavyweight admission wait on %s\n' "$heavyweight_admission_machine" >&2
+    exit 1
+  }
+
+  heavyweight_admission_capacity() {
+    heavyweight_capacity_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)
+    case "$heavyweight_capacity_cpu" in ''|*[!0-9]*|0) heavyweight_capacity_cpu=1 ;; esac
+    heavyweight_cpu_slots=$((heavyweight_capacity_cpu / 4))
+    [ "$heavyweight_cpu_slots" -gt 0 ] || heavyweight_cpu_slots=1
+    heavyweight_capacity_memory_kib=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)
+    case "$heavyweight_capacity_memory_kib" in
+      ''|*[!0-9]*) heavyweight_memory_slots=$heavyweight_cpu_slots ;;
+      *)
+        # One heavyweight validation or dependency install gets a 4 CPU / 12
+        # GiB envelope. That yields three slots on a 14-core/72 GiB primary
+        # and two on an 8-core/24 GiB worker without a separate scheduler.
+        heavyweight_memory_slots=$((heavyweight_capacity_memory_kib / 12582912))
+        [ "$heavyweight_memory_slots" -gt 0 ] || heavyweight_memory_slots=1
+        ;;
+    esac
+    if [ "$heavyweight_memory_slots" -lt "$heavyweight_cpu_slots" ]; then
+      printf '%s' "$heavyweight_memory_slots"
+    else
+      printf '%s' "$heavyweight_cpu_slots"
+    fi
+  }
+
+  heavyweight_limit=$(heavyweight_admission_capacity)
+
+  heavyweight_release_lock() {
+    if [ "${heavyweight_lock_held-0}" = 1 ]; then
+      flock -u 9 2>/dev/null || true
+      heavyweight_lock_held=0
+    fi
+  }
+
+  heavyweight_release_admission() {
+    rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
+    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" 2>/dev/null || true
+    rmdir -- "$heavyweight_owner_path" 2>/dev/null || true
+    heavyweight_release_lock
+  }
+
+  heavyweight_cleanup_owners() {
+    heavyweight_check_owner_identity=${1-0}
+    for heavyweight_entry in "$heavyweight_owners_dir"/*; do
+      [ -d "$heavyweight_entry" ] || continue
+      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || true
+      # A dead owner frees capacity immediately through the shell builtin.
+      # Re-check the Linux start token periodically to catch PID reuse without
+      # making every queued waiter fork an awk per live owner on each pass.
+      if ! kill -0 "$heavyweight_entry_pid" 2>/dev/null \
+        || { [ "$heavyweight_check_owner_identity" = 1 ] && ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; }; then
+        rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" 2>/dev/null || true
+        rmdir -- "$heavyweight_entry" 2>/dev/null || true
+      fi
+    done
+  }
+
+  heavyweight_cleanup_waiters() {
+    # Waiters do not consume a slot. Clean them only when an owner is being
+    # admitted: scanning every waiter on every waiter retry is O(N²) /proc
+    # work under pressure, while the next admission still reclaims crashes.
+    for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
+      [ -f "$heavyweight_entry" ] || continue
+      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry" 2>/dev/null || true
+      if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
+        rm -f -- "$heavyweight_entry" 2>/dev/null || true
+      fi
+    done
+  }
+
+  heavyweight_count_entries() {
+    heavyweight_active_count=0
+    for heavyweight_entry in "$heavyweight_owners_dir"/*; do
+      [ -d "$heavyweight_entry" ] && heavyweight_active_count=$((heavyweight_active_count + 1))
+    done
+    heavyweight_waiting_count=0
+    for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
+      [ -f "$heavyweight_entry" ] && heavyweight_waiting_count=$((heavyweight_waiting_count + 1))
+    done
+  }
+
+  heavyweight_resource_is_ready() {
+    heavyweight_resource_reason=ready
+    heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)
+    case "$heavyweight_cpu" in ''|*[!0-9]*|0) heavyweight_cpu=1 ;; esac
+    heavyweight_run_queue=$(awk '{split($4, queue, "/"); print queue[1]}' /proc/loadavg 2>/dev/null || true)
+    heavyweight_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {print available, total}' /proc/meminfo 2>/dev/null || true)
+    IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
+$heavyweight_memory
+EOF
+    heavyweight_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
+    case "$heavyweight_run_queue" in
+      [1-9]|[1-9][0-9]*)
+        if [ "$heavyweight_run_queue" -gt "$heavyweight_cpu" ]; then
+          heavyweight_resource_reason="run-queue=$heavyweight_run_queue/cpu=$heavyweight_cpu"
+          return 1
+        fi
+        ;;
+    esac
+    case "$heavyweight_mem_available:$heavyweight_mem_total" in
+      *[!0-9:]*|'':*) ;;
+      *)
+        if awk -v available="$heavyweight_mem_available" -v total="$heavyweight_mem_total" 'BEGIN { exit !(total > 0 && (available / total) < 0.1) }'; then
+          heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total"
+          return 1
+        fi
+        ;;
+    esac
+    if [ -n "$heavyweight_memory_psi" ] && awk -v pressure="$heavyweight_memory_psi" 'BEGIN { exit !((pressure + 0) >= 10) }'; then
+      heavyweight_resource_reason="memory-psi=$heavyweight_memory_psi/threshold=10"
+      return 1
+    fi
+    return 0
+  }
+
+  heavyweight_acquire_lock() {
+    while :; do
+      if flock -n 9 2>/dev/null; then
+        heavyweight_lock_held=1
+        return 0
+      fi
+      sleep "$heavyweight_fast_retry_seconds"
+    done
+  }
+
+  heavyweight_child_pid=
+  heavyweight_run_admitted_command() {
+    # A prepared user slice keeps admitted build work out of the agent/control
+    # cgroup. Do not create or configure it here: a missing user manager or
+    # slice simply retains the portable direct-child behavior.
+    if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
+      && systemctl --user show-environment >/dev/null 2>&1 \
+      && [ "$(systemctl --user show happier-jobs.slice --property=LoadState --value 2>/dev/null || true)" = loaded ]; then
+      exec systemd-run --user --scope --quiet --slice=happier-jobs.slice --nice=10 -- "$@"
+    fi
+    exec "$@"
+  }
+  heavyweight_interrupt() {
+    if [ -n "$heavyweight_child_pid" ] && kill -0 "$heavyweight_child_pid" 2>/dev/null; then
+      kill -TERM "$heavyweight_child_pid" 2>/dev/null || true
+      wait "$heavyweight_child_pid" 2>/dev/null || true
+    fi
+    exit 130
+  }
+  trap 'heavyweight_release_admission' EXIT
+  trap 'heavyweight_interrupt' HUP INT TERM
+  heavyweight_wait_started=$(date +%s)
+  heavyweight_last_wait_state=
+  heavyweight_owner_identity_check_attempt=0
+  while :; do
+    heavyweight_acquire_lock || {
+      printf '[preferred-execution] heavyweight admission lock failed on %s\n' "$heavyweight_admission_machine" >&2
+      exit 1
+    }
+    heavyweight_owner_identity_check_attempt=$((heavyweight_owner_identity_check_attempt + 1))
+    heavyweight_check_owner_identity=0
+    if [ "$heavyweight_owner_identity_check_attempt" -ge 12 ]; then
+      heavyweight_owner_identity_check_attempt=0
+      heavyweight_check_owner_identity=1
+    fi
+    heavyweight_cleanup_owners "$heavyweight_check_owner_identity"
+    heavyweight_count_entries
+    heavyweight_ready=0
+    heavyweight_wait_delay_seconds=$heavyweight_fast_retry_seconds
+    # A full pool cannot admit regardless of its current pressure signals.
+    # Avoid three /proc awk subprocesses per queued job on that common path.
+    if [ "$heavyweight_active_count" -lt "$heavyweight_limit" ]; then
+      if heavyweight_resource_is_ready; then
+        heavyweight_ready=1
+      else
+        heavyweight_wait_delay_seconds=$heavyweight_pressure_retry_seconds
+      fi
+    fi
+    if [ "$heavyweight_active_count" -lt "$heavyweight_limit" ] && [ "$heavyweight_ready" -eq 1 ] && mkdir "$heavyweight_owner_path" 2>/dev/null; then
+      printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process"
+      printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class"
+      rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
+      heavyweight_cleanup_waiters
+      heavyweight_count_entries
+      heavyweight_release_lock
+      heavyweight_waited_seconds=$(( $(date +%s) - heavyweight_wait_started ))
+      if [ -n "$heavyweight_last_wait_state" ]; then
+        printf '[preferred-execution] admitted heavyweight command on %s (class=%s, active=%s/%s, waited=%ss)\n' \
+          "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_active_count" "$heavyweight_limit" "$heavyweight_waited_seconds" >&2
+      fi
+      break
+    fi
+    if [ "$heavyweight_active_count" -ge "$heavyweight_limit" ]; then
+      heavyweight_wait_reason="active=$heavyweight_active_count/$heavyweight_limit"
+    elif [ "$heavyweight_ready" -eq 0 ]; then
+      heavyweight_wait_reason="$heavyweight_resource_reason"
+    else
+      heavyweight_wait_reason="active=$heavyweight_active_count/$heavyweight_limit"
+    fi
+    heavyweight_wait_state="$heavyweight_wait_reason queue=$heavyweight_waiting_count"
+    heavyweight_release_lock
+    if [ "$heavyweight_wait_state" != "$heavyweight_last_wait_state" ]; then
+      printf '[preferred-execution] waiting for heavyweight admission on %s (class=%s, %s)\n' \
+        "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_wait_state" >&2
+      heavyweight_last_wait_state=$heavyweight_wait_state
+    fi
+    sleep "$heavyweight_wait_delay_seconds"
+  done
+  heavyweight_run_admitted_command "$@" <&0 &
+  heavyweight_child_pid=$!
+  wait "$heavyweight_child_pid"
+  heavyweight_status=$?
+  heavyweight_child_pid=
+  exit "$heavyweight_status"
+}
+
+if [ "${1-}" = --heavyweight-admission ]; then
+  shift
+  heavyweight_admission_root=
+  heavyweight_admission_class=validation
+  heavyweight_admission_machine=local
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
+      --class=*) heavyweight_admission_class=${1#--class=} ;;
+      --machine=*) heavyweight_admission_machine=${1#--machine=} ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        printf '%s\n' '[preferred-execution] invalid heavyweight admission invocation' >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+  [ -n "$heavyweight_admission_root" ] || heavyweight_admission_root=$(resolve_heavyweight_admission_root) || {
+    printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
+    exit 1
+  }
+  run_heavyweight_admission "$heavyweight_admission_root" "$heavyweight_admission_class" "$heavyweight_admission_machine" "$@"
+fi
+
+run_local() {
+  heavyweight_local_class=
+  case "${1-}" in
+    --script=*)
+      local_script=${1#--script=}
+      shift
+      if [ "${1-}" = "--" ]; then shift; fi
+      case "${local_script%%:*}" in
+        build|check|test|typecheck|vitest) heavyweight_local_class=validation ;;
+      esac
+      if [ -n "${npm_node_execpath-}" ] && [ -n "${npm_execpath-}" ]; then
+        set -- "$npm_node_execpath" "$npm_execpath" -s "$local_script" "$@"
+      else
+        set -- corepack yarn -s "$local_script" "$@"
+      fi
+      ;;
+  esac
+
+  if [ "${1-}" = "--" ]; then shift; fi
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' '[preferred-execution] provide --script=NAME or COMMAND [ARG...] after --' >&2
+    exit 1
+  fi
+  if [ -z "$heavyweight_local_class" ]; then
+    heavyweight_local_class=$(heavyweight_command_class "$@" || true)
+  fi
+  if [ -n "$heavyweight_local_class" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+    heavyweight_local_root=$(resolve_heavyweight_admission_root) || {
+      printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
+      exit 1
+    }
+    exec "$launcher_path" --heavyweight-admission "--admission-root=$heavyweight_local_root" \
+      "--class=$heavyweight_local_class" --machine=local -- "$@"
+  fi
+  exec "$@"
+}
+
+run_local_without_target_config() {
+  if [ -n "$explicit_target" ]; then
+    printf '%s\n' '[preferred-execution] no target configuration is available for exact-target execution' >&2
+    exit 1
+  fi
+  run_local "$@"
+}
+
+restart_launcher() {
+  if [ -n "$explicit_target" ]; then
+    if [ "${explicit_tty-0}" = 1 ]; then
+      exec "$0" "--target=$explicit_target" --tty "$@"
+    fi
+    exec "$0" "--target=$explicit_target" "$@"
+  fi
+  exec "$0" "$@"
+}
+
+explicit_target=
+case "${1-}" in
+  --target=*)
+    explicit_target=${1#--target=}
+    shift
+    ;;
+  --target)
+    shift
+    explicit_target=${1-}
+    [ -n "$explicit_target" ] || {
+      printf '%s\n' '[preferred-execution] --target requires a configured target name' >&2
+      exit 1
+    }
+    shift
+    ;;
+esac
+case "$explicit_target" in
+  ''|*[!A-Za-z0-9._-]*)
+    if [ -n "$explicit_target" ]; then
+      printf '%s\n' '[preferred-execution] --target requires a configured target name' >&2
+      exit 1
+    fi
+    ;;
+esac
+
+explicit_tty=0
+if [ "${1-}" = --tty ]; then
+  explicit_tty=1
+  shift
+fi
+if [ "$explicit_tty" = 1 ] && [ -z "$explicit_target" ]; then
+  printf '%s\n' '[preferred-execution] --tty requires --target' >&2
+  exit 1
+fi
+
+if [ "${1-}" = --local ]; then
+  if [ -n "$explicit_target" ]; then
+    printf '%s\n' '[preferred-execution] --target and --local cannot be combined' >&2
+    exit 1
+  fi
+  shift
+  run_local "$@"
+fi
+
+storage_root=${HAPPIER_STACK_STORAGE_DIR-}
+if [ -z "$storage_root" ]; then
+  if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
+  storage_root="$HOME/.happier/stacks"
+else
+  case "$storage_root" in
+    '~')
+      if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
+      storage_root=$HOME
+      ;;
+    '~/'*)
+      if [ -z "${HOME-}" ]; then run_local_without_target_config "$@"; fi
+      storage_root="$HOME/${storage_root#'~/'}"
+      ;;
+  esac
+fi
+
+if [ -d "$storage_root" ] && [ ! -r "$storage_root" ]; then
+  run_local_without_target_config "$@"
+fi
+
+# Preserve the zero-configuration fast path before deriving a checkout token.
+# A workspace name such as `0.3` needs external normalization tools, but an
+# empty Stack storage root cannot contain either its token-matched config or a
+# projection-root match from the bounded fallback below. Keep the caller's
+# positional arguments intact while probing the bounded Stack directory.
+has_stack_config=0
+if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] && [ -f "$HAPPIER_EXEC_CONFIG_PATH" ]; then
+  # An explicit config path is the caller's canonical stack selection. It can
+  # intentionally live outside the storage-root discovery layout (for example
+  # in a primary execution-host workspace), so do not take the local fast path
+  # before it has a chance to refresh and project that target.
+  has_stack_config=1
+else
+  for candidate_config in "$storage_root"/repo-*/dev-targets.json; do
+    if [ -f "$candidate_config" ]; then
+      has_stack_config=1
+      break
+    fi
+  done
+fi
+[ "$has_stack_config" -eq 1 ] || run_local_without_target_config "$@"
+
+repo_token=${repo_root##*/}
+case "$repo_token" in
+  ''|*[!a-z0-9-]*)
+    repo_token=$(printf '%s' "$repo_token" \
+      | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+      | sed 's/[^a-z0-9-][^a-z0-9-]*/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//') || \
+      run_local_without_target_config "$@"
+    ;;
+esac
+[ -n "$repo_token" ] || repo_token=repo
+
+config_path=
+projection_path=
+if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
+  candidate_config=$HAPPIER_EXEC_CONFIG_PATH
+  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+  if [ -f "$candidate_config" ] && [ -r "$candidate_projection" ] \
+    && [ ! "$candidate_config" -nt "$candidate_projection" ] \
+    && [ ! "$projection_generator" -nt "$candidate_projection" ]; then
+    . "$candidate_projection" || run_local_without_target_config "$@"
+    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ]; then
+      node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+      restart_launcher "$@"
+    fi
+    [ "${projection_repo_root-}" = "$repo_root" ] || run_local_without_target_config "$@"
+    config_path=$candidate_config
+    projection_path=$candidate_projection
+  elif [ -f "$candidate_config" ]; then
+    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    restart_launcher "$@"
+  fi
+fi
+for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
+  [ -z "$projection_path" ] || break
+  [ -f "$candidate_config" ] || continue
+  candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+  if [ -r "$candidate_projection" ] \
+    && [ ! "$candidate_config" -nt "$candidate_projection" ] \
+    && [ ! "$projection_generator" -nt "$candidate_projection" ]; then
+    # The projection is generated from the validated canonical config and is
+    # private to the stack directory. It is data for this native dispatcher.
+    . "$candidate_projection" || run_local_without_target_config "$@"
+    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 2 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
+      config_path=$candidate_config
+      projection_path=$candidate_projection
+      break
+    fi
+  fi
+done
+
+# Execution-host workspaces can use stable operator-facing names such as
+# `0.2` and `0.3` that intentionally differ from their Stack identity. The
+# projection already records its exact repository root, so use that canonical
+# identity as the bounded fallback instead of requiring callers to export a
+# second config-path override.
+if [ -z "$projection_path" ]; then
+  for candidate_config in "$storage_root"/repo-*/dev-targets.json; do
+    [ -f "$candidate_config" ] || continue
+    candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+    [ -r "$candidate_projection" ] || continue
+    if (
+      unset projection_repo_root
+      . "$candidate_projection" && [ "${projection_repo_root-}" = "$repo_root" ]
+    ); then
+      if [ "$candidate_config" -nt "$candidate_projection" ] \
+        || [ "$projection_generator" -nt "$candidate_projection" ]; then
+        node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+        restart_launcher "$@"
+      fi
+      . "$candidate_projection" || run_local_without_target_config "$@"
+      if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ]; then
+        node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+        restart_launcher "$@"
+      fi
+      config_path=$candidate_config
+      projection_path=$candidate_projection
+      break
+    fi
+  done
+fi
+
+# The first invocation after configuration changes pays one Node configuration
+# parse. It only refreshes this native projection; it never selects or executes.
+if [ -z "$projection_path" ]; then
+  if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] && [ -f "$HAPPIER_EXEC_CONFIG_PATH" ]; then
+    candidate_projection=$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh
+    node "$projection_generator" "$HAPPIER_EXEC_CONFIG_PATH" "$candidate_projection" "$repo_root" || exit $?
+    restart_launcher "$@"
+  fi
+  for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
+    [ -f "$candidate_config" ] || continue
+    candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
+    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    restart_launcher "$@"
+  done
+  run_local_without_target_config "$@"
+fi
+
+if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ]; then
+  if [ -n "$explicit_target" ]; then
+    printf '%s\n' '[preferred-execution] nested exact-target execution is not allowed' >&2
+    exit 1
+  fi
+  run_local "$@"
+fi
+if { [ -n "${CI-}" ] || [ "${command_mode-}" = local ]; } && [ -z "$explicit_target" ]; then
+  run_local "$@"
+fi
+
+# Command routing is intentionally POSIX-target-only. The Windows launcher is
+# local-only, and Windows remote targets are omitted from the projection.
+if [ "${target_count-0}" -eq 0 ]; then
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] no POSIX execution target is configured' >&2
+    exit 1
+  fi
+  run_local "$@"
+fi
+
+explicit_target_number=
+if [ -n "$explicit_target" ]; then
+  number=1
+  while [ "$number" -le "$target_count" ]; do
+    eval "candidate_name=\${target_${number}_name-}"
+    if [ "$candidate_name" = "$explicit_target" ]; then
+      explicit_target_number=$number
+      break
+    fi
+    number=$((number + 1))
+  done
+  if [ -z "$explicit_target_number" ]; then
+    printf '%s\n' "[preferred-execution] configured target not found: $explicit_target" >&2
+    exit 1
+  fi
+  fallback_mode=error
+fi
+
+case "${1-}" in
+  --script=*)
+    local_script=${1#--script=}
+    shift
+    [ "${1-}" = -- ] && shift
+    set -- corepack yarn -s "$local_script" "$@"
+    ;;
+  --) shift ;;
+esac
+[ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] command is required' >&2; exit 1; }
+requested_command=$1
+requested_command_name=${requested_command##*/}
+command_class=unknown
+primary_only_direct_commands=${primary_only_direct_commands-git}
+case " $primary_only_direct_commands " in
+  *" $requested_command_name "*) [ -n "$explicit_target" ] || run_local -- "$@" ;;
+esac
+requires_remote_dependencies=0
+case " ${dependency_direct_commands-} " in
+  *" $requested_command_name "*) requires_remote_dependencies=1 ;;
+esac
+if [ "$requested_command_name" = corepack ]; then
+  case " ${dependency_corepack_subcommands-} " in
+    *" ${2-} "*) requires_remote_dependencies=1 ;;
+  esac
+fi
 source_search_direct_commands=${source_search_direct_commands-find grep rg}
 case " $source_search_direct_commands " in
   *" $requested_command_name "*) command_class=source-search ;;
+esac
+nested_worker_tool=
+case "$requested_command_name" in
+  rg) nested_worker_tool=rg ;;
+  vitest) nested_worker_tool=vitest ;;
 esac
 requires_remote_workspace_preparation=0
 validation_direct_commands=${validation_direct_commands-tsc vitest}
@@ -212,7 +745,37 @@ case " $validation_script_families " in
     fi
     ;;
 esac
-[ "$script_family" = install ] && command_class=dependency-mutation
+# Package scripts are opaque to the dispatcher by design. Their names still
+# carry the same tool contract as their direct entry points, so use inherited
+# controls for the two owned toolchains rather than parsing script bodies.
+case "$script_family" in
+  test|vitest) nested_worker_tool=vitest ;;
+  typecheck) nested_worker_tool=typescript-native ;;
+esac
+[ "$script_family" = install ] && command_class=dependency-install
+# `runTypeScriptCli.mjs` is the sole compiler-selection owner. It delegates to
+# TypeScript 7's native Go compiler, whose runtime honors GOMAXPROCS to narrow
+# internal parallelism without guessing at a process-wide Node setting.
+# Keep ordinary `node` commands untouched.
+case "$requested_command_name:${2-}" in
+  node:scripts/workspaces/runTypeScriptCli.mjs|node:./scripts/workspaces/runTypeScriptCli.mjs|node:"$repo_root"/scripts/workspaces/runTypeScriptCli.mjs)
+    nested_worker_tool=typescript-native
+    requires_remote_workspace_preparation=1
+    command_class=validation
+    ;;
+esac
+if is_bundled_plugin_generator_invocation "$@"; then
+  nested_worker_tool=bundled-plugin-generator
+  requires_remote_workspace_preparation=1
+  command_class=validation
+fi
+case "$requested_command_name:${2-}" in
+  node:node_modules[\\/]vitest[\\/]vitest.mjs|node:./node_modules[\\/]vitest[\\/]vitest.mjs|node:"$repo_root"/node_modules[\\/]vitest[\\/]vitest.mjs|tsx:node_modules[\\/]vitest[\\/]vitest.mjs|tsx:./node_modules[\\/]vitest[\\/]vitest.mjs|tsx:"$repo_root"/node_modules[\\/]vitest[\\/]vitest.mjs)
+    nested_worker_tool=vitest
+    requires_remote_workspace_preparation=1
+    command_class=validation
+    ;;
+esac
 preflight_command=$requested_command
 [ "$requires_remote_dependencies" -eq 1 ] && preflight_command=corepack
 relative_cwd=${invoked_cwd#"$repo_root"}
@@ -224,9 +787,29 @@ else
   [ "$command_class" = validation ] && command_class=full-validation
 fi
 
+# Only command forms with a known heavy test/typecheck/build contract enter the
+# machine-wide gate. Searches and ordinary control commands retain immediate
+# dispatch, including the existing per-command worker hints below.
+heavyweight_admission_required=0
+case "$requested_command_name" in
+  tsc|vitest) heavyweight_admission_required=1 ;;
+esac
+case "$nested_worker_tool" in
+  vitest|typescript-native|bundled-plugin-generator) heavyweight_admission_required=1 ;;
+esac
+case "$script_family" in
+  build|check|test|typecheck|vitest|install) heavyweight_admission_required=1 ;;
+esac
+
 stack_dir=$(dirname -- "$config_path")
 cache_dir="$stack_dir/dev-target-command-load-native"
-mkdir -p -- "$cache_dir" || run_local "$@"
+mkdir -p -- "$cache_dir" || {
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] command dispatch state is unavailable' >&2
+    exit 1
+  fi
+  run_local "$@"
+}
 
 value_for_target() {
   field=$1
@@ -238,21 +821,41 @@ quote_remote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
 }
 
-sync_is_ready() {
+sync_name_for_target() {
   target_name=$1
+  target_number=$2
+  sync_name=$(value_for_target sync_name "$target_number")
+  if [ -z "$sync_name" ]; then
+    # Projections created before target sync names were materialized still
+    # need to observe the canonical Mutagen encoding. Target names are
+    # validated to lowercase alphanumeric, dot, underscore, and hyphen.
+    encoded_target_name=$(printf '%s' "$target_name" | sed 's/-/--/g; s/\./-d-/g; s/_/-u-/g') || return 1
+    sync_name="happier-$encoded_target_name"
+  fi
+  printf '%s\n' "$sync_name"
+}
+
+configure_mutagen_environment() {
   MUTAGEN_DATA_DIRECTORY="$stack_dir/mutagen/data"
   export MUTAGEN_DATA_DIRECTORY
   if [ -d "$stack_dir/mutagen/openssh" ]; then
     MUTAGEN_SSH_PATH="$stack_dir/mutagen/openssh"
     export MUTAGEN_SSH_PATH
   fi
-  status_line=$(mutagen sync list "happier-$target_name" \
+}
+
+sync_is_ready() {
+  target_name=$1
+  target_number=$2
+  sync_name=$(sync_name_for_target "$target_name" "$target_number") || return 1
+  configure_mutagen_environment
+  status_line=$(mutagen sync list "$sync_name" \
     --template='{{range .}}{{printf "%s|%s|%d|%s|%t|%d\n" .Name .Status .SuccessfulCycles .LastError .Paused (len .Conflicts)}}{{end}}' \
     2>/dev/null || true)
   IFS='|' read -r session_name session_status successful_cycles last_error paused conflict_count <<EOF
 $status_line
 EOF
-  [ "$session_name" = "happier-$target_name" ] || return 1
+  [ "$session_name" = "$sync_name" ] || return 1
   [ "$paused" = false ] || return 1
   [ -z "$last_error" ] || return 1
   [ "${conflict_count-0}" = 0 ] || return 1
@@ -267,6 +870,12 @@ EOF
       ;;
     *) return 1 ;;
   esac
+}
+
+flush_selected_sync() {
+  selected_sync_name=$(sync_name_for_target "$selected_name" "$selected_number") || return 1
+  configure_mutagen_environment
+  exec mutagen sync flush "$selected_sync_name"
 }
 
 remote_load_probe() {
@@ -349,7 +958,13 @@ command_is_available() {
         else
           ttl=${unavailable_ttl_seconds-120}
         fi
-        if [ $((now - sampled)) -lt "$ttl" ]; then [ "$available" = 1 ]; return; fi
+        if [ $((now - sampled)) -lt "$ttl" ]; then
+          if [ "$available" = 1 ]; then return 0; fi
+          # An explicit request is also a recovery probe. Automatic routing
+          # keeps the negative TTL to avoid repeatedly hitting broken hosts,
+          # while a named target must observe a just-repaired SSH/tool state.
+          [ -z "$explicit_target_number" ] && return 1
+        fi
         ;;
     esac
   fi
@@ -399,7 +1014,7 @@ probe_target() {
   cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
   if [ -n "$cached" ]; then
     cached_available=${cached%% *}
-    if [ "$cached_available" = 1 ] || ! sync_is_ready "$name"; then
+    if [ "$cached_available" = 1 ] || ! sync_is_ready "$name" "$number"; then
       printf '%s %s %s cached\n' "$number" "$name" "$cached"
       return
     fi
@@ -435,7 +1050,7 @@ probe_target() {
     return
   fi
   trap 'rmdir "$lock_path" 2>/dev/null || true' EXIT HUP INT TERM
-  if sync_is_ready "$name"; then
+  if sync_is_ready "$name" "$number"; then
     sample=$(remote_load_probe "$number" 2>/dev/null || true)
   else
     sample=
@@ -466,25 +1081,35 @@ probe_target() {
   trap - EXIT HUP INT TERM
 }
 
-probe_tmp=$(mktemp -d "${TMPDIR:-/tmp}/hstack-exec.XXXXXX") || run_local "$@"
+probe_tmp=$(mktemp -d "${TMPDIR:-/tmp}/hstack-exec.XXXXXX") || {
+  if [ "${fallback_mode-local}" = error ]; then
+    printf '%s\n' '[preferred-execution] command target probe state is unavailable' >&2
+    exit 1
+  fi
+  run_local "$@"
+}
 cleanup_probe_tmp() { rm -rf -- "$probe_tmp"; }
 trap cleanup_probe_tmp EXIT HUP INT TERM
 number=1
 while [ "$number" -le "$target_count" ]; do
-  (probe_target "$number" > "$probe_tmp/$number") &
+  eval "automatic_target=\${target_${number}_automatic-1}"
+  if { [ -n "$explicit_target_number" ] && [ "$number" -eq "$explicit_target_number" ]; } || \
+     { [ -z "$explicit_target_number" ] && [ "$automatic_target" = 1 ]; }; then
+    (probe_target "$number" > "$probe_tmp/$number") &
+  fi
   number=$((number + 1))
 done
 wait
 
-if [ "${include_local-0}" = 1 ]; then
+if [ "${include_local-0}" = 1 ] && [ -z "$explicit_target" ]; then
   cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1)
-  load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
-  [ -n "$load" ] || load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || printf 999999)
+  load_value=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
+  [ -n "$load_value" ] || load_value=$(awk '{print $1}' /proc/loadavg 2>/dev/null || printf 999999)
   free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
   [ -n "$free" ] || free=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}' /proc/meminfo 2>/dev/null)
   [ -n "$free" ] || free=1
   local_disk_free=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}')
-  local_score=$(awk -v load="$load" -v cpu="$cpu" -v free="$free" 'BEGIN {if(cpu>0) printf "%.6f", (load/cpu)+((free<0.1)?1:0); else print "999999"}')
+  local_score=$(awk -v load_value="$load_value" -v cpu="$cpu" -v free="$free" 'BEGIN {if(cpu>0) printf "%.6f", (load_value/cpu)+((free<0.1)?1:0); else print "999999"}')
   if [ -n "$local_disk_free" ] && [ "$local_disk_free" -lt 1048576 ]; then
     printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
   else
@@ -494,25 +1119,60 @@ fi
 
 dispatch_lock="$cache_dir/dispatch.lock"
 dispatch_lock_acquired=0
-dispatch_attempt=0
-while [ "$dispatch_attempt" -lt 200 ]; do
+dispatch_retry_seconds=$((2 + $$ % 2))
+dispatch_stale_check_attempt=0
+dispatch_last_wait_state=
+dispatch_wait_pid=
+cancel_dispatch_wait() {
+  if [ -n "$dispatch_wait_pid" ] && kill -0 "$dispatch_wait_pid" 2>/dev/null; then
+    kill -TERM "$dispatch_wait_pid" 2>/dev/null || true
+    wait "$dispatch_wait_pid" 2>/dev/null || true
+  fi
+  cleanup_probe_tmp
+  exit 130
+}
+trap 'cancel_dispatch_wait' HUP INT TERM
+while :; do
   if mkdir "$dispatch_lock" 2>/dev/null; then
     dispatch_lock_acquired=1
     break
   fi
-  now=$(date +%s)
-  lock_mtime=$(stat -f %m "$dispatch_lock" 2>/dev/null || stat -c %Y "$dispatch_lock" 2>/dev/null || true)
-  case "$lock_mtime" in
-    ''|*[!0-9]*) ;;
-    *)
-      if [ $((now - lock_mtime)) -ge 20 ]; then
-        rmdir "$dispatch_lock" 2>/dev/null || true
-      fi
-      ;;
-  esac
-  sleep 0.05
-  dispatch_attempt=$((dispatch_attempt + 1))
+  # A non-directory means the cache cannot host the existing directory lock;
+  # preserve the configured local/error fallback instead of waiting forever.
+  [ -d "$dispatch_lock" ] || break
+  dispatch_stale_check_attempt=$((dispatch_stale_check_attempt + 1))
+  # The selection critical section is normally brief. Poll passively, and
+  # inspect its mtime only every fourth retry so a crowded caller set does not
+  # turn lock waiting into a date/stat fork storm. GNU and BSD stat use
+  # different format switches; accept only a numeric result from either.
+  if [ "$dispatch_stale_check_attempt" -ge 4 ]; then
+    dispatch_stale_check_attempt=0
+    now=$(date +%s)
+    lock_mtime=$(stat -c %Y "$dispatch_lock" 2>/dev/null || true)
+    case "$lock_mtime" in
+      ''|*[!0-9]*) lock_mtime=$(stat -f %m "$dispatch_lock" 2>/dev/null || true) ;;
+    esac
+    case "$lock_mtime" in
+      ''|*[!0-9]*) ;;
+      *)
+        if [ $((now - lock_mtime)) -ge 20 ]; then
+          rmdir "$dispatch_lock" 2>/dev/null || true
+          dispatch_last_wait_state=
+          continue
+        fi
+        ;;
+    esac
+  fi
+  if [ -z "$dispatch_last_wait_state" ]; then
+    printf '%s\n' '[preferred-execution] waiting for dispatch reservation' >&2
+    dispatch_last_wait_state=waiting
+  fi
+  sleep "$dispatch_retry_seconds" &
+  dispatch_wait_pid=$!
+  wait "$dispatch_wait_pid" 2>/dev/null || true
+  dispatch_wait_pid=
 done
+trap cleanup_probe_tmp EXIT HUP INT TERM
 if [ "$dispatch_lock_acquired" -ne 1 ]; then
   if [ "${fallback_mode-local}" = error ]; then
     printf '%s\n' '[preferred-execution] command dispatch is temporarily unavailable' >&2
@@ -641,6 +1301,91 @@ if [ -r "$cache_dir/$selected_name.telemetry" ]; then
     telemetry_psi_cpu telemetry_psi_memory telemetry_psi_io telemetry_swap_in_pages \
     telemetry_swap_out_pages telemetry_platform < "$cache_dir/$selected_name.telemetry" || true
 fi
+if [ "$telemetry_platform" = darwin ]; then
+  heavyweight_admission_required=0
+fi
+
+# Linux inherits niceness through the complete launched process tree, so this
+# gives Stack/daemon control work its normal scheduler share without holding a
+# job back while the guest is otherwise idle. The worker allowance deliberately
+# derives from current guest capacity, the in-flight dispatcher reservations,
+# and observed runnable/PSI pressure. It is a per-command hint, not a queue or
+# a session limit: a lone quiet job receives the guest's full CPU capacity.
+resource_governor_priority=control
+resource_governor_workers=
+if [ "$telemetry_platform" = linux ]; then
+  case "$command_class" in
+    source-search|targeted-validation|full-validation|validation)
+      resource_governor_priority=background
+      resource_governor_workers=$(awk \
+        -v cpu="$telemetry_cpu" \
+        -v active="$selected_active" \
+        -v run_queue="$telemetry_run_queue" \
+        -v cpu_psi="$telemetry_psi_cpu" \
+        -v memory_psi="$telemetry_psi_memory" '
+          BEGIN {
+            if (cpu !~ /^[0-9]+$/ || cpu < 1) exit
+            if (active !~ /^[0-9]+$/ || active < 0) active = 0
+            if (run_queue !~ /^[0-9]+$/ || run_queue < 0) run_queue = 0
+            if (cpu_psi !~ /^[0-9]+([.][0-9]+)?$/ || cpu_psi < 0) cpu_psi = 0
+            if (memory_psi !~ /^[0-9]+([.][0-9]+)?$/ || memory_psi < 0) memory_psi = 0
+            denominator = active + 1 + (cpu_psi / 100) + (memory_psi / 100)
+            if (run_queue > cpu) denominator += (run_queue - cpu) / cpu
+            workers = int(cpu / denominator)
+            if (workers < 1) workers = 1
+            if (workers > cpu) workers = cpu
+            print workers
+          }
+        ')
+      ;;
+  esac
+fi
+case "$resource_governor_workers" in ''|*[!0-9]*) resource_governor_workers= ;; esac
+
+governor_inject_vitest_environment=0
+governor_inject_rg_threads=0
+governor_inject_typescript_gomaxprocs=0
+if [ "$resource_governor_priority" = background ] && [ -n "$resource_governor_workers" ]; then
+  explicit_vitest_workers=0
+  explicit_rg_threads=0
+  explicit_typescript_single_threaded=0
+  for governed_argument in "$@"; do
+    case "$governed_argument" in
+      --maxWorkers|--maxWorkers=*|--max-workers|--max-workers=*|--minWorkers|--minWorkers=*|--min-workers|--min-workers=*|--poolOptions.*.maxThreads|--poolOptions.*.maxThreads=*|--poolOptions.*.minThreads|--poolOptions.*.minThreads=*|--poolOptions.*.maxForks|--poolOptions.*.maxForks=*|--poolOptions.*.minForks|--poolOptions.*.minForks=*) explicit_vitest_workers=1 ;;
+      --threads|--threads=*|-j|-j[0-9]*) explicit_rg_threads=1 ;;
+      --singleThreaded) explicit_typescript_single_threaded=1 ;;
+    esac
+  done
+  explicit_vitest_environment=0
+  if [ "${VITEST_MAX_THREADS+x}" = x ] || [ "${VITEST_MIN_THREADS+x}" = x ] \
+    || [ "${VITEST_MAX_FORKS+x}" = x ] || [ "${VITEST_MIN_FORKS+x}" = x ]; then
+    explicit_vitest_environment=1
+  fi
+  explicit_typescript_environment=0
+  [ "${GOMAXPROCS+x}" = x ] && explicit_typescript_environment=1
+  case "$nested_worker_tool" in
+    vitest)
+      if [ "$explicit_vitest_workers" -ne 1 ] \
+        && [ "$explicit_vitest_environment" -ne 1 ] \
+        && [ "$resource_governor_workers" -lt "$telemetry_cpu" ]; then
+        governor_inject_vitest_environment=1
+      fi
+      ;;
+    rg)
+      if [ "$explicit_rg_threads" -ne 1 ] \
+        && [ "$resource_governor_workers" -lt "$telemetry_cpu" ]; then
+        governor_inject_rg_threads=1
+      fi
+      ;;
+    typescript-native)
+      if [ "$explicit_typescript_single_threaded" -ne 1 ] \
+        && [ "$explicit_typescript_environment" -ne 1 ] \
+        && [ "$resource_governor_workers" -lt "$telemetry_cpu" ]; then
+        governor_inject_typescript_gomaxprocs=1
+      fi
+      ;;
+  esac
+fi
 execution_provenance_schema_version=${execution_provenance_schema_version-1}
 execution_provenance_filename=${execution_provenance_filename-provenance.jsonl}
 provenance_path="$cache_dir/$execution_provenance_filename"
@@ -673,15 +1418,92 @@ remote_cwd=$remote_repo
 pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
+remote_setup_script=
 if [ "$requires_remote_dependencies" -eq 1 ]; then
-  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
-  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs $(quote_remote "--component-relative-dir=$relative_cwd");"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs $(quote_remote "--component-relative-dir=$relative_cwd");"
 fi
-remote_script="$remote_script cd -- $(quote_remote "$remote_cwd");"
-for argument in "$@"; do remote_script="$remote_script $(quote_remote "$argument")"; done
-remote_script="$remote_script; exit \$?"
+remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
+remote_command_environment=
+if [ "$resource_governor_priority" = background ]; then
+  case "$nested_worker_tool" in
+    vitest)
+      # Preserve an explicit caller budget (which SSH would not otherwise
+      # forward) and do not replace a budget already supplied by the guest.
+      if [ "${VITEST_MAX_THREADS+x}" = x ]; then
+        remote_command_environment="$remote_command_environment export VITEST_MAX_THREADS=$(quote_remote "$VITEST_MAX_THREADS");"
+      fi
+      if [ "${VITEST_MIN_THREADS+x}" = x ]; then
+        remote_command_environment="$remote_command_environment export VITEST_MIN_THREADS=$(quote_remote "$VITEST_MIN_THREADS");"
+      fi
+      if [ "${VITEST_MAX_FORKS+x}" = x ]; then
+        remote_command_environment="$remote_command_environment export VITEST_MAX_FORKS=$(quote_remote "$VITEST_MAX_FORKS");"
+      fi
+      if [ "${VITEST_MIN_FORKS+x}" = x ]; then
+        remote_command_environment="$remote_command_environment export VITEST_MIN_FORKS=$(quote_remote "$VITEST_MIN_FORKS");"
+      fi
+      if [ "$governor_inject_vitest_environment" -eq 1 ]; then
+        remote_command_environment="$remote_command_environment if [ -z \"\${VITEST_MAX_THREADS+x}\" ] && [ -z \"\${VITEST_MIN_THREADS+x}\" ] && [ -z \"\${VITEST_MAX_FORKS+x}\" ] && [ -z \"\${VITEST_MIN_FORKS+x}\" ]; then export VITEST_MAX_THREADS=$resource_governor_workers; export VITEST_MIN_THREADS=1; export VITEST_MAX_FORKS=$resource_governor_workers; export VITEST_MIN_FORKS=1; fi;"
+      fi
+      ;;
+    typescript-native)
+      if [ "${GOMAXPROCS+x}" = x ]; then
+        remote_command_environment="$remote_command_environment export GOMAXPROCS=$(quote_remote "$GOMAXPROCS");"
+      fi
+      if [ "$governor_inject_typescript_gomaxprocs" -eq 1 ]; then
+        remote_command_environment="$remote_command_environment if [ -z \"\${GOMAXPROCS+x}\" ]; then export GOMAXPROCS=$resource_governor_workers; fi;"
+      fi
+      ;;
+  esac
+fi
+remote_command_arguments=
+append_remote_command_argument() {
+  remote_command_arguments="$remote_command_arguments $(quote_remote "$1")"
+}
+argument_position=0
+for argument in "$@"; do
+  argument_position=$((argument_position + 1))
+  append_remote_command_argument "$argument"
+  if [ "$argument_position" -eq 1 ]; then
+    if [ "$governor_inject_rg_threads" -eq 1 ]; then
+      append_remote_command_argument "--threads=$resource_governor_workers"
+    fi
+  fi
+done
+heavyweight_admission_prefix=
+if [ "$heavyweight_admission_required" -eq 1 ]; then
+  # The same native launcher owns local and target admission. The target's
+  # POSIX account home is machine-local rather than target-config-local, so
+  # independently routed jobs contend even when their CLI homes differ.
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$command_class") $(quote_remote "--machine=$selected_name") --"
+fi
+if [ -n "$heavyweight_admission_prefix" ]; then
+  # Dependency bootstrap can itself perform the initial package install. Keep
+  # that existing per-workspace lock, but execute bootstrap, preparation, and
+  # the requested heavyweight command beneath the one per-machine admission.
+  heavyweight_command_body="set -euo pipefail;$remote_setup_script$remote_command_environment"
+  if [ "$resource_governor_priority" = background ]; then
+    # Keep niceness on the actual child process while the admission wrapper
+    # owns its slot. A guest without `nice` still waits and runs normally.
+    heavyweight_command_body="$heavyweight_command_body if type nice >/dev/null 2>&1; then nice -n 10$remote_command_arguments; else$remote_command_arguments; fi;"
+  else
+    heavyweight_command_body="$heavyweight_command_body$remote_command_arguments;"
+  fi
+  remote_script="$remote_script$heavyweight_admission_prefix bash -c $(quote_remote "$heavyweight_command_body");"
+elif [ "$resource_governor_priority" = background ]; then
+  # `nice` is available on supported Linux guests. Keep the fallback in the
+  # remote shell so an unusual minimal guest still executes the command rather
+  # than turning scheduler protection into a new command-availability failure.
+  remote_script="$remote_script$remote_setup_script$remote_command_environment if type nice >/dev/null 2>&1; then nice -n 10$remote_command_arguments; else$remote_command_arguments; fi;"
+else
+  remote_script="$remote_script$remote_setup_script$remote_command_environment$remote_command_arguments;"
+fi
+# Bash login shells may run a failing logout hook after an explicit exit. Keep
+# strict setup/command execution, then disable errexit only after capturing the
+# command result so a host logout helper cannot replace that result.
+remote_script="$remote_script command_status=\$?; set +e; exit \"\$command_status\""
 remote_command="bash -lc $(quote_remote "$remote_script")"
 
 control_dir=$(mktemp -d /tmp/hstack-ssh.XXXXXX) || {
@@ -717,6 +1539,34 @@ close_selected_control() {
   rmdir -- "$control_dir" 2>/dev/null || true
 }
 
+cleanup_probe_tmp
+trap - EXIT HUP INT TERM
+if [ -n "$explicit_target" ]; then
+  flush_selected_sync &
+  flush_pid=$!
+  cancel_selected_flush() {
+    kill -TERM "$flush_pid" 2>/dev/null || true
+    wait "$flush_pid" 2>/dev/null || true
+    close_selected_control
+    release_reservation
+    exit 130
+  }
+  trap 'cancel_selected_flush' HUP INT TERM
+  wait "$flush_pid"
+  flush_status=$?
+  trap - HUP INT TERM
+  if [ "$flush_status" -ne 0 ]; then
+    printf '[preferred-execution] selected target sync flush failed: %s\n' "$selected_name" >&2
+    close_selected_control
+    release_reservation
+    if [ "${fallback_mode-local}" = error ]; then
+      exit 1
+    fi
+    printf '%s\n' '[preferred-execution] selected target sync flush failed; running locally' >&2
+    run_local "$@"
+  fi
+fi
+
 if ! open_selected_control; then
   release_reservation
   rm -f -- "$control_path" 2>/dev/null || true
@@ -726,6 +1576,10 @@ if ! open_selected_control; then
   unavailable_temporary="$unavailable_cache.$$.tmp"
   printf '%s 0 - 1\n' "$now" > "$unavailable_temporary" && \
     mv -f -- "$unavailable_temporary" "$unavailable_cache"
+  if [ -n "$explicit_target_number" ]; then
+    printf '%s\n' "[preferred-execution] requested target $selected_name did not accept the command connection" >&2
+    exit 1
+  fi
   retry_count=${HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT-0}
   case "$retry_count" in ''|*[!0-9]*) retry_count=0 ;; esac
   retry_count=$((retry_count + 1))
@@ -746,15 +1600,15 @@ if ! open_selected_control; then
 fi
 
 run_selected_ssh() {
+  ssh_tty=-T
+  [ "$explicit_tty" = 1 ] && ssh_tty=-tt
   if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    ssh "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   else
-    ssh -T -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    ssh "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   fi
 }
 
-cleanup_probe_tmp
-trap - EXIT HUP INT TERM
 run_selected_ssh &
 ssh_pid=$!
 cancel_remote() {

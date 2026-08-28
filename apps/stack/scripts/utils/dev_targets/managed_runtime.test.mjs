@@ -43,6 +43,7 @@ test('managed runtime startup refreshes guest SSH publication from the running L
   assert.equal(calls[2][0], 'login-manager');
   assert.equal(calls[3][0], 'publication');
   assert.equal(calls[3][1].sshLocalPort, 60955);
+  assert.equal(calls[3][1].guestVerified, true);
   assert.deepEqual(result.guestLoginManager, { repaired: false });
   assert.deepEqual(result.sshPublication, { changed: true, port: 60955, hostKeyAliasAdded: false });
 });

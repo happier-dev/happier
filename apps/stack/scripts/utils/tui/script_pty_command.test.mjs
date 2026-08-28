@@ -11,6 +11,7 @@ test('buildScriptPtyArgs uses util-linux -c form on linux', () => {
   });
   assert.equal(res.cmd, 'script');
   assert.equal(res.args[0], '-q');
+  assert.ok(res.args.includes('-e'), `expected -e to preserve child exit status, got ${JSON.stringify(res.args)}`);
   assert.ok(res.args.includes('-c'), `expected -c in args, got ${JSON.stringify(res.args)}`);
   assert.equal(res.args[res.args.length - 1], '/dev/null');
 });
@@ -26,4 +27,3 @@ test('buildScriptPtyArgs uses BSD args form on darwin', () => {
     args: ['-q', '/dev/null', '/usr/bin/node', '/x/hstack.mjs', 'dev'],
   });
 });
-

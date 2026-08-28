@@ -38,6 +38,9 @@ export const STACK_WRAPPER_PRESERVE_KEYS = [
   'HAPPIER_STACK_STORAGE_DIR',
   'HAPPIER_STACK_CLI_HOME_DIR',
   'HAPPIER_STACK_CLI_IDENTITY',
+  // Preserve the user's filesystem scope while stack commands execute their
+  // absolute entrypoints from the Stack package root.
+  'HAPPIER_STACK_INVOKED_CWD',
 
   // UX knobs.
   'HAPPIER_STACK_VERBOSE',

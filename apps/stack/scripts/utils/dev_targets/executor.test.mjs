@@ -176,7 +176,7 @@ test('dependency-consuming commands bootstrap a synchronized target before dispa
   assert.deepEqual(calls.map((call) => call.kind), ['command']);
 });
 
-test('remote exec checks sync health but launches without an implicit flush', async () => {
+test('remote exec flushes the live replica after health inspection and before SSH launch', async () => {
   const calls = [];
   const result = await runDevTargetCommand(
     {
@@ -188,7 +188,8 @@ test('remote exec checks sync health but launches without an implicit flush', as
     {
       runCaptureResult: async ({ command, args }) => {
         calls.push([command, ...args]);
-        return readyListResult();
+        if (args.includes('list')) return readyListResult();
+        return { ok: true, exitCode: 0, out: '', err: '' };
       },
       spawnProcess: ({ command, args }) => {
         calls.push([command, ...args]);
@@ -198,7 +199,10 @@ test('remote exec checks sync health but launches without an implicit flush', as
   );
 
   assert.equal(result.code, 0);
-  assert.equal(calls.filter((call) => call.includes('flush')).length, 0);
+  assert.equal(calls.filter((call) => call.includes('flush')).length, 1);
+  const flushIndex = calls.findIndex((call) => call.includes('flush'));
+  const sshIndex = calls.findIndex((call) => call[0] === 'ssh');
+  assert.ok(flushIndex > 0 && flushIndex < sshIndex);
   const sshCall = calls.find((call) => call[0] === 'ssh');
   assert.ok(sshCall);
   assert.ok(sshCall.includes('BatchMode=yes'));
@@ -251,7 +255,7 @@ test('explicit remote execution records one schema-safe admitted/completed prove
   assert.equal(JSON.stringify(records).includes('secret'), false);
 });
 
-test('remote exec flushes only when explicitly requested and before SSH launch', async () => {
+test('an explicit flush request retains the single pre-launch flush contract', async () => {
   const calls = [];
   await runDevTargetCommand(
     {
@@ -328,6 +332,26 @@ test('sync status and explicit sync use the target session in the stack Mutagen 
   assert.equal(synced.state, 'ready');
   assert.ok(calls.some((call) => call.args.includes('flush')));
   assert.ok(calls.every((call) => call.env.MUTAGEN_DATA_DIRECTORY === '/tmp/stack/mutagen/data'));
+});
+
+test('sync inspection reports a missing named session as missing rather than unavailable', async () => {
+  const inspected = await inspectDevTargetSync({
+    target,
+    stackBaseDir: '/tmp/stack',
+    env: {},
+  }, {
+    runCaptureResult: async () => ({
+      ok: false,
+      exitCode: 1,
+      out: '',
+      err: 'Error: unable to locate requested sessions: specification "happier-linux" did not match any sessions',
+    }),
+  });
+
+  assert.deepEqual(inspected, {
+    state: 'missing',
+    sessionName: 'happier-linux',
+  });
 });
 
 test('sync inspection accepts a bounded timeout for automatic health probes', async () => {
@@ -468,8 +492,8 @@ test('remote exec cancels the exact remote process tree before stopping SSH and 
   signalSource.emit('SIGINT');
   const result = await execution;
   assert.deepEqual(stopped, { ownedChild: child, signal: 'SIGINT' });
-  assert.deepEqual(calls.map((call) => call[0]), ['mutagen', 'ssh', 'stop-local-ssh']);
-  assert.match(calls[1].at(-1), /018f0f52-5fe8-7a9f-8ef5-f81f20572791/);
+  assert.deepEqual(calls.map((call) => call[0]), ['mutagen', 'mutagen', 'ssh', 'stop-local-ssh']);
+  assert.match(calls[2].at(-1), /018f0f52-5fe8-7a9f-8ef5-f81f20572791/);
   assert.equal(result.signal, 'SIGINT');
   assert.equal(signalSource.listenerCount('SIGINT'), 0);
   assert.equal(signalSource.listenerCount('SIGTERM'), 0);

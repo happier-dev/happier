@@ -20,12 +20,37 @@ export async function prepareRemoteValidationWorkspace({
   componentRelativeDir = '.',
   env = process.env,
   loadWorkspaceBuildOwner = async () => await import('../proc/pm.mjs'),
+  loadCliBuildOwner = async () => await import('../../../../cli/scripts/buildSharedDeps.mjs'),
 } = {}) {
   const { componentDir, componentPath } = resolveComponentDir(repoDir, componentRelativeDir);
   if (!componentPath) return { ok: true, built: [], skipped: ['repository-root-script-owned'] };
 
   const { ensureWorkspacePackagesBuiltForComponent } = await loadWorkspaceBuildOwner();
-  return await ensureWorkspacePackagesBuiltForComponent(componentDir, { env });
+  const result = await ensureWorkspacePackagesBuiltForComponent(componentDir, { env });
+  const normalizedComponentPath = componentPath.replaceAll('\\', '/');
+  if (normalizedComponentPath === 'apps/cli' || normalizedComponentPath === 'apps/ui') {
+    if (normalizedComponentPath === 'apps/ui') {
+      // The UI owns only its bundled UI package subset, while the projection
+      // publisher validates the complete CLI-bundled plugin membership before
+      // atomically writing the ignored CLI and platform UI artifacts.
+      await ensureWorkspacePackagesBuiltForComponent(resolve(repoDir, 'apps', 'cli'), { env });
+    }
+    const {
+      resolveCliBundledWorkspacePackageNames,
+      runCanonicalBundledPluginArtifactPublisher,
+    } = await loadCliBuildOwner();
+    const workspaceNames = resolveCliBundledWorkspacePackageNames({ repoRoot: resolve(repoDir) });
+    await runCanonicalBundledPluginArtifactPublisher({
+      repoRoot: resolve(repoDir),
+      workspaceNames,
+      env,
+      // These generated files are deliberately replica-owned and absent from
+      // Mutagen. Preparation must materialize them, not check a nonexistent
+      // local projection or synchronize the primary checkout's stale bytes.
+      mode: 'write',
+    });
+  }
+  return result;
 }
 
 function readComponentRelativeDir(argv) {

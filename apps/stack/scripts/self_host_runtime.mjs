@@ -16,7 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, win32 as win32Path } from 'node:path';
+import { basename, dirname, join, win32 as win32Path } from 'node:path';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
@@ -35,9 +35,15 @@ import {
   resolveServiceBackend,
 } from '@happier-dev/cli-common/service';
 import {
+  mergeSelfHostServerEnvText,
   parseEnvText as parseEnvTextShared,
   renderSelfHostServerEnvText as renderSelfHostServerEnvTextShared,
+  resolveSelfHostServerMigrationPlan,
 } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
+  assertPackagedServerRuntimeClosure,
+  relocateServerRuntimeArtifactClosure,
+} from '@happier-dev/cli-common/firstPartyRuntime/serverRuntimeArtifactLayout';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import {
   PUBLIC_RELEASE_RING_IDS,
@@ -331,12 +337,18 @@ export function pickReleaseAsset({ assets, product, os, arch }) {
   };
 }
 
-export async function applySelfHostSqliteMigrationsAtInstallTime({
+export async function applySelfHostServerMigrationsAtInstallTime({
   config,
   env,
   runCommandImpl = runCommand,
 }) {
-  return runCommandImpl(config.serverBinaryPath, ['--migrate-only'], {
+  const plan = resolveSelfHostServerMigrationPlan({
+    serverBinaryPath: config.serverBinaryPath,
+    env,
+    platform: config.platform ?? process.platform,
+  });
+  if (!plan) return null;
+  return runCommandImpl(plan.command, [...plan.args], {
     cwd: config.installRoot,
     env,
     stdio: 'pipe',
@@ -532,6 +544,14 @@ export function applyEnvOverridesToEnvText(envText, overrides) {
   }
   lines.push('');
   return `${lines.join('\n')}\n`;
+}
+
+export function mergeSelfHostServerRuntimeEnvText({ baseEnvText, existingEnvText = '', envOverrides = [] } = {}) {
+  return mergeSelfHostServerEnvText({
+    baseEnvText: String(baseEnvText ?? ''),
+    existingEnvText: String(existingEnvText ?? ''),
+    overrides: Object.fromEntries((Array.isArray(envOverrides) ? envOverrides : []).map(({ key, value }) => [key, value])),
+  });
 }
 
 export function mergeEnvTextWithDefaults(existingText, defaultsText) {
@@ -1192,100 +1212,35 @@ async function syncSelfHostSqliteMigrations({ artifactRootDir, targetDir }) {
   return { copied: true, reason: 'ok' };
 }
 
-async function syncSelfHostGeneratedClients({ artifactRootDir, targetDir }) {
-  const root = String(artifactRootDir ?? '').trim();
-  const dest = String(targetDir ?? '').trim();
-  if (!root || !dest) return { copied: false, reason: 'missing-paths' };
-
-  const source = join(root, 'generated');
-  if (!existsSync(source)) return { copied: false, reason: 'missing-source' };
-
-  await rm(dest, { recursive: true, force: true });
-  await mkdir(dirname(dest), { recursive: true });
-  await cp(source, dest, { recursive: true });
-  return { copied: true, reason: 'ok' };
-}
-
-async function syncSelfHostNodeModules({ artifactRootDir, targetDir }) {
-  const root = String(artifactRootDir ?? '').trim();
-  const dest = String(targetDir ?? '').trim();
-  if (!root || !dest) return { copied: false, reason: 'missing-paths', copiedEntries: [], missingEntries: [] };
-
-  const sourceRoot = join(root, 'node_modules');
-  if (!existsSync(sourceRoot)) return { copied: false, reason: 'missing-source-root', copiedEntries: [], missingEntries: [] };
-
-  const sidecars = [
-    { sourcePath: join(sourceRoot, '.prisma'), targetPath: join(dest, '.prisma') },
-    { sourcePath: join(sourceRoot, '@prisma'), targetPath: join(dest, '@prisma') },
-  ];
-  const missingEntries = sidecars
-    .filter((sidecar) => !existsSync(sidecar.sourcePath))
-    .map((sidecar) => sidecar.sourcePath);
-  if (missingEntries.length > 0) {
-    return { copied: false, reason: 'incomplete-sidecars', copiedEntries: [], missingEntries };
-  }
-
-  const copiedEntries = [];
-
-  await rm(dest, { recursive: true, force: true });
-  await mkdir(dest, { recursive: true });
-  for (const sidecar of sidecars) {
-    await mkdir(dirname(sidecar.targetPath), { recursive: true });
-    await cp(sidecar.sourcePath, sidecar.targetPath, { recursive: true });
-    copiedEntries.push(sidecar.targetPath);
-  }
-
-  return copiedEntries.length > 0
-    ? { copied: true, reason: 'ok', copiedEntries, missingEntries: [] }
-    : { copied: false, reason: 'missing-sidecars', copiedEntries, missingEntries: [] };
-}
-
-function assertSelfHostNodeModulesSync(result) {
-  if (result?.copied) return;
-  const reason = String(result?.reason ?? 'unknown');
-  throw new Error(`[self-host] server runtime is missing packaged node_modules sidecars (${reason})`);
-}
-
 async function stageSelfHostRuntimePayload({ artifactRootDir, stageRootDir }) {
   const stageRoot = String(stageRootDir ?? '').trim();
   if (!stageRoot) {
     throw new Error('[self-host] missing runtime staging directory');
   }
 
-  const sqliteMigrationsDir = join(stageRoot, 'migrations', 'sqlite');
+  await cp(artifactRootDir, stageRoot, { recursive: true });
+  const relocated = await relocateServerRuntimeArtifactClosure({
+    payloadRoot: stageRoot,
+    platform: process.platform,
+  });
+  await assertPackagedServerRuntimeClosure({ runtimeRoot: relocated.runtimeRoot });
+
+  const sqliteMigrationsDir = join(stageRoot, 'managed-data', 'migrations', 'sqlite');
   await syncSelfHostSqliteMigrations({
-    artifactRootDir,
+    artifactRootDir: relocated.runtimeRoot,
     targetDir: sqliteMigrationsDir,
   }).catch(() => {});
 
-  const generatedDir = join(stageRoot, 'generated');
-  const generated = await syncSelfHostGeneratedClients({
-    artifactRootDir,
-    targetDir: generatedDir,
-  });
-  if (!generated.copied) {
-    throw new Error('[self-host] server runtime is missing packaged generated clients');
-  }
-
-  const nodeModulesDir = join(stageRoot, 'node_modules');
-  const nodeModules = await syncSelfHostNodeModules({
-    artifactRootDir,
-    targetDir: nodeModulesDir,
-  });
-  assertSelfHostNodeModulesSync(nodeModules);
-
-  const embeddedUiSourceDir = join(artifactRootDir, 'ui-web', 'current');
   const embeddedUiDir = join(stageRoot, 'ui-web', 'current');
-  const embeddedUiIndex = await stat(join(embeddedUiSourceDir, 'index.html')).catch(() => null);
-  if (embeddedUiIndex?.isFile()) {
-    await mkdir(dirname(embeddedUiDir), { recursive: true });
-    await cp(embeddedUiSourceDir, embeddedUiDir, { recursive: true });
-  }
+  const embeddedUiIndex = await stat(join(embeddedUiDir, 'index.html')).catch(() => null);
 
   return {
     embeddedUiDir: embeddedUiIndex?.isFile() ? embeddedUiDir : '',
-    generatedDir,
-    nodeModulesDir,
+    generatedDir: join(relocated.runtimeRoot, 'generated'),
+    nodeModulesDir: join(relocated.runtimeRoot, 'node_modules'),
+    prismaDir: join(relocated.runtimeRoot, 'prisma'),
+    runtimeDir: join(relocated.runtimeRoot, 'runtime'),
+    migrationBinaryPath: relocated.migrationBinaryPath || '',
     sqliteMigrationsDir: existsSync(sqliteMigrationsDir) ? sqliteMigrationsDir : '',
   };
 }
@@ -1398,6 +1353,20 @@ async function promoteStagedSelfHostRuntimePayload({
     {
       stagedDir: stagedRuntime.nodeModulesDir,
       targetDir: join(dirname(config.serverBinaryPath), 'node_modules'),
+    },
+    {
+      stagedDir: stagedRuntime.prismaDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'prisma'),
+    },
+    {
+      stagedDir: stagedRuntime.runtimeDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'runtime'),
+    },
+    {
+      stagedDir: stagedRuntime.migrationBinaryPath,
+      targetDir: stagedRuntime.migrationBinaryPath
+        ? join(dirname(config.serverBinaryPath), basename(stagedRuntime.migrationBinaryPath))
+        : '',
     },
   ].filter(({ stagedDir }) => {
     const staged = String(stagedDir ?? '').trim();
@@ -1894,15 +1863,20 @@ async function performSelfHostPostPromoteSteps({
     arch: process.arch,
     platform: config.platform,
   });
-  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
+  const existingEnvText = existsSync(config.configEnvPath)
+    ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
+    : '';
+  const envTextWithOverrides = mergeSelfHostServerRuntimeEnvText({
+    baseEnvText: envText,
+    existingEnvText,
+    envOverrides,
+  });
   await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
   const installEnv = parseEnvText(envTextWithOverrides);
   const healthPort = resolveSelfHostEffectiveServerPort({ config, env: installEnv });
-  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
-    await applySelfHostSqliteMigrationsAtInstallTime({ config, env: installEnv }).catch((e) => {
-      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
-    });
-  }
+  await applySelfHostServerMigrationsAtInstallTime({ config, env: installEnv }).catch((e) => {
+    throw new Error(`[self-host] failed to apply database migrations at install time: ${String(e?.message ?? e)}`);
+  });
 
   const serverShimPath = join(config.binDir, config.serverBinaryName);
   await mkdir(config.binDir, { recursive: true });

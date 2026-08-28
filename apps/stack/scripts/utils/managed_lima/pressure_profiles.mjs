@@ -4,6 +4,8 @@ const PRESSURE_PROFILES = Object.freeze({
   'swap64-zswap': Object.freeze({ swapGiB: 64, zswap: true }),
   swap128: Object.freeze({ swapGiB: 128, zswap: false }),
   'swap128-zswap': Object.freeze({ swapGiB: 128, zswap: true }),
+  swap256: Object.freeze({ swapGiB: 256, zswap: false }),
+  'swap256-zswap': Object.freeze({ swapGiB: 256, zswap: true }),
 });
 
 const FREE_SPACE_RESERVE_GIB = 32;

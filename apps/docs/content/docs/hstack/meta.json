@@ -5,6 +5,7 @@
     "setup",
     "development",
     "dev-targets",
+    "dev-vm",
     "quickstarts",
     "running",
     "validation",

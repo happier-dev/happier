@@ -8,6 +8,7 @@ import { configureManagedLimaGuestPressure } from './guest_pressure.mjs';
 import { resolveManagedLimaPressureProfile } from './pressure_profiles.mjs';
 import {
   ensureManagedLimaGuestLoginManager,
+  inspectManagedLimaGuestToolchain,
   inspectManagedLimaGuestLoginManager,
   inspectManagedLimaGuestIdentity,
   provisionManagedLimaGuest,
@@ -107,6 +108,7 @@ export async function setupManagedLimaRuntime({
   provisionGuest = provisionManagedLimaGuest,
   configureGuestPressure = configureManagedLimaGuestPressure,
   ensureGuestLoginManager = ensureManagedLimaGuestLoginManager,
+  inspectGuestToolchain = inspectManagedLimaGuestToolchain,
   inspectGuest = inspectManagedLimaGuestIdentity,
 }) {
   const lifecycle = await setupManagedLimaInstance({
@@ -130,9 +132,17 @@ export async function setupManagedLimaRuntime({
     profile: resolveManagedLimaPressureProfile(pressureProfileName),
     scriptSource: guestPressureScriptSource,
   });
+  const guestToolchain = await inspectGuestToolchain({ executor, instance });
+  if (guestToolchain?.ok !== true) {
+    const error = managedLimaError(
+      `[managed-lima] required guest toolchain is unavailable: ${guestToolchain?.error || 'inspection failed'}`,
+      'MANAGED_LIMA_GUEST_TOOLCHAIN_UNHEALTHY',
+    );
+    throw error;
+  }
   const guestLoginManager = await ensureGuestLoginManager({ executor, instance });
   const guest = await inspectGuest({ executor, instance });
-  return { ...lifecycle, provision, pressure, guestLoginManager, guest };
+  return { ...lifecycle, provision, pressure, guestToolchain, guestLoginManager, guest };
 }
 
 export async function doctorManagedLimaInstance({
@@ -169,9 +179,13 @@ export async function doctorManagedLimaInstance({
   const guestLoginManager = current.status.toLowerCase() === 'running'
     ? await inspectManagedLimaGuestLoginManager({ executor, instance })
     : null;
+  const guestToolchain = guestLoginManager?.ok === true
+    ? await inspectManagedLimaGuestToolchain({ executor, instance })
+    : null;
   const ok = Object.values(drift).every((entries) => entries.length === 0)
     && current.status.toLowerCase() !== 'broken'
-    && (guestLoginManager?.ok ?? true);
+    && (guestLoginManager?.ok ?? true)
+    && (guestToolchain?.ok ?? true);
   return {
     ok,
     exists: true,
@@ -180,5 +194,6 @@ export async function doctorManagedLimaInstance({
     status: current.status,
     drift,
     ...(guestLoginManager ? { guestLoginManager } : {}),
+    ...(guestToolchain ? { guestToolchain } : {}),
   };
 }

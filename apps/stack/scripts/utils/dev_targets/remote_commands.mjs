@@ -1,3 +1,9 @@
+import { createHash } from 'node:crypto';
+
+import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
+import { REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN } from '../managed_lima/provisioner.mjs';
+import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
+
 export const REMOTE_DEPENDENCY_ADMISSION = Object.freeze({
   directCommands: Object.freeze([
     'node',
@@ -324,11 +330,13 @@ export function buildRemoteDoctorCommand(target) {
       target,
       [
         '$ErrorActionPreference = "Stop"',
-        'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js is required on the remote target" }',
-        'if (-not (Get-Command corepack -ErrorAction SilentlyContinue)) { throw "Corepack is required on the remote target" }',
-        'node --version',
-        'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
-        'corepack --version',
+        ...REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN.map(({ command, label }) => (
+          `if (-not (Get-Command ${command} -ErrorAction SilentlyContinue)) { throw "${label} is required on the remote target" }`
+        )),
+        ...REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN.flatMap(({ command }) => [
+          `${command} --version`,
+          'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+        ]),
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -337,10 +345,10 @@ export function buildRemoteDoctorCommand(target) {
     target,
     [
       'set -euo pipefail',
-      'command -v node >/dev/null || { echo "Node.js is required on the remote target" >&2; exit 127; }',
-      'command -v corepack >/dev/null || { echo "Corepack is required on the remote target" >&2; exit 127; }',
-      'node --version',
-      'corepack --version',
+      ...REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN.map(({ command, label }) => (
+        `command -v ${command} >/dev/null || { echo "${label} is required on the remote target" >&2; exit 127; }`
+      )),
+      ...REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN.map(({ command }) => `${command} --version`),
     ].join('; '),
   );
 }
@@ -377,6 +385,95 @@ function requireServicePort(value, label, { optional = false } = {}) {
   return port;
 }
 
+const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
+  'HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY',
+  'HAPPIER_SQLITE_BUSY_TIMEOUT_MS',
+  'HAPPIER_SQLITE_CONNECTION_LIMIT',
+]);
+const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES = ['HAPPIER_SERVER_RETENTION__'];
+
+function isRemoteServerLightSemanticEnvKey(key) {
+  return REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS.has(key)
+    || REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+function projectRemoteServerLightSemanticEnvironment(env) {
+  const projected = {};
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (!isRemoteServerLightSemanticEnvKey(key) || value == null) continue;
+    if (!/^[A-Z0-9_]+$/.test(key)) {
+      throw new Error('[dev-targets] invalid remote server semantic environment key');
+    }
+    const normalized = String(value).trim();
+    if (!normalized) continue;
+    if (/[\0\r\n]/.test(normalized)) {
+      throw new Error('[dev-targets] invalid remote server semantic environment value');
+    }
+    projected[key] = normalized;
+  }
+  return projected;
+}
+
+export function resolveRemoteServerRuntimeConfig({ serverComponentName, env = {} } = {}) {
+  if (serverComponentName !== 'happier-server-light') {
+    throw new Error('[dev-targets] remote server placement only supports happier-server-light');
+  }
+  const effectiveProvider = resolveEffectiveDbProvider({ serverComponentName, env });
+  if (!effectiveProvider.ok) {
+    throw new Error('[dev-targets] remote server placement has an unsupported SQLite provider configuration');
+  }
+  if (effectiveProvider.provider !== 'sqlite') {
+    throw new Error('[dev-targets] remote server placement only supports SQLite');
+  }
+  return {
+    serverComponentName: 'happier-server-light',
+    dbProvider: 'sqlite',
+    environment: projectRemoteServerLightSemanticEnvironment(env),
+  };
+}
+
+function normalizeRemoteServerRuntimeConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('[dev-targets] remote server placement requires a supported server runtime configuration');
+  }
+  const environment = config.environment ?? {};
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)) {
+    throw new Error('[dev-targets] remote server semantic environment must be an object');
+  }
+  const envProvider = environment.HAPPIER_DB_PROVIDER;
+  if (
+    config.dbProvider != null
+    && envProvider != null
+    && String(config.dbProvider).trim().toLowerCase() !== String(envProvider).trim().toLowerCase()
+  ) {
+    throw new Error('[dev-targets] remote server runtime DB provider configuration conflicts');
+  }
+  return resolveRemoteServerRuntimeConfig({
+    serverComponentName: config.serverComponentName,
+    env: {
+      ...environment,
+      ...(config.dbProvider != null ? { HAPPIER_DB_PROVIDER: config.dbProvider } : {}),
+    },
+  });
+}
+
+function requireStableOuterServerUrl(value) {
+  const urlText = String(value ?? '').trim();
+  if (!urlText || /[\0\r\n]/.test(urlText)) {
+    throw new Error('[dev-targets] remote server placement requires a stable outer --server-public-url');
+  }
+  let url;
+  try {
+    url = new URL(urlText);
+  } catch {
+    throw new Error('[dev-targets] remote server placement requires an HTTP(S) --server-public-url');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('[dev-targets] remote server placement requires an HTTP(S) --server-public-url');
+  }
+  return urlText;
+}
+
 function buildRemoteDevArgs({ services, serverUrl, publicServerUrl, startMobile }) {
   const args = [];
   if (!services.server) args.push('--no-server');
@@ -384,7 +481,9 @@ function buildRemoteDevArgs({ services, serverUrl, publicServerUrl, startMobile 
   if (!services.daemon) args.push('--no-daemon');
   args.push('--no-browser', '--no-dev-targets', '--watch');
   if (services.expo && startMobile) args.push('--mobile');
-  if (!services.server) {
+  if (services.server) {
+    if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
+  } else {
     args.push(`--server-url=${serverUrl}`);
     if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
   }
@@ -403,16 +502,75 @@ function formatPowerShellDevArg(arg) {
   return `${arg.slice(0, separator + 1)}${powershellQuote(arg.slice(separator + 1))}`;
 }
 
+function resolveRemoteTargetStackName(target, { stackName } = {}) {
+  const controllerStackName = String(stackName ?? '').trim();
+  const targetName = String(target?.name ?? '').trim().toLowerCase();
+  if (!controllerStackName || !targetName) {
+    throw new Error('[dev-targets] remote Stack identity requires controller Stack and target names');
+  }
+  const targetToken = targetName
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'target';
+  const fingerprint = createHash('sha256')
+    .update(`${controllerStackName}\0${targetName}\0${String(target.repoDir ?? '')}\0${String(target.cliHomeDir ?? '')}`)
+    .digest('hex')
+    .slice(0, 16);
+  return `dev-target-${targetToken}-${fingerprint}`;
+}
+
+export function resolveRemoteStackStatePaths(target, { stackName } = {}) {
+  const remoteStackName = resolveRemoteTargetStackName(target, { stackName });
+  const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
+  const stackBaseDir = `${stackStorageDir}/${remoteStackName}`;
+  return {
+    activeServerId: buildStackStableScopeId({
+      stackName: remoteStackName,
+      cliIdentity: 'default',
+    }),
+    stackName: remoteStackName,
+    stackStorageDir,
+    stackBaseDir,
+    stackEnvPath: `${stackBaseDir}/env`,
+  };
+}
+
+export function buildRemoteStackRetirementProbeCommand(target, { stackName } = {}) {
+  const { stackBaseDir } = resolveRemoteStackStatePaths(target, { stackName });
+  const runtimeStatePath = `${stackBaseDir}/stack.runtime.json`;
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(
+      target,
+      [
+        '$ErrorActionPreference = "Stop"',
+        `if (Test-Path -LiteralPath ${powershellQuote(runtimeStatePath)}) { exit 1 }`,
+        'exit 0',
+      ].join('; '),
+    );
+  }
+  return wrapRemoteScript(
+    target,
+    [
+      'set -euo pipefail',
+      `test ! -e ${posixQuote(runtimeStatePath)}`,
+    ].join('; '),
+  );
+}
+
 function resolveRemoteStackInvocation(target, {
   services,
   serverUrl,
   publicServerUrl = '',
-  activeServerId,
   stackName,
   remoteServerPort = null,
   remoteExpoPort = null,
   expoPublicUrl = '',
   startMobile = false,
+  resolveServerPublicUrlOnTarget = false,
+  resolveExpoPublicUrlOnTarget = false,
+  remoteServerRuntimeConfig = null,
+  deferDaemonStartUntilCredentials = false,
 }) {
   const normalizedServices = {
     server: services?.server === true,
@@ -425,30 +583,47 @@ function resolveRemoteStackInvocation(target, {
   const serverPort = normalizedServices.server
     ? requireServicePort(remoteServerPort, 'remote server port')
     : null;
+  const serverRuntimeConfig = normalizedServices.server
+    ? normalizeRemoteServerRuntimeConfig(remoteServerRuntimeConfig)
+    : null;
+  const stablePublicServerUrl = normalizedServices.server
+    ? (resolveServerPublicUrlOnTarget ? '' : requireStableOuterServerUrl(publicServerUrl))
+    : publicServerUrl;
   const expoPort = normalizedServices.expo
     ? requireServicePort(remoteExpoPort, 'remote Expo port')
     : null;
-  const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
-  const stackBaseDir = `${stackStorageDir}/${stackName}`;
-  const stackEnvPath = `${stackBaseDir}/env`;
+  const {
+    activeServerId,
+    stackName: remoteStackName,
+    stackStorageDir,
+    stackBaseDir,
+    stackEnvPath,
+  } = resolveRemoteStackStatePaths(target, { stackName });
+  const stackServerComponent = serverRuntimeConfig?.serverComponentName ?? 'happier-server-light';
+  const stackDbProvider = serverRuntimeConfig?.dbProvider ?? 'sqlite';
   const stackEnvLines = [
     `HAPPIER_STACK_REPO_DIR=${target.repoDir}`,
     `HAPPIER_STACK_CLI_HOME_DIR=${target.cliHomeDir}`,
-    'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+    `HAPPIER_STACK_SERVER_COMPONENT=${stackServerComponent}`,
+    `HAPPIER_DB_PROVIDER=${stackDbProvider}`,
+    ...Object.entries(serverRuntimeConfig?.environment ?? {}).map(([key, value]) => `${key}=${value}`),
     'HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000',
     'HAPPIER_DEV_TARGET_EXECUTION=1',
+    ...(normalizedServices.daemon && deferDaemonStartUntilCredentials
+      ? ['HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1']
+      : []),
     ...(serverPort ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
     ...(expoPort ? [
       `HAPPIER_STACK_EXPO_DEV_PORT=${expoPort}`,
       'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY=stable',
       'HAPPIER_STACK_EXPO_HOST=localhost',
     ] : []),
-    ...(expoPublicUrl ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
+    ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
   const devArgs = buildRemoteDevArgs({
     services: normalizedServices,
     serverUrl,
-    publicServerUrl,
+    publicServerUrl: stablePublicServerUrl,
     startMobile,
   });
   return {
@@ -457,7 +632,9 @@ function resolveRemoteStackInvocation(target, {
     stackBaseDir,
     stackEnvLines,
     stackEnvPath,
-    stackName,
+    stackServerComponent,
+    stackDbProvider,
+    stackName: remoteStackName,
     stackStorageDir,
   };
 }
@@ -466,15 +643,13 @@ function buildWindowsRemoteStackPrelude(target, invocation) {
   return [
     '$ErrorActionPreference = "Stop"',
     `$env:HAPPIER_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
+    `$env:HAPPIER_STACK_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
     `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
     `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(invocation.stackStorageDir)}`,
     `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = ${powershellQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
     `$env:HAPPIER_STACK_STACK = ${powershellQuote(invocation.stackName)}`,
     `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(invocation.activeServerId)}`,
     `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
-    `New-Item -ItemType Directory -Force -Path ${powershellQuote(invocation.stackBaseDir)} | Out-Null`,
-    `$stackEnvPath = ${powershellQuote(invocation.stackEnvPath)}`,
-    `@(${invocation.stackEnvLines.map(powershellQuote).join(', ')}) | Set-Content -LiteralPath $stackEnvPath -Encoding Ascii`,
     `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
   ];
 }
@@ -483,15 +658,28 @@ function buildPosixRemoteStackPrelude(target, invocation) {
   return [
     'set -euo pipefail',
     `export HAPPIER_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
+    `export HAPPIER_STACK_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
     `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
     `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(invocation.stackStorageDir)}`,
     `export HAPPIER_STACK_PM_CACHE_BASE_DIR=${posixQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
     `export HAPPIER_STACK_STACK=${posixQuote(invocation.stackName)}`,
     `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(invocation.activeServerId)}`,
     `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
-    `install -d -m 700 -- ${posixQuote(invocation.stackBaseDir)}`,
-    `printf '%s\\n' ${invocation.stackEnvLines.map(posixQuote).join(' ')} > ${posixQuote(invocation.stackEnvPath)}`,
     `cd -- ${posixQuote(target.repoDir)}`,
+  ];
+}
+
+function buildWindowsRemoteStackInitializationCommands(target, invocation) {
+  return [
+    `corepack yarn workspace @happier-dev/stack stack new ${powershellQuote(invocation.stackName)} --server=${powershellQuote(invocation.stackServerComponent)} --db-provider=${powershellQuote(invocation.stackDbProvider)} --repo=${powershellQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
+    `corepack yarn workspace @happier-dev/stack stack env ${powershellQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(powershellQuote).join(' ')}`,
+  ];
+}
+
+function buildPosixRemoteStackInitializationCommands(target, invocation) {
+  return [
+    `corepack yarn workspace @happier-dev/stack stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
+    `corepack yarn workspace @happier-dev/stack stack env ${posixQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(posixQuote).join(' ')}`,
   ];
 }
 
@@ -527,6 +715,10 @@ export function buildRemoteStackCommand(target, options) {
       target,
       [
         ...buildWindowsRemoteStackPrelude(target, invocation),
+        ...buildWindowsRemoteStackInitializationCommands(target, invocation).flatMap((command) => [
+          command,
+          'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+        ]),
         `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
         'exit $LASTEXITCODE',
       ].join('; '),
@@ -536,6 +728,7 @@ export function buildRemoteStackCommand(target, options) {
     target,
     [
       ...buildPosixRemoteStackPrelude(target, invocation),
+      ...buildPosixRemoteStackInitializationCommands(target, invocation),
       `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
     ].join('; '),
   );
@@ -572,7 +765,8 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
   );
 }
 
-export function buildRemoteDaemonReadinessProbeCommand(target, { activeServerId }) {
+export function buildRemoteDaemonReadinessProbeCommand(target, { stackName }) {
+  const { activeServerId } = resolveRemoteStackStatePaths(target, { stackName });
   const cliHomeDir = String(target.cliHomeDir).replace(/[\\/]+$/, '');
   const statePath = `${cliHomeDir}/servers/${String(activeServerId)}/daemon.state.json`;
   if (target.platform === 'windows') {

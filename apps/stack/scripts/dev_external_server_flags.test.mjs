@@ -159,6 +159,52 @@ test('dev --json discovers stack-scoped remote development targets without start
   }
 });
 
+test('--no-dev-targets cannot bypass persisted remote server placement into the local Stack', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const devScript = join(packageRoot, 'scripts', 'dev.mjs');
+  const storageDir = await mkdtemp(join(tmpdir(), 'hstack-dev-remote-server-authority-'));
+  const stackName = 'repo-remote-server-authority';
+  try {
+    const stackDir = join(storageDir, stackName);
+    await mkdir(stackDir, { recursive: true });
+    await writeFile(
+      join(stackDir, 'dev-targets.json'),
+      JSON.stringify({
+        version: 2,
+        targets: [{
+          name: 'mac',
+          platform: 'posix',
+          ssh: 'happier-stack-mac',
+          repoDir: '/Users/dev/happier',
+          cliHomeDir: '/Users/dev/.happier/mac',
+        }],
+        runtimePlacement: {
+          server: { mode: 'prefer-target', target: 'mac' },
+        },
+      }),
+    );
+    const res = await runNode([devScript, '--json', '--no-dev-targets'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_HOME_DIR: join(storageDir, 'home'),
+        HAPPIER_STACK_STORAGE_DIR: storageDir,
+        HAPPIER_STACK_SANDBOX_DIR: join(storageDir, 'sandbox'),
+        HAPPIER_STACK_REPO_DIR: '',
+        HAPPIER_STACK_ENV_FILE: '',
+        HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+      },
+    });
+    assert.equal(res.code, 1, `unexpected success:\n${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, /--no-dev-targets.*remote server placement/i);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test('configured dev targets fail closed when dev uses an external server', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
@@ -198,7 +244,7 @@ test('configured dev targets fail closed when dev uses an external server', asyn
       },
     });
     assert.equal(res.code, 1);
-    assert.match(res.stderr, /configured dev targets require the local Stack server/);
+    assert.match(res.stderr, /remote runtime placement.*external --server-url/i);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

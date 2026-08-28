@@ -21,6 +21,36 @@ const target = {
   cliHomeDir: '/Users/dev/.happier',
 };
 
+async function writeCriticalScopeStubs(root) {
+  const binDir = join(root, 'critical-scope-bin');
+  const systemdRunLog = join(root, 'systemd-run.log');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(binDir, 'systemctl'), [
+    '#!/bin/sh',
+    'if [ "$1" = "--user" ] && [ "$2" = "show" ] && [ "$3" = "happier-critical.slice" ]; then',
+    "  printf '%s\\n' 'LoadState=loaded' 'MemoryLow=4294967296'",
+    '  exit 0',
+    'fi',
+    'exit 1',
+    '',
+  ].join('\n'));
+  await writeFile(join(binDir, 'systemd-run'), [
+    '#!/bin/sh',
+    `printf '%s\\n' "$*" >> ${JSON.stringify(systemdRunLog)}`,
+    'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
+    'if [ "$1" = "--" ]; then shift; fi',
+    'exec "$@"',
+    '',
+  ].join('\n'));
+  for (const command of ['mutagen', 'ssh']) {
+    await writeFile(join(binDir, command), '#!/bin/sh\nexit 0\n');
+  }
+  await Promise.all(['systemctl', 'systemd-run', 'mutagen', 'ssh'].map((command) => (
+    chmod(join(binDir, command), 0o755)
+  )));
+  return { binDir, systemdRunLog };
+}
+
 test('canonical dev-target control runner captures stdout while streaming diagnostics', async () => {
   const result = await runDevTargetControlProcess({
     label: 'dev-target-control-test',
@@ -32,6 +62,66 @@ test('canonical dev-target control runner captures stdout while streaming diagno
   assert.equal(result.code, 0);
   assert.equal(result.out, 'session-json\n');
   assert.equal(result.err, 'diagnostic\n');
+});
+
+test('runs a future independent Mutagen daemon control launch in the protected critical user slice', async (t) => {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+  t.after(() => {
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    }
+  });
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-critical-mutagen-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { binDir, systemdRunLog } = await writeCriticalScopeStubs(root);
+
+  const result = await runDevTargetControlProcess({
+    label: 'mutagen',
+    command: 'mutagen',
+    args: ['version'],
+    env: {
+      ...process.env,
+      PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+    },
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(
+    await readFile(systemdRunLog, 'utf8'),
+    /--user --scope --quiet --slice=happier-critical\.slice -- mutagen version/,
+  );
+});
+
+test('runs Stack outbound SSH control launches in the protected critical user slice', async (t) => {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+  t.after(() => {
+    if (originalPlatformDescriptor) {
+      Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    }
+  });
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-critical-ssh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { binDir, systemdRunLog } = await writeCriticalScopeStubs(root);
+
+  const result = await runDevTargetControlProcess({
+    label: 'ssh',
+    command: 'ssh',
+    args: ['guest', 'true'],
+    env: {
+      ...process.env,
+      PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
+    },
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(
+    await readFile(systemdRunLog, 'utf8'),
+    /--user --scope --quiet --slice=happier-critical\.slice -- ssh guest true/,
+  );
 });
 
 async function writeMutagenStatusStub(root) {
@@ -148,6 +238,12 @@ test('equivalent project restarts its isolated Mutagen daemon once when custom S
         resumeAttempts += 1;
         return { code: resumeAttempts === 1 ? 1 : 0 };
       }
+      if (args[0] === 'sync' && args[1] === 'list') {
+        return {
+          code: 0,
+          out: JSON.stringify([{ name: 'happier-mac', status: 'connecting-beta', successfulCycles: 0 }]),
+        };
+      }
       return { code: 0 };
     },
   });
@@ -160,6 +256,7 @@ test('equivalent project restarts its isolated Mutagen daemon once when custom S
       ['mutagen', 'project', 'resume'],
       ['mutagen', 'daemon', 'stop'],
       ['mutagen', 'project', 'resume'],
+      ['mutagen', 'sync', 'list'],
       ['mutagen', 'project', 'list'],
     ],
   );
@@ -201,7 +298,7 @@ test('Stack borrows an equivalent independent project without changing its lifec
   assert.deepEqual(calls.map((call) => call.args[1] ?? call.args[0]), ['version', 'list', 'list']);
 });
 
-test('Stack refreshes a changed independent project without taking lifecycle ownership', async () => {
+test('Stack refuses to replace a changed independent project owned by the sync service', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-refresh-independent-'));
   const projectFile = join(root, 'mutagen', 'mutagen.yml');
   await mkdir(join(root, 'mutagen'), { recursive: true });
@@ -213,30 +310,73 @@ test('Stack refreshes a changed independent project without taking lifecycle own
   const calls = [];
   const refreshedTarget = { ...target, repoDir: '/remote/happier-refreshed' };
 
-  const result = await ensureDevTargetSyncProject({
-    stackBaseDir: root,
-    sourceDir: '/source/happier',
-    targets: [refreshedTarget],
-    ownerId: 123,
-    allowIndependentBorrow: true,
-    env: {},
-  }, {
-    runProcess: async ({ command, args }) => {
-      calls.push({ command, args });
-      return { code: 0 };
-    },
-  });
+  await assert.rejects(
+    ensureDevTargetSyncProject({
+      stackBaseDir: root,
+      sourceDir: '/source/happier',
+      targets: [refreshedTarget],
+      ownerId: 123,
+      allowIndependentBorrow: true,
+      env: {},
+    }, {
+      runProcess: async ({ command, args }) => {
+        calls.push({ command, args });
+        return { code: 0 };
+      },
+    }),
+    /independent synchronization project configuration differs/,
+  );
 
-  assert.equal(result.ownership, 'independent');
   assert.match(
     await readFile(projectFile, 'utf8'),
     new RegExp(`^# hstack-owner: ${JSON.stringify(INDEPENDENT_DEV_TARGET_SYNC_OWNER)}`),
   );
-  assert.match(await readFile(projectFile, 'utf8'), /happier-refreshed/);
-  await result.release('pause');
+  assert.doesNotMatch(await readFile(projectFile, 'utf8'), /happier-refreshed/);
   assert.deepEqual(
     calls.filter((call) => call.command === 'mutagen').map((call) => call.args[1] ?? call.args[0]),
-    ['version', 'terminate', 'start', 'list'],
+    ['version'],
+  );
+});
+
+test('Stack refuses destructive fallback when independent ownership appears during ensure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-raced-independent-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: 123,
+  }));
+  const calls = [];
+
+  await assert.rejects(
+    ensureDevTargetSyncProject({
+      stackBaseDir: root,
+      sourceDir: '/source/happier',
+      targets: [target],
+      ownerId: 123,
+      allowIndependentBorrow: true,
+      env: {},
+    }, {
+      runProcess: async ({ command, args }) => {
+        calls.push({ command, args });
+        if (args[0] === 'sync' && args[1] === 'list') {
+          await writeFile(projectFile, renderMutagenProject({
+            sourceDir: '/source/happier',
+            targets: [target],
+            ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+          }));
+        }
+        return { code: args[0] === 'version' ? 0 : 1 };
+      },
+    }),
+    /independent synchronization ownership changed during Stack startup/,
+  );
+
+  assert.equal(calls.some((call) => call.args[1] === 'terminate'), false);
+  assert.match(
+    await readFile(projectFile, 'utf8'),
+    /^# hstack-owner: "dev-target-sync-service"/,
   );
 });
 
@@ -296,7 +436,7 @@ test('Stack default runner preserves a nonzero independent status exit', async (
   );
 });
 
-test('independent sync stop pauses and releases the generated project to Stack ownership', async () => {
+test('independent sync stop releases ownership before pausing so interruption cannot advertise stale ownership', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-stop-'));
   const projectFile = join(root, 'mutagen', 'mutagen.yml');
   await mkdir(join(root, 'mutagen'), { recursive: true });
@@ -313,12 +453,64 @@ test('independent sync stop pauses and releases the generated project to Stack o
   }, {
     runProcess: async ({ command, args }) => {
       calls.push({ command, args });
+      assert.doesNotMatch(await readFile(projectFile, 'utf8'), /^# hstack-owner:/);
       return { code: 0 };
     },
   });
 
   assert.equal(released, true);
   assert.deepEqual(calls.map((call) => call.args[1] ?? call.args[0]), ['pause']);
+  assert.doesNotMatch(await readFile(projectFile, 'utf8'), /^# hstack-owner:/);
+});
+
+test('independent sync stop restores ownership when project pause fails normally', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-stop-failure-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+
+  await assert.rejects(
+    releaseIndependentDevTargetSyncProject({
+      stackBaseDir: root,
+      env: {},
+    }, {
+      runProcess: async () => ({ code: 7 }),
+    }),
+    /independent Mutagen project pause failed \(code=7\)/,
+  );
+
+  assert.match(
+    await readFile(projectFile, 'utf8'),
+    /^# hstack-owner: "dev-target-sync-service"/,
+  );
+});
+
+test('independent sync stop leaves ownership released when project pause is interrupted', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-stop-interrupted-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+
+  await assert.rejects(
+    releaseIndependentDevTargetSyncProject({
+      stackBaseDir: root,
+      env: {},
+    }, {
+      runProcess: async () => {
+        throw new Error('interrupted after launch');
+      },
+    }),
+    /interrupted after launch/,
+  );
+
   assert.doesNotMatch(await readFile(projectFile, 'utf8'), /^# hstack-owner:/);
 });
 

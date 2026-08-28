@@ -31,8 +31,11 @@ export function getServerComponentName({ kv } = {}) {
   return raw;
 }
 
-export async function fetchHappierHealth(baseUrl) {
+export async function fetchHappierHealth(baseUrl, { signal } = {}) {
   const ctl = new AbortController();
+  const abortForCaller = () => ctl.abort(signal?.reason);
+  if (signal?.aborted) abortForCaller();
+  else signal?.addEventListener('abort', abortForCaller, { once: true });
   const t = setTimeout(() => ctl.abort(), 1500);
   try {
     const url = baseUrl.replace(/\/+$/, '') + '/health';
@@ -55,6 +58,7 @@ export async function fetchHappierHealth(baseUrl) {
     return { ok: false, ready: false, status: null, json: null, text: null };
   } finally {
     clearTimeout(t);
+    signal?.removeEventListener('abort', abortForCaller);
   }
 }
 
@@ -175,6 +179,7 @@ export function createServerReadinessDeadline({
 export async function waitForServerReady(url, {
   timeoutMs = 60_000,
   intervalMs = 300,
+  signal = null,
   childProcess = null,
   startupDeadline = null,
   continueWhileChildAlive = process.env.HAPPIER_STACK_TUI === '1',
@@ -191,6 +196,11 @@ export async function waitForServerReady(url, {
   const onExit = (code, signal) => {
     earlyExitError = new Error(formatServerReadyEarlyExit(url, code, signal));
   };
+  const throwIfAborted = () => {
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error(`Server readiness cancelled at ${url}`);
+    }
+  };
 
   if (childProcess && typeof childProcess.once === 'function') {
     if (childProcess.exitCode !== null && childProcess.exitCode !== undefined) {
@@ -201,6 +211,7 @@ export async function waitForServerReady(url, {
 
   try {
     while (true) {
+      throwIfAborted();
       if (earlyExitError) {
         throw earlyExitError;
       }
@@ -216,12 +227,13 @@ export async function waitForServerReady(url, {
       // the root route serves the app shell instead of the legacy welcome page.
       // Prefer that contract, but keep the older root-page probe as a fallback for source/dev flows.
       // eslint-disable-next-line no-await-in-loop
-      const health = await fetchHappierHealth(url);
+      const health = await fetchHappierHealth(url, { signal });
+      throwIfAborted();
       if (health.ready) {
         return;
       }
       try {
-        const res = await fetch(url, { method: 'GET' });
+        const res = await fetch(url, { method: 'GET', signal });
         const text = await res.text();
         if (res.ok && text.includes('Welcome to Happier Server!')) {
           return;
@@ -229,7 +241,12 @@ export async function waitForServerReady(url, {
       } catch {
         // ignore
       }
-      await delay(intervalMs);
+      try {
+        await delay(intervalMs, undefined, signal ? { signal } : undefined);
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason ?? error;
+        throw error;
+      }
     }
     if (earlyExitError) {
       throw earlyExitError;

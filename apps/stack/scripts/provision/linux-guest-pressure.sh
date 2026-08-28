@@ -7,7 +7,7 @@ RESERVE_GIB="${HAPPIER_SWAP_FREE_RESERVE_GIB:-32}"
 SWAP_FILE="/var/lib/happier/swapfile"
 ZSWAP_UNIT="happier-zswap.service"
 
-case "${SWAP_GIB}" in 0|64|128) ;; *) echo "unsupported swap size: ${SWAP_GIB}" >&2; exit 2 ;; esac
+case "${SWAP_GIB}" in 0|64|128|256) ;; *) echo "unsupported swap size: ${SWAP_GIB}" >&2; exit 2 ;; esac
 case "${ZSWAP}" in 0|1) ;; *) echo "unsupported zswap value: ${ZSWAP}" >&2; exit 2 ;; esac
 case "${RESERVE_GIB}" in 32) ;; *) echo "unsupported free-space reserve: ${RESERVE_GIB}" >&2; exit 2 ;; esac
 
@@ -92,7 +92,7 @@ else
   if [[ "${current_bytes}" != "${desired_bytes}" ]]; then
     if swap_is_active; then as_root swapoff "${SWAP_FILE}"; fi
     as_root install -d -o root -g root -m 0755 "$(dirname "${SWAP_FILE}")"
-    as_root dd if=/dev/zero of="${SWAP_FILE}" bs=1M count="$((SWAP_GIB * 1024))" status=none
+    as_root fallocate -l "${SWAP_GIB}G" "${SWAP_FILE}"
     as_root chmod 0600 "${SWAP_FILE}"
     as_root mkswap "${SWAP_FILE}" >/dev/null
   fi

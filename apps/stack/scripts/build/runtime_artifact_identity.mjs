@@ -158,6 +158,9 @@ export function assertSelectedBuildPrerequisites({
   }
   if (needsDaemonBinary) {
     resolveYarnCommand({ commandProbe });
+    if (!commandProbe('go')) {
+      throw new Error('[build] Go is required before starting daemon support artifact builds.');
+    }
   }
 }
 

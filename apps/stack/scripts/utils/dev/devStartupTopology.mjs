@@ -1,6 +1,14 @@
 const EXACT_SERVER_TOPOLOGIES = new Set(['absent', 'exact-owned-direct', 'exact-owned-proxy']);
 const DEFAULT_STARTUP_PORT_OBSERVATION_TIMEOUT_MS = 3_000;
 
+export function resolveDevWatchEnabled({
+  watchRequested = false,
+  noWatchRequested = false,
+  interactive = false,
+} = {}) {
+  return Boolean(watchRequested || (!noWatchRequested && interactive));
+}
+
 function coerceRuntimePid(pid) {
   const value = Number(pid);
   return Number.isFinite(value) && value > 1 ? value : null;
@@ -104,4 +112,25 @@ export function decideDevStartupTopology({
     startExpo: Boolean(expoRequested && (restart || !expoRunning)),
     adoptedServer: Boolean(serverRequested && serverAlreadyOwned && !restart),
   });
+}
+
+export function shouldExitAdoptedDevRuntime({
+  serviceTargetCount = 0,
+  restart = false,
+  watchEnabled = false,
+  serverRequested = false,
+  adoptedServer = false,
+  daemonRequested = false,
+  daemonRunning = false,
+  expoRequested = false,
+  expoRunning = false,
+} = {}) {
+  return (
+    serviceTargetCount === 0
+    && !restart
+    && !watchEnabled
+    && (!serverRequested || adoptedServer)
+    && (!daemonRequested || daemonRunning)
+    && (!expoRequested || expoRunning)
+  );
 }

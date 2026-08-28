@@ -76,6 +76,10 @@ import {
   routeDevTargetLogPaneId,
   routeRemoteServiceLogPaneId,
 } from './utils/tui/dev_target_panes.mjs';
+import {
+  createExecutionFabricSummaryReader,
+  formatExecutionFabricSummaryLines,
+} from './utils/tui/execution_fabric_summary.mjs';
 import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoLogPath, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
@@ -677,7 +681,7 @@ async function main() {
         '  q / Ctrl+C      : quit (stops a runtime owner admitted by this TUI)',
         '',
         'panes (default):',
-        '  orchestration | summary | local | server | expo | daemon | stack logs',
+        '  orchestration | summary | execution fabric | local | server | expo | daemon | stack logs',
       ].join('\n'),
     });
     return;
@@ -807,6 +811,12 @@ async function main() {
       ...(rescue ? { HAPPIER_STACK_RESCUE: '1' } : {}),
     },
   });
+  const executionFabricSummaryReader = stackName && configuredDevTargets.length > 0
+    ? createExecutionFabricSummaryReader({
+        stackBaseDir: resolveStackBaseDir(stackName, childEnv).baseDir,
+        targetNames: configuredDevTargets.map((target) => target.name),
+      })
+    : null;
   const borrowedExpoProducerStackName = String(childEnv.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
   let borrowedExpoLogFollower = null;
   let borrowedExpoLogPath = '';
@@ -1083,6 +1093,18 @@ async function main() {
       panes[idx].lines = lines;
     } catch (e) {
       panes[idx].lines = [`summary error: ${e instanceof Error ? e.message : String(e)}`];
+    }
+
+    const fabricIdx = paneIndexById.get('fabric');
+    if (fabricIdx != null && executionFabricSummaryReader) {
+      try {
+        const summary = await executionFabricSummaryReader.read();
+        panes[fabricIdx].lines = formatExecutionFabricSummaryLines(summary);
+      } catch (error) {
+        panes[fabricIdx].lines = [
+          `execution fabric unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        ];
+      }
     }
 
     // Daemon pane (best-effort): show sign-in guidance when credentials are missing,

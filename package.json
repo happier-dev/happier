@@ -10,6 +10,7 @@
     "check:first-party-plugins:finite": "apps/stack/bin/hstack-exec --script=check:first-party-plugins:finite:local",
     "check:first-party-plugins:finite:local": "turbo run plugins:aggregate:finite --filter=@happier-dev/cli",
     "dev": "node ./apps/stack/scripts/repo_local.mjs dev",
+    "dev-vm": "node ./apps/stack/scripts/repo_local.mjs dev-vm",
     "dev-targets": "node ./apps/stack/scripts/repo_local.mjs dev-targets",
     "stop": "node ./apps/stack/scripts/repo_local.mjs stop",
     "start": "node ./apps/stack/scripts/repo_local.mjs start",

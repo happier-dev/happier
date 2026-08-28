@@ -34,6 +34,9 @@ export function resolveDevServerConnection({
   });
   const externalServerUrl = serverUrlFromArg || serverUrlFromEnv;
   const advertisedServerUrl = publicServerUrlFromArg || publicServerUrlFromEnv;
+  const publicServerUrlIsExplicit = Boolean(
+    advertisedServerUrl || String(resolvedLocalUrls?.envPublicUrl ?? '').trim(),
+  );
   const useExternalServer = noServer || Boolean(serverUrlFromArg);
 
   if (serverUrlFromArg && (kv.has('--server') || kv.has('--server-flavor'))) {
@@ -55,6 +58,7 @@ export function resolveDevServerConnection({
       internalServerUrl: externalServerUrl,
       publicServerUrl: advertisedServerUrl || externalServerUrl,
       uiApiUrl: advertisedServerUrl || externalServerUrl,
+      publicServerUrlIsExplicit,
       source: serverUrlFromArg ? 'cli-arg' : 'env',
     };
   }
@@ -70,6 +74,7 @@ export function resolveDevServerConnection({
     internalServerUrl: resolvedLocalUrls.internalServerUrl,
     publicServerUrl: advertisedServerUrl || localPublicServerUrl,
     uiApiUrl: advertisedServerUrl || localPublicServerUrl,
+    publicServerUrlIsExplicit,
     source: 'local',
   };
 }

@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveMobileReachableServerUrl } from './mobile_api_url.mjs';
+import {
+  hasExplicitMobileReachableHost,
+  resolveMobileReachableServerUrl,
+} from './mobile_api_url.mjs';
+
+test('hasExplicitMobileReachableHost distinguishes configured host choices from auto-detection', () => {
+  assert.equal(hasExplicitMobileReachableHost({ env: {} }), false);
+  assert.equal(hasExplicitMobileReachableHost({ env: { HAPPIER_STACK_LAN_IP: '192.168.0.50' } }), true);
+  assert.equal(hasExplicitMobileReachableHost({ env: { HAPPIER_STACK_LAN_HOST: 'dev-mac.local' } }), true);
+  assert.equal(hasExplicitMobileReachableHost({ env: {}, preferredHost: '100.64.0.10' }), true);
+});
 
 test('resolveMobileReachableServerUrl rewrites localhost to LAN IP (env override)', () => {
   const out = resolveMobileReachableServerUrl({

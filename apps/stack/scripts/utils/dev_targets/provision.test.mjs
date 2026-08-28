@@ -89,7 +89,12 @@ test('POSIX provisioning creates a dedicated key, installs it when needed, and d
     assert.equal(calls.filter((call) => call[0] === 'ssh-copy-id').length, 1);
     assert.deepEqual(configuredSshModes, ['accept-new', 'accept-new', 'accept-new', 'yes']);
     const copyIdCall = calls.find((call) => call[0] === 'ssh-copy-id');
-    assert.deepEqual(copyIdCall?.slice(1, 5), ['-F', target.sshConfigFile, '-o', 'BatchMode=no']);
+    assert.deepEqual(copyIdCall?.slice(1, 9), [
+      '-F', target.sshConfigFile,
+      '-o', 'BatchMode=no',
+      '-o', 'IdentitiesOnly=yes',
+      '-o', 'IdentityAgent=none',
+    ]);
     assert.equal(copyIdCall?.at(-1), target.ssh);
     assert.equal(existsSync(target.sshConfigFile), true);
     const sshConfig = await readFile(target.sshConfigFile, 'utf8');

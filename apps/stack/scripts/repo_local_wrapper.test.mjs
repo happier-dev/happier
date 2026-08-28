@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 import { resolveStablePortStart } from './utils/expo/metro_ports.mjs';
+import { resolveManagedLimaProfile } from './utils/managed_lima/profiles.mjs';
+import { resolveRepoStackIdentity } from './utils/stack/repo_stack_identity.mjs';
 
 async function listenOnPort(port) {
   const srv = createServer((socket) => {
@@ -86,6 +88,206 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.equal(data.env.HAPPIER_STACK_LOG_TEE_TIMESTAMPS, '1');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
   assert.equal(data.env.HAPPIER_STACK_RUNTIME_MODE, 'source', 'expected repo-local wrapper to default to source runtime mode');
+});
+
+test('active Mac repo-local mirror uses the mapped Stack identity before delegating to the guest owner', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'hstack-repo-local-active-sync-service-'));
+  try {
+    const mirrorRepoRoot = join(fixtureRoot, 'mirror', '0.3');
+    const homeDir = join(fixtureRoot, 'home');
+    const storageDir = join(fixtureRoot, 'storage');
+    const binDir = join(fixtureRoot, 'bin');
+    const logPath = join(fixtureRoot, 'limactl.log');
+    const guestWorkspaceDir = '/home/example/.happier-stack/workspace';
+    const guestRepoDir = `${guestWorkspaceDir}/0.3`;
+    const stackName = 'repo-dev-a1cc5e0671';
+    const managedProfile = resolveManagedLimaProfile('heavy');
+    const legacyForwarding = [
+      {
+        guestIPMustBeZero: false,
+        guestIP: '127.0.0.1',
+        guestPortRange: [52005, 54004],
+        hostIP: '0.0.0.0',
+        hostPortRange: [52005, 54004],
+        proto: 'any',
+      },
+      {
+        guestIPMustBeZero: false,
+        guestIP: '127.0.0.1',
+        guestPortRange: [18081, 20080],
+        hostIP: '0.0.0.0',
+        hostPortRange: [18081, 20080],
+        proto: 'any',
+      },
+      {
+        guestIPMustBeZero: false,
+        guestIP: '0.0.0.0',
+        guestPortRange: [1, 65535],
+        hostIP: '127.0.0.1',
+        hostPortRange: [1, 65535],
+        proto: 'any',
+        ignore: true,
+      },
+    ];
+    const retainedInstance = {
+      name: 'primary',
+      status: 'Running',
+      vmType: managedProfile.vmType,
+      arch: managedProfile.arch,
+      cpus: managedProfile.cpus,
+      memory: managedProfile.memoryGiB * 1024 ** 3,
+      disk: managedProfile.diskGiB * 1024 ** 3,
+      config: {
+        mounts: [],
+        containerd: { user: false, system: false },
+        ssh: { forwardAgent: false },
+        vmOpts: {
+          vz: {
+            diskImageFormat: managedProfile.diskImageFormat,
+            rosetta: { enabled: managedProfile.rosetta, binfmt: managedProfile.rosetta },
+          },
+        },
+        portForwards: legacyForwarding,
+      },
+    };
+    mkdirSync(homeDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(mirrorRepoRoot, { recursive: true });
+    const mirrorRepoDir = realpathSync(mirrorRepoRoot);
+    symlinkSync(join(repoRoot, 'apps'), join(mirrorRepoDir, 'apps'), 'dir');
+    writeFileSync(join(homeDir, 'execution-host.json'), `${JSON.stringify({
+      version: 2,
+      mode: 'managed-lima',
+      activation: 'active',
+      instance: 'primary',
+      limaHome: join(fixtureRoot, 'lima'),
+      profile: 'heavy',
+      pressureProfile: 'none',
+      guestWorkspaceDir,
+      mirrorWorkspaceDir: dirname(mirrorRepoDir),
+      controllerEntrypoint: join(fixtureRoot, 'execution-host-bridge.mjs'),
+      workspaces: [{
+        id: '0.3',
+        stackName,
+        hostSourceDir: join(fixtureRoot, 'source'),
+        hostMirrorDir: mirrorRepoDir,
+        guestDir: guestRepoDir,
+      }],
+    })}\n`, 'utf8');
+    writeFileSync(join(binDir, 'limactl'), [
+      '#!/bin/sh',
+      'printf "%s\\n" "$*" >> "$HAPPIER_TEST_LIMA_LOG"',
+      'if [ "$1" = "--version" ]; then echo "limactl version 2.2.0"; exit 0; fi',
+      `if [ "$1" = "list" ]; then printf '%s\\n' ${JSON.stringify(JSON.stringify(retainedInstance))}; exit 0; fi`,
+      'if [ "$1" = "shell" ]; then exit 0; fi',
+      'exit 1',
+      '',
+    ].join('\n'), 'utf8');
+    chmodSync(join(binDir, 'limactl'), 0o755);
+
+    const commandEnv = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+      HAPPIER_STACK_HOME_DIR: homeDir,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL: '0',
+      HAPPIER_TEST_LIMA_LOG: logPath,
+    };
+    const preview = await runNode(
+      ['--preserve-symlinks-main', join(mirrorRepoDir, 'apps', 'stack', 'scripts', 'repo_local.mjs'), 'dev-targets', 'sync-service', 'status', '--dry-run'],
+      { cwd: mirrorRepoDir, env: commandEnv },
+    );
+    assert.equal(preview.code, 0, `stdout:\n${preview.stdout}\nstderr:\n${preview.stderr}`);
+    const previewData = JSON.parse(preview.stdout);
+    assert.equal(previewData.env.HAPPIER_STACK_STACK, stackName);
+    assert.equal(previewData.env.HAPPIER_STACK_ENV_FILE, join(storageDir, stackName, 'env'));
+    assert.equal(existsSync(storageDir), false, 'dry-run must not create a shadow Stack directory');
+
+    const result = await runNode(
+      ['--preserve-symlinks-main', join(mirrorRepoDir, 'apps', 'stack', 'scripts', 'repo_local.mjs'), 'dev-targets', 'sync-service', 'status', '--json'],
+      {
+        cwd: mirrorRepoDir,
+        env: commandEnv,
+      },
+    );
+
+    assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.deepEqual(readdirSync(storageDir), [stackName]);
+    assert.match(readFileSync(join(storageDir, stackName, 'env'), 'utf8'), new RegExp(`^HAPPIER_STACK_STACK=${stackName}$`, 'm'));
+    const calls = readFileSync(logPath, 'utf8');
+    assert.match(
+      calls,
+      new RegExp(`shell --workdir ${guestRepoDir.replaceAll('/', '\\/')} primary -- env HAPPIER_STACK_EXECUTION_HOST_REENTRY=1 HAPPIER_STACK_INVOKED_CWD=${guestRepoDir.replaceAll('/', '\\/')} HAPPIER_STACK_STACK=${stackName} node ${guestRepoDir.replaceAll('/', '\\/')}\\/apps\\/stack\\/scripts\\/repo_local\\.mjs dev-targets sync-service status --json`),
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate and unmapped active execution-host profiles retain the normal repo-local identity', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'hstack-repo-local-identity-fallback-'));
+  try {
+    const mirrorRepoRoot = join(fixtureRoot, 'mirror', '0.3');
+    const homeDir = join(fixtureRoot, 'home');
+    const storageDir = join(fixtureRoot, 'storage');
+    mkdirSync(mirrorRepoRoot, { recursive: true });
+    const mirrorRepoDir = realpathSync(mirrorRepoRoot);
+    symlinkSync(join(repoRoot, 'apps'), join(mirrorRepoDir, 'apps'), 'dir');
+    const expected = resolveRepoStackIdentity({
+      repoRoot: mirrorRepoDir,
+      stacksStorageRoot: storageDir,
+      createIfMissing: false,
+    });
+    const profileFor = (activation, hostMirrorDir) => ({
+      version: 2,
+      mode: 'managed-lima',
+      activation,
+      instance: 'primary',
+      limaHome: join(fixtureRoot, 'lima'),
+      profile: 'heavy',
+      pressureProfile: 'none',
+      guestWorkspaceDir: '/home/example/.happier-stack/workspace',
+      mirrorWorkspaceDir: dirname(mirrorRepoDir),
+      controllerEntrypoint: join(fixtureRoot, 'execution-host-bridge.mjs'),
+      workspaces: [{
+        id: '0.3',
+        stackName: 'repo-dev-a1cc5e0671',
+        hostSourceDir: join(fixtureRoot, 'source'),
+        hostMirrorDir,
+        guestDir: '/home/example/.happier-stack/workspace/0.3',
+      }],
+    });
+
+    for (const [activation, hostMirrorDir] of [
+      ['candidate', mirrorRepoDir],
+      ['active', join(dirname(mirrorRepoDir), 'unmapped')],
+    ]) {
+      mkdirSync(homeDir, { recursive: true });
+      writeFileSync(join(homeDir, 'execution-host.json'), `${JSON.stringify(profileFor(activation, hostMirrorDir))}\n`, 'utf8');
+      const result = await runNode(
+        ['--preserve-symlinks-main', join(mirrorRepoDir, 'apps', 'stack', 'scripts', 'repo_local.mjs'), 'dev-targets', 'status', '--dry-run'],
+        {
+          cwd: mirrorRepoDir,
+          env: {
+            ...process.env,
+            HAPPIER_STACK_HOME_DIR: homeDir,
+            HAPPIER_STACK_STORAGE_DIR: storageDir,
+          },
+        },
+      );
+      assert.equal(result.code, 0, `activation=${activation}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+      assert.equal(JSON.parse(result.stdout).env.HAPPIER_STACK_STACK, expected.stackName);
+    }
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('repo-local wrapper replaces an inherited runtime-state path with its checkout-owned path', async () => {
@@ -403,6 +605,7 @@ test('repo-local runtime snapshot selection bypasses repository identity and dep
         cwd: repoRoot,
         env: {
           ...process.env,
+          HAPPIER_STACK_HOME_DIR: join(fixtureRoot, 'home'),
           HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
           HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: fixtureRoot,
           NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
@@ -416,6 +619,7 @@ test('repo-local runtime snapshot selection bypasses repository identity and dep
       cwd: repoRoot,
       env: {
         ...process.env,
+        HAPPIER_STACK_HOME_DIR: join(fixtureRoot, 'home'),
         HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
         HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: fixtureRoot,
         NODE_OPTIONS: `--experimental-loader=${loaderPath}`,

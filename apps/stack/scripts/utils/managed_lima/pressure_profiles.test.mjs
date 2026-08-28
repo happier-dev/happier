@@ -24,9 +24,15 @@ test('managed Lima pressure profiles keep swap as an explicit survival experimen
     zswap: true,
     freeSpaceReserveGiB: 32,
   });
+  assert.deepEqual(resolveManagedLimaPressureProfile('swap256-zswap'), {
+    name: 'swap256-zswap',
+    swapGiB: 256,
+    zswap: true,
+    freeSpaceReserveGiB: 32,
+  });
 });
 
 test('managed Lima pressure profiles reject unbounded or implicit swap policy', () => {
-  assert.throws(() => resolveManagedLimaPressureProfile('swap256'), /unknown managed Lima pressure profile/);
+  assert.throws(() => resolveManagedLimaPressureProfile('swap512'), /unknown managed Lima pressure profile/);
   assert.throws(() => resolveManagedLimaPressureProfile(''), /unknown managed Lima pressure profile/);
 });

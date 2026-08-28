@@ -168,6 +168,18 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
       'an automatic all-target pool should follow configured target additions',
     );
 
+    const localAndTargetDaemons = await run(
+      [
+        'placement', 'set', 'daemon', 'local-and-targets', '--stack=repo-test',
+        '--targets=mac,linux',
+      ],
+      root,
+    );
+    assert.deepEqual(localAndTargetDaemons.config.runtimePlacement.daemon, {
+      mode: 'local-and-targets',
+      targets: ['mac', 'linux'],
+    });
+
     const blockedRemoval = await runRaw(['remove', 'mac', '--stack=repo-test'], root);
     assert.equal(blockedRemoval.code, 1);
     assert.match(blockedRemoval.stderr, /referenced by placement/i);
@@ -193,7 +205,7 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
   }
 });
 
-test('dev-targets status, sync, and exec share the moving mirror without implicit flush or a command queue', async () => {
+test('dev-targets status, sync, and exec share the moving mirror with a pre-launch flush and no command queue', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-targets-exec-'));
   try {
     const binDir = join(root, 'bin');
@@ -266,7 +278,8 @@ test('dev-targets status, sync, and exec share the moving mirror without implici
     assert.equal(executed.code, 0);
     const executionLog = await readFile(logPath, 'utf8');
     assert.match(executionLog, /mutagen\|.*\/mutagen\/data\|sync list happier-linux/);
-    assert.doesNotMatch(executionLog, /sync flush/);
+    assert.match(executionLog, /sync flush happier-linux/);
+    assert.ok(executionLog.indexOf('sync flush happier-linux') < executionLog.indexOf('ssh|'));
     assert.match(executionLog, /ssh\|.*happier-stack-linux.*apps\/cli.*CI.*rg.*--json.*needle/);
     assert.doesNotMatch(executionLog, /remote_dependency_bootstrap\.mjs/);
 
@@ -348,7 +361,7 @@ test('dev-targets status reports managed Lima lifecycle health alongside mirror 
         '  printf "limactl version 2.0.0\\n"',
         '  exit 0',
         'fi',
-        'printf \'[{"status":"Running","vmType":"vz","arch":"aarch64","cpus":8,"memory":25769803776,"disk":171798691840,"config":{"mounts":[],"containerd":{"user":false,"system":false},"ssh":{"forwardAgent":false},"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"portForwards":[{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]},{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]}}]\\n\'',
+        'printf \'[{"status":"Running","vmType":"vz","arch":"aarch64","cpus":8,"memory":25769803776,"disk":171798691840,"config":{"mounts":[],"containerd":{"user":false,"system":false},"ssh":{"forwardAgent":false},"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"portForwards":[{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]}}]\\n\'',
         '',
       ].join('\n'),
     );
@@ -396,6 +409,9 @@ test('dev-targets sync-service detached owns continuous synchronization independ
       '',
     ].join('\n'));
     await chmod(mutagen, 0o700);
+    const ssh = join(binDir, 'ssh');
+    await writeFile(ssh, '#!/bin/sh\nexit 0\n');
+    await chmod(ssh, 0o700);
     await run([
       'add',
       'linux',

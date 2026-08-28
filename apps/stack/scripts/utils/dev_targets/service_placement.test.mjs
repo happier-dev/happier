@@ -113,6 +113,28 @@ test('host preflight failure selects local fallback without removing reachable o
   ]);
 });
 
+test('host preflight fails closed when persisted server authority is unavailable', () => {
+  const configured = resolveDevTargetServicePlans({
+    targets,
+    policy: {
+      server: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+      expo: { mode: 'local' },
+      daemons: { mode: 'local' },
+      commands: { mode: 'local' },
+    },
+    requested: { server: true, expo: true, daemon: true },
+  });
+
+  assert.throws(
+    () => resolveServicePlansAfterTargetPreflight({
+      configured,
+      mutagenAvailable: false,
+      reachableTargets: new Set(),
+    }),
+    /server placement.*authoritative.*mac/i,
+  );
+});
+
 test('host preflight fallback retains command synchronization while moving unavailable services local', () => {
   const configured = resolveDevTargetServicePlans({
     targets,

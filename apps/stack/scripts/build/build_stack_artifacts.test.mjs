@@ -192,6 +192,24 @@ test('assertSelectedBuildPrerequisites fails fast when daemon artifacts need yar
   );
 });
 
+test('assertSelectedBuildPrerequisites fails fast when daemon support needs Go', () => {
+  assert.equal(typeof buildModule.assertSelectedBuildPrerequisites, 'function');
+  assert.throws(
+    () =>
+      buildModule.assertSelectedBuildPrerequisites({
+        selection: {
+          components: {
+            web: false,
+            server: false,
+            daemon: true,
+          },
+        },
+        commandProbe: (cmd) => cmd === 'bun' || cmd === 'yarn',
+      }),
+    /go.*required.*daemon support/i,
+  );
+});
+
 test('assertSelectedBuildPrerequisites accepts bun from BUN_INSTALL even when PATH probe misses it', () => {
   assert.equal(typeof buildModule.assertSelectedBuildPrerequisites, 'function');
   const tempRoot = mkdtempSync(join(tmpdir(), 'stack-build-prereq-bun-'));

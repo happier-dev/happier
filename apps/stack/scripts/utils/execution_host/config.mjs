@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { resolveManagedLimaProfile, validateManagedLimaInstanceName } from '../managed_lima/profiles.mjs';
 import { resolveManagedLimaPressureProfile } from '../managed_lima/pressure_profiles.mjs';
 import { getHappyStacksHomeDir } from '../paths/paths.mjs';
+import { retireExecutionHostCandidateMirrors } from './candidate_repository.mjs';
 
 const PROFILE_FILE = 'execution-host.json';
 const FIELDS = new Set([
@@ -20,9 +21,12 @@ const FIELDS = new Set([
   'mirrorWorkspaceDir',
   'controllerEntrypoint',
   'workspaces',
+  'autoMount',
+  'hostMountDir',
 ]);
-const WORKSPACE_FIELDS = new Set(['id', 'hostSourceDir', 'hostMirrorDir', 'guestDir']);
+const WORKSPACE_FIELDS = new Set(['id', 'stackName', 'hostSourceDir', 'hostMirrorDir', 'guestDir']);
 const WORKSPACE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const WORKSPACE_STACK_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function requireAbsolutePath(value, field) {
   const path = String(value ?? '').trim();
@@ -55,6 +59,13 @@ function normalizeNamedWorkspaces(raw, { guestWorkspaceDir, mirrorWorkspaceDir }
     ids.add(id);
     const workspace = {
       id,
+      ...(entry.stackName != null ? (() => {
+        const stackName = String(entry.stackName).trim();
+        if (!WORKSPACE_STACK_RE.test(stackName)) {
+          throw new Error(`[execution-host] invalid workspace Stack name: ${JSON.stringify(stackName)}`);
+        }
+        return { stackName };
+      })() : {}),
       hostSourceDir: requireAbsolutePath(entry.hostSourceDir, `workspaces[${index}].hostSourceDir`),
       hostMirrorDir: requireAbsolutePath(entry.hostMirrorDir, `workspaces[${index}].hostMirrorDir`),
       guestDir: requireAbsolutePath(entry.guestDir, `workspaces[${index}].guestDir`),
@@ -114,6 +125,15 @@ function normalizeExecutionHostProfile(raw) {
     pressureProfile,
     guestWorkspaceDir,
     mirrorWorkspaceDir,
+    ...(raw.autoMount != null ? {
+      autoMount: (() => {
+        if (typeof raw.autoMount !== 'boolean') throw new Error('[execution-host] autoMount must be a boolean');
+        return raw.autoMount;
+      })(),
+    } : {}),
+    ...(raw.hostMountDir != null ? {
+      hostMountDir: requireAbsolutePath(raw.hostMountDir, 'hostMountDir'),
+    } : {}),
   };
   if (raw.version === 1) {
     if (raw.controllerEntrypoint != null || raw.workspaces != null) {
@@ -136,7 +156,12 @@ export function resolveExecutionHostSetupConfiguration({ current, requested = {}
   if (current?.activation === 'active') {
     throw new Error('[execution-host] cannot reconfigure an active execution host through candidate setup');
   }
-  const choose = (field) => requested[field] || current?.[field] || defaults[field];
+  const choose = (field) => {
+    const requestedValue = requested[field];
+    const hasRequestedValue = requestedValue != null
+      && !(typeof requestedValue === 'string' && requestedValue.trim() === '');
+    return hasRequestedValue ? requestedValue : current?.[field] ?? defaults[field];
+  };
   const requestedWorkspaces = Array.isArray(requested.workspaces) ? requested.workspaces : [];
   const currentWorkspaces = current?.version === 2 ? current.workspaces : [];
   return {
@@ -146,6 +171,8 @@ export function resolveExecutionHostSetupConfiguration({ current, requested = {}
     pressureProfile: choose('pressureProfile'),
     guestWorkspaceDir: choose('guestWorkspaceDir'),
     mirrorWorkspaceDir: choose('mirrorWorkspaceDir'),
+    ...(choose('autoMount') != null ? { autoMount: choose('autoMount') } : {}),
+    ...(choose('hostMountDir') != null ? { hostMountDir: choose('hostMountDir') } : {}),
     workspaces: requestedWorkspaces.length > 0 ? requestedWorkspaces : currentWorkspaces,
   };
 }
@@ -197,7 +224,26 @@ export async function activateExecutionHostProfile(env = process.env) {
   if (current.activation !== 'candidate') {
     throw new Error('[execution-host] only an existing candidate profile can be activated');
   }
-  return writeExecutionHostProfile({ ...current, activation: 'active' }, env);
+  const retiredCandidateMirrors = await retireExecutionHostCandidateMirrors({ profile: current, env });
+  const latest = readExecutionHostProfile(env);
+  if (!latest || latest.activation !== 'candidate' || JSON.stringify(latest) !== JSON.stringify(current)) {
+    throw new Error('[execution-host] candidate profile changed while candidate mirrors were retired; activation aborted');
+  }
+  return {
+    profile: await writeExecutionHostProfile({ ...latest, activation: 'active' }, env),
+    retiredCandidateMirrors,
+  };
+}
+
+export async function configureExecutionHostWorkspaceMount({ enabled, mountDir }, env = process.env) {
+  const current = readExecutionHostProfile(env);
+  if (!current) throw new Error('[execution-host] no execution host profile exists');
+  if (typeof enabled !== 'boolean') throw new Error('[execution-host] mount enabled state must be a boolean');
+  return writeExecutionHostProfile({
+    ...current,
+    autoMount: enabled,
+    hostMountDir: requireAbsolutePath(mountDir, 'hostMountDir'),
+  }, env);
 }
 
 export function validateExecutionHostProfile(raw) {

@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   cleanupProvisionalServerChild,
+  createDevServerReloadExecutor,
   resolveStackOwnedServerListenPid,
   resolveStackOwnedServerRuntimePid,
   preflightDevServerRestart,
@@ -288,6 +289,185 @@ test('stopped-stack restart delegates declaration admission once to a running ru
 
     assert.deepEqual(calls, ['deps', 'preflight', 'spawn', 'ready']);
   });
+});
+
+test('watch restart admits existing source declarations before a source preflight can block availability', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const calls = [];
+    const child = { pid: 2001, exitCode: null };
+
+    const result = await startDevServer(
+      {
+        serverComponentName: 'happier-server',
+        serverDir,
+        autostart: { stackName: 'start-test', baseDir: serverDir },
+        baseEnv: { HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0' },
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://localhost:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: false,
+        restart: true,
+        admitPriorBuildsImmediately: true,
+        children: [],
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async (_dir, _label, options) => {
+          calls.push('deps');
+          assert.equal(options.refreshExisting, false);
+          assert.equal(options.prepareComponentOutputs, false);
+        },
+        ensureSourceServerWorkspacePackagesBuiltImpl: async ({ admitPriorOutputsImmediately }) => {
+          calls.push('workspace');
+          assert.equal(admitPriorOutputsImmediately, true);
+        },
+        preflightDevServerRestartImpl: async () => {
+          throw new Error('watch startup must not require a current-source preflight before prior-output admission');
+        },
+        pmSpawnScriptImpl: async () => {
+          calls.push('spawn');
+          return child;
+        },
+        waitForServerReadyImpl: async () => { calls.push('ready'); },
+        assertServerPortOwnedBySpawnedProcessGroupImpl: async () => 3001,
+        recordStackRuntimeServerActivationImpl: async () => {},
+      },
+    );
+
+    assert.equal(result.serverProc, child);
+    assert.deepEqual(calls, ['deps', 'workspace', 'spawn', 'ready']);
+  });
+});
+
+test('watch startup exposes source workspace admission failures for the canonical reload owner', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const workspaceFailure = new Error('current protocol declaration is not runnable');
+    workspaceFailure.code = 'EEXIT';
+
+    await assert.rejects(
+      () => startDevServer(
+        {
+          serverComponentName: 'happier-server-light',
+          serverDir,
+          autostart: { stackName: 'start-test', baseDir: serverDir },
+          baseEnv: {},
+          serverPort: 34567,
+          internalServerUrl: 'http://127.0.0.1:34567',
+          publicServerUrl: 'http://localhost:34567',
+          envPath: join(serverDir, 'env'),
+          stackMode: true,
+          runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+          serverAlreadyRunning: false,
+          restart: true,
+          admitPriorBuildsImmediately: true,
+          children: [],
+          quiet: true,
+        },
+        {
+          ensureDepsInstalledImpl: async () => {},
+          ensureSourceServerWorkspacePackagesBuiltImpl: async () => {
+            throw workspaceFailure;
+          },
+        },
+      ),
+      (error) => (
+        error === workspaceFailure
+        && error.devServerWorkspaceAdmissionFailure?.stage === 'workspace-admission'
+        && error.devServerWorkspaceAdmissionFailure.serverEnv
+        && typeof error.devServerWorkspaceAdmissionFailure.serverScript === 'string'
+      ),
+    );
+  });
+});
+
+test('watch startup preserves non-build workspace configuration failures', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const configurationFailure = new Error('workspace package has no build script');
+
+    await assert.rejects(
+      () => startDevServer(
+        {
+          serverComponentName: 'happier-server-light',
+          serverDir,
+          autostart: { stackName: 'start-test', baseDir: serverDir },
+          baseEnv: {},
+          serverPort: 34567,
+          internalServerUrl: 'http://127.0.0.1:34567',
+          publicServerUrl: 'http://localhost:34567',
+          envPath: join(serverDir, 'env'),
+          stackMode: true,
+          runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+          serverAlreadyRunning: false,
+          restart: true,
+          admitPriorBuildsImmediately: true,
+          children: [],
+          quiet: true,
+        },
+        {
+          ensureDepsInstalledImpl: async () => {},
+          ensureSourceServerWorkspacePackagesBuiltImpl: async () => {
+            throw configurationFailure;
+          },
+        },
+      ),
+      (error) => error === configurationFailure && !error.devServerWorkspaceAdmissionFailure,
+    );
+  });
+});
+
+test('server reload owner cold-starts after a failed watch admission', async () => {
+  const children = [];
+  const serverProcRef = { current: null };
+  const child = {
+    pid: 2001,
+    exitCode: null,
+    once() {},
+    off() {},
+  };
+  const spawned = [];
+  const executor = createDevServerReloadExecutor(
+    {
+      enabled: true,
+      stackMode: false,
+      serverComponentName: 'happier-server-light',
+      serverDir: '/tmp/server',
+      serverPort: 34567,
+      internalServerUrl: 'http://127.0.0.1:34567',
+      serverScript: 'dev',
+      serverEnv: {},
+      runtimeStatePath: null,
+      stackName: 'watch-test',
+      envPath: '/tmp/watch-test/env',
+      children,
+      serverProcRef,
+      isShuttingDown: () => false,
+    },
+    {
+      pmSpawnScriptImpl: async (input) => {
+        spawned.push(input);
+        return child;
+      },
+      waitForServerReadyImpl: async () => {},
+      listListenPidsWithStatusImpl: async () => ({ status: 'ok', supported: true, pids: [2001] }),
+      getProcessGroupIdImpl: async () => 2001,
+    },
+  );
+
+  const result = await executor.restart({
+    generation: 1,
+    changedDescriptors: ['server:app'],
+    descriptorEvidenceConclusive: true,
+    allowSupersededActivation: true,
+  });
+
+  assert.deepEqual(result, { restarted: true });
+  assert.equal(serverProcRef.current, child);
+  assert.deepEqual(children, [child]);
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].script, 'dev');
 });
 
 test('stopped-stack restart admits source declarations once when runtime preflight has no build script', async (t) => {

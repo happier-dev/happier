@@ -817,22 +817,43 @@ export async function startDevServer({
   const ensureWorkspacePackagesBuiltBeforeSpawn = async ({
     admitPrior = admitPriorBuildsImmediately,
   } = {}) => {
-    await ensureSourceServerWorkspacePackagesBuiltImpl({
-      runtimeBackedStart: false,
-      serverDir,
-      quiet,
-      env: serverEnv,
-      admitPriorOutputsImmediately: admitPrior,
-    });
+    try {
+      await ensureSourceServerWorkspacePackagesBuiltImpl({
+        runtimeBackedStart: false,
+        serverDir,
+        quiet,
+        env: serverEnv,
+        admitPriorOutputsImmediately: admitPrior,
+      });
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (failure.code !== 'EEXIT') throw failure;
+      Object.defineProperty(failure, 'devServerWorkspaceAdmissionFailure', {
+        value: {
+          stage: 'workspace-admission',
+          serverEnv,
+          serverScript,
+        },
+        enumerable: false,
+        configurable: true,
+      });
+      throw failure;
+    }
   };
 
   // Restart behavior (stack-safe): only kill when we can prove ownership via runtime state
   // or a stale listener that is still bound to this stack.
   if (restart && stackMode && runtimeStatePath) {
     if (!usePriorRuntime) {
-      const preflightResult = await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
-      if (preflightResult?.ran !== true) {
-        await ensureWorkspacePackagesBuiltBeforeSpawn();
+      if (admitPriorBuildsImmediately) {
+        // The workspace-build owner validates retained outputs and rebuilds when they are missing
+        // or invalid. Do not make source freshness a startup gate for a watch lifecycle.
+        await ensureWorkspacePackagesBuiltBeforeSpawn({ admitPrior: true });
+      } else {
+        const preflightResult = await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
+        if (preflightResult?.ran !== true) {
+          await ensureWorkspacePackagesBuiltBeforeSpawn();
+        }
       }
     }
   }
@@ -1507,7 +1528,7 @@ export function createDevServerReloadExecutor({
   const restartWithExclusiveDbProxy = async (reloadPlan, context = {}) => {
     const currentServerProc = serverProcRef?.current;
     const pid = Number(currentServerProc?.pid);
-    if (!Number.isFinite(pid) || pid <= 1) return false;
+    const hasCurrentServer = Number.isFinite(pid) && pid > 1;
 
     const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
     const oldBackendPort = activeBackendPort;
@@ -1518,7 +1539,7 @@ export function createDevServerReloadExecutor({
     let maintenanceTarget = null;
     let attemptedReplacementTarget = null;
 
-    const currentPidWasAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
+    const currentPidWasAlive = hasCurrentServer && !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
     const precheckObservationScope = currentPidWasAlive
       ? createListenerOwnershipObservationScope({
           listListenPidsImpl,
@@ -1537,7 +1558,8 @@ export function createDevServerReloadExecutor({
       : null;
     const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
     if (
-      context.allowSupersededActivation !== true
+      hasCurrentServer
+      && context.allowSupersededActivation !== true
       && typeof context.revalidateGeneration === 'function'
       && !await context.revalidateGeneration()
     ) return false;
@@ -1580,20 +1602,23 @@ export function createDevServerReloadExecutor({
     try {
       await publishLifecycle({ phase: 'maintenance', plan: reloadPlan });
     } catch (error) {
-      await flipProxyUpstreamAndDrainTargets({
-        targetPort: oldBackendPort,
-        drainTargets: [maintenanceTarget],
-        transition: {
-          generation: reloadPlan.generation,
-          pid,
-          mode: reloadPlan.mode,
-          purpose: 'maintenance_restore',
-        },
-      });
+      if (hasCurrentServer) {
+        await flipProxyUpstreamAndDrainTargets({
+          targetPort: oldBackendPort,
+          drainTargets: [maintenanceTarget],
+          transition: {
+            generation: reloadPlan.generation,
+            pid,
+            mode: reloadPlan.mode,
+            purpose: 'maintenance_restore',
+          },
+        });
+      }
       throw error;
     }
     if (
-      context.allowSupersededActivation !== true
+      hasCurrentServer
+      && context.allowSupersededActivation !== true
       && typeof context.revalidateGeneration === 'function'
       && !await context.revalidateGeneration()
     ) {
@@ -1680,14 +1705,16 @@ export function createDevServerReloadExecutor({
     try {
       await observePortAndDatabaseRelease({
         port: oldBackendPort,
-        pid,
-        scope: 'server backend port',
+        pid: hasCurrentServer ? pid : null,
+        scope: hasCurrentServer ? 'server backend port' : 'unavailable server backend port',
         reloadPlan,
       });
-      const nextBackendPort = await pickNextFreeTcpPortImpl(oldBackendPort + 1, {
-        host: '127.0.0.1',
-        reservedPorts: new Set([Number(serverPort), oldBackendPort]),
-      });
+      const nextBackendPort = hasCurrentServer
+        ? await pickNextFreeTcpPortImpl(oldBackendPort + 1, {
+            host: '127.0.0.1',
+            reservedPorts: new Set([Number(serverPort), oldBackendPort]),
+          })
+        : oldBackendPort;
       attemptedReplacementTarget = backendDrainTarget(nextBackendPort);
       replacement = await spawnServerBackend({
         port: nextBackendPort,
@@ -1888,10 +1915,67 @@ export function createDevServerReloadExecutor({
   const restartDirect = async (reloadPlan, context = {}) => {
     const currentServerProc = serverProcRef?.current;
     const pid = Number(currentServerProc?.pid);
-    if (!Number.isFinite(pid) || pid <= 1) return false;
+    const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
+    if (!Number.isFinite(pid) || pid <= 1) {
+      let next = null;
+      try {
+        await observePortAndDatabaseRelease({
+          port: serverPort,
+          pid: null,
+          scope: 'unavailable server port',
+          reloadPlan,
+        });
+        next = await spawnServerBackend({
+          port: serverPort,
+          recentLineBuffer,
+          envOverrides: serverReloadMigrationEnv(reloadPlan),
+          reloadPlan,
+          purpose: 'initial-recovery',
+        });
+        serverProcRef.current = next.child;
+        observeActiveChildExit(next.child);
+        if (stackMode && runtimeStatePath) {
+          await recordStackRuntimeServerActivationImpl(runtimeStatePath, {
+            listenerPid: next.listenerPid,
+            wrapperPid: next.child.pid,
+            stablePort: serverPort,
+            mode: 'direct',
+            restartMode: reloadPlan.mode,
+            reloadGeneration: reloadPlan.generation,
+            clearProxyState: true,
+          }).catch((error) => {
+            throw annotateServerRestartError(
+              error,
+              classifyServerRestartFailure({
+                error,
+                stage: 'post_commit',
+                child: next.child,
+                oldServerStopped: false,
+                serviceRestored: true,
+                directReplacementActive: true,
+                recentLines: recentLineBuffer.snapshot(),
+              }),
+            );
+          });
+        }
+        logger.log(`[local] watch: server started after unavailable admission (pid=${next.child.pid}, port=${serverPort})`);
+        return true;
+      } catch (error) {
+        if (error?.serverRestartFailure?.serviceRestored === true) throw error;
+        throw annotateServerRestartError(
+          error,
+          classifyServerRestartFailure({
+            error,
+            stage: 'spawn',
+            child: next?.child ?? null,
+            oldServerStopped: false,
+            recentLines: recentLineBuffer.snapshot(),
+          }),
+        );
+      }
+    }
 
     let oldServerStopped = false;
-    const recentLineBuffer = createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit);
     const currentPidWasAlive = !hasChildExited(currentServerProc) && isPidAliveImpl(pid);
     const precheckObservationScope = currentPidWasAlive
       ? createListenerOwnershipObservationScope({

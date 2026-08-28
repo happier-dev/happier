@@ -44,6 +44,17 @@ Remote development targets:
 
 See: [Remote development targets](/hstack/dev-targets).
 
+Managed development VM (development-only, unreleased):
+
+- Setup/reconcile: `hstack dev-vm setup` (checkout-local equivalent: `yarn dev-vm -- setup`)
+- Candidate-retirement handoff: `hstack dev-vm activate` (after the owning cutover workflow completes its required checks)
+- Lifecycle: `hstack dev-vm start|stop`
+- Inspect/repair: `hstack dev-vm status|doctor [--repair-forwarding]`
+- Guest commands: `hstack dev-vm shell [--guest-cwd=<absolute-path>] [-- COMMAND...]`, `hstack dev-vm exec [--guest-cwd=<absolute-path>] -- COMMAND [ARG...]`
+- Guest-home SSHFS mount: `hstack dev-vm mount status|enable|disable [--mount-dir=<absolute-path>]`, `hstack dev-vm unmount [--mount-dir=<absolute-path>]`
+
+See: [Development VM](/hstack/dev-vm).
+
 ---
 
 ## Stacks

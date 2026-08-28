@@ -378,9 +378,13 @@ export function upgradeDevTargetsConfigToVersion3(config) {
   });
 }
 
-export function resolveDevTargetExecutionPolicy(config) {
+export function resolveDevTargetExecutionPolicy(
+  config,
+  { targetsEnabled = true, serverRequested = false } = {},
+) {
+  let policy;
   if (config?.version === 1) {
-    return {
+    policy = {
       server: { mode: 'local' },
       expo: { mode: 'local' },
       daemons: config.targets.length
@@ -390,15 +394,28 @@ export function resolveDevTargetExecutionPolicy(config) {
         ? automaticCommandExecution(config.targets)
         : { mode: 'local' },
     };
-  }
-  if (config?.version !== 2 && config?.version !== 3) {
+  } else if (config?.version !== 2 && config?.version !== 3) {
     throw new Error(`[dev-targets] unsupported configuration version: ${String(config?.version)}`);
+  } else {
+    policy = {
+      server: { ...config.runtimePlacement.server },
+      expo: { ...config.runtimePlacement.expo },
+      daemons: { ...config.runtimePlacement.daemon },
+      commands: { ...config.commandExecution },
+    };
+  }
+  if (targetsEnabled !== false) return policy;
+  if (serverRequested && policy.server.mode === 'prefer-target') {
+    throw new Error(
+      '[dev-targets] --no-dev-targets cannot bypass persisted remote server placement; '
+      + 'keep target execution enabled or set runtimePlacement.server to local',
+    );
   }
   return {
-    server: { ...config.runtimePlacement.server },
-    expo: { ...config.runtimePlacement.expo },
-    daemons: { ...config.runtimePlacement.daemon },
-    commands: { ...config.commandExecution },
+    server: { mode: 'local' },
+    expo: { mode: 'local' },
+    daemons: { mode: 'local' },
+    commands: { mode: 'local' },
   };
 }
 

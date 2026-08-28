@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
 import { parseArgs } from '../utils/cli/args.mjs';
+import { getInvokedCwd } from '../utils/cli/cwd_scope.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
@@ -103,7 +104,11 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
       }
 
       const child = spawn(process.execPath, [passthroughEntrypoint.entrypoint, ...childArgs], {
-        cwd: passthroughEntrypoint.cwd,
+        // The entrypoint is absolute, so its package/runtime resolution does
+        // not require changing the CLI's working directory. Preserve the
+        // caller scope already captured by hstack: relative author paths and
+        // every other CLI filesystem argument belong to that scope.
+        cwd: getInvokedCwd(envForHappy),
         env: envForHappy,
         stdio: 'inherit',
         shell: false,

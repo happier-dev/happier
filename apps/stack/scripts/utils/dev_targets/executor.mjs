@@ -44,6 +44,12 @@ function assertReadySyncStatus(status, { allowSynchronizing = false } = {}) {
   );
 }
 
+function isMissingNamedMutagenSession(result) {
+  const detail = `${String(result?.err ?? '')}\n${String(result?.error?.message ?? '')}`;
+  return /unable to locate requested sessions/i.test(detail)
+    && /did not match any sessions/i.test(detail);
+}
+
 export async function inspectDevTargetSync(
   { target, stackBaseDir, env = process.env, timeoutMs = null },
   { runCaptureResult: runCaptureResultImpl = defaultRunCaptureResult } = {},
@@ -57,6 +63,9 @@ export async function inspectDevTargetSync(
     ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   });
   if (!result?.ok) {
+    if (isMissingNamedMutagenSession(result)) {
+      return { state: 'missing', sessionName };
+    }
     return {
       state: 'unavailable',
       sessionName,
@@ -172,7 +181,7 @@ export async function runDevTargetCommand(
     commandArgs,
     cwd = '.',
     environment = {},
-    flush = false,
+    flush = null,
     tty = false,
     dependencyAdmission = 'auto',
     workspacePreparation = 'auto',
@@ -204,7 +213,7 @@ export async function runDevTargetCommand(
     );
     assertReadySyncStatus(syncStatus);
   }
-  if (flush) {
+  if (flush === true || (flush === null && !syncAlreadyVerified)) {
     await flushDevTarget(
       { target, stackBaseDir, env },
       { runCaptureResult: runCaptureResultImpl },

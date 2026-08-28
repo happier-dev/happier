@@ -19,12 +19,11 @@ import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundle
 import { runCapture } from '../utils/proc/proc.mjs';
 
 const SERVER_RUNTIME_SUPPORT_ENTRYPOINT = '.happier-server-support.json';
-const SERVER_RUNTIME_SUPPORT_DIRECTORIES = Object.freeze(['generated', 'prisma', 'node_modules']);
+const SERVER_RUNTIME_SUPPORT_DIRECTORIES = Object.freeze(['generated', 'prisma', 'node_modules', 'runtime']);
 
 function resolveServerRuntimeSupportDirectories(serverComponent) {
-  return serverComponent === 'happier-server'
-    ? [...SERVER_RUNTIME_SUPPORT_DIRECTORIES, 'runtime']
-    : SERVER_RUNTIME_SUPPORT_DIRECTORIES;
+  void serverComponent;
+  return SERVER_RUNTIME_SUPPORT_DIRECTORIES;
 }
 
 function requireArtifactFingerprint(value, label) {
@@ -36,17 +35,17 @@ function requireArtifactFingerprint(value, label) {
 }
 
 async function readServerRuntimeSupportToolInputs({ serverComponent, env }) {
-  if (serverComponent !== 'happier-server') return [];
+  void serverComponent;
   const bunCommand = resolveBunCommand({ processEnv: env });
   if (!bunCommand) {
-    throw new Error('[build] Bun is required to collect full-server Prisma migration support identity.');
+    throw new Error('[build] Bun is required to collect server Prisma migration support identity.');
   }
   const bunVersion = String(await runCapture(bunCommand, ['--version'], {
     env,
     timeoutMs: 10_000,
   })).trim();
   if (!bunVersion) {
-    throw new Error('[build] Bun returned an empty version while collecting full-server Prisma migration support identity.');
+    throw new Error('[build] Bun returned an empty version while collecting server Prisma migration support identity.');
   }
   return [`bun=${bunVersion}`];
 }

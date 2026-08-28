@@ -765,8 +765,16 @@ test('dev restart preflight follows the canonical local-versus-external server t
     await mkdir(join(rootDir, 'apps', 'cli'), { recursive: true });
     await mkdir(join(rootDir, 'apps', 'ui'), { recursive: true });
     await writeFile(join(rootDir, 'package.json'), '{"private":true}\n', 'utf8');
-    await writeFile(join(rootDir, 'scripts', 'dev.mjs'), 'process.exit(17);\n', 'utf8');
-    await writeFile(join(serverDir, 'preflight.mjs'), "await import('node:fs/promises').then(({ writeFile }) => writeFile(process.env.PREFLIGHT_MARKER, 'ran\\n'));\n", 'utf8');
+    await writeFile(
+      join(rootDir, 'scripts', 'dev.mjs'),
+      "import { writeFile } from 'node:fs/promises';\nimport { setTimeout as delay } from 'node:timers/promises';\nawait writeFile(process.env.DEV_START_MARKER, 'started\\n');\nawait delay(50);\nprocess.exit(17);\n",
+      'utf8',
+    );
+    await writeFile(
+      join(serverDir, 'preflight.mjs'),
+      "import { writeFile } from 'node:fs/promises';\nawait writeFile(process.env.PREFLIGHT_MARKER, 'ran\\n');\nif (process.env.PREFLIGHT_FAIL === '1') process.exit(42);\n",
+      'utf8',
+    );
     await writeFile(join(serverDir, 'package.json'), JSON.stringify({
       name: '@happier-dev/server',
       private: true,
@@ -794,11 +802,18 @@ test('dev restart preflight follows the canonical local-versus-external server t
         env: [],
         expectsPreflight: true,
       },
+      {
+        name: 'local-server-watch-admits-prior-outputs',
+        args: ['--watch'],
+        env: ['PREFLIGHT_FAIL=1'],
+        expectsPreflight: false,
+      },
     ];
     for (const scenario of cases) {
       const stackName = `external-${scenario.name}`;
       const stackDir = join(storageDir, stackName);
       const markerPath = join(temp.dir, `${scenario.name}.preflight`);
+      const devStartMarkerPath = join(temp.dir, `${scenario.name}.dev-start`);
       await mkdir(stackDir, { recursive: true });
       await writeFile(
         join(stackDir, 'env'),
@@ -807,6 +822,7 @@ test('dev restart preflight follows the canonical local-versus-external server t
           'HAPPIER_STACK_SERVER_COMPONENT=happier-server',
           'HAPPIER_STACK_MANAGED_INFRA=0',
           `PREFLIGHT_MARKER=${markerPath}`,
+          `DEV_START_MARKER=${devStartMarkerPath}`,
           ...scenario.env,
         ].join('\n') + '\n',
         'utf8',
@@ -821,6 +837,7 @@ test('dev restart preflight follows the canonical local-versus-external server t
         }),
         /exited \(code=17/,
       );
+      assert.equal(await readFile(devStartMarkerPath, 'utf8'), 'started\n');
       if (scenario.expectsPreflight) {
         assert.equal(await readFile(markerPath, 'utf8'), 'ran\n');
       } else {

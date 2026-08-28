@@ -8,18 +8,22 @@ test('workspace flags derive explicit source, mirror, and guest paths without ch
     argv: [
       '--workspace=0.2=/Users/dev/happier/remote-dev',
       '--workspace', '0.3=/Users/dev/happier/dev',
+      '--workspace-stack=0.2=repo-remote-dev-d72117acdb',
+      '--workspace-stack', '0.3=repo-dev-a1cc5e0671',
     ],
     guestWorkspaceDir: '/home/dev/.happier-stack/workspace',
     mirrorWorkspaceDir: '/Users/dev/.happier-stack/workspace-mirror',
   }), [
     {
       id: '0.2',
+      stackName: 'repo-remote-dev-d72117acdb',
       hostSourceDir: '/Users/dev/happier/remote-dev',
       hostMirrorDir: '/Users/dev/.happier-stack/workspace-mirror/0.2',
       guestDir: '/home/dev/.happier-stack/workspace/0.2',
     },
     {
       id: '0.3',
+      stackName: 'repo-dev-a1cc5e0671',
       hostSourceDir: '/Users/dev/happier/dev',
       hostMirrorDir: '/Users/dev/.happier-stack/workspace-mirror/0.3',
       guestDir: '/home/dev/.happier-stack/workspace/0.3',
@@ -43,4 +47,9 @@ test('workspace flags reject malformed declarations before VM setup', () => {
     guestWorkspaceDir: '/guest',
     mirrorWorkspaceDir: '/mirror',
   }), /absolute source directory/);
+  assert.throws(() => resolveNamedWorkspaceConfiguration({
+    argv: ['--workspace=0.2=/source', '--workspace-stack=unknown=repo-dev'],
+    guestWorkspaceDir: '/guest',
+    mirrorWorkspaceDir: '/mirror',
+  }), /unknown workspace id/);
 });

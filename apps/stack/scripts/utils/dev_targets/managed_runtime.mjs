@@ -65,6 +65,7 @@ export async function startManagedDevTargetRuntime(
   const sshPublication = await reconcileSshPublication({
     target,
     sshLocalPort: current.instance?.sshLocalPort ?? current.instance?.SSHLocalPort,
+    guestVerified: true,
     env,
   });
   return { ...lifecycle, guestLoginManager, sshPublication };

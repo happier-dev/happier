@@ -15,9 +15,12 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
   const keyDir = join(root, 'dev-target-ssh', 'worker-host');
   const privateKeyPath = join(keyDir, 'id_ed25519');
   const publicKeyPath = `${privateKeyPath}.pub`;
+  const guestKnownHostsPath = join(root, 'dev-target-ssh', 'worker', 'guest-known-hosts');
   await mkdir(keyDir, { recursive: true });
+  await mkdir(join(root, 'dev-target-ssh', 'worker'), { recursive: true });
   await writeFile(privateKeyPath, 'private-key');
   await writeFile(publicKeyPath, 'ssh-ed25519 AAAATEST controller');
+  await writeFile(guestKnownHostsPath, 'happier-dev-target-worker ssh-ed25519 AAAASTALE stale\n');
   const calls = [];
   let guestConfigModes = [];
 
@@ -56,9 +59,26 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
       },
       });
     },
-    setupRuntime: async ({ instance, profileName, architecture, allowInstall, guestProvisionProfile }) => {
-      calls.push(['runtime', instance, profileName, architecture, allowInstall, guestProvisionProfile]);
-      return { guest: { user: 'dev', homeDir: '/home/dev' } };
+    setupRuntime: async ({
+      instance,
+      profileName,
+      architecture,
+      allowInstall,
+      guestProvisionProfile,
+      guestProvisionScriptSource,
+      guestPressureScriptSource,
+    }) => {
+      calls.push([
+        'runtime',
+        instance,
+        profileName,
+        architecture,
+        allowInstall,
+        guestProvisionProfile,
+        guestProvisionScriptSource,
+        guestPressureScriptSource,
+      ]);
+      return { reconfigured: true, guest: { user: 'dev', homeDir: '/home/dev' } };
     },
     getRuntimeStatus: async () => ({
       exists: true,
@@ -67,20 +87,44 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
     }),
     runSshProbe: async ({ configPath }) => {
       const config = await readFile(configPath, 'utf8');
-      guestConfigModes.push(config.match(/StrictHostKeyChecking (\S+)/)?.[1]);
+      const strictHostKeyChecking = config.match(/StrictHostKeyChecking (\S+)/)?.[1];
+      guestConfigModes.push(strictHostKeyChecking);
+      const knownHosts = await readFile(guestKnownHostsPath, 'utf8').catch(() => '');
+      if (strictHostKeyChecking === 'yes' && !knownHosts.includes('AAAACURRENT')) {
+        return {
+          ok: false,
+          exitCode: 255,
+          out: '',
+          err: 'REMOTE HOST IDENTIFICATION HAS CHANGED',
+        };
+      }
+      if (strictHostKeyChecking === 'accept-new') {
+        if (knownHosts.includes('AAAASTALE')) {
+          return {
+            ok: false,
+            exitCode: 255,
+            out: '',
+            err: 'REMOTE HOST IDENTIFICATION HAS CHANGED',
+          };
+        }
+        await writeFile(guestKnownHostsPath, 'happier-dev-target-worker ssh-ed25519 AAAACURRENT current\n');
+      }
       return { ok: true, exitCode: 0, out: '', err: '' };
     },
     guestProvisionScriptSource: '#!/bin/sh\n',
+    guestPressureScriptSource: '#!/bin/sh\n# pressure\n',
   });
 
   assert.deepEqual(calls[0], ['outer', false]);
   assert.deepEqual(calls.find(([kind]) => kind === 'runtime'), [
     'runtime', 'happier-worker', 'worker-balanced', 'aarch64', true, 'happier',
+    '#!/bin/sh\n', '#!/bin/sh\n# pressure\n',
   ]);
   const keyInstall = calls.find(([kind, command]) => kind === 'host-capture' && command === 'limactl');
   assert.ok(keyInstall);
   assert.ok(keyInstall.includes('ssh-ed25519 AAAATEST controller'));
-  assert.deepEqual(guestConfigModes, ['accept-new', 'yes']);
+  assert.deepEqual(guestConfigModes, ['yes', 'accept-new', 'yes']);
+  assert.match(await readFile(guestKnownHostsPath, 'utf8'), /AAAACURRENT/);
   assert.equal(target.ssh, 'happier-dev-target-worker');
   assert.equal(target.repoDir, '/home/dev/happier-dev');
   assert.equal(target.cliHomeDir, '/home/dev/.happier/dev-targets/worker');
@@ -206,17 +250,27 @@ test('managed worker SSH publication follows a changed Lima port and migrates to
       managedRuntime: { kind: 'lima' },
     },
     sshLocalPort: 60955,
+    guestVerified: true,
     env: {},
   }, {
     runSshProbe: async ({ configPath: probedPath }) => {
       const contents = await readFile(probedPath, 'utf8');
-      modes.push(contents.match(/StrictHostKeyChecking (\S+)/)?.[1]);
+      const strictHostKeyChecking = contents.match(/StrictHostKeyChecking (\S+)/)?.[1];
+      modes.push(strictHostKeyChecking);
+      if (strictHostKeyChecking === 'yes' && modes.length === 1) {
+        return {
+          ok: false,
+          exitCode: 255,
+          out: '',
+          err: 'No ED25519 host key is known for happier-dev-target-worker and you have requested strict checking.',
+        };
+      }
       return { ok: true, exitCode: 0, out: '', err: '' };
     },
   });
 
   assert.deepEqual(result, { changed: true, port: 60955, hostKeyAliasAdded: true });
-  assert.deepEqual(modes, ['accept-new', 'yes']);
+  assert.deepEqual(modes, ['yes', 'accept-new', 'yes']);
   const contents = await readFile(configPath, 'utf8');
   assert.match(contents, /Port 60955/);
   assert.match(contents, /HostKeyAlias happier-dev-target-worker/);

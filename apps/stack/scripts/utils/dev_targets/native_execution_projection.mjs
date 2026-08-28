@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
+import { resolveMutagenSessionName } from './mutagen_project.mjs';
 import { REMOTE_COMMAND_CLASSIFICATION, REMOTE_DEPENDENCY_ADMISSION } from './remote_commands.mjs';
 import {
   EXECUTION_PROVENANCE_FILENAME,
@@ -25,9 +26,7 @@ export function renderNativeExecutionProjection(config, { repoRoot = '' } = {}) 
     : policy.mode === 'prefer-target'
       ? new Set([policy.target])
       : new Set();
-  const targets = normalized.targets.filter((target) => (
-    target.platform === 'posix' && selectedNames.has(target.name)
-  ));
+  const targets = normalized.targets.filter((target) => target.platform === 'posix');
   const lines = [
     assignment('HSTACK_EXEC_PROJECTION_VERSION', '2'),
     assignment('projection_repo_root', repoRoot),
@@ -50,11 +49,13 @@ export function renderNativeExecutionProjection(config, { repoRoot = '' } = {}) 
     const prefix = `target_${index + 1}`;
     lines.push(
       assignment(`${prefix}_name`, target.name),
+      assignment(`${prefix}_sync_name`, resolveMutagenSessionName(target.name)),
       assignment(`${prefix}_ssh`, target.ssh),
       assignment(`${prefix}_ssh_config`, target.sshConfigFile ?? ''),
       assignment(`${prefix}_repo_dir`, target.repoDir),
       assignment(`${prefix}_cli_home`, target.cliHomeDir),
       assignment(`${prefix}_remote_path`, target.remotePath?.join(':') ?? ''),
+      assignment(`${prefix}_automatic`, selectedNames.has(target.name) ? '1' : '0'),
     );
   });
   return `${lines.join('\n')}\n`;

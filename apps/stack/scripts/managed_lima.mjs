@@ -29,7 +29,7 @@ function usage(json) {
     data: { commands: ['setup', 'status', 'doctor', 'start', 'stop', 'shell', 'ssh-config'] },
     text: [
       '[managed-lima] usage:',
-      '  hstack tools managed-lima setup --instance=NAME [--profile=balanced] [--pressure-profile=none|swap64|swap64-zswap|swap128|swap128-zswap] [--guest-profile=happier] [--lima-home=PATH] [--no-install] [--json]',
+      '  hstack tools managed-lima setup --instance=NAME [--profile=balanced] [--pressure-profile=none|swap64|swap64-zswap|swap128|swap128-zswap|swap256|swap256-zswap] [--guest-profile=happier] [--lima-home=PATH] [--no-install] [--json]',
       '  hstack tools managed-lima status|doctor|start|stop --instance=NAME [--profile=balanced] [--lima-home=PATH] [--json]',
       '  hstack tools managed-lima shell --instance=NAME [--lima-home=PATH] -- COMMAND [ARG...]',
       '  hstack tools managed-lima ssh-config --instance=NAME --output=/absolute/guest.conf [--alias=happier-agent-primary]',

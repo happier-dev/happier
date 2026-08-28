@@ -262,14 +262,20 @@ function countEvent(events, expected) {
 test('dev reaches Expo before starting remote development targets', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
   const expoStartIndex = source.lastIndexOf('await ensureDevExpoServer({');
-  const daemonStartIndex = source.indexOf('if (startupDecision.startDaemon) {');
+  const serverStartIndex = source.indexOf('await startDevServer({');
+  const daemonStartIndex = source.indexOf('if (startupDecision.startDaemon');
   const devTargetsStartIndex = source.indexOf(
     'devTargetsController = startStackDevTargetsInBackground(',
   );
 
   assert.notEqual(expoStartIndex, -1, 'expected the canonical Expo startup call');
+  assert.notEqual(serverStartIndex, -1, 'expected the canonical server startup call');
   assert.notEqual(daemonStartIndex, -1, 'expected daemon startup');
   assert.notEqual(devTargetsStartIndex, -1, 'expected background dev-target startup');
+  assert.ok(
+    expoStartIndex < serverStartIndex,
+    'server source workspace admission must not delay independent Expo availability',
+  );
   assert.ok(
     expoStartIndex < daemonStartIndex,
     'a potentially expensive daemon build must not delay Expo availability',
@@ -280,27 +286,69 @@ test('dev reaches Expo before starting remote development targets', async () => 
   );
 });
 
-test('remote Expo or daemon placement keeps generated plugin preparation on the local checkout owner', async () => {
+test('remote server placement does not wait for the local daemon before starting its target', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+  const remoteServerDependencyIndex = source.indexOf(
+    'const localDaemonWaitsForRemoteServer = servicePlans.targets.some((plan) => plan.services.server);',
+  );
+  const backgroundDaemonIndex = source.indexOf(
+    'if (localDaemonWaitsForRemoteServer) {',
+  );
+  const devTargetsStartIndex = source.indexOf(
+    'devTargetsController = startStackDevTargetsInBackground(',
+  );
+
+  assert.notEqual(remoteServerDependencyIndex, -1, 'expected the remote-server dependency decision');
+  assert.notEqual(backgroundDaemonIndex, -1, 'expected remote-server daemon startup to be non-blocking');
+  assert.notEqual(devTargetsStartIndex, -1, 'expected the canonical target supervisor startup');
+  const remoteServerBranchEnd = source.indexOf('} else {', backgroundDaemonIndex);
+  assert.notEqual(remoteServerBranchEnd, -1, 'expected the local-server branch after remote-server handling');
+  const remoteServerBranch = source.slice(backgroundDaemonIndex, remoteServerBranchEnd);
+  assert.match(
+    remoteServerBranch,
+    /void daemonStartPromise\.catch/u,
+    'the VM daemon may start concurrently, but it must not gate the target-hosted server that it needs',
+  );
+  assert.doesNotMatch(
+    remoteServerBranch,
+    /await daemonStartPromise/u,
+    'waiting for the daemon here recreates the daemon→server→target startup cycle',
+  );
+});
+
+test('remote Expo or daemon placement scopes generated plugin preparation to dependent targets', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
 
   assert.match(source, /createHappyCliWorkspacePreparationExecutor/u);
   assert.match(
     source,
-    /servicePlans\.targets\.some\(\s*\(plan\) => plan\.services\.daemon \|\| plan\.services\.expo,?\s*\)/u,
+    /servicePlans\.targets\.some\(\s*planRequiresRemoteCliWorkspacePreparation,?\s*\)/u,
   );
   assert.match(
     source,
     /const daemonRefreshEnabled = daemonReloadEnabled \|\| remoteCliWorkspacePreparationEnabled/u,
   );
   assert.match(source, /daemonReloadEnabled:\s*daemonRefreshEnabled/u);
-  const initialPreparationIndex = source.indexOf('await remoteWorkspacePreparationExecutor.build()');
+  const initialPreparationIndex = source.indexOf(
+    'const remoteWorkspacePreparation = remoteWorkspacePreparationExecutor',
+  );
   const devTargetsStartIndex = source.indexOf(
     'devTargetsController = startStackDevTargetsInBackground(',
   );
-  assert.notEqual(initialPreparationIndex, -1, 'expected initial local generated-input preparation');
+  assert.notEqual(initialPreparationIndex, -1, 'expected one shared local generated-input preparation promise');
   assert.ok(
     initialPreparationIndex < devTargetsStartIndex,
-    'remote services must bootstrap only after the local source authority prepares generated inputs',
+    'the supervisor must receive the shared preparation promise when it starts',
+  );
+  assert.match(
+    source,
+    /startStackDevTargetsInBackground\(\{\s*\.\.\.devTargetsStartOptions,\s*remoteWorkspacePreparation,\s*\}\)/u,
+    'the canonical target supervisor must own the scoped preparation barrier',
+  );
+  assert.doesNotMatch(
+    source,
+    /await remoteWorkspacePreparationExecutor\.build\(\)/u,
+    'an unrelated server-only target must not wait for remote Expo or daemon preparation',
   );
 });
 
@@ -338,6 +386,40 @@ test('dev publishes initial remote target state before background startup can pu
   assert.ok(
     initialStateIndex < devTargetsStartIndex,
     'a fast unavailable/running callback must not be overwritten by a later starting projection',
+  );
+  const initialProjection = source.slice(initialStateIndex, devTargetsStartIndex);
+  assert.match(
+    initialProjection,
+    /status:\s*'starting',\s*phase:\s*null,\s*error:\s*null,/u,
+    'a new controller incarnation must clear stale retry diagnostics while publishing its starting state',
+  );
+});
+
+test('dev publishes a configured remote Expo service in its initial runtime declaration', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+  const remoteExpoPlanIndex = source.indexOf('const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;');
+  const configuredRemoteExpoIndex = source.indexOf('const initialRemoteExpoProjection =');
+  const runtimeStartIndex = source.indexOf('await recordStackRuntimeStart(runtimeStatePath, {');
+  const watchdogIndex = source.indexOf('spawnStackOwnerDeathWatchdog({');
+
+  assert.notEqual(remoteExpoPlanIndex, -1, 'expected the resolved remote Expo plan');
+  assert.notEqual(configuredRemoteExpoIndex, -1, 'expected an initial configured remote Expo projection');
+  assert.notEqual(runtimeStartIndex, -1, 'expected the canonical Stack runtime start publication');
+  assert.notEqual(watchdogIndex, -1, 'expected the initial runtime publication boundary');
+  assert.ok(
+    configuredRemoteExpoIndex < runtimeStartIndex,
+    'the initial remote Expo declaration must exist before a service tunnel can discover the Stack runtime',
+  );
+  const initialRuntimePublication = source.slice(runtimeStartIndex, watchdogIndex);
+  assert.match(
+    initialRuntimePublication,
+    /\.\.\.\(initialRemoteExpoProjection \? \{ expo: initialRemoteExpoProjection \} : \{\}\)/u,
+    'the first runtime declaration must expose the configured remote Expo service',
+  );
+  assert.match(
+    source.slice(remoteExpoPlanIndex, runtimeStartIndex),
+    /remoteExpoPlan[\s\S]*HAPPIER_STACK_EXPO_DEV_PORT[\s\S]*remoteTarget/u,
+    'only a configured remote Expo plan may be published before target startup',
   );
 });
 

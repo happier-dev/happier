@@ -41,12 +41,14 @@ function namedCandidate(overrides = {}) {
     workspaces: [
       {
         id: '0.2',
+        stackName: 'repo-remote-dev-d72117acdb',
         hostSourceDir: '/Users/example/happier/remote-dev',
         hostMirrorDir: '/Users/example/.happier-stack/workspace-mirror/0.2',
         guestDir: '/home/example/.happier-stack/workspace/0.2',
       },
       {
         id: '0.3',
+        stackName: 'repo-dev-a1cc5e0671',
         hostSourceDir: '/Users/example/happier/dev',
         hostMirrorDir: '/Users/example/.happier-stack/workspace-mirror/0.3',
         guestDir: '/home/example/.happier-stack/workspace/0.3',
@@ -79,6 +81,8 @@ test('execution host setup preserves omitted retained-candidate identity and wor
     limaHome: '/Users/example/.happier/stacks/repo-dev/lima',
     profile: 'balanced',
     pressureProfile: 'swap64',
+    autoMount: true,
+    hostMountDir: '/Users/example/.happier-stack/vm-home',
   });
 
   assert.deepEqual(resolveExecutionHostSetupConfiguration({
@@ -99,6 +103,8 @@ test('execution host setup preserves omitted retained-candidate identity and wor
     pressureProfile: 'swap64',
     guestWorkspaceDir: current.guestWorkspaceDir,
     mirrorWorkspaceDir: current.mirrorWorkspaceDir,
+    autoMount: true,
+    hostMountDir: current.hostMountDir,
     workspaces: current.workspaces,
   });
 
@@ -139,7 +145,8 @@ test('ordinary profile writes cannot activate delegation and the cutover seam ac
   );
   await writeCandidateExecutionHostProfile(candidate(), env);
   const active = await activateExecutionHostProfile(env);
-  assert.equal(active.activation, 'active');
+  assert.equal(active.profile.activation, 'active');
+  assert.deepEqual(active.retiredCandidateMirrors, []);
   assert.equal(readExecutionHostProfile(env).activation, 'active');
 });
 
@@ -166,6 +173,12 @@ test('named execution host profiles preserve two explicit workspace mappings', a
 });
 
 test('named execution host profiles reject ambiguous, unsafe, and relative workspace mappings', async () => {
+  await assert.rejects(
+    writeCandidateExecutionHostProfile(namedCandidate({
+      workspaces: [{ ...namedCandidate().workspaces[0], stackName: '../unsafe' }],
+    }), {}),
+    /invalid workspace Stack name/,
+  );
   await assert.rejects(
     writeCandidateExecutionHostProfile(namedCandidate({
       workspaces: [namedCandidate().workspaces[0], { ...namedCandidate().workspaces[1], id: '0.2' }],

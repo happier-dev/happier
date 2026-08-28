@@ -27,6 +27,7 @@ function buildStubHappyCliScript({ message }) {
       `console.log(JSON.stringify({`,
       `  message: ${JSON.stringify(message)},`,
       `  args,`,
+      `  cwd: process.cwd(),`,
       `  stack: process.env.HAPPIER_STACK_STACK || null,`,
       `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
@@ -145,6 +146,27 @@ test('hstack stack happier <name> runs CLI under that stack env', async (t) => {
   assert.ok(String(out.envFile).endsWith(`/${fixture.stackName}/env`), `expected envFile to end with /${fixture.stackName}/env, got: ${out.envFile}`);
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
+});
+
+test('hstack stack happier <name> preserves the caller cwd for relative CLI paths', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-happy-caller-cwd-',
+    message: 'caller-cwd',
+    serverPort: 3999,
+  });
+  const callerCwd = join(fixture.storageDir, 'plugin-author-root');
+  await mkdir(callerCwd, { recursive: true });
+
+  const res = await runNodeCapture(
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName, '--', 'plugins', 'dev', 'build', '.'],
+    { cwd: callerCwd, env: fixture.baseEnv },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'caller-cwd');
+  assert.equal(out.cwd, callerCwd);
+  assert.deepEqual(out.args, ['plugins', 'dev', 'build', '.']);
 });
 
 test('hstack stack happier <name> overrides pre-set HAPPIER_* env vars with stack-scoped values', async (t) => {

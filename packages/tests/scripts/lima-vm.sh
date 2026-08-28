@@ -99,6 +99,11 @@ LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
 export LIMA_HOME="${LIMA_HOME_DIR}"
 LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
 LIMA_YAML="${LIMA_DIR}/lima.yaml"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+GUEST_PROVISION_SCRIPT="${REPO_DIR}/apps/stack/scripts/provision/linux-ubuntu-provision.sh"
+GUEST_PROVISION_PROFILE="${HSTACK_PROVISION_PROFILE:-happier}"
+VM_CREATED=0
 
 echo "[lima] vm: ${VM_NAME}"
 echo "[lima] template: ${TEMPLATE}"
@@ -124,6 +129,10 @@ fi
 
 if [[ ! -f "${LIMA_YAML}" ]]; then
   echo "[lima] creating VM..."
+  if [[ ! -f "${GUEST_PROVISION_SCRIPT}" ]]; then
+    echo "[lima] missing canonical guest provision script: ${GUEST_PROVISION_SCRIPT}" >&2
+    exit 1
+  fi
   if [[ "${LIMA_VM_TYPE}" == "qemu" ]]; then
     if ! command -v qemu-system-aarch64 >/dev/null 2>&1 && ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
       echo "[lima] qemu vmType requested but no qemu-system-* binary is available." >&2
@@ -149,6 +158,7 @@ if [[ ! -f "${LIMA_YAML}" ]]; then
   fi
   create_args+=("${TEMPLATE_LOCATOR}")
   limactl "${create_args[@]}"
+  VM_CREATED=1
 fi
 
 if [[ ! -f "${LIMA_YAML}" ]]; then
@@ -263,11 +273,19 @@ PY
 echo "[lima] starting VM..."
 limactl start "${VM_NAME}"
 
+if [[ "${VM_CREATED}" == "1" ]]; then
+  echo "[lima] provisioning fresh guest (${GUEST_PROVISION_PROFILE})..."
+  limactl shell "${VM_NAME}" -- bash -s -- "--profile=${GUEST_PROVISION_PROFILE}" < "${GUEST_PROVISION_SCRIPT}"
+fi
+
 echo ""
 echo "[lima] done."
 echo ""
 echo "What this script did:"
 echo "  - ensured the VM exists (${VM_NAME})"
+if [[ "${VM_CREATED}" == "1" ]]; then
+  echo "  - provisioned fresh guest dependencies (${GUEST_PROVISION_PROFILE})"
+fi
 echo "  - set VM memory (${LIMA_MEMORY})"
 echo "  - configured localhost port forwarding:"
 echo "      - stack/server: ${STACK_PORT_RANGE}"

@@ -2,7 +2,7 @@ import { doctorManagedLimaInstance } from '../managed_lima/manager.mjs';
 import { startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 
 const HOST_ONLY_COMMANDS = new Set([
-  'host',
+  'dev-vm',
   'init',
   'setup',
   'setup-from-source',
@@ -80,7 +80,7 @@ export async function executeCandidateHostCommand({
     profileName: profile.profile,
   });
   if (diagnosis.ok !== true) {
-    throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack host doctor` before execution');
+    throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack dev-vm doctor` before execution');
   }
   const result = await executor.run('limactl', [
     'shell', '--workdir', cwd, profile.instance, '--', executable, ...args,

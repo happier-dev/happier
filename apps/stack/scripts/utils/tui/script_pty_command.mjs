@@ -16,12 +16,12 @@ export function buildScriptPtyArgs({ platform = process.platform, file = '/dev/n
   const argv = Array.isArray(command) ? command : [];
 
   // util-linux `script` (common on Linux) requires -c for commands; it does not accept
-  // `script <file> <cmd> <args...>` like BSD `script` does.
+  // `script <file> <cmd> <args...>` like BSD `script` does. Its -e option preserves the
+  // wrapped command's status instead of reporting `script`'s own successful completion.
   if (platform === 'linux') {
-    return { cmd, args: ['-q', '-c', joinShCommand(argv), f] };
+    return { cmd, args: ['-q', '-e', '-c', joinShCommand(argv), f] };
   }
 
   // BSD `script` (macOS) supports: script [-q] [file [command ...]]
   return { cmd, args: ['-q', f, ...argv] };
 }
-

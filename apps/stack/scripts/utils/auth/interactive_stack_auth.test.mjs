@@ -11,6 +11,13 @@ test('shouldSuppressInteractiveStackAuthSetup disables startup auth inside TUI-m
   assert.equal(shouldSuppressInteractiveStackAuthSetup({ env: {} }), null);
 });
 
+test('shouldSuppressInteractiveStackAuthSetup leaves Dev Target authentication to its supervisor', () => {
+  assert.equal(
+    shouldSuppressInteractiveStackAuthSetup({ env: { HAPPIER_DEV_TARGET_EXECUTION: '1' } }),
+    'dev_target_managed',
+  );
+});
+
 test('maybeRunInteractiveStackAuthSetup skips interactive startup auth in TUI-managed child sessions', async () => {
   const result = await maybeRunInteractiveStackAuthSetup({
     env: { HAPPIER_STACK_TUI: '1' },

@@ -39,7 +39,12 @@ import {
   resolveStackOwnedServerRuntimePid,
   startDevServer,
 } from './utils/dev/server.mjs';
-import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
+import {
+  decideDevStartupTopology,
+  observeDevServerStartupTopology,
+  resolveDevWatchEnabled,
+  shouldExitAdoptedDevRuntime,
+} from './utils/dev/devStartupTopology.mjs';
 import {
   requestInitialDevRefreshes,
   resolveDevReloadPollIntervalMs,
@@ -87,10 +92,17 @@ import {
   resolveDevTargetServicePlans,
   resolveServicePlansAfterTargetPreflight,
 } from './utils/dev_targets/service_placement.mjs';
-import { startStackDevTargetsInBackground } from './utils/dev_targets/supervisor.mjs';
+import { resolveRemoteServerRuntimeConfig } from './utils/dev_targets/remote_commands.mjs';
+import {
+  planRequiresRemoteCliWorkspacePreparation,
+  startStackDevTargetsInBackground,
+} from './utils/dev_targets/supervisor.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 import { selectExpoDevMetroPort } from './utils/expo/metro_ports.mjs';
-import { resolveMobileReachableServerUrl } from './utils/server/mobile_api_url.mjs';
+import {
+  hasExplicitMobileReachableHost,
+  resolveMobileReachableServerUrl,
+} from './utils/server/mobile_api_url.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
@@ -251,10 +263,8 @@ async function main() {
     producerStackName: borrowedExpoProducerStackName,
   });
   const startOwnedExpo = Boolean((startUi || startMobile) && !borrowedExpo);
-  const loadedDevTargets = flags.has('--no-dev-targets')
-    ? { path: null, config: { version: 1, targets: [] } }
-    : await loadDevTargetsConfig({ stackName, env: baseEnv, allowMissing: true });
-  const devTargets = loadedDevTargets.config.targets;
+  const devTargetsEnabled = !flags.has('--no-dev-targets');
+  const loadedDevTargets = await loadDevTargetsConfig({ stackName, env: baseEnv, allowMissing: true });
   if (!json && stackMode && runtimeStatePath) {
     await completeInterruptedStackStopBeforeStart({
       rootDir,
@@ -301,7 +311,11 @@ async function main() {
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
 
-  const executionPolicy = resolveDevTargetExecutionPolicy(loadedDevTargets.config);
+  const executionPolicy = resolveDevTargetExecutionPolicy(loadedDevTargets.config, {
+    targetsEnabled: devTargetsEnabled,
+    serverRequested: requestedStartServer,
+  });
+  const devTargets = devTargetsEnabled ? loadedDevTargets.config.targets : [];
   const configuredServicePlans = resolveDevTargetServicePlans({
     targets: devTargets,
     policy: executionPolicy,
@@ -320,6 +334,9 @@ async function main() {
         + 'set runtime placement to local or use --no-dev-targets for this run',
     );
   }
+  const remoteServerRuntimeConfig = configuredServicePlans.targets.some((plan) => plan.services.server)
+    ? resolveRemoteServerRuntimeConfig({ serverComponentName, env: baseEnv })
+    : null;
   let servicePlans = configuredServicePlans;
   const exclusiveTargetPlans = configuredServicePlans.targets.filter((plan) => (
     Object.entries(plan.services).some(([service, enabled]) => enabled && !configuredServicePlans.local[service])
@@ -349,6 +366,7 @@ async function main() {
   const startServer = servicePlans.local.server;
   const startDaemon = servicePlans.local.daemon;
   const startExpo = servicePlans.local.expo;
+  const localDaemonWaitsForRemoteServer = servicePlans.targets.some((plan) => plan.services.server);
 
   if (json) {
     printResult({
@@ -414,8 +432,11 @@ async function main() {
 
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   // Watch mode (interactive only by default): rebuild happier-cli and restart daemon when code changes.
-  const watchEnabled =
-    flags.has('--watch') || (!flags.has('--no-watch') && Boolean(process.stdin.isTTY && process.stdout.isTTY));
+  const watchEnabled = resolveDevWatchEnabled({
+    watchRequested: flags.has('--watch'),
+    noWatchRequested: flags.has('--no-watch'),
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  });
   const watchers = [];
 
   const serverHealthObservation = startServer
@@ -476,13 +497,17 @@ async function main() {
       })
     : { admitted: false, reason: 'not_requested', detail: null };
 
-  if (
-    servicePlans.targets.length === 0 &&
-    !restart &&
-    (!startServer || startupDecision.adoptedServer) &&
-    (!startDaemon || daemonAlreadyRunning) &&
-    (!startExpo || expoAlreadyRunning)
-  ) {
+  if (shouldExitAdoptedDevRuntime({
+    serviceTargetCount: servicePlans.targets.length,
+    restart,
+    watchEnabled,
+    serverRequested: startServer,
+    adoptedServer: startupDecision.adoptedServer,
+    daemonRequested: startDaemon,
+    daemonRunning: daemonAlreadyRunning,
+    expoRequested: startExpo,
+    expoRunning: expoAlreadyRunning,
+  })) {
     console.log(
       `${green('✓')} dev: already running ${dim('(')}` +
         `${dim('server=')}${cyan(internalServerUrl)}${startServer ? '' : dim(' (external)')}` +
@@ -494,6 +519,22 @@ async function main() {
     return;
   }
 
+  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
+  const configuredRemoteExpoPort = Number(baseEnv.HAPPIER_STACK_EXPO_DEV_PORT);
+  const initialRemoteExpoProjection = remoteExpoPlan
+    && Number.isInteger(configuredRemoteExpoPort)
+    && configuredRemoteExpoPort > 0
+    ? {
+        port: configuredRemoteExpoPort,
+        webPort: startUi ? configuredRemoteExpoPort : null,
+        mobilePort: startMobile ? configuredRemoteExpoPort : null,
+        webEnabled: startUi,
+        devClientEnabled: startMobile,
+        host: resolveExpoDevHost({ env: baseEnv }),
+        remoteTarget: remoteExpoPlan.target.name,
+      }
+    : null;
+
   if (stackMode && runtimeStatePath) {
     const startedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
       stackName,
@@ -501,6 +542,7 @@ async function main() {
       ephemeral,
       ownerPid: process.pid,
       ports: requestedStartServer ? { server: serverPort } : {},
+      ...(initialRemoteExpoProjection ? { expo: initialRemoteExpoProjection } : {}),
       runtimeSnapshotId: null,
       serveUi: null,
     });
@@ -556,6 +598,38 @@ async function main() {
   }
   const serverBindPort = proxyPlan.backendPort;
   const serverBackendInternalUrl = `http://127.0.0.1:${serverBindPort}`;
+  const wantsAuthFlow =
+    (baseEnv.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
+    (baseEnv.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
+
+  // Expo has its own last-green admission owner and can serve the configured API
+  // origin before the source server proves a replacement is buildable. Keep that
+  // independently available boundary ahead of server and daemon source work.
+  let expoResEarly = null;
+  const ensureExpoAvailable = async () => {
+    if (expoResEarly) return expoResEarly;
+    expoResEarly = await ensureDevExpoServer({
+      startUi,
+      startMobile,
+      uiDir,
+      autostart,
+      baseEnv,
+      apiServerUrl: uiApiUrl,
+      restart,
+      stackMode,
+      runtimeStatePath,
+      stackName,
+      envPath,
+      children,
+      ...(wantsAuthFlow && startUi
+        ? { spawnOptions: { stdio: ['ignore', 'ignore', 'ignore'] } }
+        : {}),
+      expoTailscale,
+      isShuttingDown: () => shuttingDown,
+    });
+    return expoResEarly;
+  };
+  if (startExpo) await ensureExpoAvailable();
 
   if (priorRuntimeServer.admitted) {
     console.log(
@@ -564,8 +638,13 @@ async function main() {
     );
   }
 
-  const { serverEnv, serverScript, serverProc } = startServer && startupDecision.startServer
-    ? await startDevServer({
+  let serverEnv = baseEnv;
+  let serverScript = null;
+  let serverProc = null;
+  let serverWorkspaceAdmissionFailure = null;
+  if (startServer && startupDecision.startServer) {
+    try {
+      ({ serverEnv, serverScript, serverProc } = await startDevServer({
         serverComponentName,
         serverDir,
         autostart,
@@ -600,10 +679,29 @@ async function main() {
                 fallbackReason: proxyPlan.fallbackReason,
               }
             : null,
-      })
-    : { serverEnv: baseEnv, serverScript: null, serverProc: null };
+      }));
+    } catch (error) {
+      const workspaceAdmissionFailure = error?.devServerWorkspaceAdmissionFailure;
+      if (
+        !watchEnabled
+        || !workspaceAdmissionFailure?.serverEnv
+        || typeof workspaceAdmissionFailure.serverScript !== 'string'
+      ) {
+        throw error;
+      }
+      serverWorkspaceAdmissionFailure = error;
+      serverEnv = workspaceAdmissionFailure.serverEnv;
+      serverScript = workspaceAdmissionFailure.serverScript;
+      console.error(
+        '[local] server: source workspace admission failed; keeping available components running and retrying on source changes.\n'
+          + (error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
   if (!startServer) {
     console.log(`${green('✓')} server: external ${cyan(internalServerUrl)}`);
+  } else if (serverWorkspaceAdmissionFailure) {
+    console.warn('[local] server: unavailable while source workspace admission is degraded');
   } else if (startupDecision.startServer) {
     console.log(`${green('✓')} server: ready at ${cyan(internalServerUrl)}`);
   } else {
@@ -626,7 +724,7 @@ async function main() {
   const accountProbeImpl = startupDecision.adoptedServer
     ? probeExistingAccountCountForServerComponent
     : getAccountCountForServerComponent;
-  const accountProbe = startServer
+  const accountProbe = startServer && !serverWorkspaceAdmissionFailure
     ? await accountProbeImpl({
         serverComponentName,
         serverDir,
@@ -635,38 +733,12 @@ async function main() {
       })
     : null;
   const accountCount =
-    startServer && typeof accountProbe?.accountCount === 'number' ? accountProbe.accountCount : null;
+    startServer && !serverWorkspaceAdmissionFailure && typeof accountProbe?.accountCount === 'number'
+      ? accountProbe.accountCount
+      : null;
   const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName, isInteractive });
 
-  let expoResEarly = null;
-  const wantsAuthFlow =
-    (baseEnv.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
-    (baseEnv.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
-
-  if (startServer) {
-    // CRITICAL (review-pr / setup-pr guided login):
-    // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
-    // until after the daemon is authenticated, guided login will have no UI origin and will fall back
-    // to the server port (wrong). Start Expo web UI early when running an auth flow.
-    if (wantsAuthFlow && startExpo && startUi && !expoResEarly) {
-      expoResEarly = await ensureDevExpoServer({
-        startUi,
-        startMobile,
-        uiDir,
-        autostart,
-        baseEnv,
-        apiServerUrl: uiApiUrl,
-        restart,
-        stackMode,
-        runtimeStatePath,
-        stackName,
-        envPath,
-        children,
-        spawnOptions: { stdio: ['ignore', 'ignore', 'ignore'] },
-        expoTailscale,
-        isShuttingDown: () => shuttingDown,
-      });
-    }
+  if (startServer && !serverWorkspaceAdmissionFailure) {
     await maybeRunInteractiveStackAuthSetup({
       rootDir,
       // In dev mode, guided login must target the Expo web UI origin (not the server port).
@@ -685,22 +757,7 @@ async function main() {
           );
         }
         if (expoResEarly) return;
-        expoResEarly = await ensureDevExpoServer({
-          startUi,
-          startMobile,
-          uiDir,
-          autostart,
-          baseEnv,
-          apiServerUrl: uiApiUrl,
-          restart,
-          stackMode,
-          runtimeStatePath,
-          stackName,
-          envPath,
-          children,
-          expoTailscale,
-          isShuttingDown: () => shuttingDown,
-        });
+        await ensureExpoAvailable();
       },
     });
     await prepareDaemonAuthSeed({
@@ -717,28 +774,7 @@ async function main() {
     });
   }
 
-  // Admit the UI boundary before the daemon's potentially expensive source refresh.
-  // Existing last-green Expo output remains available while its canonical refresh runs.
-  if (startExpo && !expoResEarly) {
-    expoResEarly = await ensureDevExpoServer({
-      startUi,
-      startMobile,
-      uiDir,
-      autostart,
-      baseEnv,
-      apiServerUrl: uiApiUrl,
-      restart,
-      stackMode,
-      runtimeStatePath,
-      stackName,
-      envPath,
-      children,
-      expoTailscale,
-      isShuttingDown: () => shuttingDown,
-    });
-  }
-
-  if (startupDecision.startDaemon) {
+  if (startupDecision.startDaemon && !serverWorkspaceAdmissionFailure) {
     const gate = daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl });
     if (!gate.ok) {
       // In orchestrated auth flows (setup-pr/review-pr), we intentionally keep server/UI up
@@ -752,7 +788,7 @@ async function main() {
         }
       }
     } else {
-      await startDevDaemon({
+      const daemonStartPromise = startDevDaemon({
         startDaemon: true,
         cliDir,
         buildCli,
@@ -767,10 +803,23 @@ async function main() {
         env: baseEnv,
         stackName,
       });
+      if (localDaemonWaitsForRemoteServer) {
+        void daemonStartPromise.catch((error) => {
+          console.error(
+            '[local] daemon startup failed while waiting for the target-hosted server; '
+              + 'the daemon lifecycle reconciler will retry after the server becomes available. '
+              + (error instanceof Error ? error.message : String(error)),
+          );
+        });
+      } else {
+        await daemonStartPromise;
+      }
     }
+  } else if (startupDecision.startDaemon && serverWorkspaceAdmissionFailure) {
+    console.warn('[local] daemon: waiting for source server admission before starting');
   }
 
-  if (startDaemon && stackMode && runtimeStatePath) {
+  if (startDaemon && !serverWorkspaceAdmissionFailure && stackMode && runtimeStatePath) {
     const daemonRuntimeEnv = getDaemonEnv({
       baseEnv,
       cliHomeDir,
@@ -859,9 +908,12 @@ async function main() {
 
   const reloadDescriptors = [];
   const reloadExecutors = [];
-  const daemonReloadEnabled = startDaemon && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok;
+  const daemonReloadEnabled =
+    !serverWorkspaceAdmissionFailure
+    && startDaemon
+    && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok;
   const remoteCliWorkspacePreparationEnabled = servicePlans.targets.some(
-    (plan) => plan.services.daemon || plan.services.expo,
+    planRequiresRemoteCliWorkspacePreparation,
   );
   const remoteWorkspacePreparationExecutor = remoteCliWorkspacePreparationEnabled
     ? createHappyCliWorkspacePreparationExecutor({
@@ -912,7 +964,9 @@ async function main() {
       serverProcRef.current = { pid: Number(pid), exitCode: null };
     }
   }
-  const serverReloadEnabled = startServer && watchEnabled && Boolean(serverProcRef.current?.pid);
+  const serverReloadEnabled = startServer
+    && watchEnabled
+    && (Boolean(serverProcRef.current?.pid) || Boolean(serverWorkspaceAdmissionFailure));
   if (serverReloadEnabled) {
     reloadDescriptors.push(...createDevServerReloadDescriptors({ serverDir }));
     const serverReloadExecutor = createDevServerReloadExecutor({
@@ -966,7 +1020,6 @@ async function main() {
     );
   }
 
-  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
   let remoteExpoPort = null;
   if (remoteExpoPlan) {
     const configuredExpoPort = Number(baseEnv.HAPPIER_STACK_EXPO_DEV_PORT);
@@ -1003,6 +1056,10 @@ async function main() {
           serverPort: remoteExpoPort,
         })
       : '';
+    const resolveMobilePublicUrlsOnTarget =
+      startMobile
+      && !serverConnection.publicServerUrlIsExplicit
+      && !hasExplicitMobileReachableHost({ env: baseEnv });
     if (stackMode && runtimeStatePath) {
       await recordStackRuntimeUpdate(runtimeStatePath, {
         placement: {
@@ -1021,6 +1078,8 @@ async function main() {
                 .map(([service]) => [service, 'starting']),
             ),
             status: 'starting',
+            phase: null,
+            error: null,
           },
         ])),
         ...(remoteExpoPort ? {
@@ -1044,10 +1103,12 @@ async function main() {
       localExpoPort: remoteExpoPort,
       publicServerUrl: remotePublicServerUrl,
       expoPublicUrl,
+      resolveMobilePublicUrlsOnTarget,
       expoListenHost: resolveExpoDevHost({ env: baseEnv }) === 'lan' ? '0.0.0.0' : '127.0.0.1',
       startMobile,
       activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
       credentialPath,
+      remoteServerRuntimeConfig,
       syncTargets: devTargets,
       targetPlans: servicePlans.targets,
       onTargetStateChange: async ({ name, ...state }) => {
@@ -1068,17 +1129,21 @@ async function main() {
     target: remoteExpoPlan?.target.name ?? null,
   };
   if (devTargetsStartOptions) {
-    if (remoteWorkspacePreparationExecutor) {
-      try {
-        await remoteWorkspacePreparationExecutor.build();
-      } catch (error) {
+    const remoteWorkspacePreparation = remoteWorkspacePreparationExecutor
+      ? remoteWorkspacePreparationExecutor.build()
+      : null;
+    if (remoteWorkspacePreparation) {
+      void remoteWorkspacePreparation.catch((error) => {
         console.error(
           '[local] remote workspace preparation failed; remote targets will retry while local last-green services remain available. '
             + (error instanceof Error ? error.message : String(error)),
         );
-      }
+      });
     }
-    devTargetsController = startStackDevTargetsInBackground(devTargetsStartOptions);
+    devTargetsController = startStackDevTargetsInBackground({
+      ...devTargetsStartOptions,
+      remoteWorkspacePreparation,
+    });
   }
   if (startUi) {
     const uiPort = expoRes?.port;

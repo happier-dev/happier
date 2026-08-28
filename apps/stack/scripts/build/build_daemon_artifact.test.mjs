@@ -36,6 +36,12 @@ function sourceMetadata(root) {
   };
 }
 
+async function readFixtureGoVersion(command, args) {
+  assert.equal(command, 'go');
+  assert.deepEqual(args, ['version']);
+  return 'go version go1.fixture linux/arm64';
+}
+
 test('two concurrent code-only daemon publications reuse one immutable support payload without copying stable entries again', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-support-reuse-'));
   const stackBaseDir = join(root, 'stack');
@@ -63,6 +69,7 @@ test('two concurrent code-only daemon publications reuse one immutable support p
       artifactFingerprint,
       supportArtifactFingerprint: supportFingerprint,
       sourceMetadata: sourceMetadata(root),
+      runCaptureImpl: readFixtureGoVersion,
       resolveDaemonSupportArtifactFingerprintImpl: async () => supportFingerprint,
       buildDaemonSupportArtifactPayloadImpl: async (args) => {
         supportBuilds += 1;
@@ -122,6 +129,7 @@ test('a changed daemon support identity publishes only a new daemon support arti
       artifactFingerprint,
       supportArtifactFingerprint,
       sourceMetadata: sourceMetadata(root),
+      runCaptureImpl: readFixtureGoVersion,
       resolveDaemonSupportArtifactFingerprintImpl: async () => supportArtifactFingerprint,
       buildDaemonSupportArtifactPayloadImpl: async (args) => {
         supportBuilds.push(supportArtifactFingerprint);

@@ -14,16 +14,14 @@ async function writeServerSupportArtifact({
 }) {
   const payloadDir = join(artifactDir, 'payload');
   const entrypoint = '.happier-server-support.json';
-  for (const name of ['generated', 'prisma', 'node_modules']) {
+  for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
     await mkdir(join(payloadDir, name), { recursive: true });
     await writeFile(join(payloadDir, name, 'support.txt'), `${name}:${artifactFingerprint}`, 'utf8');
   }
-  if (serverComponent === 'happier-server') {
-    await mkdir(join(payloadDir, 'runtime'), { recursive: true });
-    await writeFile(join(payloadDir, 'runtime', 'schema-engine'), 'schema engine', 'utf8');
-    await writeFile(join(payloadDir, 'runtime', 'prisma_schema_build_bg.wasm'), 'schema wasm', 'utf8');
-    await writeFile(join(payloadDir, 'runtime', 'prisma-migrate'), 'prisma migrate', 'utf8');
-  }
+  void serverComponent;
+  await writeFile(join(payloadDir, 'runtime', 'schema-engine'), 'schema engine', 'utf8');
+  await writeFile(join(payloadDir, 'runtime', 'prisma_schema_build_bg.wasm'), 'schema wasm', 'utf8');
+  await writeFile(join(payloadDir, 'runtime', 'prisma-migrate'), 'prisma migrate', 'utf8');
   await writeFile(join(payloadDir, entrypoint), JSON.stringify({ version: 1, artifactFingerprint }), 'utf8');
   await writeArtifactManifest({
     artifactDir,
@@ -108,7 +106,7 @@ test('managed server code payload links the published server support directories
       },
     });
 
-    for (const name of ['generated', 'prisma', 'node_modules']) {
+    for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
       assert.equal((await lstat(join(artifactDir, 'payload', name))).isSymbolicLink(), true);
       assert.equal(
         await readFile(join(artifactDir, 'payload', name, 'support.txt'), 'utf8'),
@@ -120,7 +118,7 @@ test('managed server code payload links the published server support directories
   }
 });
 
-test('full managed server code receives Prisma migration runtime from server support', async () => {
+test('every managed server preset receives Prisma migration runtime from server support', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-server-artifact-full-links-'));
   const artifactDir = join(root, 'artifacts', 'server', 'server-code-fingerprint');
   const supportArtifactDir = join(root, 'artifacts', 'server-support', 'server-support-fingerprint');
@@ -128,7 +126,7 @@ test('full managed server code receives Prisma migration runtime from server sup
     await writeServerSupportArtifact({
       artifactDir: supportArtifactDir,
       artifactFingerprint: 'server-support-fingerprint',
-      serverComponent: 'happier-server',
+      serverComponent: 'happier-server-light',
     });
     await buildServerArtifact({
       rootDir: root,
@@ -136,7 +134,7 @@ test('full managed server code receives Prisma migration runtime from server sup
       artifactFingerprint: 'server-code-fingerprint',
       sourceMetadata: {
         repoDir: root,
-        serverComponent: 'happier-server',
+        serverComponent: 'happier-server-light',
         sourceFingerprint: 'source-fingerprint',
         builtAt: '2026-08-16T10:00:00.000Z',
       },
@@ -224,7 +222,7 @@ test('a second code-only server publication reuses support and copies neither su
       resolveServerRuntimeSupportInputsImpl: async () => supportInputs,
       buildServerRuntimeSupportPayloadImpl: async ({ payloadDir }) => {
         supportPayloadBuilds += 1;
-        for (const name of ['generated', 'prisma', 'node_modules']) {
+        for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
           await mkdir(join(payloadDir, name), { recursive: true });
           await writeFile(join(payloadDir, name, 'stable-native-support'), 'support bytes', 'utf8');
         }
@@ -313,7 +311,7 @@ test('server support publication serializes a shared support identity through it
           signalFirstSupportBuildStarted();
           await firstSupportBuildStarted;
         }
-        for (const name of ['generated', 'prisma', 'node_modules']) {
+        for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
           await mkdir(join(payloadDir, name), { recursive: true });
           await writeFile(join(payloadDir, name, 'support.txt'), 'support bytes', 'utf8');
         }
@@ -382,7 +380,7 @@ test('server support publication rejects inputs that change while staging', asyn
           fingerprint: supportInputReads++ === 0 ? 'support-before-stage' : 'support-after-stage',
         }),
         buildServerRuntimeSupportPayloadImpl: async ({ payloadDir }) => {
-          for (const name of ['generated', 'prisma', 'node_modules']) {
+          for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
             await mkdir(join(payloadDir, name), { recursive: true });
             await writeFile(join(payloadDir, name, 'support.txt'), 'support bytes', 'utf8');
           }

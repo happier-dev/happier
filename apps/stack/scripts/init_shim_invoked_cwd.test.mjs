@@ -30,7 +30,20 @@ function runExecutable(command, args, { cwd, env }) {
   });
 }
 
-test('hstack init shim preserves HAPPIER_STACK_INVOKED_CWD before changing directories', async () => {
+function fixtureEnv(overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  for (const key of [
+    'HAPPIER_STACK_CLI_ROOT_DIR',
+    'HAPPIER_STACK_RUNTIME_DIR',
+    'HAPPIER_STACK_HOME_DIR',
+    'HAPPIER_STACK_WORKSPACE_DIR',
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
+test('hstack init shim captures the current cwd before changing directories', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-init-shim-'));
@@ -49,7 +62,7 @@ test('hstack init shim preserves HAPPIER_STACK_INVOKED_CWD before changing direc
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(res.code, 0, `expected init to exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
@@ -58,7 +71,7 @@ test('hstack init shim preserves HAPPIER_STACK_INVOKED_CWD before changing direc
     assert.match(shim, /HAPPIER_STACK_INVOKED_CWD/, 'expected shim to reference HAPPIER_STACK_INVOKED_CWD');
     assert.match(
       shim,
-      /HAPPIER_STACK_INVOKED_CWD:-\$\{PWD:-\$HOME\}/,
+      /HAPPIER_STACK_INVOKED_CWD="\$\{PWD:-\$HOME\}"/,
       'expected shim to tolerate launchd environments where PWD is unset'
     );
   } finally {
@@ -87,6 +100,7 @@ test('hstack init shim prefers the current PATH node for repo CLI launches when 
       [
         'process.stdout.write(JSON.stringify({',
         '  fakeNodeUsed: process.env.FAKE_NODE_USED === "1",',
+        '  invokedCwd: process.env.HAPPIER_STACK_INVOKED_CWD || null,',
         '  argv: process.argv.slice(2),',
         '}));',
         '',
@@ -110,7 +124,7 @@ test('hstack init shim prefers the current PATH node for repo CLI launches when 
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(
       initRes.code,
@@ -124,17 +138,18 @@ test('hstack init shim prefers the current PATH node for repo CLI launches when 
       ['shim-probe'],
       {
         cwd: rootDir,
-        env: {
-          ...process.env,
+        env: fixtureEnv({
           PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
           HAPPIER_STACK_NODE: join(tmp, 'missing-node'),
-        },
+          HAPPIER_STACK_INVOKED_CWD: join(tmp, 'stale-caller'),
+        }),
       }
     );
 
     assert.equal(runRes.code, 0, `expected shim to exit 0\nstdout:\n${runRes.stdout}\nstderr:\n${runRes.stderr}`);
     const data = JSON.parse(runRes.stdout);
     assert.equal(data.fakeNodeUsed, true, `expected shim to use PATH node\nstdout:\n${runRes.stdout}`);
+    assert.equal(data.invokedCwd, rootDir);
     assert.deepEqual(data.argv, ['shim-probe']);
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -193,7 +208,7 @@ test('hstack init shim prefers the current PATH node for service-mode repo CLI l
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(
       initRes.code,
@@ -207,12 +222,11 @@ test('hstack init shim prefers the current PATH node for service-mode repo CLI l
       ['shim-probe'],
       {
         cwd: rootDir,
-        env: {
-          ...process.env,
+        env: fixtureEnv({
           PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
           HAPPIER_STACK_NODE: pinnedNodePath,
           HAPPIER_STACK_SERVICE_MODE: '1',
-        },
+        }),
       }
     );
 
@@ -267,7 +281,7 @@ test('hstack init shim falls back to HAPPIER_STACK_NODE when PATH has no node', 
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(
       initRes.code,
@@ -281,12 +295,11 @@ test('hstack init shim falls back to HAPPIER_STACK_NODE when PATH has no node', 
       ['shim-probe'],
       {
         cwd: rootDir,
-        env: {
-          ...process.env,
+        env: fixtureEnv({
           PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
           HAPPIER_STACK_NODE: pinnedNodePath,
           HAPPIER_STACK_SERVICE_MODE: '1',
-        },
+        }),
       }
     );
 
@@ -322,7 +335,7 @@ test('hstack init shim fails clearly when repo CLI mode has no node available', 
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(initRes.code, 0);
 
@@ -332,11 +345,10 @@ test('hstack init shim fails clearly when repo CLI mode has no node available', 
       ['shim-probe'],
       {
         cwd: rootDir,
-        env: {
-          ...process.env,
+        env: fixtureEnv({
           PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
           HAPPIER_STACK_NODE: join(tmp, 'missing-node'),
-        },
+        }),
       }
     );
 
@@ -366,7 +378,7 @@ test('hstack init shim still reports a missing runtime install when no runtime e
         '--no-runtime',
         '--no-bootstrap',
       ],
-      { cwd: rootDir, env: { ...process.env } }
+      { cwd: rootDir, env: fixtureEnv() }
     );
     assert.equal(initRes.code, 0);
 
@@ -376,11 +388,10 @@ test('hstack init shim still reports a missing runtime install when no runtime e
       ['shim-probe'],
       {
         cwd: rootDir,
-        env: {
-          ...process.env,
+        env: fixtureEnv({
           PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
           HAPPIER_STACK_NODE: join(tmp, 'missing-node'),
-        },
+        }),
       }
     );
 

@@ -362,7 +362,7 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // Dev-target configuration and SSH diagnostics use only Stack-local modules.
   // Keep them available while an unrelated CLI/workspace publication owns the
   // shared build lock (notably for inspecting or repairing a running target).
-  if (command === 'dev-targets' || command === 'host') return true;
+  if (command === 'dev-targets' || command === 'dev-vm') return true;
 
   // The TUI must render before repository publication can block. Its long-lived
   // child delegates dependency admission to the server, daemon, and Expo owners,
@@ -457,6 +457,11 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // Stack control plane. Re-running the global wrapper preflight here serializes
   // startup before incumbent/last-green adoption can occur.
   if (isTuiManaged) return true;
+
+  // Explicit source watch starts use the same component-specific admission owners
+  // as TUI children. Let them validate/adopt retained outputs before a global
+  // workspace publication can fail on unrelated current-source errors.
+  if (subcommand === 'dev' && rest.includes('--watch')) return true;
 
   const hasBackground = rest.some((arg) => arg === '--background');
   return hasBackground && hasJsonFlag(rest);

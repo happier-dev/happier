@@ -7,7 +7,7 @@ import {
   resolveManagedLimaProfile,
 } from './profiles.mjs';
 
-test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and containerd-free', () => {
+test('managed Lima balanced profile leaves TCP service reachability to the execution-host SSH transport', () => {
   const profile = resolveManagedLimaProfile('balanced');
 
   assert.deepEqual(profile, {
@@ -23,10 +23,7 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
     containerd: 'none',
     mountNone: true,
     rosetta: false,
-    portForwards: [
-      { guestStart: 52005, guestEnd: 54004, hostStart: 52005, hostEnd: 54004 },
-      { guestStart: 18081, guestEnd: 20080, hostStart: 18081, hostEnd: 20080 },
-    ],
+    portForwards: [],
   });
 
   assert.deepEqual(buildManagedLimaCreateArgs({ instance: 'happier-agent-primary', profile }), [
@@ -43,7 +40,7 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
     '--set', '.vmOpts.vz.diskImageFormat = "raw"',
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
-    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]},{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]',
+    '--set', '.portForwards = [{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]',
     'template:ubuntu-24.04',
   ]);
 });
@@ -60,6 +57,14 @@ test('managed Lima worker profile can render a native x86_64 guest without chang
   );
 });
 
+test('managed Lima heavy profile leaves Mac headroom while providing a large sparse guest disk', () => {
+  const profile = resolveManagedLimaProfile('heavy');
+
+  assert.equal(profile.cpus, 14);
+  assert.equal(profile.memoryGiB, 72);
+  assert.equal(profile.diskGiB, 640);
+});
+
 test('managed Lima edit args update only mutable retained-instance settings', () => {
   assert.deepEqual(buildManagedLimaEditArgs({
     instance: 'happier-agent-primary',
@@ -74,7 +79,7 @@ test('managed Lima edit args update only mutable retained-instance settings', ()
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
     '--set', '.containerd.user = false | .containerd.system = false',
-    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]},{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]',
+    '--set', '.portForwards = [{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]',
     'happier-agent-primary',
   ]);
 });
