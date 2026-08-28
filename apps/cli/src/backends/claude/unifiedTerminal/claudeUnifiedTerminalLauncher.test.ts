@@ -783,10 +783,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
       },
     });
 
-    expect(client.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['l17'],
-      reason: 'runtime_disposed_before_delivery',
-    });
+    expect(client.blockPendingMessageDelivery).not.toHaveBeenCalled();
     expect(queue.unshift).not.toHaveBeenCalled();
     expect(client.bindProviderInputOutcomeProducer).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'claude',
@@ -2982,11 +2979,25 @@ describe('claudeUnifiedTerminalLauncher', () => {
     mocks.runClaudeUnifiedTerminalSession
       .mockImplementationOnce(async (runOpts: {
         nextMessage: () => Promise<{ message: string; mode: { permissionMode: string } } | null>;
+        returnUnconsumedMessage?: (input: {
+          message: string;
+          mode: { permissionMode: string };
+          maxUserMessageSeq?: number | null;
+          userMessageLocalIds?: readonly string[] | null;
+        }) => void;
         onTerminalHostReady?: (input: { handle: TerminalHostHandle; terminal: TerminalAttachmentInfo['terminal'] }) => Promise<void>;
       }) => {
-        await expect(runOpts.nextMessage()).resolves.toEqual(expect.objectContaining({
+        const batch = await runOpts.nextMessage();
+        expect(batch).toEqual(expect.objectContaining({
           message: 'resume after readiness timeout',
         }));
+        if (!batch) throw new Error('expected pending readiness-timeout batch');
+        runOpts.returnUnconsumedMessage?.({
+          message: batch.message,
+          mode: batch.mode,
+          maxUserMessageSeq: null,
+          userMessageLocalIds: ['pending-readiness-timeout'],
+        });
         await runOpts.onTerminalHostReady?.({
           handle: {
             kind: 'zellij',
@@ -3032,6 +3043,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
       expect.objectContaining({ permissionMode: 'default' }),
       { userMessageSeq: null, userMessageLocalIds: ['pending-readiness-timeout'] },
     );
+    expect(session.client.blockPendingMessageDelivery).not.toHaveBeenCalled();
 
     expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith({
       provider: 'claude',
