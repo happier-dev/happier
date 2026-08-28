@@ -72,6 +72,27 @@ export type TargetedPluginSurfacePhysicalMountFacts = Readonly<{
     targetedContributions: DaemonPluginUiTargetedSurfaceMountV1['contributorTargetedContributions'];
 }>;
 
+/**
+ * Stable device-QA identity for one physically selected targeted child. The
+ * marker is deliberately derived only from the daemon-admitted mount facts;
+ * it is diagnostic text, never mount/currentness authority.
+ */
+export function buildTargetedPluginSurfaceReadyTestId(
+    mount: DaemonPluginUiTargetedSurfaceMountV1,
+): string {
+    return [
+        'plugin-targeted-surface-ready',
+        mount.target.pluginId,
+        mount.target.immutableGenerationId,
+        mount.contributor.pluginId,
+        mount.contributor.contributionId,
+        mount.contributor.immutableGenerationId,
+        mount.selectedRenderer.identity.pluginId,
+        mount.selectedRenderer.identity.localId,
+        mount.selectedRenderer.renderer.kind,
+    ].join(':');
+}
+
 const EMPTY_TARGETED_SURFACE_RESOURCE_SCOPE: readonly PluginUiSurfaceContextV1['resourceScope'][number][] = Object.freeze([]);
 
 /**

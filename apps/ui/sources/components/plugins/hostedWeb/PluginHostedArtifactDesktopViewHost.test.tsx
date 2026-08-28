@@ -95,6 +95,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
 
         const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
         const { tree } = await renderScreen(<PluginHostedArtifactDesktopViewHost
+            title="Plugin preview"
             artifact={{
                 artifactHandleToken: 'hpat_test_token',
                 initialPathAndQuery: '/?happierBridgeNonce=nonce-1',
@@ -128,6 +129,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
                 request: {
                     viewId: expect.stringMatching(/^hpa_view_[a-f0-9]{32}$/),
                     token: 'hpat_test_token',
+                    title: 'Plugin preview',
                     initialPathAndQuery: '/?happierBridgeNonce=nonce-1',
                 },
             },
@@ -205,6 +207,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
 
         const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
         const { tree } = await renderScreen(<PluginHostedArtifactDesktopViewHost
+            title="Plugin preview"
             artifact={{
                 artifactHandleToken: 'hpat_test_token',
                 initialPathAndQuery: '/?happierBridgeNonce=nonce-1',
@@ -285,6 +288,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
 
         const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
         const { tree } = await renderScreen(<PluginHostedArtifactDesktopViewHost
+            title="Plugin preview"
             artifact={{
                 artifactHandleToken: 'hpat_test_token',
                 initialPathAndQuery: '/?happierBridgeNonce=nonce-1',
@@ -336,6 +340,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
 
         const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
         const { tree } = await renderScreen(<PluginHostedArtifactDesktopViewHost
+            title="Plugin preview"
             artifact={{
                 artifactHandleToken: 'hpat_test_token',
                 initialPathAndQuery: '/',
@@ -370,5 +375,94 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
         await act(async () => {
             tree.unmount();
         });
+    });
+
+    it('uses a fresh native view identity when the localized title changes', async () => {
+        invokeDesktopHost.mockImplementation(async (command: string) => (
+            command === 'desktop_hosted_artifact_open_view' ? { kind: 'opened' } : { kind: 'ok' }
+        ));
+        const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
+        const element = (title: string) => <PluginHostedArtifactDesktopViewHost
+            title={title}
+            artifact={{ artifactHandleToken: 'hpat_test_token', initialPathAndQuery: '/' }}
+            testID="plugin-hosted-web-frame"
+        />;
+        const { tree } = await renderScreen(element('Plugin preview'));
+        await act(async () => { await Promise.resolve(); });
+        const firstOpen = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const firstViewId = (firstOpen?.[1] as { request: { viewId: string } }).request.viewId;
+
+        await act(async () => {
+            tree.update(element('Aperçu du plugin'));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const openCalls = invokeDesktopHost.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const replacement = openCalls.at(-1)?.[1] as { request: { viewId: string; title: string } };
+        expect(replacement.request).toMatchObject({ title: 'Aperçu du plugin' });
+        expect(replacement.request.viewId).not.toBe(firstViewId);
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
+            request: { viewId: firstViewId, token: 'hpat_test_token' },
+        });
+
+        await act(async () => { tree.unmount(); });
+    });
+
+    it('keeps the replacement active when the preceding title opens late', async () => {
+        let resolveFirstOpen: ((value: unknown) => void) | undefined;
+        invokeDesktopHost.mockImplementation(async (command: string, payload?: unknown) => {
+            if (command === 'desktop_hosted_artifact_open_view') {
+                const title = (payload as { request: { title: string } }).request.title;
+                if (title === 'Plugin preview') {
+                    return await new Promise((resolve) => { resolveFirstOpen = resolve; });
+                }
+                return { kind: 'opened' };
+            }
+            if (command === 'desktop_hosted_artifact_go_back') return { kind: 'handled', handled: true };
+            return { kind: 'ok' };
+        });
+        const onNativeArtifactGoBackResult = vi.fn();
+        const { PluginHostedArtifactDesktopViewHost } = await import('./PluginHostedArtifactDesktopViewHost');
+        const element = (title: string, goBack = false) => <PluginHostedArtifactDesktopViewHost
+            title={title}
+            artifact={{ artifactHandleToken: 'hpat_test_token', initialPathAndQuery: '/' }}
+            navigationCommand={goBack ? { commandId: 'replacement-back', kind: 'goBack' } : undefined}
+            onNativeArtifactGoBackResult={onNativeArtifactGoBackResult}
+            testID="plugin-hosted-web-frame"
+        />;
+        const { tree } = await renderScreen(element('Plugin preview'));
+        await act(async () => { await Promise.resolve(); });
+        const firstOpen = invokeDesktopHost.mock.calls.find(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const firstViewId = (firstOpen?.[1] as { request: { viewId: string } }).request.viewId;
+
+        await act(async () => {
+            tree.update(element('Aperçu du plugin'));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const openCalls = invokeDesktopHost.mock.calls.filter(([command]) => command === 'desktop_hosted_artifact_open_view');
+        const replacementViewId = (openCalls.at(-1)?.[1] as { request: { viewId: string } }).request.viewId;
+        expect(replacementViewId).not.toBe(firstViewId);
+
+        await act(async () => {
+            resolveFirstOpen?.({ kind: 'opened' });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_close_view', {
+            request: { viewId: firstViewId, token: 'hpat_test_token' },
+        });
+
+        await act(async () => {
+            tree.update(element('Aperçu du plugin', true));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(invokeDesktopHost).toHaveBeenCalledWith('desktop_hosted_artifact_go_back', {
+            request: { viewId: replacementViewId, token: 'hpat_test_token' },
+        });
+        expect(onNativeArtifactGoBackResult).toHaveBeenCalledExactlyOnceWith(true);
+
+        await act(async () => { tree.unmount(); });
     });
 });

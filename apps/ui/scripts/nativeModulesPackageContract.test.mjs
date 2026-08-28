@@ -193,6 +193,27 @@ test('React Native carries the upstream Xcode 26 fmt fix and a version-matched H
     );
 });
 
+test('React Native Gradle plugin uses the Gradle-9-compatible Foojay resolver patch', async () => {
+    const appPackageJson = await readJson(join(appRoot, 'package.json'));
+    const reactNativeVersion = appPackageJson.dependencies?.['react-native'];
+    const gradlePluginPackageJsonPath = nodeRequire.resolve('@react-native/gradle-plugin/package.json');
+    const gradlePluginPackageJson = await readJson(gradlePluginPackageJsonPath);
+    const patchPath = join(appRoot, 'patches', `@react-native+gradle-plugin+${reactNativeVersion}.patch`);
+
+    assert.equal(gradlePluginPackageJson.version, reactNativeVersion);
+    assert.equal(await pathExists(patchPath), true);
+
+    const patch = await readText(patchPath);
+    assert.match(
+        patch,
+        /^-plugins \{ id\("org\.gradle\.toolchains\.foojay-resolver-convention"\)\.version\("0\.5\.0"\) \}$/m,
+    );
+    assert.match(
+        patch,
+        /^\+plugins \{ id\("org\.gradle\.toolchains\.foojay-resolver-convention"\)\.version\("1\.0\.0"\) \}$/m,
+    );
+});
+
 test('sherpa-native declares Expo module metadata consistent with sibling native modules', async () => {
     const audioStreamPackageRoot = join(repoRoot, 'packages', 'audio-stream-native');
     const sherpaPackageRoot = join(repoRoot, 'packages', 'sherpa-native');
@@ -560,6 +581,7 @@ test('terminal-native declares Expo module metadata and gated package surface', 
     );
     assert.deepEqual(terminalPackageJson.files, [
         'native-renderers.json',
+        'device-evidence-capture-authorities.json',
         'src',
         'ios/HappierTerminalNativeModule.swift',
         'ios/GhosttyRuntime.swift',
@@ -569,6 +591,8 @@ test('terminal-native declares Expo module metadata and gated package surface', 
         'ios/GhosttyLinks.swift',
         'ios/GhosttyAccessibility.swift',
         'ios/HappierTerminalNative.podspec',
+        'ios/Resources',
+        'ios/namespaceGhosttyWuffs.sh',
         'ios/Vendor/README.md',
         'ios/Vendor/NOTICE.md',
         'ios/Vendor/LICENSE-libghostty-spm.txt',
@@ -639,6 +663,35 @@ test('terminal-native declares Expo module metadata and gated package surface', 
 test('terminal-native records native renderer supply-chain gates', async () => {
     const terminalPackageRoot = join(repoRoot, 'packages', 'terminal-native');
     const rendererPolicy = await readJson(join(terminalPackageRoot, 'native-renderers.json'));
+    const capturePolicy = await readJson(join(terminalPackageRoot, 'device-evidence-capture-authorities.json'));
+    const releaseApprovalPolicy = await readJson(join(terminalPackageRoot, 'release-approval-authorities.json'));
+
+    assert.equal(capturePolicy.schemaVersion, 2);
+    assert.deepEqual(
+        capturePolicy.authorities,
+        [{
+            id: 'internal-term-device-qa-20260828',
+            publicKeyPem: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA7JZJEjjvoppVHW56WRjm2ijp5QsHrwqnJmrCt7T43Rg=\n-----END PUBLIC KEY-----\n',
+            validFrom: '2026-08-28T11:30:00Z',
+            validUntil: '2026-08-30T23:59:59Z',
+            scopes: [
+                {
+                    rendererId: 'ios-ghosttykit',
+                    allowedBuildIds: ['term-build-7cb8c64aca34fdab2bea0a578dc93371'],
+                },
+                {
+                    rendererId: 'android-termux',
+                    allowedBuildIds: ['term-build-ecffc9a49b0c94353ec83ba1ea982357'],
+                },
+            ],
+        }],
+        'capture authority must remain bounded to the approved internal-QA builds and validity window',
+    );
+    assert.deepEqual(
+        releaseApprovalPolicy,
+        { schemaVersion: 1, authorities: [] },
+        'internal QA capture authority must never grant Android legal/product release approval',
+    );
 
     assert.equal(rendererPolicy.iosGhostty.renderer, 'ios-ghosttykit');
     assert.equal(rendererPolicy.iosGhostty.integration, 'expo-module-libghostty-spm-vendored-xcframework');
@@ -655,6 +708,11 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     );
     assert.equal(rendererPolicy.iosGhostty.upstream.observedCommit, 'c069f05e0a4ef50143e943e954ed75e52e947009');
     assert.equal(rendererPolicy.iosGhostty.upstream.observedPackageVersion, '1.2.4');
+    assert.deepEqual(rendererPolicy.iosGhostty.artifact.linkCompatibility, {
+        reactNativeSkiaWuffsIsolation: 'required',
+        buildPhase: 'ios/namespaceGhosttyWuffs.sh',
+        reason: "Ghostty Wuffs 0.4 and React Native Skia Wuffs 0.3 export overlapping unversioned symbols; isolate Ghostty's private copy before the final app link.",
+    });
     assert.deepEqual(rendererPolicy.iosGhostty.license, {
         kind: 'MIT',
         bundledPath: 'ios/Vendor/LICENSE-libghostty-spm.txt',
@@ -673,6 +731,7 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     );
     assert.ok(rendererPolicy.iosGhostty.gates.includes('pinned-libghostty-spm-version'));
     assert.ok(rendererPolicy.iosGhostty.gates.includes('checksum-pinned-artifact'));
+	assert.ok(rendererPolicy.iosGhostty.gates.includes('react-native-skia-wuffs-isolation'));
 	assert.ok(rendererPolicy.iosGhostty.gates.includes('custom-accessibility-model-or-webview-accessible-fallback'));
 
 	assert.equal(rendererPolicy.androidTermux.renderer, 'android-termux');
@@ -694,8 +753,10 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('long-press-drag-range-selection'));
     assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('selected-range-rendering-and-copy'));
     assert.equal(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('selection-handles'), false);
-    assert.ok(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('custom-accessibility'));
-    assert.ok(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa.includes('ime-keyboard-and-mouse-smoke'));
+    assert.ok(rendererPolicy.androidTermux.interactionModel.completedDeviceQa.includes('localized-accessibility-summary-and-actions'));
+    assert.ok(rendererPolicy.androidTermux.interactionModel.completedDeviceQa.includes('renderer-crash-event'));
+    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.remainingGaps, ['complete-term-7b-loaded-workload-matrix']);
+    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa, ['complete-term-7b-loaded-workload-matrix']);
     assert.ok(rendererPolicy.androidTermux.gates.includes('legal-product-approval'));
     assert.ok(rendererPolicy.androidTermux.gates.includes('custom-accessibility-model-or-webview-accessible-fallback'));
 });
@@ -755,7 +816,7 @@ test('terminal-native iOS Ghostty view owns text, delete, and pointer routing in
         'GhosttySurfaceBridge.swift',
     ));
 
-    assert.match(viewSource, /final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits/);
+    assert.match(viewSource, /final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits/);
     assert.match(viewSource, /func insertText\(_ text: String\)/);
     assert.match(viewSource, /func deleteBackward\(\)/);
     assert.match(viewSource, /override func touchesBegan\(_ touches: Set<UITouch>, with event: UIEvent\?\)/);
@@ -1126,7 +1187,22 @@ test('terminal-native podspec links GhosttyKit only when the XCFramework artifac
     assert.match(podspec, /File\.exist\?\(ghostty_framework_path\)/);
     assert.match(podspec, /s\.vendored_frameworks\s*=\s*'Vendor\/GhosttyKit\.xcframework'/);
     assert.match(podspec, /s\.libraries\s*=\s*'c\+\+'/);
+    assert.match(podspec, /namespaceGhosttyWuffs\.sh/);
+    assert.match(podspec, /PODS_XCFRAMEWORKS_BUILD_DIR/);
+    assert.match(podspec, /execution_position\s*=>\s*:after_compile/);
     assert.match(podspec, /HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY/);
+
+    const wuffsIsolation = await readText(join(
+        repoRoot,
+        'packages',
+        'terminal-native',
+        'ios',
+        'namespaceGhosttyWuffs.sh',
+    ));
+    assert.match(wuffsIsolation, /libghostty_zcu\.o wuffs-v0\.4\.o/);
+    assert.match(wuffsIsolation, /nmedit -R wuffs-symbols\.txt/);
+    assert.match(wuffsIsolation, /_ghostty_surface_new\$/);
+    assert.match(wuffsIsolation, /Ghostty Wuffs symbols remain public after isolation/);
 });
 
 test('terminal-native is registered as a workspace and UI dependency', async () => {
@@ -1221,6 +1297,50 @@ test('EAS profiles include terminal-native without self-asserting external relea
                 undefined,
                 `EAS profile ${profileId} must not self-assert external release gate ${gate}`,
             );
+        }
+    }
+});
+
+test('every EAS profile classifies terminal-native engineering QA with an explicit internal-only allowlist', async () => {
+    const easJsonPath = join(appRoot, 'eas.json');
+    const easJson = await readJson(easJsonPath);
+    const rendererPolicy = await readJson(join(repoRoot, 'packages', 'terminal-native', 'native-renderers.json'));
+    const allowedAppEnvironments = new Set(
+        rendererPolicy.engineeringQa.allowedAppEnvironments,
+    );
+    const expectedByProfile = {
+        base: false,
+        internaldev: true,
+        'internaldev-dev-client': true,
+        'internaldev-native-ssh': true,
+        'internaldev-store': true,
+        internalpreview: true,
+        'internalpreview-apk': true,
+        publicdev: false,
+        'publicdev-apk': false,
+        'publicdev-dev-client': false,
+        preview: false,
+        'preview-apk': false,
+        production: false,
+        'production-preview': false,
+        'production-apk': false,
+        'production-preview-apk': false,
+        development: true,
+        'development-store': true,
+        canary: true,
+        'canary-apk': true,
+    };
+
+    assert.deepEqual(Object.keys(easJson.build).sort(), Object.keys(expectedByProfile).sort());
+    for (const [profileId, expectedAllowed] of Object.entries(expectedByProfile)) {
+        const env = resolveEasBuildProfileEnv({ easJsonPath, profileId });
+        assert.equal(
+            allowedAppEnvironments.has(String(env.APP_ENV ?? '').trim().toLowerCase()),
+            expectedAllowed,
+            `Unexpected terminal-native engineering-QA classification for EAS profile ${profileId}`,
+        );
+        if (!expectedAllowed) {
+            assert.notEqual(env.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED, '1');
         }
     }
 });

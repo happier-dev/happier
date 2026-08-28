@@ -13,6 +13,13 @@ type PluginSurfaceInteractionBoundaryProps = Readonly<{
     enabled: boolean;
     snapshotTitle: string;
     surfaceId: string;
+    loadedRuntimeIdentity?: Readonly<{
+        pluginId: string;
+        generation: string;
+        artifactDigest: string;
+        machineId?: string | null;
+        serverId?: string | null;
+    }>;
 }>;
 
 export function PluginSurfaceInteractionBoundary(

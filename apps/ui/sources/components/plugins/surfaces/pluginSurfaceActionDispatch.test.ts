@@ -2212,6 +2212,33 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
             .toContain('plugin_action_surface_unavailable');
     });
 
+    it('preserves canonical contributed-action remediation on the generic dispatch outcome', async () => {
+        const execute = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true as const,
+            result: {
+                ok: false as const,
+                code: 'channels_connection_required',
+                retryable: false,
+                remediation: { kind: 'openSettings' as const, path: '/settings/channels' },
+            },
+        }));
+
+        await expect(dispatchPluginSurfaceAction({
+            action: { pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' },
+            contributedAction: {
+                machineId: 'machine-1',
+                expectedGeneration: '9',
+                execute,
+            },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'channels_connection_required',
+            retryable: false,
+            remediation: { kind: 'openSettings', path: '/settings/channels' },
+        });
+    });
+
     it('rejects an unreachable daemon front door as a typed failure', async () => {
         contributedActionExecute.mockClear();
         contributedActionExecute.mockResolvedValueOnce({

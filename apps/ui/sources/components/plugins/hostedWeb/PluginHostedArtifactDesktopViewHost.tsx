@@ -35,6 +35,7 @@ type DesktopArtifactBridge = Readonly<{
 }>;
 
 type DesktopArtifactViewProps = Readonly<{
+    title: string;
     artifact: Readonly<{
         artifactHandleToken: string;
         initialPathAndQuery: string;
@@ -162,7 +163,7 @@ function boundsEqual(left: ViewBounds | null, right: ViewBounds): boolean {
  * the view's trusted command/event transport and geometry; Artifact remains
  * the authority for cache bytes, registration, currentness, and retirement.
  */
-export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewProps): React.ReactElement {
+function PluginHostedArtifactDesktopViewLifetime(props: DesktopArtifactViewProps): React.ReactElement {
     const viewIdRef = React.useRef<string | null>(null);
     if (viewIdRef.current === null) viewIdRef.current = createViewId();
     const viewId = viewIdRef.current;
@@ -350,6 +351,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
                     request: {
                         viewId,
                         token: props.artifact.artifactHandleToken,
+                        title: props.title,
                         initialPathAndQuery: props.artifact.initialPathAndQuery,
                     },
                 });
@@ -385,7 +387,7 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
             unlisten?.();
             close();
         };
-    }, [flushPendingGuestMessages, handleNativeEvent, props.artifact.artifactHandleToken, props.artifact.initialPathAndQuery, scheduleBoundsSync, viewId]);
+    }, [flushPendingGuestMessages, handleNativeEvent, props.artifact.artifactHandleToken, props.artifact.initialPathAndQuery, props.title, scheduleBoundsSync, viewId]);
 
     React.useEffect(() => {
         const navigationCommand = props.navigationCommand;
@@ -451,6 +453,19 @@ export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewPr
             />
         </View>
     );
+}
+
+export function PluginHostedArtifactDesktopViewHost(props: DesktopArtifactViewProps): React.ReactElement {
+    // Every native-open input owns one independent React lifetime. This keeps
+    // the asynchronous listener/open/close refs generation-local: a late open
+    // from the preceding title, token, or entry cannot clear or retire the
+    // replacement child's state.
+    const lifetimeKey = [
+        props.artifact.artifactHandleToken,
+        props.artifact.initialPathAndQuery,
+        props.title,
+    ].join('\u0000');
+    return <PluginHostedArtifactDesktopViewLifetime key={lifetimeKey} {...props} />;
 }
 
 const styles = StyleSheet.create({

@@ -60,6 +60,7 @@ const staticModel: Model = Object.freeze({
     requiredHostMethods: Object.freeze([]),
     declarativeInventory: Object.freeze({
         actions: Object.freeze([]),
+        destinations: Object.freeze([]),
         settings: Object.freeze([]),
         uiQueries: Object.freeze([]),
     }),
@@ -76,6 +77,7 @@ const staticModelWithRefreshAction: Model = Object.freeze({
             generation: '7',
             enabled: true,
         }]),
+        destinations: Object.freeze([]),
         settings: Object.freeze([]),
         uiQueries: Object.freeze([]),
     }),
@@ -101,6 +103,7 @@ const staticModelWithOpenTasksQuery: Model = Object.freeze({
     ...staticModel,
     declarativeInventory: Object.freeze({
         actions: Object.freeze([]),
+        destinations: Object.freeze([]),
         settings: Object.freeze([]),
         uiQueries: Object.freeze([openTasksQuery]),
     }),
@@ -129,6 +132,7 @@ const staticModelWithOddDuplicateOpenTasksQuery: Model = Object.freeze({
     ...staticModel,
     declarativeInventory: Object.freeze({
         actions: Object.freeze([]),
+        destinations: Object.freeze([]),
         settings: Object.freeze([]),
         // Three occurrences exercises the losing path where deleting only the
         // second duplicate allowed the third to become an invented authority.
@@ -247,6 +251,7 @@ function createDocumentHost(input: Readonly<{
         context: async () => unexpectedHostApiCall('context'),
         watchContext: async () => unexpectedHostApiCall('watchContext'),
         publishCurrentUiContext: () => unexpectedHostApiCall('publishCurrentUiContext'),
+        settleEphemeralInput: async () => unexpectedHostApiCall('settleEphemeralInput'),
         activeComposer: async () => unexpectedHostApiCall('activeComposer'),
         readComposer: async () => unexpectedHostApiCall('readComposer'),
         watchComposer: async () => unexpectedHostApiCall('watchComposer'),

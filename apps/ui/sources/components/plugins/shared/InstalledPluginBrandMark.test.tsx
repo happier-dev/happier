@@ -70,6 +70,27 @@ describe('InstalledPluginBrandMark', () => {
         expect(screen.getTextContent()).not.toContain('Acme Brand');
     });
 
+    it('fits the canonical brand mark into an exact compact host-chrome slot', async () => {
+        const screen = await renderScreen(
+            <InstalledPluginBrandMark
+                brand={brand}
+                size="small"
+                pixelSize={14}
+                externallyLabelled
+                testID="plugin-brand"
+            />,
+        );
+
+        const slot = screen.findByTestId('plugin-brand');
+        expect(slot?.props.style).toEqual(expect.objectContaining({ width: 14, height: 14 }));
+        const scaled = screen.findAllByType('View').find((view) => (
+            view.props.style?.width === 32
+            && view.props.style?.height === 32
+            && view.props.style?.transform?.[0]?.scale === 14 / 32
+        ));
+        expect(scaled).toBeTruthy();
+    });
+
     it('inverts the opaque backing contrast pair in dark theme without changing the packaged bitmap', async () => {
         themeState.theme = darkTheme;
         const screen = await renderScreen(

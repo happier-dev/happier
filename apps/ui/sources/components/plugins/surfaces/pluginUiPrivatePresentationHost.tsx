@@ -293,6 +293,22 @@ function focusPluginUiPrivatePresentationTarget(target: unknown): boolean {
                 return false;
             }
         }
+        // HTMLElement.focus() is allowed to return without throwing when the
+        // browser refuses the transfer (for example, a retained subtree hidden
+        // with display:none). Only DOM targets have an observable acceptance
+        // signal; host/test focusables that are not Nodes keep the structural
+        // success contract above.
+        if (typeof document !== 'undefined'
+            && typeof Node !== 'undefined'
+            && target instanceof Node) {
+            const activeElement = document.activeElement;
+            const accepted = activeElement === target
+                || (typeof Element !== 'undefined'
+                    && target instanceof Element
+                    && activeElement !== null
+                    && target.contains(activeElement));
+            if (!accepted) return false;
+        }
     } else {
         try {
             focus.call(target);

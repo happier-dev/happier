@@ -595,7 +595,13 @@ describe('plugin contributed composer Action chips', () => {
 
         expect(node.props).not.toHaveProperty('aria-pressed');
         expect(node.props.accessibilityState).toBeUndefined();
-        expect(chips[0]?.collapsedOptionsPopover?.selectedOptionId).toBe('fast');
+        const popover = unwrapDiagnosticContent<Readonly<{
+            selectedOptionId?: string | null;
+        }>>(chips[0]?.renderCollapsedPopover?.({
+            anchorRef: React.createRef(),
+            onRequestClose: vi.fn(),
+        }));
+        expect(popover.props.selectedOptionId).toBe('fast');
     });
 
     it('keeps declared choices selected while recovering unknown Resource selections through one bounded contributor diagnostic', async () => {
@@ -1365,7 +1371,7 @@ describe('plugin contributed composer Action chips', () => {
         const compactChip = compactNode;
         expect(compactChip.props.accessibilityRole).toBe('button');
         expect(compactChip.props.accessibilityLabel).toBe('Compact surface');
-        expect(compactChip.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 6, right: 6 });
+        expect(compactChip.props.hitSlop).toBeUndefined();
         const compactVisual = React.Children.only(compactChip.props.children);
         if (!React.isValidElement<Readonly<{ children?: React.ReactNode }>>(compactVisual)) {
             throw new Error('expected compact renderer visual content');

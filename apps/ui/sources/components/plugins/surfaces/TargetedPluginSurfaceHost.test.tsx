@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import {
+    buildTargetedPluginSurfaceReadyTestId,
     createTargetedPluginSurfaceBoundFacts,
     projectTargetedPluginSurfacePhysicalMountFacts,
     readTargetedPluginSurfaceReactMountRequest,
@@ -137,6 +138,20 @@ function launchInputAtSerializedByteLength(byteLength: number): PluginUiJsonValu
 }
 
 describe('readTargetedPluginSurfaceMountRequest', () => {
+    it('projects the device diagnostic from only the exact admitted target, contributor, and renderer facts', () => {
+        expect(buildTargetedPluginSurfaceReadyTestId(rawMount)).toBe([
+            'plugin-targeted-surface-ready',
+            target.pluginId,
+            target.immutableGenerationId,
+            surface.contributor.pluginId,
+            surface.contributor.contributionId,
+            surface.contributor.immutableGenerationId,
+            rawMount.selectedRenderer.identity.pluginId,
+            rawMount.selectedRenderer.identity.localId,
+            rawMount.selectedRenderer.renderer.kind,
+        ].join(':'));
+    });
+
     it('admits an already-normalized declarative leaf only through its one exact correlated B mount', () => {
         const request = readTargetedPluginSurfaceMountRequest({
             node,

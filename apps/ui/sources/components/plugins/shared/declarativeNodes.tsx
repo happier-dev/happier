@@ -16,6 +16,7 @@ import {
     HappierStack,
     HappierStatus,
     HAPPIER_TONE_COLOR_TOKEN,
+    resolveHappierLayoutGap,
     type HappierTone,
 } from '@happier-dev/plugin-ui/presentation';
 import type { HappierUiAccessibility, HappierUiTheme } from '@happier-dev/plugin-ui/environment';
@@ -209,7 +210,7 @@ export type DeclarativeActionAffordance = Readonly<{
     key: string;
     disabled: boolean;
     busy: boolean;
-    onPress?: () => void;
+    onPress?: () => unknown;
 }>;
 
 export type DeclarativeNodeRenderContext = Readonly<{
@@ -316,7 +317,10 @@ const renderDeclarativeContainer: DeclarativeNodeRenderer = (node, context) => (
     <HappierStack
         key={readDeclarativePath(node, context.nodePath)}
         testID={`plugin-declarative-${String(node.kind)}`}
-        gap={node.gap === 'large' ? 16 : node.gap === 'small' ? 4 : 8}
+        gap={resolveHappierLayoutGap(
+            node.gap === 'large' || node.gap === 'small' ? node.gap : 'medium',
+            context.presentationTheme.spacing,
+        )}
         direction={node.kind === 'stack' && node.direction === 'horizontal' ? 'horizontal' : 'vertical'}
         wrap
     >

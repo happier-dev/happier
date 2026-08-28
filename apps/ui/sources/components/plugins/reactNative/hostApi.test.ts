@@ -50,6 +50,32 @@ function readProductionSource(relativePath: string): string {
 }
 
 describe('canonical React Native plugin Host API adapter', () => {
+    it('applies the same strict Resource and clipboard result contract as hosted clients', async () => {
+        const canonicalSurface = createPluginSurfaceContextFixture({
+            mount: canonicalRightPaneMount,
+            target: { kind: 'session', sessionId: 'session-1' },
+        });
+        const createAdapter = (method: 'readResource' | 'readClipboard', result: PluginUiJsonValueV1) => (
+            createCanonicalPluginReactNativeHostApiAdapter({
+                surface: canonicalSurface,
+                requestSurface: surface,
+                requestIdPrefix: `rn-strict-${method}`,
+                handleRequest: async () => result,
+                installedMethods: [method],
+            })
+        );
+
+        await expect(createAdapter('readResource', {
+            contentType: 'text/plain',
+            digest: 'sha256:not-a-canonical-digest',
+            bytesBase64: 'aGVsbG8=',
+        }).api.readResource('plugin.preview.resource')).rejects.toMatchObject({
+            code: 'invalid_payload',
+        });
+        await expect(createAdapter('readClipboard', 'legacy bare string').api.readClipboard())
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+    });
+
     it('has no predecessor public adapter or render-context branch', () => {
         // This is an API/removal contract, not a type-only assertion: keeping
         // any one of these paths would let a mounted RN bundle bypass the
@@ -419,7 +445,7 @@ describe('canonical React Native plugin Host API adapter', () => {
             {
                 result: {
                     contentType: 'text/plain',
-                    digest: 'sha256:resource',
+                    digest: `sha256:${'a'.repeat(64)}`,
                     bytesBase64: 'aGVsbG8=',
                 },
                 invoke: (adapter: ReturnType<typeof createCanonicalPluginReactNativeHostApiAdapter>) =>
@@ -771,11 +797,15 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
                 seen.push({ method: request.method, signal: options?.signal });
                 return {
                     contentType: 'text/plain',
-                    digest: 'sha256:resource',
+                    digest: `sha256:${'a'.repeat(64)}`,
                     bytesBase64: 'aGVsbG8=',
                 };
             },
             openSurface: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return null;
+            },
+            openNewSession: async (request, options) => {
                 seen.push({ method: request.method, signal: options?.signal });
                 return null;
             },
@@ -799,6 +829,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
 
         await adapter.api.readResource('plugin.preview.resource', { signal: controller.signal });
         await adapter.api.openSurface('plugin.preview.details', undefined, { signal: controller.signal });
+        await adapter.api.openNewSession({ prompt: 'Repair CI' }, { signal: controller.signal });
         await adapter.api.notify('Saved', { signal: controller.signal });
         await adapter.api.readClipboard({ signal: controller.signal });
         await adapter.api.writeClipboard('copied text', { signal: controller.signal });
@@ -807,11 +838,22 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         expect(seen).toEqual([
             { method: 'readResource', signal: controller.signal },
             { method: 'openSurface', signal: controller.signal },
+            { method: 'openNewSession', signal: controller.signal },
             { method: 'notify', signal: controller.signal },
             { method: 'readClipboard', signal: controller.signal },
             { method: 'writeClipboard', signal: controller.signal },
             { method: 'openExternalLink', signal: controller.signal },
         ]);
+    });
+
+    it('rejects malformed New Session input before the RN transport boundary', async () => {
+        const openNewSession = vi.fn(async () => null);
+        const adapter = createAdapterOverHost({ openNewSession });
+
+        await expect(adapter.api.openNewSession({
+            prompt: { text: 'retired shape', mode: 'append' },
+        } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(openNewSession).not.toHaveBeenCalled();
     });
 
     it('rejects a parked Resource read promptly at caller cancellation and fences its late response', async () => {
@@ -848,7 +890,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
 
             resolveRead?.({
                 contentType: 'text/plain',
-                digest: 'sha256:resource',
+                digest: `sha256:${'a'.repeat(64)}`,
                 bytesBase64: 'aGVsbG8=',
             });
             await vi.waitFor(() => expect(settlements).toHaveLength(1));
@@ -975,6 +1017,55 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
 
         expect(selected).toEqual({ kind: 'serverStartDraft', draft: serverStartDraft });
         expect('action' in selected).toBe(false);
+    });
+
+    it('terminally carries one active prepared-workspace selection into openNewSession', async () => {
+        const operation = {
+            point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },
+            contributor: {
+                pluginId: 'acme.scm',
+                contributionId: 'github',
+                immutableGenerationId: 'scm-generation-a',
+            },
+            role: 'prepareReviewWorkspace',
+            action: { pluginId: 'acme.scm', localId: 'prepare-review-workspace' },
+        } as const;
+        let seenOptions: PluginSurfaceHostApiRequestOptions | undefined;
+        const result = {
+            kind: 'submitted' as const,
+            action: operation.action,
+            input: { repository: 'happier-dev/happier', pullRequestNumber: 42 },
+            selection: {
+                target: targetedSurface.targetedContributions!.target,
+                point: operation.point,
+                contributor: operation.contributor,
+            },
+            connectedAccount: { kind: 'none' as const },
+        };
+        const adapter = createAdapterOverHost({
+            selectActionInput: async () => result,
+            openNewSession: async (_request, options) => {
+                seenOptions = options;
+                return null;
+            },
+        });
+
+        const selected = await adapter.api.selectActionInput({ operation });
+        if (selected.kind !== 'submitted') throw new Error('expected submitted preparation');
+        const selectedCarrier = { operation, result: selected } as const;
+        await adapter.api.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Review PR 42' },
+            { preparedReviewWorkspace: selectedCarrier },
+        );
+
+        expect(seenOptions).toMatchObject({
+            targetedOperation: operation,
+            selectedActionInput: result,
+        });
+        await expect(adapter.api.openNewSession(
+            { checkoutIntent: 'preparedReviewWorkspace' },
+            { preparedReviewWorkspace: selectedCarrier },
+        )).rejects.toMatchObject({ code: 'invalid_payload' });
     });
 
     it('never carries immediate-execute provenance from a host request', async () => {

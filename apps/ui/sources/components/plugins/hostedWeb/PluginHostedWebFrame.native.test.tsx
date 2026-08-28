@@ -38,7 +38,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
                     sourceMaps: 'disabled',
                     mixedContent: 'deny',
                     csp: {
-                        scriptSrc: 'selfOnly', styleSrc: 'selfOnly', imgSrc: 'selfOnly', fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly', allowDataUrls: false, allowBlobUrls: false,
                         allowInlineStyles: false, allowEval: false,
                     },
@@ -106,7 +105,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
                     sourceMaps: 'disabled',
                     mixedContent: 'deny',
                     csp: {
-                        scriptSrc: 'selfOnly', styleSrc: 'selfOnly', imgSrc: 'selfOnly', fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly', allowDataUrls: false, allowBlobUrls: false,
                         allowInlineStyles: false, allowEval: false,
                     },
@@ -183,7 +181,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
                     sourceMaps: 'disabled',
                     mixedContent: 'deny',
                     csp: {
-                        scriptSrc: 'selfOnly', styleSrc: 'selfOnly', imgSrc: 'selfOnly', fontSrc: 'selfOnly',
                         connectSrc: 'selfOnly', allowDataUrls: false, allowBlobUrls: false,
                         allowInlineStyles: false, allowEval: false,
                     },

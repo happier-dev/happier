@@ -154,6 +154,7 @@
   "hammer": "hammer",
   "hand-left": "hand",
   "hand-left-outline": "hand",
+  "handoff": "share-network",
   "happy": "smiley",
   "hardware-chip": "cpu",
   "heading": "text-h",
@@ -327,5 +328,6 @@
   "volume-off": "speaker-slash",
   "warning": "warning",
   "wifi": "wifi-high",
+  "worktrees": "tree-structure",
   "x": "x"
 }

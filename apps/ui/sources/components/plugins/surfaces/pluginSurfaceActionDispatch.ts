@@ -7,6 +7,7 @@ import {
     createPluginActionPresentUserGate,
     pluginJsonValuesEqual,
     projectPluginActionUnavailableOutcomeCode,
+    readPluginActionFailureAuthorPayload,
     type ActionExecuteResult,
     type ActionExecutorContext,
     type ActionId,
@@ -21,6 +22,7 @@ import {
     type PluginProjectedActionV2,
     type PluginActionCurrentIntentRequest,
     type PluginActionCurrentIntentResult,
+    type PluginDiagnosticRemediationV1,
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginReference } from '@happier-dev/plugin-sdk';
@@ -196,7 +198,13 @@ export type PluginSurfaceClientActionBinding = Readonly<{
 
 export type PluginSurfaceActionDispatchOutcome =
     | Readonly<{ ok: true; result: PluginUiJsonValueV1 }>
-    | Readonly<{ ok: false; code: PluginUiHostApiErrorCodeV1; reason: string }>;
+    | Readonly<{
+        ok: false;
+        code: PluginUiHostApiErrorCodeV1;
+        reason: string;
+        retryable?: boolean;
+        remediation?: PluginDiagnosticRemediationV1;
+    }>;
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
     /** Stable host request identity used only by the daemon's operation observer. */
@@ -266,8 +274,18 @@ type PluginSurfaceActionDispatchFailure = Extract<
 function failure(
     code: PluginUiHostApiErrorCodeV1,
     reason: string,
+    author?: Readonly<{
+        retryable?: boolean;
+        remediation?: PluginDiagnosticRemediationV1;
+    }>,
 ): PluginSurfaceActionDispatchFailure {
-    return { ok: false, code, reason };
+    return {
+        ok: false,
+        code,
+        reason,
+        ...(author?.retryable === undefined ? {} : { retryable: author.retryable }),
+        ...(author?.remediation === undefined ? {} : { remediation: author.remediation }),
+    };
 }
 
 function readString(value: unknown): string | null {
@@ -466,10 +484,15 @@ function readClientActionCurrentUiContext(
 
 function clientActionFailure(
     code: string,
+    author?: Readonly<{
+        retryable?: boolean;
+        remediation?: PluginDiagnosticRemediationV1;
+    }>,
 ): PluginSurfaceActionDispatchOutcome {
     return actionDeclinedFailure(code) ?? failure(
         code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable',
         code,
+        author,
     );
 }
 
@@ -635,7 +658,13 @@ async function executeClientContributedAction(
         );
         return actionOutcomeUnknownFailure(code) ?? clientActionFailure(code);
     }
-    return clientActionFailure(result.code);
+    const authorPayload = readPluginActionFailureAuthorPayload(result.data);
+    return clientActionFailure(result.code, {
+        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+        ...(authorPayload.remediation === undefined
+            ? {}
+            : { remediation: authorPayload.remediation }),
+    });
 }
 
 type SubmittedSelectedActionInput = Extract<
@@ -922,7 +951,14 @@ async function executeContributedAction(
     const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code);
     if (outcomeUnknown) return outcomeUnknown;
     return actionDeclinedFailure(result.result.code)
-        ?? failure('unavailable', result.result.code);
+        ?? failure('unavailable', result.result.code, {
+            ...(result.result.retryable === undefined
+                ? {}
+                : { retryable: result.result.retryable }),
+            ...(result.result.remediation === undefined
+                ? {}
+                : { remediation: result.result.remediation }),
+        });
 }
 
 export type CreatePluginSurfaceActionDispatchHandlerInput = Readonly<{
@@ -1042,6 +1078,10 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     openSurface?: PluginSurfaceOpenHandler;
     /** Target-scoped input selection producer; never an Action executor. */
     selectActionInput?: PluginSurfaceHostApiMethodHandler;
+    /** Dedicated mounted New Session producer, composed over this exact dispatcher. */
+    createOpenNewSession?: (
+        executeSelectedOperation: PluginSurfaceHostApiMethodHandler,
+    ) => PluginSurfaceHostApiMethodHandler;
     /**
      * The daemon binding for the resource snapshot authority (§3.6). Present
      * only when the mount can address a machine and a projected generation, so
@@ -1130,6 +1170,32 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     });
     const mountedDisposeHostResource = input.mountedHostApiHandlers?.disposeHostResource;
     const resourceDisposeHostResource = resourceWatch?.disposeHostResource;
+    const executeAction = createPluginSurfaceActionDispatchHandler({
+        pluginId: input.surfaceContext.pluginId,
+        contributionId: input.surfaceContext.contributionId,
+        ...(input.callerBinding ? { callerBinding: input.callerBinding } : {}),
+        ...(input.hostAction ? { hostAction: input.hostAction } : {}),
+        ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
+        ...(input.clientAction
+            ? {
+                clientAction: {
+                    ...input.clientAction,
+                    ...(input.openSurface ? { openSurface: input.openSurface } : {}),
+                    ...(feedback.requestCurrentIntent
+                        ? { requestCurrentIntent: feedback.requestCurrentIntent }
+                        : {}),
+                },
+            }
+            : {}),
+        ...(input.invocationSurface ? { invocationSurface: input.invocationSurface } : {}),
+        ...(input.resolveContributedAction
+            ? { resolveContributedAction: input.resolveContributedAction }
+            : {}),
+        ...(input.isContributedActionAvailable
+            ? { isContributedActionAvailable: input.isContributedActionAvailable }
+            : {}),
+        ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
+    });
     return createPluginSurfaceHostApi({
         surfaceContext: input.surfaceContext,
         ...(input.isMethodAvailable ? { isMethodAvailable: input.isMethodAvailable } : {}),
@@ -1137,32 +1203,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         handlers: {
             ...input.mountedHostApiHandlers,
             ...localHostHandlers,
-            executeAction: createPluginSurfaceActionDispatchHandler({
-                pluginId: input.surfaceContext.pluginId,
-                contributionId: input.surfaceContext.contributionId,
-                ...(input.callerBinding ? { callerBinding: input.callerBinding } : {}),
-                ...(input.hostAction ? { hostAction: input.hostAction } : {}),
-                ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
-                ...(input.clientAction
-                    ? {
-                        clientAction: {
-                            ...input.clientAction,
-                            ...(input.openSurface ? { openSurface: input.openSurface } : {}),
-                            ...(feedback.requestCurrentIntent
-                                ? { requestCurrentIntent: feedback.requestCurrentIntent }
-                                : {}),
-                        },
-                    }
-                    : {}),
-                ...(input.invocationSurface ? { invocationSurface: input.invocationSurface } : {}),
-                ...(input.resolveContributedAction
-                    ? { resolveContributedAction: input.resolveContributedAction }
-                    : {}),
-                ...(input.isContributedActionAvailable
-                    ? { isContributedActionAvailable: input.isContributedActionAvailable }
-                    : {}),
-                ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
-            }),
+            executeAction,
             notify: feedback.notify,
             confirm: feedback.confirm,
             ...(input.resource
@@ -1201,6 +1242,9 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
                 : {}),
             ...(input.selectActionInput
                 ? { selectActionInput: input.selectActionInput }
+                : {}),
+            ...(input.createOpenNewSession
+                ? { openNewSession: input.createOpenNewSession(executeAction) }
                 : {}),
         },
         onDispose: () => {

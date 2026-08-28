@@ -43,6 +43,7 @@ import {
     createPluginSurfaceHostApiError,
     createPluginSurfaceHostApi,
     type PluginSurfaceHostApiHandlers,
+    type PluginSurfaceHostApiMethodHandler,
     type PluginSurfaceHostApiV1,
 } from './createPluginSurfaceHostApi';
 import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
@@ -64,6 +65,7 @@ import {
     createPluginActionInputSelectionHostApiHandler,
     serializePluginActionInputSelectionFacts,
 } from './pluginActionInputSelectionHostApi';
+import { createPluginOpenNewSessionHostApiHandler } from './pluginOpenNewSessionHostApi';
 
 /**
  * The bound surface controller (§3.1).
@@ -914,6 +916,25 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             isCurrent,
         })
         : null;
+    const createOpenNewSession = accountLifetime
+        ? (executeSelectedOperation: PluginSurfaceHostApiMethodHandler) => (
+            createPluginOpenNewSessionHostApiHandler({
+                pluginId: input.facts.pluginId,
+                accountLifetime,
+                lifetimeSignal: mountLifetime.signal,
+                isCurrent,
+                executeSelectedOperation,
+                ...(daemon
+                    ? {
+                        executionTarget: {
+                            serverId: daemon.serverId ?? accountLifetime.scope.serverId,
+                            machineId: daemon.machineId,
+                        },
+                    }
+                    : {}),
+            })
+        )
+        : null;
     const hostApi = createPluginSurfaceActionHostApi({
         pluginUiProjection: input.facts.pluginUiProjection,
         surfaceContext,
@@ -976,6 +997,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             : {}),
         ...(binding?.openSurface ? { openSurface: binding.openSurface } : {}),
         ...(selectActionInput ? { selectActionInput } : {}),
+        ...(createOpenNewSession ? { createOpenNewSession } : {}),
         ...(mountedHostApiHandlers
             ? { mountedHostApiHandlers }
             : {}),

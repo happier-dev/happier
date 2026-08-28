@@ -726,7 +726,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 ? undefined
                 : selectedTargetedOperations.get(selectedKey);
             if (
-                message.method !== 'executeAction'
+                (message.method !== 'executeAction' && message.method !== 'openNewSession')
                 || message.targetedOperation === undefined
                 || message.selectedActionInput === undefined
                 || !targetedSelection

@@ -111,8 +111,9 @@ type OpenableContentKind = Readonly<{
  * cheap prefix probe does not exist: a probe reads the whole file or nothing.
  * `DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1` is therefore the honest bound — the
  * canonical default an openable read already delivers, so classification never
- * moves more bytes than the read it describes. Above it the filename answer
- * stands, and the read below remains authoritative for the bytes it holds.
+ * moves more bytes than the read it describes. Above it an undecided filename
+ * cannot honestly select a text or binary viewer, so stat reports the existing
+ * unsupported outcome.
  */
 const CONTENT_CLASSIFICATION_PROBE_MAX_BYTES = DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1;
 
@@ -259,13 +260,13 @@ async function classifyWorkspaceOpenableContent(input: Readonly<{
     revision: string;
     memo: OpenableContentClassificationMemo;
     signal?: AbortSignal;
-}>): Promise<OpenableContentKind> {
+}>): Promise<OpenableContentKind | null> {
     const derived = deriveContentKind(input.filePath);
     // An empty file is valid UTF-8, so it needs no probe to be called text.
     if (derived.decidedByPath || input.sizeBytes === 0) return derived.kind;
     const memo = input.memo.current;
     if (memo && memo.revision === input.revision) return memo.kind;
-    if (input.sizeBytes > CONTENT_CLASSIFICATION_PROBE_MAX_BYTES) return derived.kind;
+    if (input.sizeBytes > CONTENT_CLASSIFICATION_PROBE_MAX_BYTES) return null;
 
     const probe = await awaitCancellable(
         workspaceReadFile(input.target, input.filePath, {
@@ -312,6 +313,7 @@ async function statWorkspaceOpenableContent(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
     });
     if (input.signal?.aborted) return { status: 'cancelled' };
+    if (kind === null) return { status: 'unsupported' };
     return {
         status: 'ready',
         ...kind,

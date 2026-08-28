@@ -12,6 +12,14 @@ type PluginSurfaceInteractionBoundaryProps = Readonly<{
     enabled: boolean;
     snapshotTitle: string;
     surfaceId: string;
+    /** Host-stamped, non-authoritative loaded-runtime evidence for diagnostics/QA. */
+    loadedRuntimeIdentity?: Readonly<{
+        pluginId: string;
+        generation: string;
+        artifactDigest: string;
+        machineId?: string | null;
+        serverId?: string | null;
+    }>;
 }>;
 
 function blockOfflineInteraction(event: React.SyntheticEvent): void {
@@ -85,6 +93,11 @@ export function PluginSurfaceInteractionBoundary(
                 ref={containerRef}
                 data-testid={`plugin-surface-interaction-boundary:${props.surfaceId}`}
                 data-plugin-interaction-state={props.enabled ? 'enabled' : 'offline-snapshot'}
+                data-plugin-id={props.loadedRuntimeIdentity?.pluginId}
+                data-plugin-generation={props.loadedRuntimeIdentity?.generation}
+                data-plugin-artifact-digest={props.loadedRuntimeIdentity?.artifactDigest}
+                data-plugin-machine-id={props.loadedRuntimeIdentity?.machineId ?? undefined}
+                data-plugin-server-id={props.loadedRuntimeIdentity?.serverId ?? undefined}
                 style={{ display: 'contents' }}
             >
                 <div

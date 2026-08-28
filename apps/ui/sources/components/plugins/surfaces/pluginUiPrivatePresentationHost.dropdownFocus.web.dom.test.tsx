@@ -83,6 +83,30 @@ function rect(x: number, y: number, width: number, height: number): DOMRect {
     };
 }
 
+it('reports a web focus transfer only when the browser actually accepted it', () => {
+    const host = createPluginUiPrivatePresentationHost(undefined, {
+        isFocusEligible: () => true,
+    });
+    const refused = document.createElement('button');
+    const accepted = document.createElement('button');
+    document.body.append(refused, accepted);
+    // jsdom has no layout engine, so display:none does not reliably reproduce
+    // a browser refusing focus. Keep the real DOM target and model only that
+    // exact browser outcome: focus() returns but activeElement does not move.
+    refused.focus = vi.fn();
+
+    try {
+        expect(host.focusTarget?.(refused)).toBe(false);
+        expect(document.activeElement).not.toBe(refused);
+
+        expect(host.focusTarget?.(accepted)).toBe(true);
+        expect(document.activeElement).toBe(accepted);
+    } finally {
+        refused.remove();
+        accepted.remove();
+    }
+});
+
 function DropdownHarness() {
     const [open, setOpen] = React.useState(false);
     const context = React.useMemo(() => createSurfaceContext(), []);

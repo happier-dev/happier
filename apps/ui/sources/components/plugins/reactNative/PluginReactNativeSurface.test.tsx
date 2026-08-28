@@ -520,6 +520,41 @@ describe('PluginReactNativeSurface', () => {
         expect(screen.findByTestId('plugin-native-composer-ref:missing')).toBeNull();
     });
 
+    it('passes the opaque ephemeral shared scope only through the cooperative host-private entry carrier', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const ephemeralSharedScope = Object.freeze({ acquire: vi.fn(() => null) });
+        let authorContextScope: unknown;
+        function SurfaceEntryProvider(props: Readonly<{ ephemeralSharedScope?: unknown }>) {
+            return React.createElement('PluginNativeSurface', {
+                testID: props.ephemeralSharedScope === ephemeralSharedScope
+                    ? 'plugin-native-ephemeral-scope:bound'
+                    : 'plugin-native-ephemeral-scope:missing',
+            });
+        }
+        Object.defineProperty(
+            SurfaceEntryProvider,
+            Symbol.for('happier.pluginUi.privateSurfaceEntryProvider.v1'),
+            { value: true },
+        );
+
+        const screen = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_1"
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            module={{
+                renderSurface: (context) => {
+                    authorContextScope = Reflect.get(context, 'ephemeralSharedScope');
+                    return React.createElement(SurfaceEntryProvider);
+                },
+            }}
+            renderContext={defaultRenderContext}
+            privateHostBindings={Object.freeze({ ephemeralSharedScope })}
+        />);
+
+        expect(authorContextScope).toBeUndefined();
+        expect(screen.findByTestId('plugin-native-ephemeral-scope:bound')).toBeTruthy();
+        expect(screen.findByTestId('plugin-native-ephemeral-scope:missing')).toBeNull();
+    });
+
     it('keeps private entry bindings paired with the last interactive context while an offline snapshot is retained', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
         const { createCanonicalPluginReactNativeHostApiAdapter } = await import('./hostApi');
@@ -828,11 +863,9 @@ describe('PluginReactNativeSurface', () => {
 
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
             expect(screen.findByTestId('plugin-native-surface')).toBeNull();
-            expect(reportFailure).toHaveBeenCalledWith(expect.objectContaining({
-                token: crashStateToken,
-                failure: 'load_timeout',
-                failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac17',
-            }));
+            expect(reportFailure).not.toHaveBeenCalled();
+            expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey }))
+                .toHaveLength(0);
         } finally {
             vi.useRealTimers();
         }

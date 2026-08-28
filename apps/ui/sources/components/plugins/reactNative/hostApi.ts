@@ -2,6 +2,7 @@ import {
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PluginUiExecuteActionRequestV1Schema,
+    PluginUiEphemeralInputSettlementV1Schema,
     PluginUiAcquireComposerInputLockRequestV1Schema,
     PluginUiActiveComposerResultV1Schema,
     PluginUiApplyComposerRequestV1Schema,
@@ -11,6 +12,7 @@ import {
     PluginUiHostApiRequestMethodV1Schema,
     PluginUiHostApiRequestEnvelopeV1Schema,
     PluginUiJsonValueV1Schema,
+    PluginUiOpenNewSessionRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
@@ -62,6 +64,10 @@ import {
     type PluginCancellationOptions,
     type PluginReference,
 } from '@happier-dev/plugin-sdk';
+import {
+    decodePluginUiClipboardReadResult,
+    decodePluginUiResourceContent,
+} from '@happier-dev/plugin-sdk/host/ui';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from '../hostApi/negotiatedMethods';
 import { createPluginUiHostSubscriptionRegistry } from '../hostApi/subscriptions';
@@ -601,24 +607,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 function readCanonicalResource(value: PluginUiJsonValueV1 | undefined): ResourceContent {
-    const record = value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Readonly<Record<string, PluginUiJsonValueV1>>
-        : null;
-    const contentType = typeof record?.contentType === 'string' ? record.contentType : '';
-    const digest = typeof record?.digest === 'string' ? record.digest : '';
-    const bytesBase64 = typeof record?.bytesBase64 === 'string' ? record.bytesBase64 : '';
-    if (!contentType || !digest || !bytesBase64) {
-        throwHostApiError('invalid_payload', ['resource_response_invalid']);
-    }
-    try {
-        return Object.freeze({
-            contentType,
-            digest,
-            bytes: decodeBase64(bytesBase64, 'base64'),
-        });
-    } catch {
-        throwHostApiError('invalid_payload', ['resource_bytes_invalid']);
-    }
+    const decoded = decodePluginUiResourceContent(
+        value,
+        (bytesBase64) => decodeBase64(bytesBase64, 'base64'),
+    );
+    if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
+    return decoded.value;
 }
 
 function readCanonicalOpenableContentStat(value: PluginUiJsonValueV1 | undefined) {
@@ -991,6 +985,55 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             }
             return parsedResult.data;
         },
+        openNewSession: async (openRequest, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openNewSession');
+            const payload = PluginUiOpenNewSessionRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const selected = options?.preparedReviewWorkspace === undefined
+                ? undefined
+                : resolveActiveSelectedActionInput(options.preparedReviewWorkspace);
+            if (
+                (payload.data.checkoutIntent === 'preparedReviewWorkspace')
+                    !== (selected !== undefined)
+            ) {
+                throwHostApiError('invalid_payload', ['prepared_review_workspace_selection_invalid']);
+            }
+            // A preparation is a terminal use of this exact selected operation.
+            // Retire it before crossing the mounted host boundary so success,
+            // failure, cancellation and an ambiguous transport result cannot
+            // leave a replayable workspace mutation.
+            selected?.release();
+            const requestOptions = options?.signal || selected
+                ? {
+                    ...(options?.signal ? { signal: options.signal } : {}),
+                    ...(selected
+                        ? {
+                            targetedOperation: selected.carrier.operation,
+                            selectedActionInput: selected.carrier.result,
+                        }
+                        : {}),
+                }
+                : undefined;
+            await transport.request(
+                'openNewSession',
+                payload.data,
+                requestOptions,
+            );
+            assertActive(options?.signal);
+        },
+        settleEphemeralInput: async (settlement, options) => {
+            assertActive(options?.signal);
+            assertInstalled('settleEphemeralInput');
+            const payload = PluginUiEphemeralInputSettlementV1Schema.safeParse(settlement);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request(
+                'settleEphemeralInput',
+                payload.data,
+                options?.signal ? { signal: options.signal } : undefined,
+            );
+            assertActive(options?.signal);
+        },
         readResource: async (resource, options) => {
             assertActive(options?.signal);
             assertInstalled('readResource');
@@ -1272,12 +1315,9 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 options?.signal ? { signal: options.signal } : undefined,
             );
             assertActive(options?.signal);
-            if (typeof result === 'string') return result;
-            const record = result && typeof result === 'object' && !Array.isArray(result)
-                ? result as Readonly<Record<string, PluginUiJsonValueV1>>
-                : null;
-            if (typeof record?.value === 'string') return record.value;
-            throwHostApiError('invalid_payload', ['clipboard_read_response_invalid']);
+            const decoded = decodePluginUiClipboardReadResult(result);
+            if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
+            return decoded.value;
         },
         writeClipboard: async (value, options) => {
             assertActive(options?.signal);

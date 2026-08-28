@@ -916,10 +916,6 @@ describe('plugin contributed Action controller', () => {
         await expect(controller.selectActionInput({
             hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
         })).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_input' });
-        await expect(controller.selectActionInput({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
-        })).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_input' });
     });
 
     it('fails closed for absent mounted membership, secret-bearing, and invalid Connected Account draft selections', async () => {

@@ -8,6 +8,7 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { renderScreen } from '@/dev/testkit';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    isPluginUiDestinationSurfacePlacementProjection,
     type PluginUiProjectionModel,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
@@ -210,7 +211,8 @@ describe('PluginSurfacePlacementStack', () => {
         placementHostSpy.mockClear();
 
         const sessionBinding = createPluginSurfaceDestinationNavigationBinding({
-            placements: Object.values(servicesProjection.surfacePlacementsById),
+            placements: Object.values(servicesProjection.surfacePlacementsById)
+                .filter(isPluginUiDestinationSurfacePlacementProjection),
             targetKind: 'session',
         });
 

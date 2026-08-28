@@ -422,7 +422,7 @@ describe('plugin surface openable content', () => {
         expect(workspaceReadFileMock).toHaveBeenCalledTimes(2);
     });
 
-    it('does not probe a filename-decided class or content above the bounded probe ceiling', async () => {
+    it('keeps filename-decided classes ready and refuses undecidable content above the probe ceiling', async () => {
         const imageBinding = createWorkspaceFileOpenableContentBinding({
             target: TARGET,
             filePath: 'notes/preview.png',
@@ -447,13 +447,24 @@ describe('plugin surface openable content', () => {
             sizeBytes,
             modifiedMs: 100,
         });
-        const largeBinding = createWorkspaceFileOpenableContentBinding({
+        const largeUnknownBinding = createWorkspaceFileOpenableContentBinding({
             target: TARGET,
             filePath: 'artifacts/large.qtz',
         });
-        await expect(createPluginSurfaceOpenableContentHandlers({ binding: largeBinding })
-            .statOpenableContent!(request('statOpenableContent', { ref: largeBinding.ref })))
-            .resolves.toMatchObject({ contentClass: 'text', sizeBytes });
+        await expect(createPluginSurfaceOpenableContentHandlers({ binding: largeUnknownBinding })
+            .statOpenableContent!(request('statOpenableContent', { ref: largeUnknownBinding.ref })))
+            .resolves.toEqual({ status: 'unsupported' });
+
+        // A familiar text extension is still undecided by path: the filename
+        // cannot prove that the bytes are UTF-8, and this file is too large for
+        // the bounded classifier to inspect.
+        const largeTextNamedBinding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'notes/large.md',
+        });
+        await expect(createPluginSurfaceOpenableContentHandlers({ binding: largeTextNamedBinding })
+            .statOpenableContent!(request('statOpenableContent', { ref: largeTextNamedBinding.ref })))
+            .resolves.toEqual({ status: 'unsupported' });
 
         expect(workspaceReadFileMock).not.toHaveBeenCalled();
     });

@@ -74,6 +74,12 @@ function cloneToken(token: DaemonPluginReactNativeCrashBindingTokenV1): DaemonPl
                 kind: 'destination' as const,
                 destination: Object.freeze({ ...token.mount.destination }),
             })
+            : token.mount.kind === 'inline'
+                ? Object.freeze({
+                    kind: 'inline' as const,
+                    surface: Object.freeze({ ...token.mount.surface }),
+                    role: token.mount.role,
+                })
             : token.mount.kind === 'targetedSurface'
                 ? Object.freeze({
                     kind: 'targetedSurface' as const,
@@ -85,6 +91,12 @@ function cloneToken(token: DaemonPluginReactNativeCrashBindingTokenV1): DaemonPl
                     contributor: Object.freeze({ ...token.mount.contributor }),
                     role: token.mount.role,
                     presentation: token.mount.presentation,
+                })
+            : token.mount.kind === 'automationEventSetupSurface'
+                ? Object.freeze({
+                    kind: 'automationEventSetupSurface' as const,
+                    contribution: Object.freeze({ ...token.mount.contribution }),
+                    immutableGenerationId: token.mount.immutableGenerationId,
                 })
                 : Object.freeze({
                     kind: 'composer' as const,

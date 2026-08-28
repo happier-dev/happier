@@ -502,7 +502,10 @@ export function useRegisterPluginSurfaceDestinationNavigationOwner(
 ): void {
     const contextualBinding = usePluginSurfaceDestinationNavigationBinding();
     const effectiveBinding = binding ?? contextualBinding;
-    React.useEffect(() => {
+    // Descendant layout effects may invoke the public binding on their first
+    // commit. Insertion runs during mutation, before that global layout phase;
+    // an ancestor layout/passive effect would leave the owner absent or stale.
+    React.useInsertionEffect(() => {
         if (!effectiveBinding || !owner) return;
         return effectiveBinding.registerOwner(owner);
     }, [effectiveBinding, owner]);

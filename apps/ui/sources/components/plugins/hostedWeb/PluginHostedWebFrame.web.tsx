@@ -67,6 +67,7 @@ export function PluginHostedWebFrame(props: Readonly<{
     if (props.desktopArtifact) {
         return (
             <PluginHostedArtifactDesktopViewHost
+                title={props.title}
                 artifact={props.desktopArtifact}
                 bridge={props.bridge}
                 testID={props.testID}

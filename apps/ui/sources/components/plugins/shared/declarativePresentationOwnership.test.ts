@@ -24,6 +24,8 @@ describe('declarative shared-presentation ownership', () => {
         expect(source).toContain('<HappierStack');
         expect(source).toContain('<HappierList');
         expect(source).toContain('<HappierPressable');
+        expect(source).toContain('resolveHappierLayoutGap(');
+        expect(source).not.toMatch(/gap=\{node\.gap\s*===/u);
         expect(source).not.toMatch(/import \{[^}]*\bPressable\b[^}]*\} from 'react-native'/su);
     });
 
@@ -40,6 +42,18 @@ describe('declarative shared-presentation ownership', () => {
         expect(source).not.toMatch(/import \{[^}]*\bPressable\b[^}]*\} from 'react-native'/su);
         expect(source).not.toContain("from '@/components/ui/forms/Switch'");
         expect(source).not.toMatch(/import \{[^}]*\bTextInput\b[^}]*\} from '@\/components\/ui\/text\/Text'/su);
+    });
+
+    it('uses one immutable static-model admission decoder for dynamic and mounted consumers', () => {
+        const source = readFileSync(new URL('../surfaces/DeclarativeDocumentSource.tsx', import.meta.url), 'utf8');
+        const mounted = readFileSync(new URL('../surfaces/DeclarativePluginSurface.tsx', import.meta.url), 'utf8');
+        const host = readFileSync(new URL('../surfaces/PluginSurfaceHost.tsx', import.meta.url), 'utf8');
+
+        expect(source).toContain('admitDeclarativeStaticModel({');
+        expect(mounted).toContain('admitDeclarativeStaticModel({');
+        expect(host).toContain('admitDeclarativeStaticModel({');
+        expect(source).not.toContain('function readAdmittedBindings(');
+        expect(mounted).not.toContain('function readDeclarativeCollectionCommandCatalog(');
     });
 
     it('does not schedule a dead interaction-freshness state update during render', () => {

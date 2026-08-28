@@ -1,17 +1,10 @@
 import * as React from 'react';
 
 import {
-    buildQualifiedPluginContributionKey,
     normalizePluginDeclarativeDocumentV1,
     parsePluginDeclarativeDocumentResourceBytesV1,
     PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
-    PluginContributionIdentityV1Schema,
-    PluginDeclarativeSettingsInventoryEntryV1Schema,
-    NormalizedPluginCollectionUiQueryDescriptorV1Schema,
-    type PluginContributionIdentityV1,
     type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
-    type PluginDeclarativeSettingsInventoryEntryV1,
-    type NormalizedPluginCollectionUiQueryDescriptorV1,
 } from '@happier-dev/protocol';
 import {
     useLivePluginResource,
@@ -20,6 +13,11 @@ import {
     type PluginUiResourceSnapshot,
 } from '@happier-dev/plugin-ui/hostApi';
 import type { PreparedDaemonPluginUiTargetedSurfaceMountV1 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import {
+    admitDeclarativeStaticModel,
+    declarativeCollectionUiQueryKey,
+    type AdmittedDeclarativeStaticModel,
+} from './declarativeStaticModel';
 
 type RecordValue = Readonly<Record<string, unknown>>;
 
@@ -171,22 +169,7 @@ export function projectDeclarativeTargetedSurfaceInventory(
     })));
 }
 
-type StaticActionBinding = Readonly<{
-    identity: PluginContributionIdentityV1;
-    enabled: boolean;
-}>;
-
-type StaticFieldBinding = Readonly<{
-    setting: RecordValue;
-}>;
-
-type StaticDocumentBindings = Readonly<{
-    actions: ReadonlyMap<string, StaticActionBinding>;
-    destinations: ReadonlyMap<string, PluginContributionIdentityV1>;
-    fields: ReadonlyMap<string, StaticFieldBinding>;
-    settings: readonly PluginDeclarativeSettingsInventoryEntryV1[];
-    uiQueries: ReadonlyMap<string, NormalizedPluginCollectionUiQueryDescriptorV1>;
-}>;
+type StaticDocumentBindings = AdmittedDeclarativeStaticModel;
 
 function readRecord(value: unknown): RecordValue | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -239,10 +222,6 @@ function isCurrentDocumentSourceScope(scope: DeclarativeDocumentSourceScope): bo
     }
 }
 
-function collectionUiQueryKey(collectionId: string, uiQueryId: string): string {
-    return `${collectionId}\u0000${uiQueryId}`;
-}
-
 function samePlainValue(left: unknown, right: unknown): boolean {
     if (Object.is(left, right)) return true;
     if (Array.isArray(left) && Array.isArray(right)) {
@@ -280,110 +259,6 @@ function areDeclarativeDocumentSourceScopesEquivalent(
         && left.generation === right.generation
         && samePlainValue(left.preparedTargetedSurfaces, right.preparedTargetedSurfaces)
         && samePlainValue(left.staticModel, right.staticModel);
-}
-
-function readAdmittedBindings(input: Readonly<{
-    pluginId: string;
-    generation: string;
-    staticModel: RecordValue;
-}>): StaticDocumentBindings {
-    const actions = new Map<string, StaticActionBinding>();
-    const destinations = new Map<string, PluginContributionIdentityV1>();
-    const fields = new Map<string, StaticFieldBinding>();
-    const settings: PluginDeclarativeSettingsInventoryEntryV1[] = [];
-    const uiQueries = new Map<string, NormalizedPluginCollectionUiQueryDescriptorV1>();
-    const duplicatedUiQueryKeys = new Set<string>();
-    const inventory = readRecord(input.staticModel.declarativeInventory);
-    const actionEntries = Array.isArray(inventory?.actions) ? inventory.actions : [];
-    const destinationEntries = Array.isArray(inventory?.destinations) ? inventory.destinations : [];
-    const settingEntries = Array.isArray(inventory?.settings) ? inventory.settings : [];
-    const uiQueryEntries = Array.isArray(inventory?.uiQueries) ? inventory.uiQueries : [];
-
-    for (const actionValue of actionEntries) {
-        const action = readRecord(actionValue);
-        const identity = PluginContributionIdentityV1Schema.safeParse(action?.identity);
-        const qualifiedId = readString(action?.qualifiedId);
-        if (
-            identity.success
-            && identity.data.pluginId === input.pluginId
-            && action?.generation === input.generation
-            && qualifiedId === buildQualifiedPluginContributionKey(identity.data)
-        ) {
-            const prior = actions.get(qualifiedId);
-            // A duplicate projection entry can only widen a dynamic candidate
-            // when every canonical inventory occurrence admits it. Divergence
-            // remains fail-closed.
-            actions.set(qualifiedId, Object.freeze({
-                identity: identity.data,
-                enabled: prior ? prior.enabled && action?.enabled === true : action?.enabled === true,
-            }));
-        }
-    }
-
-    for (const destinationValue of destinationEntries) {
-        const destination = readRecord(destinationValue);
-        const identity = PluginContributionIdentityV1Schema.safeParse(destination?.identity);
-        const qualifiedId = readString(destination?.qualifiedId);
-        if (
-            identity.success
-            && identity.data.pluginId === input.pluginId
-            && destination?.generation === input.generation
-            && qualifiedId === buildQualifiedPluginContributionKey(identity.data)
-            && !destinations.has(qualifiedId)
-        ) {
-            destinations.set(qualifiedId, identity.data);
-        }
-    }
-
-    for (const settingValue of settingEntries) {
-        const entry = readRecord(settingValue);
-        const setting = readRecord(entry?.setting);
-        const descriptor = readRecord(setting?.descriptor);
-        const parsed = PluginDeclarativeSettingsInventoryEntryV1Schema.safeParse({
-            pluginId: entry?.pluginId,
-            id: entry?.id,
-            qualifiedId: entry?.qualifiedId,
-            schema: entry?.schema,
-            secret: entry?.secret,
-        });
-        if (
-            !parsed.success
-            || parsed.data.pluginId !== input.pluginId
-            || !setting
-            || setting.id !== parsed.data.id
-            || setting.qualifiedId !== parsed.data.qualifiedId
-            || !descriptor
-            || !samePlainValue(descriptor.schema, parsed.data.schema)
-            || (descriptor.secret === true) !== parsed.data.secret
-        ) {
-            continue;
-        }
-        settings.push(parsed.data);
-        const prior = fields.get(parsed.data.qualifiedId);
-        // The UI adapter reattaches only the exact Settings projection supplied
-        // by the static model. A duplicate qualified binding is never a source
-        // of field authority.
-        if (!prior) fields.set(parsed.data.qualifiedId, Object.freeze({ setting }));
-        else if (!samePlainValue(prior.setting, setting)) fields.delete(parsed.data.qualifiedId);
-    }
-
-    for (const uiQueryValue of uiQueryEntries) {
-        const parsed = NormalizedPluginCollectionUiQueryDescriptorV1Schema.safeParse(uiQueryValue);
-        if (!parsed.success || parsed.data.collection.pluginId !== input.pluginId) continue;
-        const key = collectionUiQueryKey(parsed.data.collection.collectionId, parsed.data.id);
-        // A duplicate descriptor must never turn a malformed projection into
-        // an admitted query. Keep the key poisoned after the first collision:
-        // deleting only its second occurrence would let an odd third one
-        // silently become authority again.
-        if (uiQueries.has(key) || duplicatedUiQueryKeys.has(key)) {
-            uiQueries.delete(key);
-            duplicatedUiQueryKeys.add(key);
-        } else {
-            uiQueries.set(key, parsed.data);
-        }
-    }
-
-    return Object.freeze({ actions, destinations, fields, settings: Object.freeze(settings), uiQueries });
 }
 
 function collectionCommandIsAdmitted(
@@ -442,7 +317,7 @@ function projectNormalizedNode(input: Readonly<{
         const control = readRecord(node.control);
         const setting = readRecord(node.setting);
         const qualifiedId = readString(setting?.qualifiedId);
-        const binding = qualifiedId ? input.bindings.fields.get(qualifiedId) : undefined;
+        const binding = qualifiedId ? input.bindings.settingsByQualifiedId.get(qualifiedId) : undefined;
         if (
             !control
             || !setting
@@ -461,7 +336,7 @@ function projectNormalizedNode(input: Readonly<{
         const collectionId = readString(source?.collectionId);
         const uiQueryId = readString(source?.uiQueryId);
         const binding = collectionId && uiQueryId
-            ? input.bindings.uiQueries.get(collectionUiQueryKey(collectionId, uiQueryId))
+            ? input.bindings.uiQueries.get(declarativeCollectionUiQueryKey(collectionId, uiQueryId))
             : undefined;
         if (!binding || !query || !samePlainValue(binding, query)) {
             throw new Error('plugin_declarative_document_collection_query_unprojectable');
@@ -498,17 +373,19 @@ function normalizeLiveDocument(input: Readonly<{
     }>;
 }>): RecordValue {
     const document = parseResourceDocument(input.resource.bytes);
-    const bindings = readAdmittedBindings({
-        pluginId: input.pluginId,
-        generation: input.generation,
-        staticModel: input.staticModel,
+    const bindings = admitDeclarativeStaticModel({
+        model: input.staticModel,
+        expectedPluginId: input.pluginId,
     });
+    if (!bindings || bindings.generation !== input.generation) {
+        throw new Error('plugin_declarative_static_model_unavailable');
+    }
     const normalized = normalizePluginDeclarativeDocumentV1({
         pluginId: input.pluginId,
         generation: input.generation,
         document,
         actions: [...bindings.actions.values()].map(({ identity }) => identity),
-        destinations: [...bindings.destinations.values()],
+        destinations: [...bindings.destinations.values()].map(({ identity }) => identity),
         settings: bindings.settings,
         uiQueries: [...bindings.uiQueries.values()],
         ...(input.preparedTargetedSurfaces === undefined

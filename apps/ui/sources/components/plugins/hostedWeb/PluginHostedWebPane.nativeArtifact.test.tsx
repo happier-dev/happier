@@ -277,6 +277,78 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         nativeRouteBack.callback = null;
         nativeBack.reset();
     });
+    it('publishes only the exact current ready Artifact identity as a non-accessible native diagnostic', async () => {
+        frameProps.length = 0;
+        const first = createHandle();
+        const second = createHandle();
+        const artifactDigest = `sha256:${'b'.repeat(64)}`;
+        const readyDiagnosticTestId = [
+            'plugin-hosted-web-native-ready',
+            'acme.preview',
+            'preview-web',
+            '27',
+            artifactDigest,
+        ].join(':');
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const identity = {
+            pluginId: 'acme.preview',
+            contributionId: 'preview-web',
+            projectionGeneration: 27,
+            artifactDigest,
+        } as const;
+        const element = (
+            nativeArtifactAdoption: PluginUiArtifactAdoption<'hostedWebNative', PluginNativeArtifactResourceHandle>,
+            mountInstanceKey: string,
+        ) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={surfaceContext}
+                pluginUiProjection={projection}
+                platform="ios"
+                bridgeNonce={`diagnostic-${mountInstanceKey}`}
+                projectionGeneration={27}
+                {...({
+                    nativeArtifactAdoption,
+                    nativeArtifactLoadedRuntimeIdentity: identity,
+                    mountInstanceKey,
+                } as const)}
+            />
+        );
+        const screen = await renderScreen(element(createNativeArtifactAdoption(first.handle), 'first'));
+
+        expect(screen.findByTestId(readyDiagnosticTestId)).toBeNull();
+        const staleLoadEnd = frameProps.at(-1)?.onNativeArtifactLoadEnd as (() => void) | undefined;
+
+        await screen.update(element(createNativeArtifactAdoption(second.handle), 'second'));
+        await act(async () => {
+            staleLoadEnd?.();
+        });
+        expect(screen.findByTestId(readyDiagnosticTestId)).toBeNull();
+
+        const currentLoadEnd = frameProps.at(-1)?.onNativeArtifactLoadEnd as (() => void) | undefined;
+        await act(async () => {
+            currentLoadEnd?.();
+        });
+
+        const diagnostic = screen.findByTestId(readyDiagnosticTestId);
+        expect(diagnostic).toBeTruthy();
+        expect(diagnostic?.props).toEqual(expect.objectContaining({
+            accessible: false,
+            collapsable: false,
+        }));
+        expect(diagnostic?.props.accessibilityElementsHidden).toBeUndefined();
+        expect(diagnostic?.props.importantForAccessibility).toBeUndefined();
+        expect(readyDiagnosticTestId).not.toContain('hpat_frame_token');
+        expect(readyDiagnosticTestId).not.toContain(`hpa_${'a'.repeat(64)}`);
+        expect(frameProps.at(-1)?.onNativeArtifactHistoryStateChange).toEqual(expect.any(Function));
+        expect(frameProps.at(-1)?.onNativeArtifactGoBackResult).toEqual(expect.any(Function));
+
+        await act(async () => {
+            second.revoke();
+            await Promise.resolve();
+        });
+        expect(screen.findByTestId(readyDiagnosticTestId)).toBeNull();
+    });
     it('mounts only an injected opaque handle, keeps launch facts out of the address, and disposes it on target replacement', async () => {
         frameProps.length = 0;
         const native = createHandle();

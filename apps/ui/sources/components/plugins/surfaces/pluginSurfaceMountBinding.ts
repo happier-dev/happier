@@ -8,6 +8,7 @@ import {
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
+    DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     DaemonPluginUiTargetedSurfaceMountV1,
 } from '@happier-dev/protocol';
@@ -78,6 +79,13 @@ export type PluginSurfaceComposerMountBinding<
     renderer: TCatalogEntry['selectedRenderer']['renderer'];
 }>;
 
+/** One exact cold-projected embedded surface with no destination semantics. */
+export type PluginSurfaceEphemeralMountBinding = Readonly<{
+    kind: 'ephemeral';
+    surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
+    renderer: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1['selectedRenderer']['renderer'];
+}>;
+
 /**
  * Destination and target mounts join at this one discriminated seam. The
  * target arm carries Main's exact selected candidate; consumers cannot turn it
@@ -91,7 +99,8 @@ export type PluginSurfaceMountBinding<
 > = PluginSurfaceDestinationMountBinding<TDescriptor>
     | PluginSurfaceInlineMountBinding<TDescriptor>
     | PluginSurfaceTargetedMountBinding<TTargetedMount>
-    | PluginSurfaceComposerMountBinding<TComposerMount, TComposerCatalogEntry>;
+    | PluginSurfaceComposerMountBinding<TComposerMount, TComposerCatalogEntry>
+    | PluginSurfaceEphemeralMountBinding;
 
 /**
  * Project the one public destination mount fact from the admitted binding the
@@ -163,6 +172,33 @@ export function createPluginSurfaceComposerMountContext<
         role: mount.mount.role,
         presentation: 'content',
     });
+}
+
+export function createPluginSurfaceEphemeralMountContext(): PluginUiMountContextV1 {
+    return Object.freeze({
+        kind: 'embedded',
+        role: 'ephemeralInput',
+        presentation: 'content',
+    });
+}
+
+export function readPluginSurfaceEphemeralMountBinding(
+    surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
+): PluginSurfaceEphemeralMountBinding | null {
+    const selected = surface.selectedRenderer;
+    if (
+        surface.contribution.pluginId !== selected.identity.pluginId
+        || surface.executionOrigin.materializationRef.pluginId !== surface.contribution.pluginId
+        || surface.contributorTargetedContributions.target.pluginId !== surface.contribution.pluginId
+        || surface.contributorTargetedContributions.target.immutableGenerationId !== surface.immutableGenerationId
+        || surface.rendererChain.some((identity) => identity.pluginId !== surface.contribution.pluginId)
+        || selected.renderer.contributionId !== selected.identity.localId
+        || !surface.rendererChain.some((identity) => (
+            identity.pluginId === selected.identity.pluginId
+            && identity.localId === selected.identity.localId
+        ))
+    ) return null;
+    return Object.freeze({ kind: 'ephemeral', surface, renderer: selected.renderer });
 }
 
 function readOptionalString(value: unknown): string | undefined {

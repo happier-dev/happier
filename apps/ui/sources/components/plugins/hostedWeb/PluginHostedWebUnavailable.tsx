@@ -65,6 +65,8 @@ export function readPluginHostedWebUnavailableDiagnosticCode(
 export function PluginHostedWebUnavailable(props: Readonly<{
     /** Raw runtime diagnostic exposed only through SurfaceStateCard's QA marker. */
     diagnosticCode?: PluginHostedWebUnavailableDiagnosticCode | null;
+    /** Mount-local retry; source selection and capability issuance remain with their incumbent owners. */
+    onRetry?: () => void;
 }>): React.ReactElement {
     const presentation = resolvePluginSurfaceStatePresentation({
         state: 'unavailable',
@@ -83,6 +85,7 @@ export function PluginHostedWebUnavailable(props: Readonly<{
             reason={card.reason}
             diagnosticCode={presentation.diagnosticCode}
             accessibilitySemantics={card.accessibilitySemantics}
+            action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
         />
     );
 }

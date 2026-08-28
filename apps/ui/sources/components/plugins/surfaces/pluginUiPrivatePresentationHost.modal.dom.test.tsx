@@ -239,6 +239,7 @@ function createHostApi(
         context: async () => context,
         watchContext: async () => ({ dispose() {} }),
         publishCurrentUiContext: () => unexpectedHostApiCall('publishCurrentUiContext'),
+        settleEphemeralInput: async () => unexpectedHostApiCall('settleEphemeralInput'),
         activeComposer: async () => unexpectedHostApiCall('activeComposer'),
         readComposer: async () => unexpectedHostApiCall('readComposer'),
         watchComposer: async () => unexpectedHostApiCall('watchComposer'),

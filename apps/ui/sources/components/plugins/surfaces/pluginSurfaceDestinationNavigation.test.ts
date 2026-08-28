@@ -1,3 +1,5 @@
+import * as React from 'react';
+import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import {
@@ -5,7 +7,7 @@ import {
     normalizePluginUiSettingsPageBindingV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import type { PluginSurfaceOpenRequest } from './openPluginSurface';
+import type { PluginSurfaceOpenOutcome, PluginSurfaceOpenRequest } from './openPluginSurface';
 import type {
     PluginUiSettingsPageProjection,
     PluginUiSurfacePlacementProjection,
@@ -15,6 +17,7 @@ import {
     createPluginSurfaceDestinationNavigationBinding,
     createPluginSurfaceDestinationOpenSurfaceHandler,
     resolvePluginSurfaceDestinationOpen,
+    useRegisterPluginSurfaceDestinationNavigationOwner,
 } from './pluginSurfaceDestinationNavigation';
 
 const destination = Object.freeze({ pluginId: 'acme.notes', localId: 'notes' });
@@ -120,6 +123,57 @@ const retiredAccountLifetime: ActiveServerAccountScopeLifetime = Object.freeze({
 });
 
 describe('plugin surface destination navigation', () => {
+    it('registers the current owner before descendant layout navigation on mount and replacement', async () => {
+        const appPage = placement({ container: 'appPage' });
+        const firstOwner = vi.fn(async () => ({ ok: true as const }));
+        const replacementOwner = vi.fn(async () => ({ ok: true as const }));
+        const binding = createPluginSurfaceDestinationNavigationBinding({
+            placements: [appPage],
+            targetKind: 'app',
+        });
+        const outcomes: PluginSurfaceOpenOutcome[] = [];
+
+        function LayoutOpeningChild(props: Readonly<{ revision: number }>) {
+            React.useLayoutEffect(() => {
+                void binding.openSurface(request).then((outcome) => {
+                    outcomes.push(outcome);
+                });
+            }, [props.revision]);
+            return null;
+        }
+
+        function Owner(props: Readonly<{
+            handler: typeof firstOwner;
+            revision: number;
+        }>) {
+            const owner = React.useMemo(() => ({
+                container: 'appPage' as const,
+                handler: props.handler,
+            }), [props.handler]);
+            useRegisterPluginSurfaceDestinationNavigationOwner(owner, binding);
+            return React.createElement(LayoutOpeningChild, { revision: props.revision });
+        }
+
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(React.createElement(Owner, { handler: firstOwner, revision: 1 }));
+            await Promise.resolve();
+        });
+        expect(outcomes).toEqual([{ ok: true }]);
+        expect(firstOwner).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree.update(React.createElement(Owner, { handler: replacementOwner, revision: 2 }));
+            await Promise.resolve();
+        });
+        expect(outcomes).toEqual([{ ok: true }, { ok: true }]);
+        expect(firstOwner).toHaveBeenCalledTimes(1);
+        expect(replacementOwner).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
     it('routes a Session sidebar binding invocation to its same-target bottom owner', async () => {
         const sessionSidebar = placement({
             container: 'rightSidebarTab',

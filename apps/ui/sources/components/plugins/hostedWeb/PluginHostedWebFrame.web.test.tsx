@@ -14,10 +14,6 @@ const security = {
     sourceMaps: 'disabled',
     mixedContent: 'deny',
     csp: {
-        scriptSrc: 'selfOnly',
-        styleSrc: 'selfOnly',
-        imgSrc: 'selfOnly',
-        fontSrc: 'selfOnly',
         connectSrc: 'declaredOrigins',
         allowDataUrls: false,
         allowBlobUrls: false,
@@ -125,6 +121,7 @@ describe('PluginHostedWebFrame web contract', () => {
         />);
 
         expect(desktopArtifactHostProps.at(-1)).toMatchObject({
+            title: 'Preview',
             artifact: {
                 artifactHandleToken: 'hpat_test_token',
                 initialPathAndQuery: '/index.html',

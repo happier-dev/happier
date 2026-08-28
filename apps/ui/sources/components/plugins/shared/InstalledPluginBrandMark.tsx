@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
     HappierBrandMark,
+    resolveHappierImagePixels,
     type HappierImageSize,
 } from '@happier-dev/plugin-ui/presentation';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -12,6 +14,8 @@ import type { InstalledPluginBrandPresentation } from './installedPluginBrandPre
 export type InstalledPluginBrandMarkProps = Readonly<{
     brand: InstalledPluginBrandPresentation;
     size?: HappierImageSize;
+    /** Exact host-chrome slot size; packaged UI surfaces otherwise use the named size scale. */
+    pixelSize?: number;
     /** An adjacent host-owned label already supplies the one canonical name. */
     externallyLabelled?: boolean;
     testID?: string;
@@ -25,7 +29,7 @@ export type InstalledPluginBrandMarkProps = Readonly<{
 export function InstalledPluginBrandMark(props: InstalledPluginBrandMarkProps): React.ReactElement {
     const { theme } = useUnistyles();
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
-    return (
+    const mark = (
         <HappierBrandMark
             displayName={props.brand.displayName}
             bytes={props.brand.bytes}
@@ -33,7 +37,34 @@ export function InstalledPluginBrandMark(props: InstalledPluginBrandMarkProps): 
             externallyLabelled={props.externallyLabelled}
             theme={presentationTheme}
             colorScheme={theme.dark ? 'dark' : 'light'}
-            testID={props.testID}
+            testID={props.pixelSize === undefined ? props.testID : undefined}
         />
+    );
+    if (props.pixelSize === undefined) return mark;
+
+    const namedSize = props.size ?? 'small';
+    const basePixels = resolveHappierImagePixels(namedSize);
+    const pixelSize = Math.max(1, props.pixelSize);
+    return (
+        <View
+            style={{
+                width: pixelSize,
+                height: pixelSize,
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+            }}
+            testID={props.testID}
+        >
+            <View
+                style={{
+                    width: basePixels,
+                    height: basePixels,
+                    transform: [{ scale: pixelSize / basePixels }],
+                }}
+            >
+                {mark}
+            </View>
+        </View>
     );
 }

@@ -59,6 +59,8 @@ export type PluginReactNativeSurfacePrivateHostBindings = Readonly<{
     composerRef?: unknown;
     presentationHost?: unknown;
     dataClient?: unknown;
+    /** In-process Account+plugin+immutable-generation scope; absent means unavailable. */
+    ephemeralSharedScope?: unknown;
 }>;
 
 export type PluginReactNativeSurfaceModule = Readonly<{
@@ -108,6 +110,19 @@ type PluginReactNativeSurfaceProps = Readonly<{
     interactionEnabled?: boolean;
     /** Layout/route presentation eligibility; distinct from availability. */
     focusEligible?: boolean;
+    /**
+     * Exact host-admitted bytes identity. It is stamped only on the enabled
+     * boundary below, after the verified loader has produced a renderable
+     * module, so diagnostics can distinguish a projected candidate from the
+     * artifact response the browser actually adopted.
+     */
+    loadedRuntimeIdentity?: Readonly<{
+        pluginId: string;
+        generation: string;
+        artifactDigest: string;
+        machineId?: string | null;
+        serverId?: string | null;
+    }>;
     loadTimeoutMs?: number;
     /** Targeted caller fallback, consumed only for a contributor render crash. */
     targetedFallback?: React.ReactNode;
@@ -149,15 +164,19 @@ function readCrashStateTokenMountIdentity(
  */
 function readCrashStateTokenMountDiagnosticKind(
     token: DaemonPluginReactNativeCrashBindingTokenV1 | undefined,
-): 'destination' | 'targeted_surface' | 'composer' | null {
+): 'destination' | 'inline' | 'targeted_surface' | 'composer' | 'automation_event_setup_surface' | null {
     if (!token) return null;
     switch (token.mount.kind) {
         case 'destination':
             return 'destination';
+        case 'inline':
+            return 'inline';
         case 'targetedSurface':
             return 'targeted_surface';
         case 'composer':
             return 'composer';
+        case 'automationEventSetupSurface':
+            return 'automation_event_setup_surface';
     }
 }
 
@@ -377,6 +396,9 @@ function installPluginUiPrivateHostBindings(
     }
     if (bindings.dataClient !== undefined) {
         privateProviderProps.dataClient = bindings.dataClient;
+    }
+    if (bindings.ephemeralSharedScope !== undefined) {
+        privateProviderProps.ephemeralSharedScope = bindings.ephemeralSharedScope;
     }
     if (Object.keys(privateProviderProps).length === 0) {
         return element;
@@ -745,7 +767,10 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         const timeout = setTimeout(() => {
             if (!cancelled) {
                 timedOut = true;
-                recordDaemonCrashFailure('load_timeout');
+                // A bounded load deadline is presentation/liveness policy, not
+                // evidence that plugin code evaluated or rendered and crashed.
+                // Keep the current mount fenced and offer retry, but leave the
+                // durable crash owner for actual loader/module/render failures.
                 setLoadFailureDiagnostics(['load_timeout']);
                 setLoadFailed(true);
                 setRetrying(false);
@@ -1094,6 +1119,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 snapshotTitle={props.snapshotTitle ?? props.surfaceId}
                 enabled={interactionEnabled}
                 focusEligible={props.focusEligible}
+                loadedRuntimeIdentity={props.loadedRuntimeIdentity}
             >
                 <View style={resetFeedbackStyles.surface}>
                     <PluginReactNativeSurfaceRenderer

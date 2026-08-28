@@ -39,9 +39,43 @@ const composerToken = {
     crashStateEpoch: 4,
 } as const;
 
+const automationToken = {
+    mount: {
+        kind: 'automationEventSetupSurface',
+        contribution: { pluginId: 'acme.automation', localId: 'repository-updated' },
+        immutableGenerationId: 'automation-generation',
+    },
+    renderer: { pluginId: 'acme.automation', localId: 'setup-native' },
+    artifactDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    crashStateEpoch: 2,
+} as const;
+
 const scopeKey = 'server-a\u0000machine-a\u0000account-a';
 
 describe('Plugin React Native watchdog', () => {
+    it('persists Automation setup crash identity without collapsing immutable generations', () => {
+        const persistence = createMemoryWatchdogPersistence();
+        const watchdog = createPluginReactNativeWatchdog({
+            persistence,
+            createFailureOccurrenceId: () => '0d904e7f-5ccb-45ff-a2a5-90409ac69a32',
+        });
+        const pending = watchdog.recordFailure({
+            token: automationToken,
+            scopeKey,
+            failure: 'render_error',
+        });
+        const recovered = createPluginReactNativeWatchdog({ persistence });
+
+        expect(recovered.readPending({ token: automationToken, scopeKey })).toEqual([pending]);
+        expect(recovered.readPending({
+            token: {
+                ...automationToken,
+                mount: { ...automationToken.mount, immutableGenerationId: 'automation-generation-next' },
+            },
+            scopeKey,
+        })).toEqual([]);
+    });
+
     it('durably keeps one pending occurrence when daemon receipt is lost', () => {
         const persistence = createMemoryWatchdogPersistence();
         const watchdog = createPluginReactNativeWatchdog({
@@ -187,4 +221,3 @@ describe('Plugin React Native watchdog', () => {
         expect(createPluginReactNativeWatchdog({}).readPending({ token, scopeKey })).toEqual([]);
     });
 });
-

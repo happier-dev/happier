@@ -159,6 +159,43 @@ HAPPIER_STACK_STACK=activity-surfaces-premium-lead-qa \
   yarn --cwd apps/ui test:native-e2e:activity-surfaces
 ```
 
+## Hosted Artifact Plugin UI source-readiness capture
+
+The packaged-desktop Plugin UI row deliberately remains fail-closed until its
+direct-Wry child has a controlled loaded run. After building and installing the
+`packages/plugin-sdk/examples/production-hosted-reference` development source
+through the normal plugin development flow, point the scenario at that exact
+source and run:
+
+```bash
+HAPPIER_QA_STACK_RUNTIME_JSON_PATH=/path/to/stack/runtime.json \
+HAPPIER_TAURI_HOSTED_PLUGIN_ROOT=/path/to/current-source/plugin \
+HAPPIER_TAURI_HOSTED_ROUTE=/plugins/examples.production-hosted-reference/review-dashboard \
+HAPPIER_TAURI_HOSTED_SURFACE_ID=review-dashboard \
+HAPPIER_TAURI_HOSTED_TITLE='Review dashboard' \
+HAPPIER_TAURI_HOSTED_PLUGIN_ID=examples.production-hosted-reference \
+HAPPIER_TAURI_HOSTED_ARTIFACT_ID=review-hosted \
+yarn --cwd apps/ui tauri:mcp:hosted-artifact-plugin-ui:qa
+```
+
+The scenario derives Stack, daemon, UI-producer, Account, machine, server,
+catalog generation, and emitted Artifact identity through the canonical managed
+Stack testkit owner. It attaches only to that exact Stack-owned Tauri identifier
+and queries the incumbent fail-closed frame
+capability, and—only when that capability is truthfully available—captures the
+mounted interaction boundary with exact plugin/generation/artifact/machine/server
+identity plus host-boundary DOM and accessibility snapshots. Those MCP
+snapshots inspect the main Tauri webview; they do not prove the separate Wry
+child. The generated checklist therefore requires a complete native-window
+capture and direct VoiceOver inspection alongside the remaining child
+bridge/history/Back/update/offline checks.
+
+An `desktop_hosted_artifact_platform_frame_unproved` result is an expected hard
+blocker today, not a pass and not permission to bypass the capability owner.
+Complete the generated native-child checks on controlled macOS before changing
+the source proof bit. The harness intentionally has no override, proof registry,
+packaged-candidate identity, or alternate hosted runtime.
+
 ## Window / crash checks
 
 - The latest captured backend state showed one visible `main` window (`window_count: 1`), so the desktop window itself did not crash in that run.

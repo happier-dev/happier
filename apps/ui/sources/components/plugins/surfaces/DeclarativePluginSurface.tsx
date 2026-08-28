@@ -29,6 +29,8 @@ import {
     PluginContributionIdentityV1Schema,
     PluginJsonValueV2Schema,
     PluginSettingFieldSchemaV2Schema,
+    normalizeStrictJsonValue,
+    sameStrictJsonValue,
     type PluginContributionIdentityV1,
     type ComposerRefV1,
     type ComposerTransactionV1,
@@ -95,6 +97,12 @@ import type {
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { PluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
+import {
+    admitDeclarativeStaticModel,
+    type AdmittedDeclarativeAction,
+    type AdmittedDeclarativeDestination,
+    type AdmittedDeclarativeSetting,
+} from './declarativeStaticModel';
 
 /**
  * The declarative node vocabulary itself is rendered by the single owner in
@@ -110,21 +118,6 @@ export {
 } from '@/components/plugins/shared/declarativeNodes';
 
 type RecordValue = Readonly<Record<string, unknown>>;
-
-function sameJsonValue(left: unknown, right: unknown): boolean {
-    if (Object.is(left, right)) return true;
-    if (Array.isArray(left) && Array.isArray(right)) {
-        return left.length === right.length && left.every((value, index) => sameJsonValue(value, right[index]));
-    }
-    const leftRecord = record(left);
-    const rightRecord = record(right);
-    if (!leftRecord || !rightRecord) return false;
-    const leftKeys = Object.keys(leftRecord);
-    const rightKeys = Object.keys(rightRecord);
-    return leftKeys.length === rightKeys.length
-        && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
-            && sameJsonValue(leftRecord[key], rightRecord[key]));
-}
 
 type DeclarativeSettingScopeKind = 'account' | 'daemon';
 
@@ -265,15 +258,25 @@ function collectDeclarativeSettingsFields(
     nodeValue: unknown,
     fields: DeclarativeSettingsFieldBuckets,
     localized: DeclarativeTextResolver,
+    admittedSettings: ReadonlyMap<string, AdmittedDeclarativeSetting>,
 ): void {
     const node = record(nodeValue);
     if (!node) return;
     if (node.kind === 'field') {
         const binding = readDeclarativeSettingBinding(node);
+        const setting = record(node.setting);
+        const qualifiedId = typeof setting?.qualifiedId === 'string' ? setting.qualifiedId : null;
+        const admittedSetting = qualifiedId ? admittedSettings.get(qualifiedId) : undefined;
         const declaredField = binding
             ? projectDeclarativeDeclaredField(node, binding, localized)
             : null;
-        if (binding && declaredField) {
+        if (
+            binding
+            && declaredField
+            && admittedSetting
+            && admittedSetting.inventory.id === binding.id
+            && sameStrictJsonValue(setting, admittedSetting.setting)
+        ) {
             const bucket = binding.scope === 'account' && binding.secret
                 ? 'accountSecrets'
                 : binding.scope;
@@ -292,13 +295,16 @@ function collectDeclarativeSettingsFields(
         }
     }
     if (Array.isArray(node.children)) {
-        for (const child of node.children) collectDeclarativeSettingsFields(child, fields, localized);
+        for (const child of node.children) {
+            collectDeclarativeSettingsFields(child, fields, localized, admittedSettings);
+        }
     }
 }
 
 function collectDeclarativeSettingsInventory(
     root: RecordValue | null,
     localized: DeclarativeTextResolver,
+    admittedSettings: ReadonlyMap<string, AdmittedDeclarativeSetting>,
 ): DeclarativeSettingsInventory {
     const fields: DeclarativeSettingsFieldBuckets = {
         account: [],
@@ -307,7 +313,7 @@ function collectDeclarativeSettingsInventory(
         daemon: [],
         daemonDeclaredFields: [],
     };
-    if (root) collectDeclarativeSettingsFields(root, fields, localized);
+    if (root) collectDeclarativeSettingsFields(root, fields, localized, admittedSettings);
     return Object.freeze({
         account: Object.freeze(fields.account),
         accountDeclaredFields: Object.freeze(fields.accountDeclaredFields),
@@ -374,10 +380,10 @@ function readComposerApplyBinding(node: RecordValue): DeclarativeComposerApplyBi
     const parsed = PluginDeclarativeComposerApplyEffectV1Schema.safeParse(node.effect);
     if (!parsed.success) return null;
     return Object.freeze({
-        transaction: Object.freeze({
+        transaction: normalizeStrictJsonValue({
             expectedRevision: parsed.data.expectedRevision,
             operations: parsed.data.operations,
-        }),
+        }) as ComposerTransactionV1,
     });
 }
 
@@ -390,13 +396,9 @@ type DeclarativeCollectionRowCommand =
     | Readonly<{ kind: 'action'; action: DeclarativeQualifiedReference }>
     | Readonly<{ kind: 'openSurface'; destination: DeclarativeQualifiedReference }>;
 
-type DeclarativeActionCatalogEntry = DeclarativeQualifiedReference & Readonly<{
-    enabled: boolean;
-    title: string;
-    icon?: string;
-}>;
+type DeclarativeActionCatalogEntry = AdmittedDeclarativeAction;
 
-type DeclarativeDestinationCatalogEntry = DeclarativeQualifiedReference;
+type DeclarativeDestinationCatalogEntry = AdmittedDeclarativeDestination;
 
 type DeclarativeCollectionCommandCatalog = Readonly<{
     actions: ReadonlyMap<string, DeclarativeActionCatalogEntry>;
@@ -460,64 +462,6 @@ function readDeclarativeCollectionRowCommand(input: Readonly<{
         return destination ? Object.freeze({ kind: 'openSurface', destination }) : null;
     }
     return null;
-}
-
-/**
- * The CLI's static model remains the one catalog projection. This reader only
- * checks its exact qualified identities and poisons duplicate targets, so a
- * malformed projection cannot make a later entry become an alternative owner.
- */
-function readDeclarativeCollectionCommandCatalog(input: Readonly<{
-    model: RecordValue | null;
-    pluginId: string;
-    generation: string | null;
-}>): DeclarativeCollectionCommandCatalog {
-    if (!input.model || !input.generation) return EMPTY_DECLARATIVE_COLLECTION_COMMAND_CATALOG;
-    const inventory = record(input.model.declarativeInventory);
-    const actions = new Map<string, DeclarativeActionCatalogEntry>();
-    const destinations = new Map<string, DeclarativeDestinationCatalogEntry>();
-    const duplicatedActionIds = new Set<string>();
-    const duplicatedDestinationIds = new Set<string>();
-
-    for (const entryValue of Array.isArray(inventory?.actions) ? inventory.actions : []) {
-        const entry = record(entryValue);
-        const reference = readDeclarativeQualifiedReference({
-            value: entry,
-            pluginId: input.pluginId,
-            generation: input.generation,
-        });
-        const title = readNonemptyString(entry?.title);
-        if (!reference || !title) continue;
-        if (actions.has(reference.qualifiedId) || duplicatedActionIds.has(reference.qualifiedId)) {
-            actions.delete(reference.qualifiedId);
-            duplicatedActionIds.add(reference.qualifiedId);
-            continue;
-        }
-        const icon = readNonemptyString(entry?.icon);
-        actions.set(reference.qualifiedId, Object.freeze({
-            ...reference,
-            enabled: entry?.enabled === true,
-            title,
-            ...(icon ? { icon } : {}),
-        }));
-    }
-
-    for (const entryValue of Array.isArray(inventory?.destinations) ? inventory.destinations : []) {
-        const reference = readDeclarativeQualifiedReference({
-            value: entryValue,
-            pluginId: input.pluginId,
-            generation: input.generation,
-        });
-        if (!reference) continue;
-        if (destinations.has(reference.qualifiedId) || duplicatedDestinationIds.has(reference.qualifiedId)) {
-            destinations.delete(reference.qualifiedId);
-            duplicatedDestinationIds.add(reference.qualifiedId);
-            continue;
-        }
-        destinations.set(reference.qualifiedId, reference);
-    }
-
-    return Object.freeze({ actions, destinations });
 }
 
 function findCurrentDestinationPlacement(input: Readonly<{
@@ -690,22 +634,25 @@ export function DeclarativePluginSurface(props: Readonly<{
         [pluginLocale, props.pluginUiProjection],
     );
     const model = record(props.model);
-    const identity = record(model?.identity);
-    const root = record(model?.root);
-    const generation = typeof identity?.generation === 'string' ? identity.generation : null;
-    const qualifiedId = typeof identity?.qualifiedId === 'string'
-        ? identity.qualifiedId
-        : props.pluginId;
-    const visible = model?.visible === true && identity?.pluginId === props.pluginId && generation !== null;
-    const collectionCommandCatalog = React.useMemo(() => readDeclarativeCollectionCommandCatalog({
+    const admittedModel = React.useMemo(() => admitDeclarativeStaticModel({
         model,
-        pluginId: props.pluginId,
-        generation,
-    }), [generation, model, props.pluginId]);
+        expectedPluginId: props.pluginId,
+    }), [model, props.pluginId]);
+    const root = admittedModel?.root ?? null;
+    const generation = admittedModel?.generation ?? null;
+    const qualifiedId = admittedModel?.qualifiedId ?? props.pluginId;
+    const visible = admittedModel !== null;
+    const collectionCommandCatalog: DeclarativeCollectionCommandCatalog = admittedModel
+        ? admittedModel
+        : EMPTY_DECLARATIVE_COLLECTION_COMMAND_CATALOG;
     const [pendingActions, setPendingActions] = React.useState<ReadonlySet<string>>(new Set());
     const settingsInventory = React.useMemo(
-        () => collectDeclarativeSettingsInventory(root, localized),
-        [localized, root],
+        () => collectDeclarativeSettingsInventory(
+            root,
+            localized,
+            admittedModel?.settingsByQualifiedId ?? new Map(),
+        ),
+        [admittedModel, localized, root],
     );
     const settingsSourceLifetimeIdentity = `${qualifiedId}:${generation ?? 'unavailable'}:${props.authorityGeneration}`;
     const accountServerIdentityId = React.useMemo(
@@ -810,6 +757,25 @@ export function DeclarativePluginSurface(props: Readonly<{
         visible,
     ]);
 
+    const settlePendingAction = React.useCallback((
+        pendingKey: string,
+        scopeSequence: number,
+        operation: Promise<unknown>,
+    ): Promise<void> => Promise.resolve(operation)
+        // The shared pressable observes the returned thenable and owns its
+        // per-control pending/focus lifecycle. Overflow commands intentionally
+        // ignore it, so convert rejection to a settled result here as well.
+        .then(() => undefined, () => undefined)
+        .then(() => {
+            if (scopeSequenceRef.current !== scopeSequence) return;
+            pendingActionIdsRef.current.delete(pendingKey);
+            setPendingActions((current) => {
+                const next = new Set(current);
+                next.delete(pendingKey);
+                return next;
+            });
+        }), []);
+
     const runAction = React.useCallback((
         binding: DeclarativeActionBinding,
         enabled: boolean,
@@ -829,16 +795,12 @@ export function DeclarativePluginSurface(props: Readonly<{
         // Declarative nodes are a host renderer, not an authority boundary. The
         // bound controller stamps caller/origin/currentness and invokes the one
         // canonical action dispatcher through its mounted host facade.
-        void props.dispatchAction(binding.identity, binding.input).finally(() => {
-            if (scopeSequenceRef.current !== scopeSequence) return;
-            pendingActionIdsRef.current.delete(pendingKey);
-            setPendingActions((current) => {
-                const next = new Set(current);
-                next.delete(pendingKey);
-                return next;
-            });
-        });
-    }, [props.actionAvailable, props.daemonInteractionEnabled, props.dispatchAction]);
+        return settlePendingAction(
+            pendingKey,
+            scopeSequence,
+            props.dispatchAction(binding.identity, binding.input),
+        );
+    }, [props.actionAvailable, props.daemonInteractionEnabled, props.dispatchAction, settlePendingAction]);
 
     const runComposerApply = React.useCallback((
         binding: DeclarativeComposerApplyBinding,
@@ -863,16 +825,12 @@ export function DeclarativePluginSurface(props: Readonly<{
         // The declarative effect has no authored Composer target. The mounted
         // facade supplies the exact host-owned ref and forwards the same
         // canonical CAS transaction as every SDK renderer.
-        void applyComposer(composerRef, binding.transaction).finally(() => {
-            if (scopeSequenceRef.current !== scopeSequence) return;
-            pendingActionIdsRef.current.delete(pendingKey);
-            setPendingActions((current) => {
-                const next = new Set(current);
-                next.delete(pendingKey);
-                return next;
-            });
-        });
-    }, [props.applyComposer, props.composerApplyAvailable, props.composerRef, props.interactionEnabled]);
+        return settlePendingAction(
+            pendingKey,
+            scopeSequence,
+            applyComposer(composerRef, binding.transaction),
+        );
+    }, [props.applyComposer, props.composerApplyAvailable, props.composerRef, props.interactionEnabled, settlePendingAction]);
 
     /**
      * The mounted surface's action affordance. A node whose binding does not
@@ -946,7 +904,7 @@ export function DeclarativePluginSurface(props: Readonly<{
 
             if (command.kind === 'action') {
                 const action = collectionCommandCatalog.actions.get(command.action.qualifiedId);
-                if (!action) return null;
+                if (!action?.title) return null;
                 const pendingKey = rowCommandPendingKey(action, context);
                 const busy = pendingActionIdsRef.current.has(pendingKey);
                 const disabled = !action.enabled
@@ -1132,7 +1090,7 @@ export function DeclarativePluginSurface(props: Readonly<{
                         disabled={disabled}
                         minimumTouchTarget={minimumTouchTarget}
                         theme={presentationTheme}
-                        isEqual={sameJsonValue}
+                        isEqual={sameStrictJsonValue}
                         keyForOption={(_option, index) => `${nodePath}:${index}`}
                         onChange={(next) => {
                             const nextValue = next as PluginJsonValueV2;

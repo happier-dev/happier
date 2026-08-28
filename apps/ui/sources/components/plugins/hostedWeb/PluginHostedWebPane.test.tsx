@@ -150,6 +150,39 @@ describe('PluginHostedWebPane', () => {
         expect(screen.getTextContent()).not.toContain('hosted_web_preview_unavailable');
     });
 
+    it('preserves the targeted fallback for a pre-frame Artifact acquisition failure', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projection}
+            platform="web"
+            unavailableDiagnosticCode="transport_unavailable"
+            targetedFallback={React.createElement('TargetedHostedFallback', {
+                testID: 'targeted-hosted-acquisition-fallback',
+            })}
+        />);
+
+        expect(screen.findByTestId('targeted-hosted-acquisition-fallback')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
+    });
+
+    it('offers a mount-local retry for an ordinary pre-frame Artifact acquisition failure', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const onRetry = vi.fn();
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projection}
+            platform="web"
+            unavailableDiagnosticCode="transport_unavailable"
+            onUnavailableRetry={onRetry}
+        />);
+
+        screen.pressByTestId('plugin-hosted-web-unavailable-action');
+        expect(onRetry).toHaveBeenCalledExactlyOnceWith();
+    });
+
     it('fails closed when a bound mount supplies a null selected hosted-web renderer', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
 

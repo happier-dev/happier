@@ -5,7 +5,10 @@ import {
     readPluginUiContributionOrigin,
     readPluginUiProjectionEntryExecutionOrigin,
 } from '@/sync/domains/plugins/ui/projectionUnion';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import {
+    arePluginMachineExecutionOriginsEqual,
+    type PluginMachineExecutionOriginV1,
+} from '@happier-dev/protocol';
 
 /**
  * The authority a plugin launch input belongs to.
@@ -167,10 +170,7 @@ function areSameExecutionOrigins(
     return left === right || (
         left !== null
         && right !== null
-        && left.serverIdentityId === right.serverIdentityId
-        && left.materializationRef.pluginId === right.materializationRef.pluginId
-        && left.materializationRef.machineId === right.materializationRef.machineId
-        && left.materializationRef.materializationId === right.materializationRef.materializationId
+        && arePluginMachineExecutionOriginsEqual(left, right)
     );
 }
 

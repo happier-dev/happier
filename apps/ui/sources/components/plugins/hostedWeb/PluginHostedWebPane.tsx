@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
@@ -18,6 +18,7 @@ import {
     type PluginUiSubPathV1,
     PluginUiPlatformV1,
     type PluginUiSurfaceContextV1,
+    type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginSurfaceTarget, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
@@ -264,10 +265,6 @@ function isRestrictiveHostedWebSecurityPolicy(
         && security.allowedConnectOrigins.length === 0
         && security.sourceMaps === 'disabled'
         && (security.mixedContent === 'deny' || allowDevLoopbackMixedContent)
-        && security.csp.scriptSrc === 'selfOnly'
-        && security.csp.styleSrc === 'selfOnly'
-        && security.csp.imgSrc === 'selfOnly'
-        && security.csp.fontSrc === 'selfOnly'
         && security.csp.connectSrc === 'selfOnly'
         && security.csp.allowDataUrls === false
         && security.csp.allowBlobUrls === false
@@ -508,6 +505,8 @@ export function PluginHostedWebPane(props: Readonly<{
     opaqueArtifactFrame?: boolean;
     /** A bounded issuer/projection failure fact for the safe state-card channel. */
     unavailableDiagnosticCode?: PluginHostedWebUnavailableDiagnosticCode | null;
+    /** Retry the incumbent exact Artifact acquisition/issuance without changing source ownership. */
+    onUnavailableRetry?: () => void;
     /**
      * Existing target/caller fallback for a targeted surface. The host owns
      * selection and contributor attribution; the pane consumes this only for
@@ -601,6 +600,16 @@ export function PluginHostedWebPane(props: Readonly<{
         'hostedWebNative',
         PluginNativeArtifactResourceHandle
     > | null;
+    /**
+     * Exact facts captured with the incumbent adoption. They are presentation
+     * evidence only: the Artifact handle remains the currentness/custody owner.
+     */
+    nativeArtifactLoadedRuntimeIdentity?: Readonly<{
+        pluginId: string;
+        contributionId: string;
+        projectionGeneration: number;
+        artifactDigest: PluginUiArtifactDigestV1;
+    }> | null;
 }>): React.ReactElement {
     const { theme, rt } = useUnistyles();
     const descriptor = props.projectedContribution === undefined
@@ -1215,10 +1224,15 @@ export function PluginHostedWebPane(props: Readonly<{
     // the direct presence guard so TypeScript narrows the render-only values
     // below without introducing a second policy/currentness decision.
     if (unavailableDiagnosticCode || !descriptor || !sandbox || !security || !frameOrigin) {
-        if (unavailableDiagnosticCode === 'hosted_web_bridge_timeout' && props.targetedFallback !== undefined) {
+        if (unavailableDiagnosticCode && props.targetedFallback !== undefined) {
             return <>{props.targetedFallback}</>;
         }
-        return <PluginHostedWebUnavailable diagnosticCode={unavailableDiagnosticCode} />;
+        return (
+            <PluginHostedWebUnavailable
+                diagnosticCode={unavailableDiagnosticCode}
+                onRetry={props.onUnavailableRetry}
+            />
+        );
     }
 
     if (nativeArtifactActivationPending) {
@@ -1307,6 +1321,23 @@ export function PluginHostedWebPane(props: Readonly<{
         ? nativeArtifactGoBackCommand
             ?? (props.navigationCommand?.kind === 'goBack' ? props.navigationCommand : undefined)
         : props.navigationCommand;
+    const nativeArtifactLoadedRuntimeIdentity = props.nativeArtifactLoadedRuntimeIdentity;
+    const nativeArtifactReadyDiagnosticTestID = nativeArtifact
+        && nativeArtifactFramePresentationState === 'ready'
+        && nativeArtifactHandle?.isCurrent()
+        && isSurfaceCurrent()
+        && nativeArtifactLoadedRuntimeIdentity
+        && nativeArtifactLoadedRuntimeIdentity.pluginId === descriptor.pluginId
+        && nativeArtifactLoadedRuntimeIdentity.contributionId === descriptor.contributionId
+        && nativeArtifactLoadedRuntimeIdentity.projectionGeneration === projectionGeneration
+        ? [
+            'plugin-hosted-web-native-ready',
+            nativeArtifactLoadedRuntimeIdentity.pluginId,
+            nativeArtifactLoadedRuntimeIdentity.contributionId,
+            nativeArtifactLoadedRuntimeIdentity.projectionGeneration,
+            nativeArtifactLoadedRuntimeIdentity.artifactDigest,
+        ].join(':')
+        : null;
 
     return (
         <PluginSurfaceInteractionBoundary
@@ -1326,6 +1357,12 @@ export function PluginHostedWebPane(props: Readonly<{
                 active={platform === 'ios' && effectiveInteractionEnabled && nativeArtifactGuestHistoryActive}
                 consume={requestNativeArtifactGoBack}
             />
+            <View
+                testID={nativeArtifactReadyDiagnosticTestID ?? undefined}
+                accessible={false}
+                collapsable={false}
+                style={styles.nativeArtifactReadyDiagnosticRoot}
+            >
             <PluginHostedWebFrame
                 key={[
                     projectionGeneration ?? 'unversioned',
@@ -1360,6 +1397,15 @@ export function PluginHostedWebPane(props: Readonly<{
                 diagnostics={props.diagnostics}
                 testID="plugin-hosted-web-frame"
             />
+            </View>
         </PluginSurfaceInteractionBoundary>
     );
 }
+
+const styles = StyleSheet.create({
+    nativeArtifactReadyDiagnosticRoot: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+    },
+});

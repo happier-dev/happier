@@ -6,7 +6,6 @@ import {
     type PluginUiHostApiErrorCodeV1,
     type PluginUiJsonObjectV1,
     type PluginUiJsonValueV1,
-    type PluginUiSelectActionInputRequestV1,
     type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
 
@@ -24,8 +23,6 @@ import {
     type SessionServerStartDraftTarget,
     type SessionServerStartDraftComposerOutcome,
 } from '@/components/sessions/new/serverStartDraftComposer';
-import type { SessionNewSessionSeedOutcome } from '@/components/sessions/new/newSessionSeedComposer';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
@@ -163,67 +160,6 @@ function sessionComposerFailure(
     return errorPayload(outcome.kind === 'invalid' ? 'invalid_payload' : 'unavailable', outcome.reason);
 }
 
-export type PluginNewSessionSeeder = (params: Readonly<{
-    seed: unknown;
-    /**
-     * The plugin this mount belongs to. A seeded composer attachment is
-     * qualified against it at the New Session composer's own mount, exactly as
-     * a live `attachment.add` from the same plugin is.
-     */
-    pluginId: string | null;
-    scope: ServerAccountScope | null;
-    signal?: AbortSignal;
-    isCurrent: () => boolean;
-}>) => Promise<SessionNewSessionSeedOutcome>;
-
-function newSessionSeedFailure(
-    outcome: Exclude<SessionNewSessionSeedOutcome, Readonly<{ kind: 'seeded' }>>,
-): PluginUiJsonValueV1 {
-    if (outcome.kind === 'stale') return errorPayload('stale_surface', outcome.reason);
-    return errorPayload(outcome.kind === 'invalid' ? 'invalid_payload' : 'unavailable', outcome.reason);
-}
-
-/** Narrows the nested Protocol discriminant without inventing a field-presence fallback. */
-function isNewSessionSeedRequest(
-    request: PluginUiSelectActionInputRequestV1,
-): request is Extract<PluginUiSelectActionInputRequestV1, Readonly<{ hostAction: unknown }>> & Readonly<{ seed: unknown }> {
-    return 'hostAction' in request && request.seed !== undefined;
-}
-
-async function seedDefaultNewSession(
-    params: Parameters<PluginNewSessionSeeder>[0],
-): Promise<SessionNewSessionSeedOutcome> {
-    // Session-owned seeding and the app router are both loaded only after the
-    // literal host request has passed its closed Protocol boundary, for the
-    // same reason the draft modal is: neither may be reached by a contributed
-    // Action, selector or dispatcher.
-    try {
-        const [{ seedAndOpenNewSession }, { router }] = await Promise.all([
-            import('@/components/sessions/new/newSessionSeedComposer'),
-            import('expo-router'),
-        ]);
-        return seedAndOpenNewSession({
-            seed: params.seed,
-            ...(params.pluginId === null ? {} : { pluginId: params.pluginId }),
-            scope: params.scope,
-            ...(params.signal ? { signal: params.signal } : {}),
-            isCurrent: params.isCurrent,
-            navigateToNewSession: ({ dataId, draftId, worktree }) => {
-                router.push({
-                    pathname: '/new',
-                    params: {
-                        draftId,
-                        ...(dataId === null ? {} : { dataId }),
-                        ...(worktree === undefined ? {} : { worktree }),
-                    },
-                });
-            },
-        });
-    } catch {
-        return { kind: 'unavailable', reason: 'navigation_unavailable' };
-    }
-}
-
 async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSessionServerStartDraftComposer>[0]): Promise<SessionServerStartDraftComposerOutcome> {
     // The modal is Session-owned and loaded only after the literal host request
     // has passed its closed Protocol boundary. It cannot receive a contributed
@@ -271,7 +207,6 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
     present?: typeof presentActionInputForm;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     composeSessionServerStartDraft?: PluginSessionServerStartDraftComposer;
-    seedNewSession?: PluginNewSessionSeeder;
 }>): PluginSurfaceHostApiMethodHandler {
     const present = input.present ?? presentActionInputForm;
     const selectionFacts = projectPluginActionInputSelectionFacts({
@@ -294,20 +229,6 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
             && input.host.accountLifetime?.isCurrent() !== false;
         if (signal?.aborted || !hostIsCurrent()) {
             return errorPayload(hostIsCurrent() ? 'unavailable' : 'stale_surface', 'select_action_input_aborted');
-        }
-
-        if (isNewSessionSeedRequest(parsed.data)) {
-            const seeder = input.seedNewSession ?? seedDefaultNewSession;
-            const outcome = await seeder({
-                seed: parsed.data.seed,
-                pluginId: input.host.targetPluginId ?? null,
-                scope: input.host.accountLifetime?.scope ?? null,
-                ...(signal ? { signal } : {}),
-                isCurrent: hostIsCurrent,
-            });
-            return outcome.kind === 'seeded'
-                ? readBoundedSelectionResult({ kind: 'newSessionSeeded' })
-                : newSessionSeedFailure(outcome);
         }
 
         if ('hostAction' in parsed.data) {

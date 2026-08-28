@@ -1162,6 +1162,93 @@ describe('hosted web plugin host API adapter', () => {
         expect(contributed).toHaveBeenCalledTimes(contributedBeforeTerminalRelay + 1);
     });
 
+    it('terminally consumes one exact prepared-workspace selection for openNewSession', async () => {
+        const operation = {
+            point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },
+            contributor: {
+                pluginId: 'acme.scm',
+                contributionId: 'github',
+                immutableGenerationId: 'scm-generation-a',
+            },
+            role: 'prepareReviewWorkspace',
+            action: { pluginId: 'acme.scm', localId: 'prepare-review-workspace' },
+        } as const;
+        const selectedResult: PluginUiJsonValueV1 = {
+            kind: 'submitted',
+            action: operation.action,
+            input: { repository: 'happier-dev/happier', pullRequestNumber: 42 },
+            selection: {
+                target: canonicalSurface.targetedContributions.target,
+                point: operation.point,
+                contributor: operation.contributor,
+            },
+            connectedAccount: { kind: 'none' },
+        };
+        let openDispatches = 0;
+        let openOptions: unknown;
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface,
+            requestIdPrefix: 'hosted-web-open-prepared',
+            bridgeNonce: 'nonce-1',
+            canonicalHostApi: {
+                identity: canonicalIdentity,
+                surface: canonicalSurface,
+                methods: ['selectActionInput', 'openNewSession'],
+            },
+            handleRequest: async (request, options) => {
+                if (request.method === 'selectActionInput') return selectedResult;
+                if (request.method !== 'openNewSession') throw new Error('unexpected_request');
+                openDispatches += 1;
+                openOptions = options;
+                return null;
+            },
+        });
+        await handler(createEnvelope('ready', { ready: true }));
+        await handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'negotiate',
+            identity: canonicalIdentity,
+            apiRange: '^1.0.0',
+        }));
+        const selectionResponse = await handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'request',
+            identity: canonicalIdentity,
+            requestId: 'select-prepared-workspace',
+            method: 'selectActionInput',
+            payload: { operation },
+        }));
+        const selectionWire = PluginUiHostApiWireEnvelopeV1Schema.parse(selectionResponse.payload);
+        if (selectionWire.kind !== 'result' || selectionWire.method !== 'selectActionInput') {
+            throw new Error('expected prepared selection result');
+        }
+        const selected = PluginUiSelectActionInputResultV1Schema.parse(selectionWire.result);
+        if (selected.kind !== 'submitted') throw new Error('expected submitted preparation');
+        const open = (requestId: string) => handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'request',
+            identity: canonicalIdentity,
+            requestId,
+            method: 'openNewSession',
+            payload: { checkoutIntent: 'preparedReviewWorkspace' },
+            targetedOperation: operation,
+            selectedActionInput: selected,
+            consumeSelectedActionInput: true,
+        }));
+
+        await expect(open('open-prepared-workspace')).resolves.toMatchObject({
+            payload: { kind: 'result', method: 'openNewSession' },
+        });
+        expect(openOptions).toMatchObject({
+            targetedOperation: operation,
+            selectedActionInput: selected,
+        });
+        await expect(open('replay-prepared-workspace')).resolves.toMatchObject({
+            payload: { kind: 'error', error: { code: 'invalid_payload' } },
+        });
+        expect(openDispatches).toBe(1);
+    });
+
     it('retires exact selections on their own cancellation and before terminal failure or cancellation', async () => {
         const targetedOperation = {
             point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },

@@ -65,7 +65,7 @@ export type DeclarativeCollectionRowCommandAffordance = Readonly<{
     disabled: boolean;
     busy?: boolean;
     /** Bound by the mounted surface owner after static catalog reattachment. */
-    onPress?: () => void;
+    onPress?: () => unknown;
 }>;
 
 export type DeclarativeCollectionRowCommands = Readonly<{

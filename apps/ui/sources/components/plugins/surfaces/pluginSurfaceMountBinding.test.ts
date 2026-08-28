@@ -7,6 +7,7 @@ import {
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
+    DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     DaemonPluginUiTargetedSurfaceMountV1,
 } from '@happier-dev/protocol';
@@ -14,11 +15,44 @@ import type {
 import {
     createPluginSurfaceComposerMountContext,
     createPluginSurfaceDestinationMountContext,
+    createPluginSurfaceEphemeralMountContext,
     createPluginSurfaceTargetedMountContext,
     readPluginSurfaceComposerMountBinding,
+    readPluginSurfaceEphemeralMountBinding,
     readPluginSurfaceMountBinding,
     readPluginSurfaceTargetedMountBinding,
 } from './pluginSurfaceMountBinding';
+
+function eventSetupSurface(
+    renderer: Readonly<Record<string, unknown>>,
+): DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 {
+    const pluginId = 'acme.events';
+    const localId = 'repository-picker';
+    return {
+        contribution: { pluginId, localId: 'repository-pushed' },
+        immutableGenerationId: 'events-generation-a',
+        projectionGeneration: 31,
+        rendererChain: [{ pluginId, localId }],
+        selectedRenderer: {
+            identity: { pluginId, localId },
+            renderer,
+            availability: { state: 'available', reason: 'available', diagnostics: [] },
+        },
+        executionOrigin: {
+            serverIdentityId: 'srv_acme',
+            materializationRef: {
+                machineId: 'machine-events',
+                materializationId: 'events-install-a',
+                pluginId,
+            },
+        },
+        resourceCapability: { readable: true, dynamic: true },
+        contributorTargetedContributions: {
+            target: { pluginId, immutableGenerationId: 'events-generation-a' },
+            points: [],
+        },
+    } as DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
+}
 
 function destinationBinding(): PluginUiDestinationBindingV1 {
     const binding = normalizePluginUiDestinationBindingV1({
@@ -320,6 +354,64 @@ describe('readPluginSurfaceComposerMountBinding', () => {
         expect(readPluginSurfaceComposerMountBinding({
             mount: malformedMount,
             catalogEntries: [catalogEntry],
+        })).toBeNull();
+    });
+});
+
+describe('readPluginSurfaceEphemeralMountBinding', () => {
+    it.each([
+        ['declarative', { kind: 'declarative', contributionId: 'repository-picker', model: { visible: true } }],
+        ['reactNative', { kind: 'reactNative', contributionId: 'repository-picker', artifactId: 'picker-native' }],
+        ['hostedWeb', { kind: 'hostedWeb', contributionId: 'repository-picker' }],
+    ] as const)('carries the exact %s renderer through the one ephemeral mount seam', (_kind, renderer) => {
+        const surface = eventSetupSurface(renderer);
+        const binding = readPluginSurfaceEphemeralMountBinding(surface);
+
+        expect(binding).toEqual({ kind: 'ephemeral', surface, renderer });
+        expect(binding?.surface).toBe(surface);
+        expect(binding?.renderer).toBe(surface.selectedRenderer.renderer);
+        expect(createPluginSurfaceEphemeralMountContext()).toEqual({
+            kind: 'embedded',
+            role: 'ephemeralInput',
+            presentation: 'content',
+        });
+    });
+
+    it('fails closed for cross-plugin renderer, origin, chain, or retained-target generation facts', () => {
+        const surface = eventSetupSurface({
+            kind: 'hostedWeb',
+            contributionId: 'repository-picker',
+        });
+        expect(readPluginSurfaceEphemeralMountBinding({
+            ...surface,
+            selectedRenderer: {
+                ...surface.selectedRenderer,
+                identity: { pluginId: 'acme.other', localId: 'repository-picker' },
+            },
+        })).toBeNull();
+        expect(readPluginSurfaceEphemeralMountBinding({
+            ...surface,
+            executionOrigin: {
+                ...surface.executionOrigin,
+                materializationRef: {
+                    ...surface.executionOrigin.materializationRef,
+                    pluginId: 'acme.other',
+                },
+            },
+        })).toBeNull();
+        expect(readPluginSurfaceEphemeralMountBinding({
+            ...surface,
+            rendererChain: [{ pluginId: 'acme.other', localId: 'repository-picker' }],
+        })).toBeNull();
+        expect(readPluginSurfaceEphemeralMountBinding({
+            ...surface,
+            contributorTargetedContributions: {
+                ...surface.contributorTargetedContributions,
+                target: {
+                    ...surface.contributorTargetedContributions.target,
+                    immutableGenerationId: 'events-generation-retired',
+                },
+            },
         })).toBeNull();
     });
 });
