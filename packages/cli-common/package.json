@@ -107,6 +107,10 @@
       "types": "./dist/firstPartyRuntime/selfHostServerEnv.d.ts",
       "default": "./dist/firstPartyRuntime/selfHostServerEnv.js"
     },
+    "./firstPartyRuntime/serverRuntimeArtifactLayout": {
+      "types": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.d.ts",
+      "default": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js"
+    },
     "./relayHost": {
       "types": "./dist/relayHost/index.d.ts",
       "default": "./dist/relayHost/index.js"

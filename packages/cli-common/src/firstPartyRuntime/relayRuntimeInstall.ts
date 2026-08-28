@@ -4,7 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, s
 import { createConnection } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, win32 as win32Path } from 'node:path';
+import { dirname, join, win32 as win32Path } from 'node:path';
 
 import {
     applyServicePlan,
@@ -26,6 +26,10 @@ import {
     resolveSelfHostServerMigrationPlan,
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
+import {
+    relocateServerRuntimeArtifactClosure,
+    resolveServerRuntimePayloadRootFromBinaryPath,
+} from './serverRuntimeArtifactLayout.js';
 
 const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
     'config',
@@ -516,14 +520,6 @@ async function installPersistentPayload(params: Readonly<{
     await chmod(params.executablePath, 0o755).catch(() => undefined);
 }
 
-function resolveRelayRuntimePayloadRootFromServerBinaryPath(serverBinaryPath: string): string {
-    const binaryPath = String(serverBinaryPath ?? '').trim();
-    const binaryDir = dirname(binaryPath);
-    return basename(binaryDir) === 'bin'
-        ? dirname(binaryDir)
-        : binaryDir;
-}
-
 async function prepareRelayRuntimePayloadForInstall(params: Readonly<{
     serverBinaryPath: string;
     serverBinaryName: string;
@@ -531,8 +527,8 @@ async function prepareRelayRuntimePayloadForInstall(params: Readonly<{
     payloadRoot: string;
     cleanupPath: string | null;
 }>> {
-    const payloadRoot = resolveRelayRuntimePayloadRootFromServerBinaryPath(params.serverBinaryPath);
-    const serverBinaryIsNestedUnderBin = basename(dirname(params.serverBinaryPath)) === 'bin';
+    const payloadRoot = resolveServerRuntimePayloadRootFromBinaryPath(params.serverBinaryPath);
+    const serverBinaryIsNestedUnderBin = dirname(params.serverBinaryPath) === join(payloadRoot, 'bin');
     if (serverBinaryIsNestedUnderBin) {
         return {
             payloadRoot,
@@ -547,20 +543,10 @@ async function prepareRelayRuntimePayloadForInstall(params: Readonly<{
             destDir: stagingRoot,
         });
 
-        const stagedServerBinaryPath = join(stagingRoot, params.serverBinaryName);
-        if (!existsSync(stagedServerBinaryPath)) {
-            throw new Error(`[relay-runtime] staged server binary missing (${stagedServerBinaryPath})`);
-        }
-
-        const stagedBinDir = join(stagingRoot, 'bin');
-        await mkdir(stagedBinDir, { recursive: true });
-        await rename(stagedServerBinaryPath, join(stagedBinDir, params.serverBinaryName));
-
-        for (const runtimeSidecarName of ['generated', 'node_modules']) {
-            const stagedSidecarPath = join(stagingRoot, runtimeSidecarName);
-            if (!existsSync(stagedSidecarPath)) continue;
-            await rename(stagedSidecarPath, join(stagedBinDir, runtimeSidecarName));
-        }
+        await relocateServerRuntimeArtifactClosure({
+            payloadRoot: stagingRoot,
+            platform: params.serverBinaryName.endsWith('.exe') ? 'win32' : process.platform,
+        });
     } catch (error) {
         await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
         throw error;
@@ -830,7 +816,7 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         }
 
         const payloadRoot = preparedPayload.payloadRoot;
-        const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations');
+        const migrationsSourceDir = join(payloadRoot, 'bin', 'prisma', 'sqlite', 'migrations');
         await mkdir(migrationsDir, { recursive: true });
         if (existsSync(migrationsSourceDir)) {
             await copyDirectoryContents({

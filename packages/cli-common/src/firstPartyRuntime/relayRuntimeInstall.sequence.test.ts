@@ -156,8 +156,22 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
             await mkdir(payloadRoot, { recursive: true });
             const serverBinaryPath = join(payloadRoot, 'happier-server');
             await writeFile(serverBinaryPath, '#!/bin/sh\n', 'utf8');
-            await writeFile(join(payloadRoot, 'happier-server-migrate'), '#!/bin/sh\n', 'utf8');
-            const migrations = [] as Array<{ command: string; args: readonly string[]; provider: string }>;
+            await mkdir(join(payloadRoot, 'runtime'), { recursive: true });
+            await mkdir(join(payloadRoot, 'prisma', 'migrations'), { recursive: true });
+            await writeFile(join(payloadRoot, 'runtime', 'fixture.txt'), 'runtime\n', 'utf8');
+            await writeFile(join(payloadRoot, 'prisma', 'migrations', 'fixture.sql'), '-- fixture\n', 'utf8');
+            const migrationMarkerPath = join(homeDir, 'migration-ran.txt');
+            const migrationBinaryPath = join(payloadRoot, 'happier-server-migrate');
+            await writeFile(migrationBinaryPath, [
+                '#!/bin/sh',
+                'set -eu',
+                'root="$(dirname "$0")"',
+                'test -f "$root/runtime/fixture.txt"',
+                'test -f "$root/prisma/migrations/fixture.sql"',
+                'printf "%s\\n" "$HAPPIER_DB_PROVIDER" > "$MIGRATION_MARKER_PATH"',
+                '',
+            ].join('\n'), 'utf8');
+            await chmod(migrationBinaryPath, 0o755);
 
             await installOrUpdateRelayRuntimeLocal({
                 serverBinaryPath,
@@ -168,20 +182,18 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
                 env: {
                     HAPPIER_DB_PROVIDER: 'postgres',
                     DATABASE_URL: 'postgresql://operator:secret@db.example.test/happier',
+                    MIGRATION_MARKER_PATH: migrationMarkerPath,
                 },
                 runServiceCommands: false,
                 skipHealthCheck: true,
-                runMigrationCommand: async ({ command, args, env }) => {
-                    migrations.push({ command, args, provider: env.HAPPIER_DB_PROVIDER });
-                },
             });
 
             const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
-            expect(migrations).toEqual([{
-                command: join(defaults.installRoot, 'bin', 'happier-server-migrate'),
-                args: [],
-                provider: 'postgres',
-            }]);
+            await expect(readFile(migrationMarkerPath, 'utf8')).resolves.toBe('postgres\n');
+            await expect(readFile(join(defaults.installRoot, 'bin', 'runtime', 'fixture.txt'), 'utf8')).resolves.toBe('runtime\n');
+            await expect(readFile(join(defaults.installRoot, 'bin', 'prisma', 'migrations', 'fixture.sql'), 'utf8'))
+                .resolves.toBe('-- fixture\n');
+            await expect(access(join(defaults.installRoot, 'happier-server-migrate'))).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }
