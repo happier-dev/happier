@@ -14,7 +14,7 @@ const SERVER_RUNTIME_TARGETS = Object.freeze([
 ]);
 
 export const SERVER_RUNTIME_CANDIDATE_MAX_FILE_BYTES = 512 * 1024 * 1024;
-export const SERVER_RUNTIME_CANDIDATE_MAX_AGGREGATE_BYTES = 1536 * 1024 * 1024;
+export const SERVER_RUNTIME_CANDIDATE_MAX_AGGREGATE_BYTES = 2 * 1024 * 1024 * 1024;
 
 function assertVersion(version) {
   const value = String(version ?? '').trim();
@@ -78,7 +78,9 @@ export async function inspectServerRuntimeCandidate(params) {
     }
     aggregateBytes += metadata.size;
     if (aggregateBytes > maxAggregateBytes) {
-      throw new Error(`Candidate aggregate size exceeds the allowed range (${aggregateBytes} bytes)`);
+      throw new Error(
+        `Candidate aggregate size exceeds the allowed range (actual=${aggregateBytes}, max=${maxAggregateBytes}, file=${name})`,
+      );
     }
     candidateFiles.push({ name, path: filePath, size: metadata.size });
   }
