@@ -2,6 +2,7 @@ import { afterTx, inTx } from '@/storage/inTx';
 import { log } from '@/utils/logging/log';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { tombstoneSessionDraftForLifecycleInTx } from '@/app/account/sessionDrafts/sessionDraftService';
+import { SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
 
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
@@ -77,6 +78,10 @@ export async function deleteOwnedSession(
                     : null),
             };
             const recipientCursors: Array<{ accountId: string; cursor: number }> = [];
+            const deletionHint = SessionDeletedChangeHintV1Schema.parse({
+                v: 1,
+                lifecycle: 'deleted',
+            });
             for (const accountId of recipientAccountIds) {
                 await tombstoneSessionDraftForLifecycleInTx(tx as any, {
                     accountId,
@@ -95,6 +100,7 @@ export async function deleteOwnedSession(
                             accountId,
                             kind: 'session',
                             entityId: params.sessionId,
+                            hint: deletionHint,
                         });
                         recipientCursors.push({ accountId, cursor });
                     }

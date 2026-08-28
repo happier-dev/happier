@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { serializeAutomationRunExecutionRecipeV1 } from "@happier-dev/protocol";
 
 import type {
     AutomationExecutionDispatchState,
@@ -64,6 +65,45 @@ type RunFixture = Readonly<{
     replyHandoffDueAt?: Date | null;
 }>;
 
+const RETENTION_FROZEN_EXECUTION_INPUT = (() => {
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        v: 1,
+        templateVersion: 1,
+        assignmentMachineIds: [],
+        template: { t: "plain", v: { v: 1, prompt: "Retained work" } },
+        triggerEvidence: null,
+        target: {
+            kind: "executionRun",
+            request: {
+                intent: "task",
+                backendTarget: { kind: "builtInAgent", agentId: "codex" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+            },
+        },
+    });
+    if (serialized.kind !== "available") throw new Error("invalid retention Run fixture");
+    return serialized.serialized;
+})();
+
+function conversationReplyHandoffFixture(
+    id: string,
+    state: Exclude<AutomationRunReplyHandoffState, "none">,
+) {
+    return {
+        replyContextEnvelope: JSON.stringify({ t: "plain", v: {} }),
+        replyHandoffActionPluginId: "happier.channels",
+        replyHandoffActionLocalId: "automation/result-deliver-v1",
+        replyHandoffTargetMachineId: "machine-retention",
+        replyHandoffTargetMachineInstallationId: "installation-retention",
+        replyHandoffTargetMaterializationId: "materialization-retention",
+        replyHandoffId: `handoff-${id}`,
+        replyHandoffState: state,
+    } as const;
+}
+
 describe("automationRunRetentionRule", () => {
     let harness: LightSqliteHarness;
 
@@ -81,11 +121,54 @@ describe("automationRunRetentionRule", () => {
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.automationRunEvent.deleteMany(),
+            () => db.automationWorkerClaimReceipt.deleteMany(),
             () => db.automationRun.deleteMany(),
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("prunes expired signed-claim receipts through the existing Automation retention owner", async () => {
+        const account = await db.account.create({
+            data: { id: "account-claim-receipt-retention", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.automationWorkerClaimReceipt.createMany({
+            data: [
+                {
+                    id: "expired-claim-receipt",
+                    accountId: account.id,
+                    machineId: "machine-receipt",
+                    machineInstallationId: "installation-receipt",
+                    expiresAt: new Date("2026-08-11T23:59:59.000Z"),
+                },
+                {
+                    id: "current-claim-receipt",
+                    accountId: account.id,
+                    machineId: "machine-receipt",
+                    machineInstallationId: "installation-receipt",
+                    expiresAt: new Date("2026-08-12T00:05:00.000Z"),
+                },
+            ],
+        });
+
+        const rule = createAutomationRunRetentionRule();
+        await expect(rule.run({
+            policy: createPolicy(),
+            batchSize: 100,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 100,
+            now: new Date("2026-08-12T00:00:00.000Z"),
+        })).resolves.toEqual({
+            id: "automationRuns",
+            deleted: 1,
+            candidatesExamined: 1,
+            hasMore: false,
+        });
+        await expect(db.automationWorkerClaimReceipt.findMany({
+            select: { id: true },
+        })).resolves.toEqual([{ id: "current-claim-receipt" }]);
     });
 
     it("prunes terminal Runs only after an applicable Conversation reply handoff is terminal", async () => {
@@ -101,15 +184,8 @@ describe("automationRunRetentionRule", () => {
                     name: "Event retention",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "pluginEvent",
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
-                    triggerEventPluginId: "plugin.retention",
-                    triggerEventLocalId: "event/retention",
-                    triggerSourceSelectorId: "retention-source-selector",
-                    triggerSourceContractVersion: 1,
-                    triggerObservationTransport: "checkpointedPull",
-                    triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 },
                 {
                     id: "automation-conversation-retention",
@@ -117,26 +193,43 @@ describe("automationRunRetentionRule", () => {
                     name: "Conversation retention",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
-                    triggerDefinitionEnvelope: null,
                 },
             ],
+        });
+        await db.automationTrigger.create({
+            data: {
+                id: "trigger-event-retention",
+                automationId: "automation-event-retention",
+                kind: "pluginEvent",
+                eventPluginId: "plugin.retention",
+                eventLocalId: "event/retention",
+                sourceSelectorId: "retention-source-selector",
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
+                definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+            },
         });
 
         const finishedAt = new Date("2026-08-10T00:00:00.000Z");
         const triggerEvidenceEnvelope = JSON.stringify({ t: "plain", v: {} });
         const pluginEventRun = (fixture: RunFixture) => ({
             ...fixture,
+            ...(["queued", "claimed", "running"].includes(fixture.state)
+                ? { executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT }
+                : {}),
             automationId: "automation-event-retention",
             accountId: account.id,
-            originKind: "pluginEvent" as const,
-            originOccurredAt: finishedAt,
+            triggerId: "trigger-event-retention",
+            causeKind: "trigger" as const,
+            causeTriggerKind: "pluginEvent" as const,
+            causeTriggerRevision: 0,
+            causeOccurredAt: finishedAt,
             occurrenceKey: `retention-event-${fixture.id}`,
-            originSourceSelectorId: "retention-source-selector",
+            causeEventPluginId: "plugin.retention",
+            causeEventLocalId: "event/retention",
+            causeSourceSelectorId: "retention-source-selector",
             triggerEvidenceEnvelope,
             scheduledAt: finishedAt,
             dueAt: finishedAt,
@@ -150,9 +243,11 @@ describe("automationRunRetentionRule", () => {
                 ...fixture,
                 automationId: "automation-conversation-retention",
                 accountId: account.id,
-                originKind: "conversation" as const,
-                originOccurredAt: finishedAt,
+                triggerId: null,
+                causeKind: "conversation" as const,
+                causeOccurredAt: finishedAt,
                 occurrenceKey: `retention-conversation-${fixture.id}`,
+                legacyManualIdempotencyKey: null,
                 triggerEvidenceEnvelope,
                 ...(hasReplyHandoff
                     ? {
@@ -179,7 +274,7 @@ describe("automationRunRetentionRule", () => {
                     id: "run-plugin-event-no-handoff",
                     state: "succeeded",
                 }),
-                conversationRun({
+                pluginEventRun({
                     id: "run-failed-normal",
                     state: "failed",
                 }),
@@ -234,11 +329,6 @@ describe("automationRunRetentionRule", () => {
                     replyHandoffDueAt: new Date("2026-08-12T00:01:00.000Z"),
                 }),
                 conversationRun({
-                    id: "run-conversation-no-handoff",
-                    state: "succeeded",
-                    replyHandoffState: "none",
-                }),
-                conversationRun({
                     id: "run-conversation-accepted",
                     state: "succeeded",
                     replyHandoffState: "accepted",
@@ -283,8 +373,8 @@ describe("automationRunRetentionRule", () => {
             now: new Date("2026-08-12T00:00:00.000Z"),
         })).resolves.toEqual({
             id: "automationRuns",
-            deleted: 13,
-            candidatesExamined: 13,
+            deleted: 12,
+            candidatesExamined: 12,
             hasMore: false,
         });
 
@@ -303,7 +393,7 @@ describe("automationRunRetentionRule", () => {
         ]);
     });
 
-    it("applies the Account default even when global retention is disabled, deleting aged terminal history and compacting newer safe content", async () => {
+    it("applies the Account default even when global retention is disabled without erasing newer history content", async () => {
         const account = await db.account.create({
             data: { id: "account-automation-account-default-retention", encryptionMode: "plain" },
             select: { id: true },
@@ -315,9 +405,6 @@ describe("automationRunRetentionRule", () => {
                 name: "Account default retention",
                 enabled: true,
                 targetType: "execution_run",
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 templateCiphertext: "retention-fixture",
                 templateVersion: 1,
             },
@@ -337,9 +424,6 @@ describe("automationRunRetentionRule", () => {
                 name: "Account keep forever retention",
                 enabled: true,
                 targetType: "execution_run",
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 templateCiphertext: "retention-fixture",
                 templateVersion: 1,
             },
@@ -354,7 +438,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-account-default-retention",
                     accountId: account.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: new Date("2026-07-01T00:00:00.000Z"),
                     scheduledAt: new Date("2026-07-01T00:00:00.000Z"),
                     dueAt: new Date("2026-07-01T00:00:00.000Z"),
                     finishedAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -364,7 +449,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-account-default-retention",
                     accountId: account.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: recentFinishedAt,
                     executionInputEnvelope: "private-input",
                     resultEnvelope: "private-result",
                     summaryCiphertext: "private-summary",
@@ -378,7 +464,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-account-keep-forever",
                     accountId: keepForeverAccount.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: new Date("2026-07-01T00:00:00.000Z"),
                     scheduledAt: new Date("2026-07-01T00:00:00.000Z"),
                     dueAt: new Date("2026-07-01T00:00:00.000Z"),
                     finishedAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -415,16 +502,14 @@ describe("automationRunRetentionRule", () => {
                 replyHandoffReceiptEnvelope: true,
                 summaryCiphertext: true,
                 errorMessage: true,
-                contentRemovedAt: true,
             },
         })).resolves.toEqual({
-            executionInputEnvelope: null,
-            resultEnvelope: null,
+            executionInputEnvelope: "private-input",
+            resultEnvelope: "private-result",
             replyContextEnvelope: null,
             replyHandoffReceiptEnvelope: null,
-            summaryCiphertext: null,
-            errorMessage: null,
-            contentRemovedAt: now,
+            summaryCiphertext: "private-summary",
+            errorMessage: "private-error",
         });
     });
 
@@ -449,9 +534,6 @@ describe("automationRunRetentionRule", () => {
                     name: "Global maximum default",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -461,9 +543,6 @@ describe("automationRunRetentionRule", () => {
                     name: "Global maximum keep forever",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -479,7 +558,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-global-maximum-default",
                     accountId: defaultAccount.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: tenDaysAgo,
                     scheduledAt: tenDaysAgo,
                     dueAt: tenDaysAgo,
                     finishedAt: tenDaysAgo,
@@ -489,7 +569,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-global-maximum-keep-forever",
                     accountId: keepForeverAccount.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: tenDaysAgo,
                     scheduledAt: tenDaysAgo,
                     dueAt: tenDaysAgo,
                     finishedAt: tenDaysAgo,
@@ -499,7 +580,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-global-maximum-keep-forever",
                     accountId: keepForeverAccount.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: fiveDaysAgo,
                     scheduledAt: fiveDaysAgo,
                     dueAt: fiveDaysAgo,
                     finishedAt: fiveDaysAgo,
@@ -533,7 +615,7 @@ describe("automationRunRetentionRule", () => {
         ]);
     });
 
-    it("compacts terminal Event and Conversation content without changing immutable rejoin evidence", async () => {
+    it("retains full terminal Event and Conversation content until history deletion", async () => {
         const account = await db.account.create({
             data: {
                 ...createSignedAccountContentBinding(),
@@ -542,38 +624,37 @@ describe("automationRunRetentionRule", () => {
             },
             select: { id: true },
         });
-        await db.automation.createMany({
-            data: [
-                {
-                    id: "automation-retention-compaction-event",
-                    accountId: account.id,
-                    name: "Retention Event",
-                    enabled: true,
-                    targetType: "execution_run",
-                    triggerKind: "pluginEvent",
-                    templateCiphertext: "retention-fixture",
-                    templateVersion: 1,
-                    triggerEventPluginId: "plugin.retention",
-                    triggerEventLocalId: "event/compaction",
-                    triggerSourceSelectorId: "retention-compaction-source",
-                    triggerSourceContractVersion: 1,
-                    triggerObservationTransport: "checkpointedPull",
-                    triggerDefinitionEnvelope: "opaque-definition",
-                },
-                {
-                    id: "automation-retention-compaction-conversation",
-                    accountId: account.id,
-                    name: "Retention Conversation",
-                    enabled: true,
-                    targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
-                    templateCiphertext: "retention-fixture",
-                    templateVersion: 1,
-                    triggerDefinitionEnvelope: null,
-                },
-            ],
+        await db.automation.create({
+            data: {
+                id: "automation-retention-compaction-event",
+                accountId: account.id,
+                name: "Retention Event",
+                enabled: true,
+                targetType: "execution_run",
+                templateCiphertext: "retention-fixture",
+                templateVersion: 1,
+                triggers: { create: {
+                    id: "trigger-retention-content-event",
+                    kind: "pluginEvent",
+                    eventPluginId: "plugin.retention",
+                    eventLocalId: "event/compaction",
+                    sourceSelectorId: "retention-compaction-source",
+                    sourceContractVersion: 1,
+                    observationTransport: "checkpointedPull",
+                    definitionEnvelope: "opaque-definition",
+                } },
+            },
+        });
+        await db.automation.create({
+            data: {
+                id: "automation-retention-compaction-conversation",
+                accountId: account.id,
+                name: "Retention Conversation",
+                enabled: true,
+                targetType: "execution_run",
+                templateCiphertext: "retention-fixture",
+                templateVersion: 1,
+            },
         });
         const now = new Date("2026-08-12T00:00:00.000Z");
         const finishedAt = new Date("2026-08-02T00:00:00.000Z");
@@ -588,11 +669,16 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-retention-compaction-event",
                     accountId: account.id,
                     state: "failed",
-                    originKind: "pluginEvent",
-                    originOccurredAt: finishedAt,
+                    triggerId: "trigger-retention-content-event",
+                    causeKind: "trigger",
+                    causeTriggerKind: "pluginEvent",
+                    causeTriggerRevision: 0,
+                    causeOccurredAt: finishedAt,
                     occurrenceKey: "retention-compaction-event",
                     occurrenceEvidenceEqualityTag: equalityTag,
-                    originSourceSelectorId: "retention-compaction-source",
+                    causeEventPluginId: "plugin.retention",
+                    causeEventLocalId: "event/compaction",
+                    causeSourceSelectorId: "retention-compaction-source",
                     triggerEvidenceEnvelope: eventEvidence,
                     executionInputEnvelope: "opaque-event-input",
                     resultEnvelope: "opaque-event-result",
@@ -607,9 +693,10 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-retention-compaction-conversation",
                     accountId: account.id,
                     state: "succeeded",
-                    originKind: "conversation",
-                    originOccurredAt: finishedAt,
+                    causeKind: "conversation",
+                    causeOccurredAt: finishedAt,
                     occurrenceKey: "retention-compaction-conversation",
+                    legacyManualIdempotencyKey: null,
                     occurrenceEvidenceEqualityTag: equalityTag,
                     triggerEvidenceEnvelope: conversationEvidence,
                     executionInputEnvelope: "opaque-conversation-input",
@@ -634,11 +721,16 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-retention-compaction-event",
                     accountId: account.id,
                     state: "running",
-                    originKind: "pluginEvent",
-                    originOccurredAt: finishedAt,
+                    triggerId: "trigger-retention-content-event",
+                    causeKind: "trigger",
+                    causeTriggerKind: "pluginEvent",
+                    causeTriggerRevision: 0,
+                    causeOccurredAt: finishedAt,
                     occurrenceKey: "retention-compaction-active",
                     occurrenceEvidenceEqualityTag: equalityTag,
-                    originSourceSelectorId: "retention-compaction-source",
+                    causeEventPluginId: "plugin.retention",
+                    causeEventLocalId: "event/compaction",
+                    causeSourceSelectorId: "retention-compaction-source",
                     triggerEvidenceEnvelope: activeEvidence,
                     executionInputEnvelope: "opaque-active-input",
                     scheduledAt: finishedAt,
@@ -661,6 +753,15 @@ describe("automationRunRetentionRule", () => {
             orderBy: { id: "asc" },
             select: {
                 id: true,
+                triggerId: true,
+                causeKind: true,
+                causeTriggerKind: true,
+                causeTriggerRevision: true,
+                causeOccurredAt: true,
+                causeEventPluginId: true,
+                causeEventLocalId: true,
+                causeSourceSelectorId: true,
+                occurrenceKey: true,
                 triggerEvidenceEnvelope: true,
                 occurrenceEvidenceEqualityTag: true,
                 executionInputEnvelope: true,
@@ -669,11 +770,19 @@ describe("automationRunRetentionRule", () => {
                 replyHandoffReceiptEnvelope: true,
                 summaryCiphertext: true,
                 errorMessage: true,
-                contentRemovedAt: true,
             },
         })).resolves.toEqual([
             {
                 id: "run-retention-compaction-active",
+                triggerId: "trigger-retention-content-event",
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 0,
+                causeOccurredAt: finishedAt,
+                causeEventPluginId: "plugin.retention",
+                causeEventLocalId: "event/compaction",
+                causeSourceSelectorId: "retention-compaction-source",
+                occurrenceKey: "retention-compaction-active",
                 triggerEvidenceEnvelope: activeEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
                 executionInputEnvelope: "opaque-active-input",
@@ -682,31 +791,46 @@ describe("automationRunRetentionRule", () => {
                 replyHandoffReceiptEnvelope: null,
                 summaryCiphertext: null,
                 errorMessage: null,
-                contentRemovedAt: null,
             },
             {
                 id: "run-retention-compaction-conversation",
+                triggerId: null,
+                causeKind: "conversation",
+                causeTriggerKind: null,
+                causeTriggerRevision: null,
+                causeOccurredAt: finishedAt,
+                causeEventPluginId: null,
+                causeEventLocalId: null,
+                causeSourceSelectorId: null,
+                occurrenceKey: "retention-compaction-conversation",
                 triggerEvidenceEnvelope: conversationEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
-                executionInputEnvelope: null,
-                resultEnvelope: null,
-                replyContextEnvelope: null,
-                replyHandoffReceiptEnvelope: null,
-                summaryCiphertext: null,
-                errorMessage: null,
-                contentRemovedAt: now,
+                executionInputEnvelope: "opaque-conversation-input",
+                resultEnvelope: "opaque-conversation-result",
+                replyContextEnvelope: "opaque-conversation-context",
+                replyHandoffReceiptEnvelope: "opaque-conversation-receipt",
+                summaryCiphertext: "opaque-conversation-summary",
+                errorMessage: "opaque-conversation-error",
             },
             {
                 id: "run-retention-compaction-event",
+                triggerId: "trigger-retention-content-event",
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                causeTriggerRevision: 0,
+                causeOccurredAt: finishedAt,
+                causeEventPluginId: "plugin.retention",
+                causeEventLocalId: "event/compaction",
+                causeSourceSelectorId: "retention-compaction-source",
+                occurrenceKey: "retention-compaction-event",
                 triggerEvidenceEnvelope: eventEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
-                executionInputEnvelope: null,
-                resultEnvelope: null,
+                executionInputEnvelope: "opaque-event-input",
+                resultEnvelope: "opaque-event-result",
                 replyContextEnvelope: null,
                 replyHandoffReceiptEnvelope: null,
-                summaryCiphertext: null,
-                errorMessage: null,
-                contentRemovedAt: now,
+                summaryCiphertext: "opaque-event-summary",
+                errorMessage: "opaque-event-error",
             },
         ]);
     });
@@ -724,9 +848,6 @@ describe("automationRunRetentionRule", () => {
                     name: "Clear target",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -736,9 +857,6 @@ describe("automationRunRetentionRule", () => {
                     name: "Other history",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -752,7 +870,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-manual-clear-target",
                     accountId: account.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: at,
                     scheduledAt: at,
                     dueAt: at,
                     finishedAt: at,
@@ -762,7 +881,9 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-manual-clear-target",
                     accountId: account.id,
                     state: "queued",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: at,
+                    executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT,
                     scheduledAt: at,
                     dueAt: at,
                 },
@@ -771,7 +892,9 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-manual-clear-target",
                     accountId: account.id,
                     state: "claimed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: at,
+                    executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT,
                     scheduledAt: at,
                     dueAt: at,
                 },
@@ -780,7 +903,9 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-manual-clear-target",
                     accountId: account.id,
                     state: "running",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: at,
+                    executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT,
                     scheduledAt: at,
                     dueAt: at,
                 },
@@ -789,7 +914,8 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-manual-clear-other",
                     accountId: account.id,
                     state: "failed",
-                    originKind: "scheduled",
+                    causeKind: "manual",
+                    causeOccurredAt: at,
                     scheduledAt: at,
                     dueAt: at,
                     finishedAt: at,
@@ -814,9 +940,13 @@ describe("automationRunRetentionRule", () => {
         ]);
     });
 
-    it("finishes a soft-deleted Automation's deletion once retention removed its last retained Run", async () => {
+    it("deletes a soft-deleted Automation's custody-terminal history even when the Account keeps live history forever", async () => {
         const account = await db.account.create({
-            data: { id: "account-automation-finalize", encryptionMode: "plain" },
+            data: {
+                id: "account-automation-finalize",
+                encryptionMode: "plain",
+                automationRunRetention: "keepForever",
+            },
             select: { id: true },
         });
         const deletedAt = new Date("2026-08-01T00:00:00.000Z");
@@ -829,12 +959,8 @@ describe("automationRunRetentionRule", () => {
                     enabled: false,
                     deletedAt,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
-                    triggerDefinitionEnvelope: null,
                 },
                 {
                     id: "automation-deleted-without-run",
@@ -843,12 +969,8 @@ describe("automationRunRetentionRule", () => {
                     enabled: false,
                     deletedAt,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
-                    triggerDefinitionEnvelope: null,
                 },
                 {
                     id: "automation-live",
@@ -856,12 +978,8 @@ describe("automationRunRetentionRule", () => {
                     name: "Still live",
                     enabled: true,
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
-                    triggerDefinitionEnvelope: null,
                 },
             ],
         });
@@ -873,32 +991,37 @@ describe("automationRunRetentionRule", () => {
                     automationId: "automation-deleted-without-run",
                     accountId: account.id,
                     state: "cancelled",
-                    originKind: "conversation",
+                    causeKind: "conversation",
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     occurrenceKey: "retention-finalize-expired",
-                    originOccurredAt: finishedAt,
+                    legacyManualIdempotencyKey: null,
+                    causeOccurredAt: finishedAt,
                     scheduledAt: finishedAt,
                     dueAt: finishedAt,
                     finishedAt,
+                    ...conversationReplyHandoffFixture("run-finalize-expired", "suppressed"),
                 },
                 {
                     id: "run-finalize-retained",
                     automationId: "automation-deleted-with-run",
                     accountId: account.id,
                     state: "running",
-                    originKind: "conversation",
+                    causeKind: "conversation",
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     occurrenceKey: "retention-finalize-retained",
-                    originOccurredAt: finishedAt,
+                    legacyManualIdempotencyKey: null,
+                    causeOccurredAt: finishedAt,
+                    executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT,
                     scheduledAt: finishedAt,
                     dueAt: finishedAt,
+                    ...conversationReplyHandoffFixture("run-finalize-retained", "awaitingResult"),
                 },
             ],
         });
 
         const rule = createAutomationRunRetentionRule();
         await expect(rule.run({
-            policy: createPolicy(),
+            policy: createGloballyDisabledPolicy(),
             batchSize: 100,
             dryRun: false,
             maxDeletesPerRulePerRun: 100,
@@ -937,9 +1060,6 @@ describe("automationRunRetentionRule", () => {
                     enabled: false,
                     deletedAt: new Date("2026-08-01T00:00:00.000Z"),
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -950,9 +1070,6 @@ describe("automationRunRetentionRule", () => {
                     enabled: false,
                     deletedAt: new Date("2026-08-02T00:00:00.000Z"),
                     targetType: "execution_run",
-                    triggerKind: "schedule",
-                    scheduleKind: "interval",
-                    everyMs: 60_000,
                     templateCiphertext: "retention-fixture",
                     templateVersion: 1,
                 },
@@ -991,12 +1108,8 @@ describe("automationRunRetentionRule", () => {
                 enabled: false,
                 deletedAt: new Date("2026-08-01T00:00:00.000Z"),
                 targetType: "execution_run",
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 templateCiphertext: "retention-fixture",
                 templateVersion: 1,
-                triggerDefinitionEnvelope: null,
             },
         });
 

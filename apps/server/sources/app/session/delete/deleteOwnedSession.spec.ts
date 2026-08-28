@@ -34,6 +34,7 @@ const deleteSession = vi.fn(async () => ({ count: 1 }));
 const deleteMessages = vi.fn(async () => ({ count: 2 }));
 const deleteReports = vi.fn(async () => ({ count: 1 }));
 const deleteAccessKeys = vi.fn(async () => ({ count: 1 }));
+const findSessionDraft = vi.fn(async () => null);
 
 vi.mock('@/storage/inTx', () => {
         const { inTx, afterTx } = createInTxHarness(() => ({
@@ -45,6 +46,7 @@ vi.mock('@/storage/inTx', () => {
             sessionMessage: { deleteMany: deleteMessages },
             usageReport: { deleteMany: deleteReports },
             accessKey: { deleteMany: deleteAccessKeys },
+            userKVStore: { findUnique: findSessionDraft },
         }));
 
     return { afterTx, inTx };
@@ -71,8 +73,18 @@ describe('deleteOwnedSession', () => {
         expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: 's1' },
         }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'owner', kind: 'session', entityId: 's1' }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'u2', kind: 'session', entityId: 's1' }));
+        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+            accountId: 'owner',
+            kind: 'session',
+            entityId: 's1',
+            hint: { lifecycle: 'deleted', v: 1 },
+        });
+        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+            accountId: 'u2',
+            kind: 'session',
+            entityId: 's1',
+            hint: { lifecycle: 'deleted', v: 1 },
+        });
         expect(claimSession.mock.invocationCallOrder[0]!).toBeLessThan(
             markAccountChanged.mock.invocationCallOrder[0]!,
         );

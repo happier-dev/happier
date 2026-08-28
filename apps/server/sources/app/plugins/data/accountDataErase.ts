@@ -5,13 +5,17 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { admitAccountDataEraseThroughEncryptionTransitionInTx } from "@/app/encryption/accountEncryptionTransitionCoordinator";
 import { cleanupPluginWebhooksForAccountDeletionTxV1 } from "@/app/plugins/webhooks/accountDeletion";
+import { deleteDefaultAccountPetPrivateObject } from "@/app/pets/accountPetLibraryRuntime";
+import { deleteSessionTree } from "@/app/session/delete/deleteSessionTree";
 import {
     buildPluginAccountStoragePhysicalKey,
     buildPluginDeclarativeSettingsPhysicalKey,
 } from "@/app/kv/accountScopedKv";
 import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
-import { inTx, type Tx } from "@/storage/inTx";
+import { deletePublicFile } from "@/storage/blob/files";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
+import { log } from "@/utils/logging/log";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
 
@@ -328,22 +332,10 @@ export type DeleteAccountForErasureResult =
     | Readonly<{ status: "already-deleted" }>;
 
 /**
- * The sole physical Account-deletion composition for Data-owned Account
- * erasure. Domain cleanup runs in the same transaction as the Account row
- * delete so any remaining restrictive relation aborts every prior cleanup.
- *
- * It therefore deletes only an Account that still owns nothing behind a
- * restrictive relation — today the just-created Account an OAuth finalize
- * failure rolls back. `Session`, `Machine`, `AccessKey`, `Artifact`,
- * `UploadedFile`, `UsageReport`, `AccountPushToken`, `SessionShare`,
- * `SessionShareAccessLog` and `PublicSessionShare` all reference `Account`
- * with `ON DELETE RESTRICT`, so an Account owning even one Session fails
- * here with Prisma `P2003`. (`PluginWebhookEndpoint` is restrictive too but
- * does not block, because the cleanup above detaches it in this same
- * transaction.) A present-user "delete my account" ingress cannot be
- * composed from this owner as written: those domains must be erased first,
- * along with the `UploadedFile.path` blobs that `storage/blob/files.ts` has
- * no delete owner for.
+ * Sole physical Account-deletion composition. Existing domain owners remove
+ * restrictive custody in the same transaction as the Account row so any
+ * remaining blocker rolls the whole operation back. Owned public and private
+ * file bytes are removed through their storage owners only after commit.
  */
 export async function deleteAccountForErasure(input: Readonly<{
     accountId: string;
@@ -361,11 +353,41 @@ export async function deleteAccountForErasure(input: Readonly<{
             throw new Error("Plugin Account deletion requires a consistent Account encryption mode.");
         }
 
+        const [sessions, uploadedFiles, privatePetAssets] = await Promise.all([
+            tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true, updatedAt: true }, orderBy: { id: "asc" } }),
+            tx.uploadedFile.findMany({ where: { accountId: input.accountId }, select: { path: true } }),
+            tx.accountPetAsset.findMany({ where: { accountId: input.accountId }, select: { objectKey: true } }),
+        ]);
+        await tx.sessionShareAccessLog.deleteMany({ where: { userId: input.accountId } });
+        await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
+        await tx.sessionShare.deleteMany({ where: { OR: [{ sharedByUserId: input.accountId }, { sharedWithUserId: input.accountId }] } });
+        await tx.publicSessionShare.deleteMany({ where: { createdByUserId: input.accountId } });
+        for (const session of sessions) {
+            await deleteSessionTree(tx, { sessionId: session.id, sessionUpdatedAt: session.updatedAt, actorAccountId: input.accountId, reason: "user_request", sessionDeleteWhere: { accountId: input.accountId } });
+        }
+        await tx.accessKey.deleteMany({ where: { accountId: input.accountId } });
+        await tx.usageReport.deleteMany({ where: { accountId: input.accountId } });
+        await tx.accountPushToken.deleteMany({ where: { accountId: input.accountId } });
+        await tx.accountPluginUiArtifact.deleteMany({ where: { release: { accountId: input.accountId } } });
+        await tx.accountPluginRelease.deleteMany({ where: { accountId: input.accountId } });
+        await tx.artifact.deleteMany({ where: { accountId: input.accountId } });
+        await tx.uploadedFile.deleteMany({ where: { accountId: input.accountId } });
+        await tx.machine.deleteMany({ where: { accountId: input.accountId } });
         await cleanupPluginWebhooksForAccountDeletionTxV1(tx, {
             accountId: input.accountId,
             ...(input.now ? { now: input.now } : {}),
         });
         await tx.account.delete({ where: { id: input.accountId } });
+        if (uploadedFiles.length > 0 || privatePetAssets.length > 0) afterTx(tx, () => {
+            void Promise.all([
+                Promise.allSettled(uploadedFiles.map(async ({ path }) => await deletePublicFile(path))),
+                Promise.allSettled(privatePetAssets.map(async ({ objectKey }) => await deleteDefaultAccountPetPrivateObject(objectKey))),
+            ]).then(([publicResults, privateResults]) => {
+                const failedPublicFileCount = publicResults.filter((result) => result.status === "rejected").length;
+                const failedPrivateFileCount = privateResults.filter((result) => result.status === "rejected").length;
+                if (failedPublicFileCount || failedPrivateFileCount) log({ module: "account-erasure", failedPublicFileCount, failedPrivateFileCount }, "Account erasure could not remove every owned file blob");
+            });
+        });
         return { status: "deleted" };
     });
 }

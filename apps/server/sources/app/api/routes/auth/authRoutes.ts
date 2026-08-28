@@ -5,6 +5,7 @@ import { registerPairingAuthRoutes } from "./registerPairingAuthRoutes";
 import { registerApiTokenIntrospectionRoute } from "./registerApiTokenIntrospectionRoute";
 import { registerAccountApiTokenManagementRoutes } from "./registerAccountApiTokenManagementRoutes";
 import { registerAccountSessionsSignOutEverywhereRoute } from "./registerAccountSessionsSignOutEverywhereRoute";
+import { registerAccountErasureRoute } from "./registerAccountErasureRoute";
 import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPolicy";
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
@@ -41,6 +42,7 @@ export function authRoutes(app: Fastify): void {
     registerApiTokenIntrospectionRoute(app);
     registerAccountApiTokenManagementRoutes(app);
     registerAccountSessionsSignOutEverywhereRoute(app);
+    registerAccountErasureRoute(app);
 
     const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv(process.env);
     const isTerminalAuthExpired = (createdAt: Date): boolean => {

@@ -50,3 +50,9 @@ export function getDefaultAccountPetLibraryServices() {
     defaultAccountPetLibraryServicesCache = { key, services };
     return services;
 }
+
+export async function deleteDefaultAccountPetPrivateObject(objectKey: string): Promise<void> {
+    const backend = createLocalPrivateFilesBackend({ rootDir: resolveLocalPrivateFilesDir(process.env) });
+    if (!backend.deletePrivateFile) throw new Error("Account pet private-file deletion is unsupported.");
+    await backend.deletePrivateFile(objectKey);
+}

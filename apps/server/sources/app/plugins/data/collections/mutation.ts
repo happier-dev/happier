@@ -1718,12 +1718,13 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         results.push({ rowId: operation.rowId, revision, deleted: true });
     }
 
-    for (const change of relationChanges) {
-        await replaceRelationEdgesForRowTx({
+    if (relationChanges.length > 0) {
+        await replaceRelationEdgesForRowsTx({
             tx: input.tx,
             accountId: input.accountId,
             resolved,
-            change,
+            changes: relationChanges,
+            maximumBatchRows: input.deployment.maxBatchRows,
         });
     }
     const nullifiedChanges = await applyIncomingRelationDeletesTx({

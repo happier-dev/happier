@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveLightPublicUrl } from './env';
@@ -68,4 +68,8 @@ export async function readLightPublicFile(env: NodeJS.ProcessEnv, path: string):
     const safe = normalizePublicPath(path);
     const abs = join(resolveLightPublicFilesDir(env), safe);
     return await readFile(abs);
+}
+export async function deleteLightPublicFile(env: NodeJS.ProcessEnv, path: string): Promise<void> {
+    const safe = normalizePublicPath(path);
+    await rm(join(resolveLightPublicFilesDir(env), safe), { force: true });
 }

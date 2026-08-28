@@ -52,6 +52,7 @@ import {
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import {
+    ACCOUNT_ERASURE_CONFIRMATION_V1,
     AccountEncryptionMigrateInvalidParamsReasonSchema,
 } from '@happier-dev/protocol';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -93,6 +94,8 @@ import {
     listNewSessionDraftEncryptionMigrationCandidates,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
+import { deleteCurrentAccount } from '@/sync/api/account/deleteCurrentAccount';
+import { AccountDeletedLocalCleanupError, completeAccountDeletion } from '@/components/settings/account/accountDeletionLifecycle';
 
 type AccountEncryptionModePresentation = Readonly<{
     scope: string | null;
@@ -107,6 +110,7 @@ export default React.memo(() => {
     const { width, height } = useWindowDimensions();
     const [showSecret, setShowSecret] = useState(false);
     const [copiedRecently, setCopiedRecently] = useState(false);
+    const [accountDeletionPending, setAccountDeletionPending] = useState(false);
     const [analyticsOptOut, setAnalyticsOptOut] = useSettingMutable('analyticsOptOut');
     const [crashReportsOptOut, setCrashReportsOptOut] = useSettingMutable('crashReportsOptOut');
     const { connectAccount, isLoading: isConnecting } = useConnectAccount();
@@ -343,6 +347,18 @@ export default React.memo(() => {
                     }),
             });
         }
+    };
+    const handleDeleteAccount = async () => {
+        if (accountDeletionPending) return;
+        const confirmation = await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), { placeholder: ACCOUNT_ERASURE_CONFIRMATION_V1, confirmText: t('settingsAccount.deleteAccount') });
+        if (confirmation === null) return;
+        if (confirmation.trim() !== ACCOUNT_ERASURE_CONFIRMATION_V1) { await Modal.alertAsync(t('settingsAccount.deleteAccountInvalidTitle'), t('settingsAccount.deleteAccountInvalidBody')); return; }
+        const credentials = auth.credentials;
+        if (!credentials) { await Modal.alertAsync(t('common.error'), t('settingsAccount.deleteAccountFailed')); return; }
+        setAccountDeletionPending(true);
+        try { await presentFirstKeyCredentialLifecycle({ run: async () => await completeAccountDeletion({ deleteCurrentAccount: async () => await deleteCurrentAccount(credentials), logout: auth.logout, replace: (path) => router.replace(path) }) }); }
+        catch (error) { if (error instanceof AccountDeletedLocalCleanupError) await Modal.alertAsync(t('settingsAccount.deleteAccountCleanupFailedTitle'), t('settingsAccount.deleteAccountCleanupFailed')); else await Modal.alertAsync(t('settingsAccount.deleteAccountFailedTitle'), t('settingsAccount.deleteAccountFailed')); }
+        finally { setAccountDeletionPending(false); }
     };
 
     const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
@@ -1010,8 +1026,10 @@ export default React.memo(() => {
                         subtitle={t('settingsAccount.logoutSubtitle')}
                         icon={<Icon name="sign-out" size={29} color={theme.colors.state.danger.foreground} />}
                         destructive
+                        disabled={accountDeletionPending}
                         onPress={handleLogout}
                     />
+                    <Item testID="settings-account-delete" title={t('settingsAccount.deleteAccount')} subtitle={t('settingsAccount.deleteAccountSubtitle')} icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />} destructive disabled={accountDeletionPending} loading={accountDeletionPending} onPress={handleDeleteAccount} />
                 </ItemGroup>
             </ItemList>
         </>

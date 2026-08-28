@@ -80,9 +80,18 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
         expect(await db.session.findUnique({
             where: { id: "layout-1" },
         })).toBeNull();
-        expect(await db.accountChange.count({
+        expect(await db.accountChange.findMany({
             where: { accountId: "owner" },
-        })).toBeGreaterThan(0);
+            select: {
+                kind: true,
+                entityId: true,
+                hint: true,
+            },
+        })).toEqual([{
+            kind: "session",
+            entityId: "layout-1",
+            hint: { v: 1, lifecycle: "deleted" },
+        }]);
         expect(emitUpdate).toHaveBeenCalled();
     });
 
@@ -113,5 +122,44 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
         expect(await db.accountChange.count({
             where: { accountId: "owner", kind: "session" },
         })).toBe(1);
+    });
+
+    it("rolls the durable deletion hint back when the physical delete loses its condition", async () => {
+        await db.session.create({
+            data: {
+                id: "delete-condition-lost",
+                tag: "delete-condition-lost",
+                accountId: "owner",
+                metadata: "legacy-ciphertext",
+                metadataLayoutVersion: 0,
+            },
+        });
+
+        const { deleteOwnedSession } = await import(
+            "./deleteOwnedSession"
+        );
+        const result = await deleteOwnedSession({
+            sessionId: "delete-condition-lost",
+            reason: "retention_policy",
+            // The deletion owner increments seq at its writer boundary. Keeping
+            // the pre-claim value in the final predicate deterministically
+            // forces the final physical delete to lose its condition after the
+            // AccountChange write, exercising the real transaction rollback.
+            sessionWhereGuard: { seq: 0 },
+        });
+
+        expect(result).toEqual({ ok: false, error: "conflict" });
+        expect(await db.session.findUnique({
+            where: { id: "delete-condition-lost" },
+            select: { seq: true },
+        })).toEqual({ seq: 0 });
+        expect(await db.accountChange.count({
+            where: {
+                accountId: "owner",
+                kind: "session",
+                entityId: "delete-condition-lost",
+            },
+        })).toBe(0);
+        expect(emitUpdate).not.toHaveBeenCalled();
     });
 });

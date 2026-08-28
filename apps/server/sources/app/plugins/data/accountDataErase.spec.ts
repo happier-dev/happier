@@ -13,6 +13,13 @@ const mocks = vi.hoisted(() => {
     const deliveryDeleteMany = vi.fn();
     const operationDeleteMany = vi.fn();
     const routeDeleteMany = vi.fn();
+    const domainDeleteMany = vi.fn();
+    const sessionFindMany = vi.fn();
+    const uploadedFileFindMany = vi.fn();
+    const accountPetAssetFindMany = vi.fn();
+    const deleteSessionTree = vi.fn();
+    const deletePublicFile = vi.fn();
+    const deleteDefaultAccountPetPrivateObject = vi.fn();
     const tx = {
         account: {
             findUnique,
@@ -28,6 +35,9 @@ const mocks = vi.hoisted(() => {
         pluginWebhookDelivery: { deleteMany: deliveryDeleteMany },
         pluginWebhookEndpointOperation: { deleteMany: operationDeleteMany },
         pluginWebhookRoute: { deleteMany: routeDeleteMany },
+        session: { findMany: sessionFindMany }, uploadedFile: { findMany: uploadedFileFindMany, deleteMany: domainDeleteMany }, accountPetAsset: { findMany: accountPetAssetFindMany },
+        sessionShareAccessLog: { deleteMany: domainDeleteMany }, publicShareAccessLog: { deleteMany: domainDeleteMany }, sessionShare: { deleteMany: domainDeleteMany }, publicSessionShare: { deleteMany: domainDeleteMany },
+        accessKey: { deleteMany: domainDeleteMany }, usageReport: { deleteMany: domainDeleteMany }, accountPushToken: { deleteMany: domainDeleteMany }, accountPluginUiArtifact: { deleteMany: domainDeleteMany }, accountPluginRelease: { deleteMany: domainDeleteMany }, artifact: { deleteMany: domainDeleteMany }, machine: { deleteMany: domainDeleteMany },
     };
     return {
         acquireAccountEncryptionTransitionFenceInTx,
@@ -42,12 +52,20 @@ const mocks = vi.hoisted(() => {
         deliveryDeleteMany,
         operationDeleteMany,
         routeDeleteMany,
+        domainDeleteMany, sessionFindMany, uploadedFileFindMany, accountPetAssetFindMany, deleteSessionTree,
+        deletePublicFile, deleteDefaultAccountPetPrivateObject,
         tx,
     };
 });
 
 vi.mock("@/storage/inTx", () => ({
     inTx: async (operation: (tx: typeof mocks.tx) => Promise<unknown>) => await operation(mocks.tx),
+    afterTx: (_tx: typeof mocks.tx, callback: () => void) => callback(),
+}));
+vi.mock("@/app/session/delete/deleteSessionTree", () => ({ deleteSessionTree: mocks.deleteSessionTree }));
+vi.mock("@/storage/blob/files", () => ({ deletePublicFile: mocks.deletePublicFile }));
+vi.mock("@/app/pets/accountPetLibraryRuntime", () => ({
+    deleteDefaultAccountPetPrivateObject: mocks.deleteDefaultAccountPetPrivateObject,
 }));
 
 vi.mock("@/app/encryption/accountEncryptionTransition", () => ({
@@ -87,6 +105,13 @@ describe("deleteAccountForErasure", () => {
         mocks.deliveryDeleteMany.mockResolvedValue({ count: 0 });
         mocks.operationDeleteMany.mockResolvedValue({ count: 0 });
         mocks.routeDeleteMany.mockResolvedValue({ count: 0 });
+        mocks.domainDeleteMany.mockResolvedValue({ count: 0 });
+        mocks.sessionFindMany.mockResolvedValue([]);
+        mocks.uploadedFileFindMany.mockResolvedValue([]);
+        mocks.accountPetAssetFindMany.mockResolvedValue([]);
+        mocks.deleteSessionTree.mockResolvedValue(undefined);
+        mocks.deletePublicFile.mockResolvedValue(undefined);
+        mocks.deleteDefaultAccountPetPrivateObject.mockResolvedValue(undefined);
     });
 
     it("composes webhook cleanup and the physical Account delete in one transaction", async () => {
@@ -107,6 +132,35 @@ describe("deleteAccountForErasure", () => {
         expect(mocks.deleteAccount).toHaveBeenCalledWith({ where: { id: "account-1" } });
         expect(mocks.operationDeleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
             mocks.deleteAccount.mock.invocationCallOrder[0]!,
+        );
+    });
+
+    it("uses the Session owner and removes captured file bytes only after the Account delete", async () => {
+        const updatedAt = new Date("2026-08-27T10:00:00.000Z");
+        mocks.sessionFindMany.mockResolvedValue([{ id: "session-1", updatedAt }]);
+        mocks.uploadedFileFindMany.mockResolvedValue([{ path: "public/users/account-1/avatar.jpg" }]);
+        mocks.accountPetAssetFindMany.mockResolvedValue([{
+            objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp",
+        }]);
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "deleted",
+        });
+        await Promise.resolve();
+
+        expect(mocks.deleteSessionTree).toHaveBeenCalledWith(mocks.tx, {
+            sessionId: "session-1",
+            sessionUpdatedAt: updatedAt,
+            actorAccountId: "account-1",
+            reason: "user_request",
+            sessionDeleteWhere: { accountId: "account-1" },
+        });
+        expect(mocks.deletePublicFile).toHaveBeenCalledWith("public/users/account-1/avatar.jpg");
+        expect(mocks.deleteDefaultAccountPetPrivateObject).toHaveBeenCalledWith(
+            "private/accounts/account-1/pets/pet-1/sheet.webp",
+        );
+        expect(mocks.deleteAccount.mock.invocationCallOrder[0]!).toBeLessThan(
+            mocks.deletePublicFile.mock.invocationCallOrder[0]!,
         );
     });
 

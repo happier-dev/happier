@@ -1,4 +1,4 @@
-import { ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, writeLightPublicFile } from '@/flavors/light/files';
+import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, writeLightPublicFile } from '@/flavors/light/files';
 
 export type ImageRef = {
     width: number;
@@ -12,6 +12,7 @@ export type PublicFilesBackend = {
     getPublicUrl(path: string): string;
     writePublicFile(path: string, data: Uint8Array): Promise<void>;
     readPublicFile?(path: string): Promise<Uint8Array>;
+    deletePublicFile(path: string): Promise<void>;
 }
 
 let backend: PublicFilesBackend | null = null;
@@ -56,6 +57,7 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         async writePublicFile(path: string, data: Uint8Array) {
             await s3client.putObject(s3bucket, path, Buffer.from(data));
         },
+        async deletePublicFile(path: string) { await s3client.removeObject(s3bucket, path); },
     };
 }
 
@@ -72,7 +74,8 @@ export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): voi
         },
         async readPublicFile(path: string) {
             return await readLightPublicFile(env, path);
-        }
+        },
+        async deletePublicFile(path: string) { await deleteLightPublicFile(env, path); },
     };
 }
 
@@ -106,6 +109,10 @@ export async function readPublicFile(path: string): Promise<Uint8Array> {
         throw new Error('Public file read is not supported');
     }
     return await backend.readPublicFile(path);
+}
+export async function deletePublicFile(path: string): Promise<void> {
+    if (!backend) throw new Error('Files backend not initialized');
+    await backend.deletePublicFile(path);
 }
 
 function requiredEnv(env: NodeJS.ProcessEnv, key: string): string {

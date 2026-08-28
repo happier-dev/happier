@@ -6,9 +6,8 @@ import {
     automationRunCustodyTerminalWhere,
     finalizeDeletedAutomationsWithoutRetainedRunsTx,
 } from '@/app/automations/automationCrudService';
-import { emitAutomationRunUpdated } from '@/app/automations/automationChangePublisher';
+import { emitAutomationUpsert } from '@/app/automations/automationChangePublisher';
 import { automationRunItemSelect } from '@/app/automations/automationPersistenceSelect';
-import type { AutomationRunItem } from '@/app/automations/automationTypes';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 import type { RetentionRule } from '@/app/retention/runtime/retentionRuleRegistry';
 import { db } from '@/storage/db';
@@ -19,6 +18,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const automationRunRetentionCandidateSelect = {
     ...automationRunItemSelect,
+    automation: {
+        select: {
+            id: true,
+            templateVersion: true,
+            enabled: true,
+            deletedAt: true,
+            updatedAt: true,
+        },
+    },
     account: {
         select: {
             automationRunRetention: true,
@@ -62,11 +70,16 @@ function automationRunAgeRetentionWhere(
     return ageWhere;
 }
 
-function isAutomationRunOldEnoughToDelete(
+function isAutomationRunEligibleForDeletion(
     run: AutomationRunRetentionCandidate,
     policy: RetentionPolicy,
     now: Date,
 ): boolean {
+    // Deleting an Automation is an explicit request to clear its retained Run
+    // history. Custody safety remains owned by automationRunCustodyTerminalWhere;
+    // once a Run is terminal, Account keep-forever history must not strand the
+    // soft-deleted parent indefinitely.
+    if (run.automation.deletedAt !== null) return true;
     if (run.finishedAt === null) return false;
     const operatorDays = readOperatorAutomationRunRetentionDays(policy);
     const retentionDays = run.account.automationRunRetention === 'thirtyDays'
@@ -78,118 +91,6 @@ function isAutomationRunOldEnoughToDelete(
             : null;
     return retentionDays !== null
         && run.finishedAt.getTime() < ageCutoff(now, retentionDays).getTime();
-}
-
-/**
- * Compaction deliberately leaves Event/Conversation rejoin evidence intact:
- * same occurrence keys can still distinguish different signed evidence after
- * mutable execution and reply content has been removed. Schedule/Manual Runs
- * have no such evidence contract, so a corrupt retained value is also cleared.
- */
-function automationRunContentCompactionWhere(): Prisma.AutomationRunWhereInput {
-    return {
-        contentRemovedAt: null,
-        OR: [
-            { executionInputEnvelope: { not: null } },
-            { resultEnvelope: { not: null } },
-            { replyContextEnvelope: { not: null } },
-            { replyHandoffReceiptEnvelope: { not: null } },
-            { summaryCiphertext: { not: null } },
-            { errorMessage: { not: null } },
-            {
-                originKind: { in: ['scheduled', 'manual'] },
-                triggerEvidenceEnvelope: { not: null },
-            },
-            {
-                originKind: { in: ['scheduled', 'manual'] },
-                occurrenceEvidenceEqualityTag: { not: null },
-            },
-        ],
-    };
-}
-
-function hasAutomationRunContentToCompact(run: AutomationRunRetentionCandidate): boolean {
-    if (run.contentRemovedAt !== null) return false;
-    if (
-        run.executionInputEnvelope !== null
-        || run.resultEnvelope !== null
-        || run.replyContextEnvelope !== null
-        || run.replyHandoffReceiptEnvelope !== null
-        || run.summaryCiphertext !== null
-        || run.errorMessage !== null
-    ) {
-        return true;
-    }
-    return (run.originKind === 'scheduled' || run.originKind === 'manual')
-        && (
-            run.triggerEvidenceEnvelope !== null
-            || run.occurrenceEvidenceEqualityTag !== null
-        );
-}
-
-async function compactAutomationRunContent(
-    run: AutomationRunRetentionCandidate,
-    now: Date,
-): Promise<boolean> {
-    return await inTx(async (tx) => {
-        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
-            tx,
-            run.accountId,
-        );
-        if (accountFence.status !== 'ready') return false;
-        const current = await tx.automationRun.findFirst({
-            where: { id: run.id, accountId: run.accountId },
-            select: automationRunRetentionCandidateSelect,
-        });
-        if (!current || !hasAutomationRunContentToCompact(current)) return false;
-        const removeOriginEvidence = current.originKind === 'scheduled'
-            || current.originKind === 'manual';
-        const updated = await tx.automationRun.updateMany({
-            where: {
-                id: current.id,
-                accountId: current.accountId,
-                revision: current.revision,
-                contentRemovedAt: null,
-                ...automationRunCustodyTerminalWhere(),
-            },
-            data: {
-                ...(removeOriginEvidence
-                    ? {
-                        triggerEvidenceEnvelope: null,
-                        occurrenceEvidenceEqualityTag: null,
-                    }
-                    : {}),
-                executionInputEnvelope: null,
-                resultEnvelope: null,
-                replyContextEnvelope: null,
-                replyHandoffReceiptEnvelope: null,
-                summaryCiphertext: null,
-                errorMessage: null,
-                contentRemovedAt: now,
-                revision: { increment: 1 },
-                updatedAt: now,
-            },
-        });
-        if (updated.count !== 1) return false;
-        const compacted = await tx.automationRun.findFirst({
-            where: { id: current.id, accountId: current.accountId },
-            select: automationRunItemSelect,
-        });
-        if (!compacted) return false;
-        const cursor = await markAccountChanged(tx, {
-            accountId: current.accountId,
-            kind: 'automation',
-            entityId: current.automationId,
-        });
-        afterTx(tx, () => {
-            emitAutomationRunUpdated({
-                accountId: current.accountId,
-                run: compacted as AutomationRunItem,
-                cursor,
-            });
-        });
-        return true;
-    });
 }
 
 async function deleteAutomationRunHistory(
@@ -207,7 +108,7 @@ async function deleteAutomationRunHistory(
             where: { id: run.id, accountId: run.accountId },
             select: automationRunRetentionCandidateSelect,
         });
-        if (!current || !isAutomationRunOldEnoughToDelete(current, policy, now)) {
+        if (!current || !isAutomationRunEligibleForDeletion(current, policy, now)) {
             return false;
         }
         const deleted = await tx.automationRun.deleteMany({
@@ -219,11 +120,16 @@ async function deleteAutomationRunHistory(
             },
         });
         if (deleted.count !== 1) return false;
-        await markAccountChanged(tx, {
+        const cursor = await markAccountChanged(tx, {
             accountId: current.accountId,
             kind: 'automation',
             entityId: current.automationId,
         });
+        afterTx(tx, () => emitAutomationUpsert({
+            accountId: current.accountId,
+            automation: current.automation,
+            cursor,
+        }));
         return true;
     });
 }
@@ -260,6 +166,7 @@ async function finalizeDeletedAutomationDefinitions(limit: number): Promise<void
 
 export function createAutomationRunRetentionRule(): RetentionRule {
     let dryRunOffset = 0;
+    let dryRunReceiptOffset = 0;
     return {
         id: 'automationRuns',
         run: async (params) => {
@@ -268,35 +175,48 @@ export function createAutomationRunRetentionRule(): RetentionRule {
                 params.maxDeletesPerRulePerRun,
                 params.maxCandidatesPerRulePerRun ?? Number.MAX_SAFE_INTEGER,
             ));
+            const receiptCandidatesWithLookahead = await db.automationWorkerClaimReceipt.findMany({
+                where: { expiresAt: { lt: params.now } },
+                orderBy: { id: 'asc' },
+                take: limit + 1,
+                ...(params.dryRun && dryRunReceiptOffset > 0
+                    ? { skip: dryRunReceiptOffset }
+                    : {}),
+                select: { id: true },
+            });
+            const receiptCandidates = receiptCandidatesWithLookahead.slice(0, limit);
+            if (params.dryRun) dryRunReceiptOffset += receiptCandidates.length;
+            const receiptDeleted = params.dryRun
+                ? receiptCandidates.length
+                : (await db.automationWorkerClaimReceipt.deleteMany({
+                    where: { id: { in: receiptCandidates.map((receipt) => receipt.id) } },
+                })).count;
+            const runLimit = Math.max(0, limit - receiptDeleted);
             const candidatesWithLookahead = await db.automationRun.findMany({
                 where: {
                     ...automationRunCustodyTerminalWhere(),
                     OR: [
                         ...automationRunAgeRetentionWhere(params.policy, params.now),
-                        automationRunContentCompactionWhere(),
+                        { automation: { deletedAt: { not: null } } },
                     ],
                 },
                 select: automationRunRetentionCandidateSelect,
                 orderBy: { id: 'asc' },
-                take: limit + 1,
+                take: runLimit + 1,
                 ...(params.dryRun && dryRunOffset > 0 ? { skip: dryRunOffset } : {}),
             });
-            const candidates = candidatesWithLookahead.slice(0, limit);
+            const candidates = candidatesWithLookahead.slice(0, runLimit);
             if (params.dryRun) dryRunOffset += candidates.length;
 
-            let deleted = 0;
+            let deleted = receiptDeleted;
             for (const candidate of candidates) {
                 if (params.shouldContinue && !params.shouldContinue()) break;
-                if (isAutomationRunOldEnoughToDelete(candidate, params.policy, params.now)) {
+                if (isAutomationRunEligibleForDeletion(candidate, params.policy, params.now)) {
                     if (params.dryRun) {
                         deleted += 1;
                     } else if (await deleteAutomationRunHistory(candidate, params.policy, params.now)) {
                         deleted += 1;
                     }
-                    continue;
-                }
-                if (!params.dryRun && hasAutomationRunContentToCompact(candidate)) {
-                    await compactAutomationRunContent(candidate, params.now);
                 }
             }
 
@@ -304,15 +224,16 @@ export function createAutomationRunRetentionRule(): RetentionRule {
             // Automation removable. The parent has no age rule of its own:
             // it is already unreachable, and its Runs were the only thing
             // that kept the row alive.
-            if (!params.dryRun) {
-                await finalizeDeletedAutomationDefinitions(limit);
+            if (!params.dryRun && runLimit > 0) {
+                await finalizeDeletedAutomationDefinitions(runLimit);
             }
 
             return {
                 id: 'automationRuns',
                 deleted,
-                candidatesExamined: candidates.length,
-                hasMore: candidatesWithLookahead.length > limit,
+                candidatesExamined: receiptCandidates.length + candidates.length,
+                hasMore: receiptCandidatesWithLookahead.length > limit
+                    || candidatesWithLookahead.length > runLimit,
             };
         },
     };
