@@ -1,5 +1,8 @@
 /**
- * GENERATED FILE CONTRACT (A.16y.3-provider-session-control-and-runtime-descriptor-projections)
+ * GENERATED released flat Session-metadata compatibility readers.
+ *
+ * This bounded registry reads provider-specific metadata written by released
+ * CLI 0.2.0/0.2.1 builds. It is not a current descriptor or plugin-authoring seam.
  *
  * This file is emitted by:
  * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`
@@ -9,77 +12,7 @@ import {
   createGeneratedRuntimeDescriptorReader,
   type GeneratedRuntimeDescriptorReaderConfig,
 } from '../runtime/identity/generatedRuntimeProjection.js';
-import {
-  createProviderSessionIdRuntimeDescriptorReader,
-} from '../runtime/identity/providerSessionIdReader.js';
 import type { RuntimeDescriptorReaderMap } from '../runtime/identity/runtimeDescriptorTypes.js';
-
-const ANTIGRAVITY_GENERATED_RUNTIME_DESCRIPTOR_READER = createGeneratedRuntimeDescriptorReader(
-{
-  "backendModeKey": "runtimeMode",
-  "fields": [
-    {
-      "key": "runtimeMode",
-      "kind": "runtimeKind",
-      "runtimeHandle": "whenPresent"
-    },
-    {
-      "key": "providerSessionId",
-      "kind": "trimmedString",
-      "runtimeHandle": "whenPresent"
-    },
-    {
-      "key": "agyConversationId",
-      "kind": "trimmedString",
-      "runtimeHandle": "whenPresent"
-    },
-    {
-      "key": "localharnessSessionId",
-      "kind": "trimmedString",
-      "runtimeHandle": "whenPresent"
-    }
-  ],
-  "legacy": {
-    "fields": [
-      {
-        "key": "runtimeMode",
-        "kind": "runtimeKind",
-        "runtimeHandle": "whenPresent",
-        "sourceKey": "antigravityRuntimeMode"
-      },
-      {
-        "key": "providerSessionId",
-        "kind": "trimmedString",
-        "runtimeHandle": "whenPresent"
-      },
-      {
-        "key": "agyConversationId",
-        "kind": "trimmedString",
-        "runtimeHandle": "whenPresent"
-      },
-      {
-        "key": "localharnessSessionId",
-        "kind": "trimmedString",
-        "runtimeHandle": "whenPresent"
-      }
-    ],
-    "requireRuntimeKind": true
-  },
-  "providerId": "antigravity",
-  "runtimeKind": {
-    "aliases": [
-      {
-        "input": "cliPrint",
-        "runtimeKind": "cliPrint"
-      },
-      {
-        "input": "sdk",
-        "runtimeKind": "sdk"
-      }
-    ]
-  }
-} satisfies GeneratedRuntimeDescriptorReaderConfig<'antigravity'>,
-);
 
 const CODEX_GENERATED_RUNTIME_DESCRIPTOR_READER = createGeneratedRuntimeDescriptorReader(
 {
@@ -176,7 +109,7 @@ const CODEX_GENERATED_RUNTIME_DESCRIPTOR_READER = createGeneratedRuntimeDescript
       },
       {
         "input": "mcp",
-        "runtimeKind": "appServer"
+        "runtimeKind": "mcp"
       },
       {
         "input": "mcp_resume",
@@ -261,21 +194,14 @@ const OPENCODE_GENERATED_RUNTIME_DESCRIPTOR_READER = createGeneratedRuntimeDescr
 );
 
 export const GENERATED_RUNTIME_DESCRIPTOR_READER_PROVIDER_IDS = [
-  'antigravity',
   'codex',
   'opencode',
-  'pi',
 ] as const;
 
 export type GeneratedRuntimeDescriptorReaderProviderId =
   (typeof GENERATED_RUNTIME_DESCRIPTOR_READER_PROVIDER_IDS)[number];
 
 export const GENERATED_RUNTIME_DESCRIPTOR_READERS: Readonly<Pick<RuntimeDescriptorReaderMap, GeneratedRuntimeDescriptorReaderProviderId>> = Object.freeze({
-  antigravity: ANTIGRAVITY_GENERATED_RUNTIME_DESCRIPTOR_READER,
   codex: CODEX_GENERATED_RUNTIME_DESCRIPTOR_READER,
   opencode: OPENCODE_GENERATED_RUNTIME_DESCRIPTOR_READER,
-  pi: createProviderSessionIdRuntimeDescriptorReader({
-    providerId: 'pi',
-    runtimeHandle: 'providerSessionId',
-  }),
 });

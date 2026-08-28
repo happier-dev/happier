@@ -6,7 +6,10 @@ import {
   RUNTIME_DESCRIPTOR_PROVIDER_IDS,
   getRuntimeDescriptorReader,
 } from './runtimeDescriptorReaderRegistry.js';
-import { readSessionMetadataConnectedServiceBindings } from './readSessionMetadataRuntimeDescriptor.js';
+import {
+  readSessionMetadataConnectedServiceBindings,
+  readSessionMetadataRuntimeDescriptor,
+} from './readSessionMetadataRuntimeDescriptor.js';
 
 describe('runtimeDescriptorReaderRegistry', () => {
   it('loads provider runtime descriptor readers through generated contributions instead of manual provider imports', () => {
@@ -33,7 +36,6 @@ describe('runtimeDescriptorReaderRegistry', () => {
   it('keeps generated plugin reader leaves free of circular agents imports and declares protocol imports', () => {
     const pluginLeaves = [
       { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/identity/runtimeDescriptor.ts' },
-      { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/surfaces/sessions/controls/adapter.ts' },
     ] as const;
 
     for (const { packageId, sourcePath } of pluginLeaves) {
@@ -54,35 +56,10 @@ describe('runtimeDescriptorReaderRegistry', () => {
   });
 
   it('exposes only the providers that own runtime descriptor readers', () => {
-    expect(RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
+    expect(RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['codex', 'opencode']);
   });
 
   it('routes each supported provider id to its generated reader', () => {
-    expect(getRuntimeDescriptorReader('antigravity')?.({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        providerId: 'antigravity',
-        provider: {
-          runtimeMode: 'sdk',
-          providerSessionId: 'localharness-session-1',
-          agyConversationId: 'agy-conversation-1',
-          localharnessSessionId: 'localharness-session-1',
-        },
-      },
-    })).toEqual({
-      agentId: 'antigravity',
-      runtimeKind: 'sdk',
-      runtimeMode: 'sdk',
-      providerSessionId: 'localharness-session-1',
-      agyConversationId: 'agy-conversation-1',
-      localharnessSessionId: 'localharness-session-1',
-      runtimeHandle: {
-        runtimeMode: 'sdk',
-        providerSessionId: 'localharness-session-1',
-        agyConversationId: 'agy-conversation-1',
-        localharnessSessionId: 'localharness-session-1',
-      },
-    });
     expect(getRuntimeDescriptorReader('codex')?.({
       codexBackendMode: 'appServer',
       codexSessionId: ' thread-1 ',
@@ -111,39 +88,16 @@ describe('runtimeDescriptorReaderRegistry', () => {
       serverBaseUrl: 'http://127.0.0.1:4096/',
       serverBaseUrlExplicit: true,
     });
-    expect(getRuntimeDescriptorReader('pi')?.({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'pi',
-        provider: {
-          resumeStrategy: 'sessionFileBySessionId',
-          providerSessionId: 'pi-session-1',
-        },
-      },
-    })).toEqual({
-      agentId: 'pi',
-      runtimeKind: null,
-      providerSessionId: 'pi-session-1',
-      runtimeHandle: {
-        providerSessionId: 'pi-session-1',
-      },
-    });
   });
 
-  it('derives connected-service bindings from generated runtime descriptors', () => {
+  it('derives connected-service bindings only from released flat metadata', () => {
     expect(readSessionMetadataConnectedServiceBindings({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'thread-1',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceGroupId: 'team',
-          connectedServiceProfileId: 'work',
-        },
-      },
+      codexBackendMode: 'appServer',
+      codexSessionId: 'thread-1',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'team',
+      connectedServiceProfileId: 'work',
     }, 'codex')).toEqual({
       'openai-codex': {
         source: 'connected',
@@ -154,7 +108,7 @@ describe('runtimeDescriptorReaderRegistry', () => {
     });
   });
 
-  it('preserves current and legacy Codex descriptors through the one generated host reader', () => {
+  it('keeps current Agent descriptors opaque while reading released flat compatibility', () => {
     const reader = getRuntimeDescriptorReader('codex');
     const expected = {
       agentId: 'codex',
@@ -179,32 +133,31 @@ describe('runtimeDescriptorReaderRegistry', () => {
       },
     });
     const legacy = reader?.({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        providerId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'thread-legacy',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceProfileId: 'legacy-profile',
-        },
-      },
+      codexBackendMode: 'appServer',
+      codexSessionId: 'thread-legacy',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceProfileId: 'legacy-profile',
     });
 
-    expect(current).toMatchObject(expected);
+    expect(current).toBeNull();
     expect(legacy).toMatchObject(expected);
-    expect(readSessionMetadataConnectedServiceBindings({
-      agentRuntimeDescriptorV1: {
+    expect(readSessionMetadataRuntimeDescriptor({
+      runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceProfileId: 'legacy-profile',
+        agentId: 'codex',
+        agent: {
+          backendMode: 'future-codex-mode',
+          providerSessionId: 'thread-current',
+          externallyAuthoredField: 'preserve-me',
         },
       },
+    }, 'codex')).toBeNull();
+    expect(readSessionMetadataConnectedServiceBindings({
+      codexBackendMode: 'appServer',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceProfileId: 'legacy-profile',
     }, 'codex')).toEqual({
       'openai-codex': {
         source: 'connected',
@@ -238,7 +191,9 @@ describe('runtimeDescriptorReaderRegistry', () => {
   });
 
   it('fails closed for non-record metadata and uncontributed providers', () => {
-    expect(getRuntimeDescriptorReader('pi')?.(null as unknown as Record<string, unknown>)).toBeNull();
+    expect(getRuntimeDescriptorReader('codex')?.(null as unknown as Record<string, unknown>)).toBeNull();
+    expect(getRuntimeDescriptorReader('antigravity')).toBeNull();
+    expect(getRuntimeDescriptorReader('pi')).toBeNull();
     expect(getRuntimeDescriptorReader('claude')).toBeNull();
     expect(getRuntimeDescriptorReader('customAcp')).toBeNull();
   });

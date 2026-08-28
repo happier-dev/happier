@@ -1,6 +1,5 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol';
 import type { AgentId } from '../../types.js';
-import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
 import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';
 
@@ -46,7 +45,6 @@ export function evaluateVendorHandoffEligibility(input: Readonly<{
   const runtimeControlSurface = resolveAgentRuntimeControlSurfaceForSession({
     agentId: input.agentId,
     metadata: input.metadata,
-    accountSettings,
   });
   if (!runtimeControlSurface) {
     return { eligible: false, reasonCode: 'handoff_unsupported' };
@@ -63,16 +61,6 @@ export function evaluateVendorHandoffEligibility(input: Readonly<{
 
   if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'unsupported') {
     return { eligible: false, reasonCode: 'handoff_unsupported' };
-  }
-
-  if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'experimental') {
-    const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorHandoffEnabled?.({
-      metadata: input.metadata,
-      accountSettings,
-    }) === true;
-    if (!enabled) {
-      return { eligible: false, reasonCode: 'experimental_disabled' };
-    }
   }
 
   const vendorHandoffId = resolveVendorHandoffIdFromSessionMetadata(input.agentId, input.metadata);

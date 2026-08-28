@@ -7,7 +7,6 @@ describe('runtimeControlSurface', () => {
     expect(resolveAgentRuntimeControlSurfaceForSession({
       agentId: 'opencode',
       metadata: { opencodeBackendMode: 'acp' },
-      accountSettings: { opencodeBackendMode: 'server' },
     })).toMatchObject({
       sessionStorage: { direct: false, persisted: true },
       sessionCapabilities: {
@@ -17,11 +16,10 @@ describe('runtimeControlSurface', () => {
     });
   });
 
-  it('uses the configured OpenCode runtime surface when no persisted runtime identity is present', () => {
+  it('uses the declared OpenCode default when no persisted runtime identity exists', () => {
     expect(resolveAgentRuntimeControlSurfaceForSession({
       agentId: 'opencode',
       metadata: {},
-      accountSettings: { opencodeBackendMode: 'server' },
     })).toMatchObject({
       sessionStorage: { direct: true, persisted: true },
       sessionCapabilities: {
@@ -31,25 +29,10 @@ describe('runtimeControlSurface', () => {
     });
   });
 
-  it('derives the OpenCode runtime surface from account settings when no persisted runtime identity exists', () => {
-    expect(resolveAgentRuntimeControlSurfaceForSession({
-      agentId: 'opencode',
-      metadata: {},
-      accountSettings: { opencodeBackendMode: 'acp' },
-    })).toMatchObject({
-      sessionStorage: { direct: false, persisted: true },
-      sessionCapabilities: {
-        sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
-      },
-      localControl: null,
-    });
-  });
-
-  it('derives the Codex app-server runtime surface from legacy MCP account settings', () => {
+  it('uses the declared Codex default rather than parsing UI Account settings', () => {
     expect(resolveAgentRuntimeControlSurfaceForSession({
       agentId: 'codex',
       metadata: {},
-      accountSettings: { codexBackendMode: 'mcp' },
     })).toMatchObject({
       sessionCapabilities: {
         sessionFork: { conversation: 'supported' },
@@ -59,11 +42,23 @@ describe('runtimeControlSurface', () => {
     });
   });
 
+  it('fails closed rather than interpreting an Agent-owned current runtime descriptor', () => {
+    expect(resolveAgentRuntimeControlSurfaceForSession({
+      agentId: 'codex',
+      metadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'acp' },
+        },
+      },
+    })).toBeNull();
+  });
+
   it('returns the base Claude session surface even without a provider session-control adapter', () => {
     expect(resolveAgentRuntimeControlSurfaceForSession({
       agentId: 'claude',
       metadata: {},
-      accountSettings: null,
     })).toMatchObject({
       sessionStorage: { direct: true, persisted: true },
       handoff: { vendorStateTransfer: 'supported' },

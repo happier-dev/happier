@@ -1,4 +1,11 @@
-import type { AgentId, AgentSessionCapabilitySupportLevel, AgentSessionCapabilities } from '../../types.js';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+
+import {
+  isBundledAgentId,
+  type AgentId,
+  type AgentSessionCapabilitySupportLevel,
+  type AgentSessionCapabilities,
+} from '../../types.js';
 import { getAgentCore } from '../../manifest.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
 import type { RuntimeCapabilities } from '../../runtime/capabilities/runtimeCapabilities.js';
@@ -50,12 +57,42 @@ export function isAgentSessionCapabilitySupported(agentId: AgentId, capability: 
 }
 
 export function evaluateAgentSessionCapabilitySupport(params: Readonly<{
-  agentId: AgentId;
+  agentId: string;
   capability: AgentSessionCapabilityKey;
   metadata: unknown;
   accountSettings?: Record<string, unknown> | null;
+  declaredSupport?: AgentSessionCapabilitySupportLevel;
 }>): AgentSessionCapabilitySupportLevel {
+  // Usage-limit recovery is a static executable-operation declaration. A
+  // concrete runtime may refine runtime-kind facts such as fork/rollback, but
+  // it cannot invent or suppress this author contract independently.
+  if (
+    params.capability === 'usageLimitRecovery.checkNow'
+    && params.declaredSupport
+  ) {
+    return params.declaredSupport;
+  }
+  const publishedSupport = readPublishedAgentSessionCapability(
+    params.metadata,
+    params.capability,
+  );
+  if (publishedSupport) return publishedSupport;
+
+  // A caller holding the current normalized Agent declaration has already
+  // selected the authoritative static evidence channel. Apply it identically
+  // for bundled and external origins; only legacy callers without that
+  // declaration use the bundled compatibility resolver below.
+  if (params.declaredSupport) return params.declaredSupport;
+
+  if (!isBundledAgentId(params.agentId)) {
+    return 'unsupported';
+  }
+
   const effectiveRuntimeControlSurface = resolveAgentRuntimeControlSurfaceForSession(params);
+
+  if (!effectiveRuntimeControlSurface && readRuntimeDescriptorV1FromMetadata(params.metadata)) {
+    return 'unsupported';
+  }
 
   const baseSupport = effectiveRuntimeControlSurface
     ? readAgentSessionCapabilityFromSurface(effectiveRuntimeControlSurface.sessionCapabilities, params.capability)
@@ -65,6 +102,32 @@ export function evaluateAgentSessionCapabilitySupport(params: Readonly<{
   }
 
   return baseSupport;
+}
+
+function readPublishedAgentSessionCapability(
+  metadata: unknown,
+  capability: AgentSessionCapabilityKey,
+): AgentSessionCapabilitySupportLevel | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const publication = (metadata as Readonly<Record<string, unknown>>).agentRuntimeCapabilitiesV1;
+  if (!publication || typeof publication !== 'object' || Array.isArray(publication)) return null;
+  const sessionCapabilities = (publication as Readonly<Record<string, unknown>>).sessionCapabilities;
+  if (!sessionCapabilities || typeof sessionCapabilities !== 'object' || Array.isArray(sessionCapabilities)) {
+    return null;
+  }
+
+  const sessionCapabilityRecord = sessionCapabilities as Readonly<Record<string, unknown>>;
+  const value = capability.includes('.')
+    ? capability.split('.').reduce<unknown>((current, segment) => (
+        current && typeof current === 'object' && !Array.isArray(current)
+          ? (current as Readonly<Record<string, unknown>>)[segment]
+          : undefined
+      ), sessionCapabilityRecord)
+    : sessionCapabilityRecord[capability];
+
+  return value === 'supported' || value === 'experimental' || value === 'unsupported'
+    ? value
+    : null;
 }
 
 export function readRuntimeCapabilitiesForSession(params: Readonly<{

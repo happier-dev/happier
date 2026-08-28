@@ -92,14 +92,14 @@ describe('vendorHandoffPolicy', () => {
     ).toEqual({ eligible: false, reasonCode: 'storage_mode_unsupported' });
   });
 
-  it('marks codex handoff as experimental', () => {
+  it('uses the declared Codex runtime default when session metadata has no runtime identity', () => {
     expect(
       evaluateVendorHandoffEligibility({
         agentId: 'codex',
         storageMode: 'persisted',
         metadata: { codexSessionId: 'x1' },
       }),
-    ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
+    ).toEqual({ eligible: true, vendorHandoffId: 'x1' });
   });
 
   it('allows codex handoff when the canonical runtime descriptor proves an eligible backend mode', () => {
@@ -109,7 +109,11 @@ describe('vendorHandoffPolicy', () => {
         storageMode: 'persisted',
         metadata: {
           codexSessionId: 'x1',
-          codexRuntimeDescriptorV1: { v: 1, backendMode: 'appServer' },
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer', providerSessionId: 'x1' },
+          },
         },
       }),
     ).toEqual({ eligible: true, vendorHandoffId: 'x1' });
@@ -122,7 +126,11 @@ describe('vendorHandoffPolicy', () => {
         storageMode: 'persisted',
         metadata: {
           codexSessionId: 'x1',
-          codexRuntimeDescriptorV1: { v: 1, backendMode: 'mcp' },
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'acp', providerSessionId: 'x1' },
+          },
           codexBackendMode: 'appServer',
         },
       }),

@@ -62,16 +62,13 @@ export type AgentSessionStorage = Readonly<{
     persisted: boolean;
 }>;
 export type AgentSessionCapabilitySupportLevel = 'supported' | 'unsupported' | 'experimental';
-export type AgentSessionAuthSwitchTransition =
-    | 'native_to_connected'
-    | 'connected_to_native'
-    | 'connected_to_connected'
-    | 'same_connected_group';
 export type AgentSessionCapabilities = Readonly<{
     sessionListing: AgentSessionCapabilitySupportLevel;
     sessionFork: Readonly<{
         conversation: AgentSessionCapabilitySupportLevel;
         fromMessage: AgentSessionCapabilitySupportLevel;
+        /** Exact protocol strategy for the materialized runtime when one is required. */
+        protocol?: 'acp';
     }>;
     sessionRollback: Readonly<{
         conversation: AgentSessionCapabilitySupportLevel;
@@ -219,14 +216,6 @@ export type AgentCore = Readonly<{
     connectedServices?: Readonly<{
       supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
-      sessionAuthSwitch?: Readonly<{
-        continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';
-        supportedTransitions?: ReadonlyArray<AgentSessionAuthSwitchTransition>;
-        providerStateSharingRequired?: Readonly<{
-          serviceIds?: ReadonlyArray<ConnectedServiceId>;
-          supportedTransitions: ReadonlyArray<AgentSessionAuthSwitchTransition>;
-        }>;
-      }>;
       /**
        * Optional credential-kind compatibility per connected service id.
        *

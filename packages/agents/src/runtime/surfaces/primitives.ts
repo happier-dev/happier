@@ -53,17 +53,6 @@ export type BackendSurfaceResultV1<
 
 export type BackendSessionLaunchHintsV1 = Readonly<{
   directory?: string;
-  /**
-   * Provider-declared runtime-mode token needed to relaunch or take over this session.
-   * Shared host code treats this as opaque; only the owning backend interprets it.
-   */
-  backendModeHint?: string;
-  /**
-   * Provider-owned additions to the host resume plan. Host-owned fields such as
-   * directory, agent, resume id, transcript storage, and environment variables remain
-   * authoritative and are not read from this object.
-   */
-  resumePlanOptions?: Readonly<Record<string, unknown>>;
   environmentVariables?: Readonly<Record<string, string>>;
   sessionStateUpdates?: readonly SessionStateUpdateV1[];
 }>;

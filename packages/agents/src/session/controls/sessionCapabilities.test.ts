@@ -21,7 +21,7 @@ describe('sessionCapabilities', () => {
         conversation: 'unsupported',
       },
       usageLimitRecovery: {
-        checkNow: 'supported',
+        checkNow: 'unsupported',
       },
     });
 
@@ -49,7 +49,7 @@ describe('sessionCapabilities', () => {
         conversation: 'unsupported',
       },
       usageLimitRecovery: {
-        checkNow: 'supported',
+        checkNow: 'unsupported',
       },
     });
 
@@ -63,7 +63,7 @@ describe('sessionCapabilities', () => {
         conversation: 'unsupported',
       },
       usageLimitRecovery: {
-        checkNow: 'supported',
+        checkNow: 'unsupported',
       },
     });
   });
@@ -74,22 +74,22 @@ describe('sessionCapabilities', () => {
     expect(getAgentSessionCapability('codex', 'sessionFork.fromMessage')).toBe('unsupported');
     expect(getAgentSessionCapability('codex', 'sessionRollback.conversation')).toBe('supported');
     expect(getAgentSessionCapability('codex', 'usageLimitRecovery.checkNow')).toBe('supported');
-    expect(getAgentSessionCapability('opencode', 'usageLimitRecovery.checkNow')).toBe('supported');
-    expect(getAgentSessionCapability('claude', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('opencode', 'usageLimitRecovery.checkNow')).toBe('unsupported');
+    expect(getAgentSessionCapability('claude', 'usageLimitRecovery.checkNow')).toBe('unsupported');
     expect(getAgentSessionCapability('gemini', 'usageLimitRecovery.checkNow')).toBe('unsupported');
-    expect(getAgentSessionCapability('pi', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('pi', 'usageLimitRecovery.checkNow')).toBe('unsupported');
   });
 
   it('provides a boolean helper for supported session capabilities', () => {
     expect(isAgentSessionCapabilitySupported('opencode', 'sessionFork.fromMessage')).toBe(true);
     expect(isAgentSessionCapabilitySupported('claude', 'sessionRollback.conversation')).toBe(false);
-    expect(isAgentSessionCapabilitySupported('opencode', 'usageLimitRecovery.checkNow')).toBe(true);
-    expect(isAgentSessionCapabilitySupported('claude', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('opencode', 'usageLimitRecovery.checkNow')).toBe(false);
+    expect(isAgentSessionCapabilitySupported('claude', 'usageLimitRecovery.checkNow')).toBe(false);
     expect(isAgentSessionCapabilitySupported('gemini', 'usageLimitRecovery.checkNow')).toBe(false);
-    expect(isAgentSessionCapabilitySupported('pi', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('pi', 'usageLimitRecovery.checkNow')).toBe(false);
   });
 
-  it('downgrades codex conversation capabilities when the session is not app-server backed', () => {
+  it('uses released flat compatibility but fails closed for opaque current descriptors', () => {
     expect(
       evaluateAgentSessionCapabilitySupport({
         agentId: 'codex',
@@ -141,7 +141,7 @@ describe('sessionCapabilities', () => {
           },
         },
       }),
-    ).toBe('supported');
+    ).toBe('unsupported');
 
     expect(
       evaluateAgentSessionCapabilitySupport({
@@ -175,7 +175,7 @@ describe('sessionCapabilities', () => {
           },
         },
       }),
-    ).toBe('supported');
+    ).toBe('unsupported');
   });
 
   it('downgrades opencode fork-from-message to server-only sessions', () => {
@@ -201,7 +201,7 @@ describe('sessionCapabilities', () => {
         capability: 'usageLimitRecovery.checkNow',
         metadata: { opencodeBackendMode: 'server' },
       }),
-    ).toBe('supported');
+    ).toBe('unsupported');
 
     expect(
       evaluateAgentSessionCapabilitySupport({
@@ -212,7 +212,100 @@ describe('sessionCapabilities', () => {
     ).toBe('unsupported');
   });
 
-  it('prefers the canonical opencode runtime descriptor over legacy backend metadata', () => {
+  it('uses public runtime capability publication for external Agents and their declaration as fallback', () => {
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'acme.agent',
+        capability: 'sessionFork.fromMessage',
+        metadata: {
+          agentRuntimeCapabilitiesV1: {
+            sessionCapabilities: {
+              sessionFork: {
+                conversation: 'supported',
+                fromMessage: 'unsupported',
+              },
+            },
+          },
+        },
+        declaredSupport: 'supported',
+      }),
+    ).toBe('unsupported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'acme.agent',
+        capability: 'sessionFork.conversation',
+        metadata: {},
+        declaredSupport: 'supported',
+      }),
+    ).toBe('supported');
+  });
+
+  it('uses the same live capability publication ahead of bundled fallback policy', () => {
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionFork.conversation',
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { privatelyNamedRuntimeMode: 'future-mode' },
+          },
+          agentRuntimeCapabilitiesV1: {
+            sessionCapabilities: {
+              sessionFork: {
+                conversation: 'supported',
+              },
+            },
+          },
+        },
+      }),
+    ).toBe('supported');
+  });
+
+  it('uses an exact projected declaration ahead of the bundled compatibility resolver', () => {
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionFork.fromMessage',
+        metadata: {},
+        declaredSupport: 'unsupported',
+      }),
+    ).toBe('unsupported');
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionFork.fromMessage',
+        metadata: {},
+        declaredSupport: 'supported',
+      }),
+    ).toBe('supported');
+  });
+
+  it('does not let a live runtime snapshot override definition-owned usage recovery', () => {
+    const metadata = (checkNow: 'supported' | 'unsupported') => ({
+      agentRuntimeCapabilitiesV1: {
+        sessionCapabilities: {
+          usageLimitRecovery: { checkNow },
+        },
+      },
+    });
+    expect(evaluateAgentSessionCapabilitySupport({
+      agentId: 'codex',
+      capability: 'usageLimitRecovery.checkNow',
+      metadata: metadata('unsupported'),
+      declaredSupport: 'supported',
+    })).toBe('supported');
+    expect(evaluateAgentSessionCapabilitySupport({
+      agentId: 'claude',
+      capability: 'usageLimitRecovery.checkNow',
+      metadata: metadata('supported'),
+      declaredSupport: 'unsupported',
+    })).toBe('unsupported');
+  });
+
+  it('does not let legacy metadata override an opaque current OpenCode descriptor', () => {
     expect(
       evaluateAgentSessionCapabilitySupport({
         agentId: 'opencode',
@@ -226,7 +319,7 @@ describe('sessionCapabilities', () => {
           opencodeBackendMode: 'acp',
         },
       }),
-    ).toBe('supported');
+    ).toBe('unsupported');
   });
 
   it('exposes normalized runtime capabilities for session-level runtime facts', () => {

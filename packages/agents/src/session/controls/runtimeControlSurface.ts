@@ -1,9 +1,13 @@
-import { resolveAgentRuntimeControlSurface, type AgentRuntimeKind } from '../../runtimeKinds.js';
-import type { AgentId } from '../../types.js';
-import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
-import type { RuntimeControlSurface } from '../../runtime/engine/contracts.js';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
-import { resolveAgentConfiguredRuntimeKind } from './runtimeKindOverride.js';
+import {
+  resolveAgentRuntimeControlSurface,
+  resolveDefaultAgentRuntimeKind,
+  type AgentRuntimeKind,
+} from '../../runtimeKinds.js';
+import type { AgentId } from '../../types.js';
+import type { RuntimeControlSurface } from '../../runtime/engine/contracts.js';
+import { readSessionMetadataRuntimeDescriptor } from '../../runtime/identity/readSessionMetadataRuntimeDescriptor.js';
 
 function resolveAgentRuntimeSurface(agentId: AgentId, runtimeKind: AgentRuntimeKind | null): RuntimeControlSurface | null {
   return resolveAgentRuntimeControlSurface(agentId, runtimeKind as never);
@@ -12,12 +16,14 @@ function resolveAgentRuntimeSurface(agentId: AgentId, runtimeKind: AgentRuntimeK
 export function resolveAgentRuntimeControlSurfaceForSession(params: Readonly<{
   agentId: AgentId;
   metadata: unknown;
-  accountSettings?: Record<string, unknown> | null;
 }>): RuntimeControlSurface | null {
-  // This is the live shared owner for effective session control-surface resolution. Keep bridge
-  // consumers pointing here instead of reintroducing a bridge-local `resolveRuntimeControlSurface`.
-  const adapter = getProviderSessionControlAdapter(params.agentId);
-  const runtimeKind = adapter?.resolvePersistedSessionRuntimeKind?.(params.metadata)
-    ?? (adapter ? resolveAgentConfiguredRuntimeKind({ agentId: params.agentId, accountSettings: params.accountSettings }) : null);
+  // A current descriptor is Agent-owned. Generic controls cannot safely infer
+  // an effective capability surface from its opaque fields; the focused live
+  // Agent projection owns that decision. The Protocol reader also recognizes
+  // the released predecessor envelope at this ingress without exposing its
+  // Agent fields to this owner.
+  if (readRuntimeDescriptorV1FromMetadata(params.metadata)) return null;
+  const runtimeKind = readSessionMetadataRuntimeDescriptor(params.metadata, params.agentId)?.runtimeKind
+    ?? resolveDefaultAgentRuntimeKind(params.agentId);
   return resolveAgentRuntimeSurface(params.agentId, runtimeKind);
 }

@@ -10,8 +10,9 @@ import { asRecord } from './runtimeDescriptorShared.js';
 
 function reEnvelopeGeneratedLegacyDescriptor(
   metadata: Record<string, unknown>,
+  expectedAgentId?: string,
 ): RuntimeDescriptorV1 | null {
-  const agentId = resolveAgentIdFromSessionMetadata(metadata);
+  const agentId = expectedAgentId ?? resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) return null;
 
   const generatedReader = getRuntimeDescriptorReader(agentId);
@@ -49,4 +50,16 @@ export function readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(
 
   return readRuntimeDescriptorV1FromMetadata(metadataRecord)
     ?? reEnvelopeGeneratedLegacyDescriptor(metadataRecord);
+}
+
+export function readAgentSurfaceRuntimeDescriptorV1ForAgentFromSessionMetadata(
+  agentId: string,
+  metadata: unknown,
+): RuntimeDescriptorV1 | null {
+  const metadataRecord = asRecord(metadata);
+  if (!metadataRecord) return null;
+
+  const canonical = readRuntimeDescriptorV1FromMetadata(metadataRecord);
+  if (canonical) return canonical.agentId === agentId ? canonical : null;
+  return reEnvelopeGeneratedLegacyDescriptor(metadataRecord, agentId);
 }

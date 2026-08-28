@@ -39,4 +39,22 @@ describe('readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata', () => {
       opencodeSessionId: 'legacy-session',
     })).toEqual(runtimeDescriptorV1);
   });
+
+  it('does not run a canonical descriptor through the bundled legacy reader', () => {
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'future-codex-mode',
+        providerSessionId: 'canonical-session',
+        externallyAuthoredField: 'preserve-me',
+      },
+    };
+
+    expect(readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata({
+      runtimeDescriptorV1,
+      codexBackendMode: 'appServer',
+      codexSessionId: 'legacy-session',
+    })).toEqual(runtimeDescriptorV1);
+  });
 });

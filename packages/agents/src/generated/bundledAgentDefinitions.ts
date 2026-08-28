@@ -40,11 +40,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       ],
       "machineLoginKey": "antigravity-cli",
-      "probe": {
-        "backgroundChecks": "manual_only",
-        "parser": "none",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Antigravity CLI",
@@ -171,188 +166,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "ownedBackendIds": [
     "antigravity"
   ],
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolRuntimeDescriptor": {
-      "buildFunction": "buildAntigravityRuntimeDescriptorV1",
-      "canonicalReader": "readCanonicalAntigravityRuntimeDescriptorV1",
-      "kind": "providerRuntimeDescriptorV1",
-      "providerId": "antigravity",
-      "source": "./agent/runtime/runtimeDescriptor"
-    },
-    "runtimeDescriptorReader": {
-      "generatedReader": {
-        "backendModeKey": "runtimeMode",
-        "fields": [
-          {
-            "key": "runtimeMode",
-            "kind": "runtimeKind",
-            "runtimeHandle": "whenPresent"
-          },
-          {
-            "key": "providerSessionId",
-            "kind": "trimmedString",
-            "runtimeHandle": "whenPresent"
-          },
-          {
-            "key": "agyConversationId",
-            "kind": "trimmedString",
-            "runtimeHandle": "whenPresent"
-          },
-          {
-            "key": "localharnessSessionId",
-            "kind": "trimmedString",
-            "runtimeHandle": "whenPresent"
-          }
-        ],
-        "legacy": {
-          "fields": [
-            {
-              "key": "runtimeMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "antigravityRuntimeMode"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "agyConversationId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "localharnessSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            }
-          ],
-          "requireRuntimeKind": true
-        },
-        "providerId": "antigravity",
-        "runtimeKind": {
-          "aliases": [
-            {
-              "input": "cliPrint",
-              "runtimeKind": "cliPrint"
-            },
-            {
-              "input": "sdk",
-              "runtimeKind": "sdk"
-            }
-          ]
-        }
-      },
-      "kind": "providerRuntimeDescriptorReader",
-      "providerId": "antigravity"
-    },
-    "sessionControlAdapter": {
-      "generatedAdapter": {
-        "configuredRuntimeKind": {
-          "accountSettingsField": "antigravityRuntimeMode",
-          "aliases": [
-            {
-              "input": "cliPrint",
-              "runtimeKind": "cliPrint"
-            },
-            {
-              "input": "sdk",
-              "runtimeKind": "sdk"
-            }
-          ]
-        },
-        "providerId": "antigravity",
-        "runtimeDescriptor": {
-          "backendModeKey": "runtimeMode",
-          "fields": [
-            {
-              "key": "runtimeMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "agyConversationId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "localharnessSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            }
-          ],
-          "legacy": {
-            "fields": [
-              {
-                "key": "runtimeMode",
-                "kind": "runtimeKind",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "antigravityRuntimeMode"
-              },
-              {
-                "key": "providerSessionId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "agyConversationId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "localharnessSessionId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              }
-            ],
-            "requireRuntimeKind": true
-          },
-          "providerId": "antigravity",
-          "runtimeKind": {
-            "aliases": [
-              {
-                "input": "cliPrint",
-                "runtimeKind": "cliPrint"
-              },
-              {
-                "input": "sdk",
-                "runtimeKind": "sdk"
-              }
-            ]
-          }
-        },
-        "runtimeKindOverride": {
-          "accountSettingsField": "antigravityRuntimeMode",
-          "aliases": [
-            {
-              "input": "cliPrint",
-              "runtimeKind": "cliPrint"
-            },
-            {
-              "input": "sdk",
-              "runtimeKind": "sdk"
-            }
-          ]
-        },
-        "vendorResumeId": {
-          "descriptorField": "providerSessionId",
-          "legacyField": "antigravitySessionId"
-        }
-      },
-      "kind": "providerSessionControlAdapter",
-      "providerId": "antigravity"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -372,11 +185,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "parser": "unknown",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Auggie CLI",
@@ -440,12 +248,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "nonAcpApplyScope": "next_prompt",
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "AUGGIE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -456,6 +258,14 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "claude": Object.freeze(({
   "cli": {
     "auth": {
+      "credentialPaths": [
+        "~/.claude/.credentials.json",
+        "~/.claude/.claude.json"
+      ],
+      "environmentVariables": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
       "loginLaunches": [
         {
           "args": [],
@@ -464,19 +274,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         }
       ],
       "machineLoginKey": "claude-code",
-      "probe": {
-        "backgroundChecks": "safe",
-        "credentialPaths": [
-          "~/.claude/.credentials.json",
-          "~/.claude/.claude.json"
-        ],
-        "envVars": [
-          "ANTHROPIC_API_KEY",
-          "ANTHROPIC_AUTH_TOKEN"
-        ],
-        "parser": "claudeCredentialsFile",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Claude Code CLI",
@@ -556,23 +353,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "supported": true
         }
       },
-      "sessionAuthSwitch": {
-        "continuityMode": "restart_same_home",
-        "providerStateSharingRequired": {
-          "serviceIds": [
-            "claude-subscription",
-            "anthropic"
-          ],
-          "supportedTransitions": [
-            "native_to_connected",
-            "connected_to_native",
-            "connected_to_connected"
-          ]
-        },
-        "supportedTransitions": [
-          "same_connected_group"
-        ]
-      },
       "supportedKindsByServiceId": {
         "anthropic": [
           "token"
@@ -617,7 +397,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "conversation": "unsupported"
       },
       "usageLimitRecovery": {
-        "checkNow": "supported"
+        "checkNow": "unsupported"
       }
     },
     "sessionStorage": {
@@ -1052,18 +832,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "CLAUDE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolMemoryDefaults": {
-      "exportName": "CLAUDE_MEMORY_DEFAULTS",
-      "kind": "providerMemoryDefaultsV1",
-      "providerId": "claude",
-      "source": "./protocol/memory"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "provider-native",
     "semantics": "agent-modes",
@@ -1074,6 +842,10 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "codex": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY"
+      ],
       "loginLaunches": [
         {
           "args": [
@@ -1082,21 +854,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "credentialPaths": [
-          "~/.codex/auth.json"
-        ],
-        "envVars": [
-          "OPENAI_API_KEY",
-          "CODEX_API_KEY"
-        ],
-        "parser": "codexLoginStatus",
-        "statusArgs": [
-          "login",
-          "status"
-        ]
-      },
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "OpenAI Codex CLI",
@@ -1204,22 +962,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "sharedStatePrivacyRiskAcknowledgementRequired": true,
           "supported": true
         }
-      },
-      "sessionAuthSwitch": {
-        "continuityMode": "restart_shared_state_required",
-        "providerStateSharingRequired": {
-          "serviceIds": [
-            "openai-codex"
-          ],
-          "supportedTransitions": [
-            "native_to_connected",
-            "connected_to_native",
-            "connected_to_connected"
-          ]
-        },
-        "supportedTransitions": [
-          "same_connected_group"
-        ]
       },
       "supportedKindsByServiceId": {
         "openai": [
@@ -1335,37 +1077,59 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "nonAcpApplyScope": "spawn_only",
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "CODEX_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolBuiltInBackendProfiles": {
-      "exportName": "CODEX_BUILT_IN_BACKEND_PROFILES",
-      "kind": "providerBuiltInBackendProfilesV1",
-      "providerId": "codex",
-      "source": "./protocol/profiles"
-    },
-    "protocolRuntimeDescriptor": {
-      "buildFunction": "buildCodexAgentRuntimeDescriptorV1",
-      "canonicalReader": "readCanonicalCodexAgentRuntimeDescriptorV1",
-      "kind": "providerRuntimeDescriptorV1",
-      "providerId": "codex",
-      "source": "./protocol/runtimeDescriptorV1"
-    },
-    "runtimeDescriptorReader": {
-      "generatedReader": {
-        "backendModeKey": "backendMode",
+  "releasedFlatSessionMetadataRuntimeDescriptorReader": {
+    "generatedReader": {
+      "backendModeKey": "backendMode",
+      "fields": [
+        {
+          "key": "backendMode",
+          "kind": "runtimeKind",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "providerSessionId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "home",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "connectedServiceId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "connectedServiceProfileId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "connectedServiceGroupId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "homePath",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        }
+      ],
+      "legacy": {
         "fields": [
           {
             "key": "backendMode",
             "kind": "runtimeKind",
-            "runtimeHandle": "whenPresent"
+            "runtimeHandle": "whenPresent",
+            "sourceKey": "codexBackendMode"
           },
           {
             "key": "providerSessionId",
             "kind": "trimmedString",
-            "runtimeHandle": "whenPresent"
+            "runtimeHandle": "whenPresent",
+            "sourceKey": "codexSessionId"
           },
           {
             "key": "home",
@@ -1393,375 +1157,32 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "runtimeHandle": "whenPresent"
           }
         ],
-        "legacy": {
-          "fields": [
-            {
-              "key": "backendMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "codexBackendMode"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "codexSessionId"
-            },
-            {
-              "key": "home",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceProfileId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceGroupId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "homePath",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            }
-          ],
-          "requireRuntimeKind": true
-        },
-        "providerId": "codex",
-        "runtimeKind": {
-          "aliases": [
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            },
-            {
-              "input": "appServer",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp_resume",
-              "runtimeKind": "acp"
-            }
-          ]
-        }
+        "requireRuntimeKind": true
       },
-      "kind": "providerRuntimeDescriptorReader",
-      "providerId": "codex"
-    },
-    "sessionControlAdapter": {
-      "generatedAdapter": {
-        "configuredRuntimeKind": {
-          "accountSettingsField": "codexBackendMode",
-          "aliases": [
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            },
-            {
-              "input": "appServer",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp_resume",
-              "runtimeKind": "acp"
-            }
-          ],
-          "booleanTrueField": "experimentalCodexAcp",
-          "booleanTrueRuntimeKind": "acp",
-          "defaultRuntimeKind": "appServer"
-        },
-        "controlRuntimeKind": {
-          "aliases": [
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            },
-            {
-              "input": "appServer",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp",
-              "runtimeKind": "mcp"
-            },
-            {
-              "input": "mcp_resume",
-              "runtimeKind": "acp"
-            }
-          ],
-          "genericState": {
-            "fields": [
-              "sessionModesV1",
-              "sessionModelsV1",
-              "sessionConfigOptionsV1",
-              "acpSessionModesV1",
-              "acpSessionModelsV1",
-              "acpConfigOptionsV1"
-            ],
-            "providerId": "codex",
+      "providerId": "codex",
+      "runtimeKind": {
+        "aliases": [
+          {
+            "input": "acp",
+            "runtimeKind": "acp"
+          },
+          {
+            "input": "appServer",
             "runtimeKind": "appServer"
           },
-          "metadataPaths": [
-            {
-              "path": [
-                "codexRuntimeDescriptorV1",
-                "backendMode"
-              ]
-            },
-            {
-              "path": [
-                "affinity",
-                "backendMode"
-              ]
-            },
-            {
-              "path": [
-                "codexBackendMode"
-              ]
-            },
-            {
-              "path": [
-                "directSessionV1",
-                "codexBackendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "externalSessionV1",
-                "codexBackendMode"
-              ]
-            }
-          ],
-          "rawDescriptorPaths": [
-            {
-              "path": [
-                "agent",
-                "agentExtra",
-                "runtimeHandle",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "agent",
-                "agentExtra",
-                "runtimeAffinity",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "agent",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "provider",
-                "providerExtra",
-                "runtimeHandle",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "provider",
-                "providerExtra",
-                "runtimeAffinity",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            },
-            {
-              "path": [
-                "provider",
-                "backendMode"
-              ],
-              "providerId": "codex"
-            }
-          ]
-        },
-        "experimentalVendorHandoff": {
-          "accountSettingsField": "codexBackendMode",
-          "accountSettingsValues": [
-            "acp",
-            "appServer",
-            "mcp_resume"
-          ],
-          "booleanTrueField": "experimentalCodexAcp",
-          "runtimeKinds": [
-            "acp",
-            "appServer"
-          ]
-        },
-        "experimentalVendorResume": {
-          "accountSettingsField": "codexBackendMode",
-          "accountSettingsValues": [
-            "acp",
-            "appServer",
-            "mcp_resume"
-          ],
-          "booleanTrueField": "experimentalCodexAcp",
-          "requireConfiguredRuntimeKind": true,
-          "runtimeKinds": [
-            "acp",
-            "appServer"
-          ]
-        },
-        "providerId": "codex",
-        "runtimeDescriptor": {
-          "backendModeKey": "backendMode",
-          "fields": [
-            {
-              "key": "backendMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "home",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceProfileId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "connectedServiceGroupId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "homePath",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            }
-          ],
-          "legacy": {
-            "fields": [
-              {
-                "key": "backendMode",
-                "kind": "runtimeKind",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "codexBackendMode"
-              },
-              {
-                "key": "providerSessionId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "codexSessionId"
-              },
-              {
-                "key": "home",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "connectedServiceId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "connectedServiceProfileId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "connectedServiceGroupId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              },
-              {
-                "key": "homePath",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent"
-              }
-            ],
-            "requireRuntimeKind": true
+          {
+            "input": "mcp",
+            "runtimeKind": "mcp"
           },
-          "providerId": "codex",
-          "runtimeKind": {
-            "aliases": [
-              {
-                "input": "acp",
-                "runtimeKind": "acp"
-              },
-              {
-                "input": "appServer",
-                "runtimeKind": "appServer"
-              },
-              {
-                "input": "mcp",
-                "runtimeKind": "appServer"
-              },
-              {
-                "input": "mcp_resume",
-                "runtimeKind": "acp"
-              }
-            ]
+          {
+            "input": "mcp_resume",
+            "runtimeKind": "acp"
           }
-        },
-        "runtimeKindOverride": {
-          "accountSettingsField": "codexBackendMode",
-          "aliases": [
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            },
-            {
-              "input": "appServer",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp",
-              "runtimeKind": "appServer"
-            },
-            {
-              "input": "mcp_resume",
-              "runtimeKind": "acp"
-            }
-          ]
-        },
-        "vendorResumeId": {
-          "descriptorField": "providerSessionId",
-          "legacyField": "codexSessionId"
-        }
-      },
-      "kind": "providerSessionControlAdapter",
-      "providerId": "codex"
-    }
+        ]
+      }
+    },
+    "kind": "providerRuntimeDescriptorReader",
+    "providerId": "codex"
   },
   "sessionModeDescriptor": {
     "runtimeSwitch": "metadata-gating",
@@ -1773,6 +1194,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "copilot": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN"
+      ],
       "loginLaunches": [
         {
           "args": [
@@ -1781,16 +1207,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "COPILOT_GITHUB_TOKEN",
-          "GH_TOKEN",
-          "GITHUB_TOKEN"
-        ],
-        "parser": "copilotGhAuth",
-        "statusArgs": null
-      },
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "GitHub Copilot CLI",
@@ -1868,19 +1285,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "cursor": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "CURSOR_API_KEY"
+      ],
       "loginLaunches": [],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "CURSOR_API_KEY"
-        ],
-        "parser": "cursorAboutJson",
-        "statusArgs": [
-          "about",
-          "--format",
-          "json"
-        ]
-      },
+      "nonInteractiveStatusProbe": true,
       "support": "status_only"
     },
     "displayName": "Cursor Agent CLI",
@@ -1965,12 +1374,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "CURSOR_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",
@@ -1981,19 +1384,14 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "gemini": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_LOCATION"
+      ],
       "loginLaunches": [],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "GEMINI_API_KEY",
-          "GOOGLE_API_KEY",
-          "GOOGLE_GENAI_USE_VERTEXAI",
-          "GOOGLE_CLOUD_PROJECT",
-          "GOOGLE_CLOUD_LOCATION"
-        ],
-        "parser": "envOnly",
-        "statusArgs": null
-      },
       "support": "unsupported"
     },
     "displayName": "Google Gemini CLI",
@@ -2023,13 +1421,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorKey": "gemini"
     },
     "connectedServices": {
-      "sessionAuthSwitch": {
-        "continuityMode": "restart_same_home",
-        "supportedTransitions": [
-          "native_to_connected",
-          "connected_to_connected"
-        ]
-      },
       "supportedKindsByServiceId": {
         "gemini": [
           "token"
@@ -2126,18 +1517,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "GEMINI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolBuiltInBackendProfiles": {
-      "exportName": "GEMINI_BUILT_IN_BACKEND_PROFILES",
-      "kind": "providerBuiltInBackendProfilesV1",
-      "providerId": "gemini",
-      "source": "./protocol/profiles"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -2148,6 +1527,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "grok": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "XAI_API_KEY"
+      ],
       "loginLaunches": [
         {
           "args": [
@@ -2163,14 +1545,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "device_code"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "XAI_API_KEY"
-        ],
-        "parser": "unknown",
-        "statusArgs": null
-      },
+      "missingCredentialState": "unknown",
       "support": "login_terminal"
     },
     "displayName": "Grok",
@@ -2269,12 +1644,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "nonAcpApplyScope": "next_prompt",
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "GROK_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -2292,11 +1661,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "parser": "unknown",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Kilo CLI",
@@ -2364,12 +1728,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "KILO_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",
@@ -2388,11 +1746,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "parser": "unknown",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Kimi CLI",
@@ -2490,12 +1843,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "nonAcpApplyScope": "next_prompt",
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "KIMI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -2514,15 +1861,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "manual_only",
-        "parser": "kiroWhoamiJson",
-        "statusArgs": [
-          "whoami",
-          "--format",
-          "json"
-        ]
-      },
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "Kiro CLI",
@@ -2592,12 +1931,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "KIRO_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",
@@ -2606,37 +1939,17 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "ohMyPi": Object.freeze(({
-  "builtInAcpConfig": {
-    "agentId": "ohMyPi",
-    "launcher": {
-      "args": [
-        "--mode",
-        "acp"
-      ],
-      "command": "omp"
-    },
-    "promptImageSupport": "yes",
-    "supportsLoadSession": true,
-    "supportsModels": "yes",
-    "supportsModes": "yes",
-    "transportProfile": "generic"
-  },
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "OPENAI_CODEX_OAUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_OAUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY"
+      ],
       "loginLaunches": [],
       "machineLoginKey": "oh-my-pi",
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "OPENAI_CODEX_OAUTH_TOKEN",
-          "OPENAI_API_KEY",
-          "ANTHROPIC_OAUTH_TOKEN",
-          "ANTHROPIC_API_KEY",
-          "GEMINI_API_KEY"
-        ],
-        "parser": "piEnvOnly",
-        "statusArgs": null
-      },
       "support": "manual_only"
     },
     "displayName": "oh-my-pi CLI",
@@ -2767,12 +2080,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",
@@ -2792,14 +2099,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "parser": "opencodeAuthList",
-        "statusArgs": [
-          "auth",
-          "list"
-        ]
-      },
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "OpenCode CLI",
@@ -2837,14 +2137,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cliSubcommand": "opencode",
     "cloudConnect": null,
     "connectedServices": {
-      "sessionAuthSwitch": {
-        "continuityMode": "restart_same_home",
-        "supportedTransitions": [
-          "native_to_connected",
-          "connected_to_native",
-          "connected_to_connected"
-        ]
-      },
       "supportedKindsByServiceId": {
         "anthropic": [
           "token"
@@ -2920,7 +2212,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "conversation": "unsupported"
       },
       "usageLimitRecovery": {
-        "checkNow": "supported"
+        "checkNow": "unsupported"
       }
     },
     "sessionStorage": {
@@ -2943,206 +2235,79 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "OPENCODE_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolRuntimeDescriptor": {
-      "buildFunction": "buildOpenCodeAgentRuntimeDescriptorV1",
-      "canonicalReader": "readCanonicalOpenCodeAgentRuntimeDescriptorV1",
-      "kind": "providerRuntimeDescriptorV1",
-      "providerId": "opencode",
-      "source": "./protocol/runtimeDescriptorV1"
-    },
-    "runtimeDescriptorReader": {
-      "exportName": "readOpenCodeSessionMetadataRuntimeDescriptor",
-      "generatedReader": {
-        "backendModeKey": "backendMode",
+  "releasedFlatSessionMetadataRuntimeDescriptorReader": {
+    "generatedReader": {
+      "backendModeKey": "backendMode",
+      "fields": [
+        {
+          "key": "backendMode",
+          "kind": "runtimeKind",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "providerSessionId",
+          "kind": "trimmedString",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "serverBaseUrl",
+          "kind": "loopbackHttpOrigin",
+          "runtimeHandle": "whenPresent"
+        },
+        {
+          "key": "serverBaseUrlExplicit",
+          "kind": "booleanTrue",
+          "requiresField": "serverBaseUrl",
+          "runtimeHandle": "booleanTrue"
+        }
+      ],
+      "legacy": {
+        "defaultRuntimeKindWhenAnyFieldPresent": "server",
         "fields": [
           {
             "key": "backendMode",
             "kind": "runtimeKind",
-            "runtimeHandle": "whenPresent"
+            "runtimeHandle": "whenPresent",
+            "sourceKey": "opencodeBackendMode"
           },
           {
             "key": "providerSessionId",
             "kind": "trimmedString",
-            "runtimeHandle": "whenPresent"
+            "runtimeHandle": "whenPresent",
+            "sourceKey": "opencodeSessionId"
           },
           {
             "key": "serverBaseUrl",
             "kind": "loopbackHttpOrigin",
-            "runtimeHandle": "whenPresent"
+            "runtimeHandle": "whenPresent",
+            "sourceKey": "opencodeServerBaseUrl"
           },
           {
             "key": "serverBaseUrlExplicit",
             "kind": "booleanTrue",
             "requiresField": "serverBaseUrl",
-            "runtimeHandle": "booleanTrue"
+            "runtimeHandle": "booleanTrue",
+            "sourceKey": "opencodeServerBaseUrlExplicit"
+          }
+        ]
+      },
+      "providerId": "opencode",
+      "runtimeKind": {
+        "aliases": [
+          {
+            "input": "server",
+            "runtimeKind": "server"
+          },
+          {
+            "input": "acp",
+            "runtimeKind": "acp"
           }
         ],
-        "legacy": {
-          "defaultRuntimeKindWhenAnyFieldPresent": "server",
-          "fields": [
-            {
-              "key": "backendMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "opencodeBackendMode"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "opencodeSessionId"
-            },
-            {
-              "key": "serverBaseUrl",
-              "kind": "loopbackHttpOrigin",
-              "runtimeHandle": "whenPresent",
-              "sourceKey": "opencodeServerBaseUrl"
-            },
-            {
-              "key": "serverBaseUrlExplicit",
-              "kind": "booleanTrue",
-              "requiresField": "serverBaseUrl",
-              "runtimeHandle": "booleanTrue",
-              "sourceKey": "opencodeServerBaseUrlExplicit"
-            }
-          ]
-        },
-        "providerId": "opencode",
-        "runtimeKind": {
-          "aliases": [
-            {
-              "input": "server",
-              "runtimeKind": "server"
-            },
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            }
-          ],
-          "caseInsensitive": true
-        }
-      },
-      "kind": "providerRuntimeDescriptorReader",
-      "providerId": "opencode",
-      "source": "./agent/identity/runtimeDescriptor"
+        "caseInsensitive": true
+      }
     },
-    "sessionControlAdapter": {
-      "exportName": "OPENCODE_SESSION_CONTROL_ADAPTER",
-      "generatedAdapter": {
-        "configuredRuntimeKind": {
-          "accountSettingsField": "opencodeBackendMode",
-          "aliases": [
-            {
-              "input": "server",
-              "runtimeKind": "server"
-            },
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            }
-          ],
-          "caseInsensitive": true
-        },
-        "providerId": "opencode",
-        "runtimeDescriptor": {
-          "backendModeKey": "backendMode",
-          "fields": [
-            {
-              "key": "backendMode",
-              "kind": "runtimeKind",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "providerSessionId",
-              "kind": "trimmedString",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "serverBaseUrl",
-              "kind": "loopbackHttpOrigin",
-              "runtimeHandle": "whenPresent"
-            },
-            {
-              "key": "serverBaseUrlExplicit",
-              "kind": "booleanTrue",
-              "requiresField": "serverBaseUrl",
-              "runtimeHandle": "booleanTrue"
-            }
-          ],
-          "legacy": {
-            "defaultRuntimeKindWhenAnyFieldPresent": "server",
-            "fields": [
-              {
-                "key": "backendMode",
-                "kind": "runtimeKind",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "opencodeBackendMode"
-              },
-              {
-                "key": "providerSessionId",
-                "kind": "trimmedString",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "opencodeSessionId"
-              },
-              {
-                "key": "serverBaseUrl",
-                "kind": "loopbackHttpOrigin",
-                "runtimeHandle": "whenPresent",
-                "sourceKey": "opencodeServerBaseUrl"
-              },
-              {
-                "key": "serverBaseUrlExplicit",
-                "kind": "booleanTrue",
-                "requiresField": "serverBaseUrl",
-                "runtimeHandle": "booleanTrue",
-                "sourceKey": "opencodeServerBaseUrlExplicit"
-              }
-            ]
-          },
-          "providerId": "opencode",
-          "runtimeKind": {
-            "aliases": [
-              {
-                "input": "server",
-                "runtimeKind": "server"
-              },
-              {
-                "input": "acp",
-                "runtimeKind": "acp"
-              }
-            ],
-            "caseInsensitive": true
-          }
-        },
-        "runtimeKindOverride": {
-          "accountSettingsField": "opencodeBackendMode",
-          "aliases": [
-            {
-              "input": "server",
-              "runtimeKind": "server"
-            },
-            {
-              "input": "acp",
-              "runtimeKind": "acp"
-            }
-          ],
-          "caseInsensitive": true,
-          "fallbackRuntimeKind": "server"
-        },
-        "vendorResumeId": {
-          "descriptorField": "providerSessionId",
-          "legacyField": "opencodeSessionId"
-        }
-      },
-      "kind": "providerSessionControlAdapter",
-      "providerId": "opencode",
-      "source": "./agent/surfaces/sessions/controls/adapter"
-    }
+    "kind": "providerRuntimeDescriptorReader",
+    "providerId": "opencode"
   },
   "sessionModeDescriptor": {
     "runtimeSwitch": "acp-setSessionMode",
@@ -3154,19 +2319,14 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "pi": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "KIMI_API_KEY"
+      ],
       "loginLaunches": [],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "OPENAI_API_KEY",
-          "ANTHROPIC_API_KEY",
-          "GEMINI_API_KEY",
-          "OPENROUTER_API_KEY",
-          "KIMI_API_KEY"
-        ],
-        "parser": "piEnvOnly",
-        "statusArgs": null
-      },
       "support": "status_only"
     },
     "displayName": "Pi Coding Agent CLI",
@@ -3208,19 +2368,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "sharedStatePrivacyRiskAcknowledgementRequired": true,
           "supported": true
         }
-      },
-      "sessionAuthSwitch": {
-        "continuityMode": "restart_same_home",
-        "providerStateSharingRequired": {
-          "supportedTransitions": [
-            "native_to_connected",
-            "connected_to_native",
-            "connected_to_connected"
-          ]
-        },
-        "supportedTransitions": [
-          "connected_to_connected"
-        ]
       },
       "supportedKindsByServiceId": {
         "anthropic": [
@@ -3270,7 +2417,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "conversation": "unsupported"
       },
       "usageLimitRecovery": {
-        "checkNow": "supported"
+        "checkNow": "unsupported"
       }
     },
     "sessionStorage": {
@@ -3294,31 +2441,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsFreeform": true,
     "supportsSelection": true
   },
-  "runtimeContributions": {
-    "agentCatalogEntry": {
-      "importName": "PI_AGENT_RUNTIME_CONTRIBUTION",
-      "source": "./agent/contributions/catalog"
-    },
-    "protocolRuntimeDescriptor": {
-      "buildFunction": "buildPiAgentRuntimeDescriptorV1",
-      "canonicalReader": "readCanonicalPiAgentRuntimeDescriptorV1",
-      "kind": "providerRuntimeDescriptorV1",
-      "providerId": "pi",
-      "source": "./protocol/runtimeDescriptorV1"
-    },
-    "runtimeDescriptorReader": {
-      "kind": "providerSessionId",
-      "providerId": "pi",
-      "runtimeHandle": "providerSessionId"
-    },
-    "sessionControlAdapter": {
-      "absolutePathField": "sessionFile",
-      "fallbackField": "providerSessionId",
-      "kind": "runtimeDescriptorResumeId",
-      "legacyAbsolutePathField": "piSessionFile",
-      "providerId": "pi"
-    }
-  },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",
     "semantics": "none",
@@ -3336,11 +2458,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
-      "probe": {
-        "backgroundChecks": "safe",
-        "parser": "unknown",
-        "statusArgs": null
-      },
       "support": "login_terminal"
     },
     "displayName": "Qwen CLI",
@@ -3418,15 +2535,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "coderabbit": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "CODERABBIT_API_KEY"
+      ],
       "loginLaunches": [],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "CODERABBIT_API_KEY"
-        ],
-        "parser": "unknown",
-        "statusArgs": null
-      },
+      "missingCredentialState": "unknown",
       "support": "status_only"
     },
     "displayName": "CodeRabbit",
@@ -3496,15 +2609,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "deepsec": Object.freeze(({
   "cli": {
     "auth": {
+      "environmentVariables": [
+        "AI_GATEWAY_API_KEY"
+      ],
       "loginLaunches": [],
-      "probe": {
-        "backgroundChecks": "safe",
-        "envVars": [
-          "AI_GATEWAY_API_KEY"
-        ],
-        "parser": "unknown",
-        "statusArgs": null
-      },
+      "missingCredentialState": "unknown",
       "support": "status_only"
     },
     "displayName": "DeepSec",

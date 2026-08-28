@@ -88,7 +88,7 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: true, vendorResumeId: 'omp-session-1' });
   });
 
-  it('prefers vendor session ids from runtimeDescriptorV1 over legacy top-level metadata', () => {
+  it('does not interpret provider session ids from the opaque runtime descriptor', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('codex', {
       runtimeDescriptorV1: {
         v: 1,
@@ -96,10 +96,10 @@ describe('vendorResumePolicy', () => {
         provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
-    })).toBe('runtime_thread');
+    })).toBe('legacy_thread');
   });
 
-  it('keeps legacy agentRuntimeDescriptorV1 read-compat for vendor session ids', () => {
+  it('does not treat a legacy descriptor envelope as a generic identity carrier', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {
         v: 1,
@@ -107,7 +107,7 @@ describe('vendorResumePolicy', () => {
         provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
-    })).toBe('runtime_thread');
+    })).toBe('legacy_thread');
   });
 
   it('allows Pi resume when a session id is present', () => {
@@ -295,7 +295,7 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: true, vendorResumeId: 'conversation-1' });
   });
 
-  it('prefers Pi absolute session-file metadata over bare session ids for resume', () => {
+  it('uses Pi released resume identity without interpreting provider descriptor details', () => {
     expect(
       evaluateVendorResumeEligibility({
         agentId: 'pi',
@@ -313,7 +313,7 @@ describe('vendorResumePolicy', () => {
         },
         accountSettings: {},
       }),
-    ).toEqual({ eligible: true, vendorResumeId: '/tmp/pi/sessions/2026-05-27T00-00-00-000Z_p1.jsonl' });
+    ).toEqual({ eligible: true, vendorResumeId: 'p1' });
   });
 
   it('rejects when vendor resume id is missing', () => {
@@ -326,14 +326,14 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
   });
 
-  it('rejects experimental codex resume when ACP is disabled by settings', () => {
+  it('uses the declared Codex runtime default when session metadata has no runtime identity', () => {
     expect(
       evaluateVendorResumeEligibility({
         agentId: 'codex',
         metadata: { codexSessionId: 'x1' },
         accountSettings: { codexBackendMode: 'mcp' },
       }),
-    ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
+    ).toEqual({ eligible: true, vendorResumeId: 'x1' });
   });
 
   it('allows experimental codex resume when ACP is enabled by settings', () => {
@@ -366,14 +366,14 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: true, vendorResumeId: 'cursor-session-1' });
   });
 
-  it('keeps experimental Kiro resume disabled by default', () => {
+  it('does not impose a second experimental gate when Kiro declares resume support', () => {
     expect(
       evaluateVendorResumeEligibility({
         agentId: 'kiro',
         metadata: { kiroSessionId: 'kiro-session-1' },
         accountSettings: {},
       }),
-    ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
+    ).toEqual({ eligible: true, vendorResumeId: 'kiro-session-1' });
   });
 
   it('allows ohMyPi resume when a session id is present', () => {
@@ -406,13 +406,17 @@ describe('vendorResumePolicy', () => {
     ).toEqual({ eligible: false, reasonCode: 'experimental_disabled' });
   });
 
-  it('prefers codexRuntimeDescriptorV1 over legacy codexBackendMode metadata', () => {
+  it('prefers the canonical runtime descriptor over legacy codexBackendMode metadata', () => {
     expect(
       evaluateVendorResumeEligibility({
         agentId: 'codex',
         metadata: {
           codexSessionId: 'x1',
-          codexRuntimeDescriptorV1: { v: 1, backendMode: 'appServer' },
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer', providerSessionId: 'x1' },
+          },
           codexBackendMode: 'mcp',
         },
         accountSettings: { codexBackendMode: 'mcp' },
@@ -529,12 +533,13 @@ describe('resolveVendorResumeIdFromSessionMetadata — external Agent runtime de
       agentId,
       agent: {
         backendMode: 'custom',
-        providerSessionId,
+        privateResumeFact: providerSessionId,
       },
     },
+    nativeResumeIdentityV1: { v: 1, vendorResumeId: providerSessionId },
   });
 
-  it('reads an external Agent’s native session id from the runtime descriptor', () => {
+  it('reads an external Agent’s native session id from the canonical Session identity carrier', () => {
     expect(
       resolveVendorResumeIdFromSessionMetadata('acme', externalDescriptorMetadata(' acme-native-1 ')),
     ).toBe('acme-native-1');
@@ -546,9 +551,7 @@ describe('resolveVendorResumeIdFromSessionMetadata — external Agent runtime de
     ).toBeNull();
   });
 
-  it('keeps the generated adapter authoritative for a bundled Agent', () => {
-    // Pi's adapter prefers its absolute session-file path over the descriptor's
-    // bare providerSessionId. A generic descriptor tier must not overtake it.
+  it('keeps Agent-owned resume details opaque without a generic provider-descriptor reader', () => {
     expect(
       resolveVendorResumeIdFromSessionMetadata('pi', {
         runtimeDescriptorV1: {
@@ -561,10 +564,10 @@ describe('resolveVendorResumeIdFromSessionMetadata — external Agent runtime de
           },
         },
       }),
-    ).toBe('/home/u/.pi/sessions/pi-1.json');
+    ).toBeNull();
   });
 
-  it('keeps the catalog-declared flat field authoritative for a bundled Agent', () => {
+  it('keeps a bundled Agent released flat field authoritative over opaque descriptor data', () => {
     expect(
       resolveVendorResumeIdFromSessionMetadata('claude', {
         claudeSessionId: 'claude-flat-1',

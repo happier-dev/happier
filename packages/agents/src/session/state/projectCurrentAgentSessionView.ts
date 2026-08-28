@@ -126,20 +126,6 @@ export function projectCurrentAgentSessionView<TMetadata extends SessionMetadata
     'identity.providerSessionId',
   ) as Record<string, unknown>;
 
-  const vendorResumeIdMetadataKey = getAgentResumeConfig(params.agentId)?.vendorResumeIdField ?? null;
-  const nativeResumeIdentity = params.nativeResumeIdentity ?? null;
-  if (vendorResumeIdMetadataKey && nativeResumeIdentity) {
-    // Through the one vendor-resume writer, which also rewrites the Agent's
-    // session-log-path slot. No path is supplied here: the projection restores
-    // an id the target is about to resume, and only the target's own runtime
-    // knows where that conversation's log now lives. It republishes the path on
-    // its next established turn.
-    next = writeProviderSessionIdSessionState(next, {
-      metadataKey: vendorResumeIdMetadataKey,
-      value: nativeResumeIdentity.vendorResumeId,
-    });
-  }
-
   next = writeRuntimeDescriptorSessionState(
     next as SessionMetadata,
     params.runtimeDescriptor ?? null,
@@ -149,6 +135,20 @@ export function projectCurrentAgentSessionView<TMetadata extends SessionMetadata
       next as SessionMetadata,
       'identity.runtimeDescriptor',
     ) as Record<string, unknown>;
+  }
+
+  const vendorResumeIdMetadataKey = getAgentResumeConfig(params.agentId)?.vendorResumeIdField ?? null;
+  const nativeResumeIdentity = params.nativeResumeIdentity ?? null;
+  if (nativeResumeIdentity) {
+    // Through the one vendor-resume writer, which also rewrites the Agent's
+    // session-log-path slot. No path is supplied here: the projection restores
+    // an id the target is about to resume, and only the target's own runtime
+    // knows where that conversation's log now lives. It republishes the path on
+    // its next established turn.
+    next = writeProviderSessionIdSessionState(next, {
+      metadataKey: vendorResumeIdMetadataKey,
+      value: nativeResumeIdentity.vendorResumeId,
+    });
   }
 
   if ((params.agentScopedCurrentState ?? 'carry') === 'clear') {

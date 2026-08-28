@@ -1,9 +1,6 @@
-import type {
-  GeneratedCanonicalRuntimeDescriptorByProviderIdV1,
-  GeneratedRuntimeDescriptorProviderIdV1,
-} from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import type { GeneratedRuntimeDescriptorReaderProviderId } from '../../generated/runtimeDescriptorReaders.js';
 
-export type SupportedRuntimeDescriptorProviderId = GeneratedRuntimeDescriptorProviderIdV1;
+export type SupportedRuntimeDescriptorProviderId = GeneratedRuntimeDescriptorReaderProviderId;
 
 export type SharedRuntimeDescriptorRuntimeHandle = Readonly<Record<string, unknown>>;
 
@@ -15,26 +12,19 @@ export type GenericProviderRuntimeDescriptor = Readonly<{
   rawProvider?: Readonly<Record<string, unknown>>;
 } & Record<string, unknown>>;
 
-type SharedRuntimeKindForDescriptor<TDescriptor> =
-  TDescriptor extends Readonly<{ backendMode: infer TBackendMode }>
-    ? TBackendMode
-    : TDescriptor extends Readonly<{ runtimeMode: infer TRuntimeMode }>
-      ? TRuntimeMode
-      : null;
-
 type SharedRuntimeDescriptorForProviderId<
   TProviderId extends SupportedRuntimeDescriptorProviderId,
 > = Readonly<
-  GeneratedCanonicalRuntimeDescriptorByProviderIdV1[TProviderId] & {
-    runtimeKind: SharedRuntimeKindForDescriptor<
-      GeneratedCanonicalRuntimeDescriptorByProviderIdV1[TProviderId]
-    >;
+  {
+    agentId: TProviderId;
+    providerSessionId?: string | null;
+    runtimeKind: string | null;
     runtimeHandle: SharedRuntimeDescriptorRuntimeHandle | null;
     home?: 'user' | 'connectedService' | null;
     connectedServiceId?: string | null;
     connectedServiceProfileId?: string | null;
     connectedServiceGroupId?: string | null;
-  }
+  } & Record<string, unknown>
 >;
 
 export type SharedRuntimeDescriptorByProviderId = {

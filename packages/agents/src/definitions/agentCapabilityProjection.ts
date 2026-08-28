@@ -33,6 +33,9 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
     sessionRollback: Readonly<{
       conversation: string;
     }>;
+    usageLimitRecovery?: Readonly<{
+      checkNow: string;
+    }>;
   }>;
   localControl?: AgentLocalControlDeclaration | null;
   tools?: Readonly<{
@@ -70,7 +73,7 @@ export type AuthoredAgentCapabilitySurfaceV2 = Exclude<PluginAgentCapabilitySurf
  * a second time.
  */
 export type AuthoredAgentSessionCapabilitiesV2 =
-  & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback'>
+  & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback' | 'usageLimitRecovery'>
   & Readonly<{ open: readonly AuthoredAgentSessionOpenRouteV2[] }>;
 
 export type AuthoredAgentCapabilitiesV2 = Readonly<{
@@ -86,6 +89,10 @@ function declaresSessionFork(facts: AgentDefinitionCapabilityFacts): boolean {
 
 function declaresConversationRollback(facts: AgentDefinitionCapabilityFacts): boolean {
   return facts.sessionCapabilities.sessionRollback.conversation === 'supported';
+}
+
+function declaresUsageLimitRecoveryCheckNow(facts: AgentDefinitionCapabilityFacts): boolean {
+  return facts.sessionCapabilities.usageLimitRecovery?.checkNow === 'supported';
 }
 
 /**
@@ -166,6 +173,14 @@ export function projectAgentCapabilitiesV2FromDefinition(
         ...(declaresSessionFork(facts) ? (['fork'] as const) : []),
       ],
       ...(declaresConversationRollback(facts) ? { conversationRollback: true as const } : {}),
+      ...(declaresUsageLimitRecoveryCheckNow(facts)
+        ? {
+          usageLimitRecovery: {
+            active: ['checkNow'] as const,
+            inactive: ['checkNow'] as const,
+          },
+        }
+        : {}),
     }
     : null;
   const tools = projectToolsCapability(facts);

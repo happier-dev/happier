@@ -58,6 +58,27 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
       .not.toHaveProperty('conversationRollback');
   });
 
+  it('projects check-now recovery only from the definition-owned executable readiness fact', () => {
+    const supported = projectAgentCapabilitiesV2FromDefinition({
+      sessionCapabilities: {
+        ...NO_CAPABILITIES.sessionCapabilities,
+        usageLimitRecovery: { checkNow: 'supported' },
+      },
+    }, { sessions: MINIMAL_SESSIONS });
+    const unsupported = projectAgentCapabilitiesV2FromDefinition({
+      sessionCapabilities: {
+        ...NO_CAPABILITIES.sessionCapabilities,
+        usageLimitRecovery: { checkNow: 'unsupported' },
+      },
+    }, { sessions: MINIMAL_SESSIONS });
+
+    expect(supported.sessions?.usageLimitRecovery).toEqual({
+      active: ['checkNow'],
+      inactive: ['checkNow'],
+    });
+    expect(unsupported.sessions).not.toHaveProperty('usageLimitRecovery');
+  });
+
   it('treats an experimental declaration as unsupported rather than advertising it', () => {
     const experimental = projectAgentCapabilitiesV2FromDefinition({
       sessionCapabilities: {
@@ -122,7 +143,6 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
         delivery: ['newTurn', 'steer', 'followUp'],
         cancel: true,
         configuration: true,
-        usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
         workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
       },
       executionRuns: { open: ['create'], checkpoint: true, stop: true },
@@ -132,7 +152,6 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
       delivery: ['newTurn', 'steer', 'followUp'],
       cancel: true,
       configuration: true,
-      usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
       workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
     });
     expect(projected.executionRuns).toEqual({ open: ['create'], checkpoint: true, stop: true });

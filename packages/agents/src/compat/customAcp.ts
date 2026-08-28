@@ -1,4 +1,3 @@
-import type { BuiltInAcpConfig, BuiltInAcpYesNoAuto } from '../acp.js';
 import type { AgentLocalCliConfig, AgentCliLaunchCommand, AgentCliSupportKind } from '../localCli.js';
 import type { AgentModelConfig } from '../models.js';
 import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
@@ -33,12 +32,6 @@ export type LegacyCompatAgentLocalCliConfig = Readonly<
   }
 >;
 
-export type LegacyCompatBuiltInAcpConfig = Readonly<
-  Omit<BuiltInAcpConfig, 'agentId'> & {
-    agentId: LegacyCompatAgentId;
-  }
->;
-
 export type LegacyCompatAgentCore = Readonly<
   Omit<AgentCore, 'id' | 'cliSubcommand'> & {
     id: LegacyCompatAgentId;
@@ -50,10 +43,6 @@ export const LEGACY_CUSTOM_ACP_FLAVOR_ALIASES = Object.freeze([
   LEGACY_CUSTOM_ACP_AGENT_ID.toLowerCase(),
   'custom-acp',
 ] as const);
-
-const LEGACY_CUSTOM_ACP_SUPPORTS_MODES: BuiltInAcpYesNoAuto = 'auto';
-const LEGACY_CUSTOM_ACP_SUPPORTS_MODELS: BuiltInAcpYesNoAuto = 'auto';
-const LEGACY_CUSTOM_ACP_PROMPT_IMAGE_SUPPORT: BuiltInAcpYesNoAuto = 'auto';
 
 export function resolveLegacyCustomAcpCompatAgentIdFromFlavor(
   flavor: string,
@@ -151,23 +140,6 @@ export function getLegacyCustomAcpAgentLocalCliConfig(): LegacyCompatAgentLocalC
   return createLegacyCustomAcpAgentLocalCliConfig({
     detectKey: getLegacyCustomAcpAgentCliRuntimeSpec().binaryName,
   });
-}
-
-export function createLegacyCustomAcpBuiltInAcpConfig(params: Readonly<{
-  command: string;
-}>): LegacyCompatBuiltInAcpConfig {
-  return {
-    agentId: LEGACY_CUSTOM_ACP_AGENT_ID,
-    launcher: {
-      command: params.command,
-      args: [],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: LEGACY_CUSTOM_ACP_SUPPORTS_MODES,
-    supportsModels: LEGACY_CUSTOM_ACP_SUPPORTS_MODELS,
-    promptImageSupport: LEGACY_CUSTOM_ACP_PROMPT_IMAGE_SUPPORT,
-  };
 }
 
 function createLegacyCustomAcpAgentCore(params: Readonly<{

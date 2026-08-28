@@ -44,7 +44,7 @@ describe('runtimeKinds', () => {
       sessionStorage: { direct: true, persisted: true },
       sessionCapabilities: {
         sessionFork: { conversation: 'supported', fromMessage: 'supported' },
-        usageLimitRecovery: { checkNow: 'supported' },
+        usageLimitRecovery: { checkNow: 'unsupported' },
       },
       localControl: { supported: true },
     });

@@ -2,7 +2,6 @@ import type { AgentModelConfig } from '../models.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentCore, AgentId } from '../types.js';
 import type { PluginAgentCliMetadata } from '@happier-dev/protocol';
-import type { BuiltInAcpConfig } from '../acp.js';
 
 type DeepReadonly<T> = T extends (...args: never[]) => unknown
   ? T
@@ -13,6 +12,12 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
       : T;
 
 export type AgentDefinitionCliMetadata = DeepReadonly<PluginAgentCliMetadata>;
+
+type ReleasedFlatSessionMetadataRuntimeDescriptorReaderDefinition = Readonly<{
+  kind: 'providerRuntimeDescriptorReader';
+  providerId: 'codex' | 'opencode';
+  generatedReader: Readonly<Record<string, unknown>>;
+}>;
 
 /**
  * Canonical “agent definition” contract exported by bundled first-party extensions.
@@ -27,6 +32,10 @@ export type AgentDefinition = Readonly<{
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig;
   cli: AgentDefinitionCliMetadata;
-  builtInAcpConfig?: BuiltInAcpConfig | null;
-  runtimeContributions?: Readonly<Record<string, unknown>>;
+  /**
+   * Read-forward only for flat Session identity metadata written by released
+   * cli-v0.2.0@526aa0d and cli-v0.2.1@b1d15a8. Current writers use
+   * runtimeDescriptorV1; remove this seam when those releases leave support.
+   */
+  releasedFlatSessionMetadataRuntimeDescriptorReader?: ReleasedFlatSessionMetadataRuntimeDescriptorReaderDefinition;
 }>;

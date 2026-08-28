@@ -7,34 +7,35 @@ import {
 } from './providerSessionId.js';
 
 describe('providerSessionId session-state binding', () => {
-  it('projects provider session ids through provider-owned runtime descriptor readers', () => {
+  it('reads the canonical generic native-resume identity without interpreting the runtime descriptor', () => {
     expect(readProviderSessionIdSessionState({
+      nativeResumeIdentityV1: { v: 1, vendorResumeId: 'canonical-session' },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'opencode',
-        provider: {
+        agent: {
           backendMode: 'server',
-          providerSessionId: 'oc-descriptor-session',
+          providerSessionId: 'private-descriptor-session',
         },
       },
     })).toEqual({
-      value: 'oc-descriptor-session',
+      value: 'canonical-session',
       updatedAt: null,
     });
   });
 
-  it('reads legacy vendorSessionId descriptors without writing that old field', () => {
+  it('does not interpret a legacy vendorSessionId inside the opaque runtime descriptor', () => {
     expect(readProviderSessionIdSessionState({
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'opencode',
-        provider: {
+        agent: {
           backendMode: 'server',
           vendorSessionId: 'legacy-oc-session',
         },
       },
     })).toEqual({
-      value: 'legacy-oc-session',
+      value: null,
       updatedAt: null,
     });
   });
@@ -232,9 +233,8 @@ describe('providerSessionId matched native session-log path', () => {
 
 /**
  * An external (manifest-contributed) Agent has no generated `<vendor>SessionId`
- * slot. Its native conversation id belongs in the one agent-agnostic carrier —
- * the runtime descriptor — or the id is discarded and its Session silently
- * respawns as a FRESH provider conversation.
+ * slot. Its native conversation id belongs in the generic Session identity
+ * carrier; the Agent-owned runtime descriptor remains byte-for-byte opaque.
  */
 describe('providerSessionId binding — external Agent with no catalog-declared slot', () => {
   const externalDescriptorMetadata = () => ({
@@ -246,20 +246,17 @@ describe('providerSessionId binding — external Agent with no catalog-declared 
     },
   });
 
-  it('routes a bare-string id into the descriptor slot the Agent actually has', () => {
+  it('routes a bare-string id into the generic native-resume identity carrier', () => {
     const next = providerSessionIdBinding.write(externalDescriptorMetadata(), {
       value: 'acme-native-1',
     }) as Record<string, unknown>;
 
-    expect(next.runtimeDescriptorV1).toEqual({
-      v: 1,
-      agentId: 'acme',
-      agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
-    });
+    expect(next.runtimeDescriptorV1).toEqual(externalDescriptorMetadata().runtimeDescriptorV1);
+    expect(next.nativeResumeIdentityV1).toEqual({ v: 1, vendorResumeId: 'acme-native-1' });
     expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-1');
   });
 
-  it('routes a structured id whose named key no catalog declares into the descriptor slot', () => {
+  it('routes a structured id whose named key no catalog declares into the generic carrier', () => {
     const next = providerSessionIdBinding.write(externalDescriptorMetadata(), {
       value: { metadataKey: 'acmeSessionId', value: 'acme-native-2' },
     }) as Record<string, unknown>;
@@ -268,16 +265,22 @@ describe('providerSessionId binding — external Agent with no catalog-declared 
     expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-2');
   });
 
-  it('replaces a stale descriptor id rather than keeping the previous conversation', () => {
+  it('replaces a stale generic identity without changing the descriptor', () => {
     const next = providerSessionIdBinding.write({
+      nativeResumeIdentityV1: { v: 1, vendorResumeId: 'acme-native-1' },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'acme',
-        agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
+        agent: { backendMode: 'custom', privateSessionMarker: 'do-not-read' },
       },
     }, { value: 'acme-native-2' }) as Record<string, unknown>;
 
     expect(readProviderSessionIdSessionState(next as never).value).toBe('acme-native-2');
+    expect(next.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'acme',
+      agent: { backendMode: 'custom', privateSessionMarker: 'do-not-read' },
+    });
   });
 
   it('leaves the descriptor untouched for a blank id', () => {
@@ -285,19 +288,21 @@ describe('providerSessionId binding — external Agent with no catalog-declared 
     expect(providerSessionIdBinding.write(metadata, { value: '   ' })).toBe(metadata);
   });
 
-  it('clears only the descriptor provider-session id for an explicit null update', () => {
+  it('clears only the generic native-resume identity for an explicit null update', () => {
     const next = providerSessionIdBinding.write({
+      nativeResumeIdentityV1: { v: 1, vendorResumeId: 'acme-native-1' },
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'acme',
-        agent: { backendMode: 'custom', providerSessionId: 'acme-native-1' },
+        agent: { backendMode: 'custom', privateSessionMarker: 'keep-me' },
       },
     }, { value: null }) as Record<string, unknown>;
 
     expect(next.runtimeDescriptorV1).toEqual({
       v: 1,
       agentId: 'acme',
-      agent: { backendMode: 'custom' },
+      agent: { backendMode: 'custom', privateSessionMarker: 'keep-me' },
     });
+    expect(next).not.toHaveProperty('nativeResumeIdentityV1');
   });
 });

@@ -75,6 +75,26 @@ describe('projectCurrentAgentSessionView — one flat vendor key', () => {
     expect(next.flavor).toBe('codex');
   });
 
+  it('writes an external Agent resume id to generic Session identity without changing its descriptor', () => {
+    const runtimeDescriptor = {
+      v: 1 as const,
+      agentId: 'acme.agent',
+      agent: { providerSessionId: 'private-do-not-read', mode: 'custom' },
+    };
+    const next = projectCurrentAgentSessionView(CLAUDE_NATIVE_VIEW, {
+      agentId: 'acme.agent',
+      nativeResumeIdentity: { v: 1, vendorResumeId: 'acme-native-1' },
+      runtimeDescriptor,
+    });
+
+    expect(next.nativeResumeIdentityV1).toEqual({
+      v: 1,
+      vendorResumeId: 'acme-native-1',
+    });
+    expect(next.runtimeDescriptorV1).toEqual(runtimeDescriptor);
+    expect(next.claudeSessionId).toBeUndefined();
+  });
+
   it('never carries one Agent’s session-log path into another Agent’s view', () => {
     const next = projectCurrentAgentSessionView({ claudeTranscriptPath: '/tmp/leak.jsonl' }, {
       agentId: 'codex',

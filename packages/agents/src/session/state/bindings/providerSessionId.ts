@@ -1,12 +1,11 @@
 import {
+  AgentNativeResumeIdentityV1Schema,
   readRuntimeDescriptorV1FromMetadata,
-  writeRuntimeDescriptorV1ToMetadata,
   type SessionMetadata,
 } from '@happier-dev/protocol';
 
 import { AGENT_IDS } from '../../../types.js';
 import { getAgentResumeConfig } from '../../../manifest.js';
-import { readNormalizedRuntimeDescriptor } from '../../../runtime/identity/runtimeDescriptor.js';
 import type { SessionStateBinding, SessionStateFieldWriteValue, SessionStateStoredValue } from '../_types.js';
 
 export type ProviderSessionIdMetadataKey = keyof SessionMetadata & string;
@@ -76,8 +75,15 @@ function readLegacyProviderSessionId(metadata: SessionMetadata): string | null {
   return null;
 }
 
+function readNativeResumeIdentity(metadata: SessionMetadata): string | null {
+  const parsed = AgentNativeResumeIdentityV1Schema.safeParse(
+    (metadata as Record<string, unknown>).nativeResumeIdentityV1,
+  );
+  return parsed.success ? parsed.data.vendorResumeId : null;
+}
+
 function resolveProviderSessionIdMetadataKey(metadata: SessionMetadata): ProviderSessionIdMetadataKey | null {
-  const providerId = readNormalizedRuntimeDescriptor(metadata)?.providerId;
+  const providerId = readRuntimeDescriptorV1FromMetadata(metadata)?.agentId;
   if (providerId && providerId in PROVIDER_SESSION_ID_METADATA_KEY_BY_PROVIDER_ID) {
     return PROVIDER_SESSION_ID_METADATA_KEY_BY_PROVIDER_ID[
       providerId as keyof typeof PROVIDER_SESSION_ID_METADATA_KEY_BY_PROVIDER_ID
@@ -97,48 +103,36 @@ export function readProviderSessionIdSessionState(
   metadata: SessionMetadata,
 ): SessionStateStoredValue<'identity.providerSessionId'> {
   return {
-    value: asTrimmedString(readNormalizedRuntimeDescriptor(metadata)?.providerSessionId) ?? readLegacyProviderSessionId(metadata),
+    value: readNativeResumeIdentity(metadata) ?? readLegacyProviderSessionId(metadata),
     updatedAt: null,
   };
 }
 
 /**
- * The agent-agnostic slot for an Agent with no catalog-declared flat field —
- * every external (manifest-contributed) Agent, and any bundled Agent whose
- * catalog stops declaring one.
- *
- * The descriptor is the Session's own runtime identity and already names the
- * Agent, so the id lands beside the Agent that produced it. Without a
- * descriptor there is no Agent identity to attach the id to, and inventing one
- * would attribute a native conversation to the wrong Agent, so the write is
- * declined rather than guessed.
+ * The generic Session identity slot for an Agent with no catalog-declared flat
+ * field. A valid descriptor envelope must still name the current Agent, but
+ * its `agent` payload is never read or changed.
  */
-function writeRuntimeDescriptorProviderSessionId<TMetadata extends Record<string, unknown>>(
+function writeNativeResumeIdentity<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   providerSessionId: string,
 ): TMetadata {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
   if (!descriptor) return metadata;
-  const agent = descriptor.agent as Readonly<Record<string, unknown>>;
-  if (agent.providerSessionId === providerSessionId) return metadata;
-  return writeRuntimeDescriptorV1ToMetadata(metadata, {
-    ...descriptor,
-    agent: { ...agent, providerSessionId },
-  }) as TMetadata;
+  const current = readNativeResumeIdentity(metadata as SessionMetadata);
+  if (current === providerSessionId) return metadata;
+  return {
+    ...metadata,
+    nativeResumeIdentityV1: { v: 1, vendorResumeId: providerSessionId },
+  };
 }
 
-function clearRuntimeDescriptorProviderSessionId<TMetadata extends Record<string, unknown>>(
+function clearNativeResumeIdentity<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
 ): TMetadata {
-  const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  if (!descriptor) return metadata;
-  const agent = descriptor.agent as Readonly<Record<string, unknown>>;
-  if (!asTrimmedString(agent.providerSessionId)) return metadata;
-  const { providerSessionId: _providerSessionId, ...withoutProviderSessionId } = agent;
-  return writeRuntimeDescriptorV1ToMetadata(metadata, {
-    ...descriptor,
-    agent: withoutProviderSessionId,
-  }) as TMetadata;
+  if (!Object.hasOwn(metadata, 'nativeResumeIdentityV1')) return metadata;
+  const { nativeResumeIdentityV1: _nativeResumeIdentityV1, ...rest } = metadata;
+  return rest as TMetadata;
 }
 
 export function writeProviderSessionIdSessionState<TMetadata extends Record<string, unknown>>(
@@ -157,10 +151,12 @@ export function writeProviderSessionIdSessionState<TMetadata extends Record<stri
     // cannot erase an established native conversation.
     if (update.value !== null) return metadata;
     if (!update.metadataKey) {
-      return clearRuntimeDescriptorProviderSessionId(metadata);
+      return clearNativeResumeIdentity(metadata);
     }
 
-    const withoutProviderSessionId: Record<string, unknown> = { ...metadata };
+    const withoutProviderSessionId: Record<string, unknown> = {
+      ...clearNativeResumeIdentity(metadata),
+    };
     delete withoutProviderSessionId[update.metadataKey];
     const logPathMetadataKey = getAgentNativeSessionLogPathMetadataKey(update.metadataKey);
     if (!logPathMetadataKey) {
@@ -171,13 +167,14 @@ export function writeProviderSessionIdSessionState<TMetadata extends Record<stri
   }
 
   if (!update.metadataKey) {
-    return writeRuntimeDescriptorProviderSessionId(metadata, next);
+    return writeNativeResumeIdentity(metadata, next);
   }
 
   const written = {
     ...metadata,
     [update.metadataKey]: next,
   };
+  delete (written as Record<string, unknown>).nativeResumeIdentityV1;
 
   const logPathMetadataKey = getAgentNativeSessionLogPathMetadataKey(update.metadataKey);
   if (!logPathMetadataKey) {
@@ -263,12 +260,10 @@ export function createProviderSessionIdBinding(
 /**
  * ONE writer for a Session's native provider session id.
  *
- * A catalog-declared flat `<vendor>SessionId` slot wins when the Agent has one;
- * otherwise the id goes to the agent-agnostic runtime-descriptor slot. Before,
- * the absence of a declared slot returned the metadata unchanged, so every
- * external Agent's id — including one published through the documented
- * `identity.providerSessionId` author channel — was silently discarded and its
- * Session could never be resumed.
+ * A catalog-declared released flat `<vendor>SessionId` slot wins when the Agent
+ * has one; otherwise the id goes to `nativeResumeIdentityV1`. The descriptor
+ * envelope identifies the Agent but its opaque payload is never a Session
+ * identity carrier.
  */
 export const providerSessionIdBinding: SessionStateBinding<'identity.providerSessionId'> = {
   read: readProviderSessionIdSessionState,

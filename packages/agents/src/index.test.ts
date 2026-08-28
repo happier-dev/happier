@@ -30,7 +30,6 @@ import {
   getAgentDefinitionContract,
   getBackendCatalogDefinition,
   getBackendDefinitionContract,
-  readNormalizedRuntimeDescriptor,
   getProviderConnectedServicesAdapter,
   getAgentResumeConfig,
   getProviderRuntimePreferencesAdapter,
@@ -417,33 +416,8 @@ describe('agents package exports', () => {
     ]).toHaveLength(6);
   });
 
-  it('re-exports the canonical runtime identity reader from the package root', () => {
-    expect(readNormalizedRuntimeDescriptor({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'thread_1',
-        },
-      },
-    })).toEqual({
-      providerId: 'codex',
-      runtimeKind: 'appServer',
-      providerSessionId: 'thread_1',
-      runtimeHandle: {
-        backendMode: 'appServer',
-        providerSessionId: 'thread_1',
-      },
-      rawProvider: {
-        backendMode: 'appServer',
-        providerSessionId: 'thread_1',
-      },
-    });
-  });
-
   it('re-exports the canonical runtime descriptor registry entrypoints from the package root', () => {
-    expect(agents.RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
+    expect(agents.RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['codex', 'opencode']);
     expect(typeof agents.getRuntimeDescriptorReader).toBe('function');
     expect(agents.getRuntimeDescriptorReader('codex')).toBeDefined();
   });

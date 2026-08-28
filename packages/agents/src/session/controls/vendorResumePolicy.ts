@@ -1,5 +1,9 @@
-import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
-import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol';
+import {
+  AgentNativeResumeIdentityV1Schema,
+  isBackendTargetDisabledByAccountSettings,
+  readRuntimeDescriptorV1FromMetadata,
+  type AgentNativeResumeIdentityV1,
+} from '@happier-dev/protocol';
 import type {
   PluginContributionIdentity,
 } from '@happier-dev/protocol/plugins/manifest';
@@ -8,8 +12,7 @@ import {
 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { AgentId } from '../../types.js';
 import { getAgentResumeConfig, isRuntimeCheckedExperimentalVendorResume } from '../../manifest.js';
-import { readNormalizedRuntimeDescriptor } from '../../runtime/identity/runtimeDescriptor.js';
-import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
+import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -58,12 +61,9 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
   const link = resolution.linkedSession;
   if (link.agentId !== input.agentId) return false;
 
-  // An Agent with no catalog-declared flat field keeps its native id in the
-  // agent-agnostic descriptor slot; reading only the flat field there would
-  // refuse every external Agent's linked-session resume as unverified.
   const persistedVendorResumeId = input.vendorResumeIdField
     ? metadata[input.vendorResumeIdField]
-    : resolveRuntimeDescriptorVendorResumeId(input.agentId as AgentId, metadata);
+    : resolveCanonicalNativeResumeId(input.agentId as AgentId, metadata);
   if (
     typeof persistedVendorResumeId !== 'string'
     || persistedVendorResumeId.trim().length === 0
@@ -86,44 +86,30 @@ export function isLinkedVendorResumeIdentityCurrent(input: Readonly<{
 }
 
 /**
- * The Agent's own native conversation id, from the one carrier that is not an
- * enumeration of bundled vendors.
- *
- * `runtimeDescriptorV1.agent.providerSessionId` is agent-agnostic: the schema
- * accepts any `agentId`, the host stamps the id there for EVERY Session it
- * runs, and the descriptor is what `readProviderSessionIdSessionState` and the
- * CLI/UI resume readers already prefer. It is therefore the only slot an
- * external (manifest-contributed) Agent has, since generated
- * `<vendor>SessionId` fields and session-control adapters exist for bundled
- * Agents only.
- *
- * The descriptor names exactly one Agent, so a descriptor written by a
- * different Agent is never borrowed.
+ * Canonical generic Session identity. The descriptor envelope only attributes
+ * it to the current Agent; its opaque `agent` payload is never interpreted.
  */
-function resolveRuntimeDescriptorVendorResumeId(agentId: AgentId, metadata: unknown): string | null {
-  const descriptor = readNormalizedRuntimeDescriptor(metadata);
-  return descriptor && descriptor.providerId === agentId
-    ? descriptor.providerSessionId
-    : null;
+function resolveCanonicalNativeResumeId(agentId: AgentId, metadata: unknown): string | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+  const descriptor = readRuntimeDescriptorV1FromMetadata(record);
+  if (descriptor?.agentId !== agentId) return null;
+  const identity = AgentNativeResumeIdentityV1Schema.safeParse(record.nativeResumeIdentityV1);
+  return identity.success ? identity.data.vendorResumeId : null;
 }
 
 /**
  * ONE owner for "what is this Session's native resume id", in declared-authority
  * order:
  *
- * 1. the Agent's own session-control adapter, which may prefer a richer handle
- *    (Pi resumes from an absolute session-file path, not a bare id);
- * 2. the Agent's catalog-declared flat `<vendor>SessionId` field;
- * 3. the agent-agnostic runtime-descriptor slot.
+ * 1. the Agent catalog's released flat `<vendor>SessionId` compatibility field;
+ * 2. the canonical generic native-resume identity attributed by descriptor.
  *
- * Tiers 1 and 2 exist only for bundled Agents, so tier 3 is what makes an
- * external Agent resumable at all. It is LAST so that adding it cannot change
- * any bundled Agent's answer.
+ * The first source exists only for bundled Agents. Keeping it ahead of the
+ * generic carrier preserves released persisted behavior without teaching
+ * generic code to interpret the opaque descriptor payload.
  */
 export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
-  const adapterResumeId = getProviderSessionControlAdapter(agentId)?.resolveVendorResumeId?.(metadata);
-  if (adapterResumeId) return adapterResumeId;
-
   const record = asRecord(metadata);
   if (!record) return null;
 
@@ -136,7 +122,7 @@ export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metad
     }
   }
 
-  return resolveRuntimeDescriptorVendorResumeId(agentId, record);
+  return resolveCanonicalNativeResumeId(agentId, record);
 }
 
 /**
@@ -218,11 +204,11 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
       return evaluateMetadataVendorResumeId(input);
     }
 
-    const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorResumeEnabled?.({
+    const runtimeSurface = resolveAgentRuntimeControlSurfaceForSession({
+      agentId: input.agentId,
       metadata: input.metadata,
-      accountSettings,
-    }) === true;
-    if (!enabled) {
+    });
+    if (runtimeSurface?.resume.vendorResume === 'unsupported') {
       return { eligible: false, reasonCode: 'experimental_disabled' };
     }
   }

@@ -70,17 +70,6 @@ describe('AGENTS_CORE cloudConnect status', () => {
     });
   });
 
-  it('advertises Claude existing-session connected-service auth switching continuity', () => {
-    expect(AGENTS_CORE.claude.connectedServices?.sessionAuthSwitch).toEqual({
-      continuityMode: 'restart_same_home',
-      supportedTransitions: ['same_connected_group'],
-      providerStateSharingRequired: {
-        serviceIds: ['claude-subscription', 'anthropic'],
-        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-      },
-    });
-  });
-
   it('advertises Claude provider state sharing capabilities from the shared catalog', () => {
     expect(AGENTS_CORE.claude.connectedServices?.providerStateSharing).toEqual({
       config: {
@@ -95,30 +84,10 @@ describe('AGENTS_CORE cloudConnect status', () => {
     });
   });
 
-  it('advertises existing-session connected-service auth switching for supported providers', () => {
-    expect(AGENTS_CORE.codex.connectedServices?.sessionAuthSwitch).toEqual({
-      continuityMode: 'restart_shared_state_required',
-      supportedTransitions: ['same_connected_group'],
-      providerStateSharingRequired: {
-        serviceIds: ['openai-codex'],
-        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-      },
-    });
-    expect(AGENTS_CORE.gemini.connectedServices?.sessionAuthSwitch).toEqual({
-      continuityMode: 'restart_same_home',
-      supportedTransitions: ['native_to_connected', 'connected_to_connected'],
-    });
-    expect(AGENTS_CORE.opencode.connectedServices?.sessionAuthSwitch).toEqual({
-      continuityMode: 'restart_same_home',
-      supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-    });
-    expect(AGENTS_CORE.pi.connectedServices?.sessionAuthSwitch).toEqual({
-      continuityMode: 'restart_same_home',
-      supportedTransitions: ['connected_to_connected'],
-      providerStateSharingRequired: {
-        supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-      },
-    });
+  it('keeps existing-session switch continuity out of the private AgentCore catalog', () => {
+    for (const agentId of ['claude', 'codex', 'gemini', 'opencode', 'pi'] as const) {
+      expect(AGENTS_CORE[agentId].connectedServices).not.toHaveProperty('sessionAuthSwitch');
+    }
   });
 
   it('advertises Pi shared session state only through its implemented session directory materializer', () => {

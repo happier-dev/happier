@@ -16,6 +16,8 @@ export type HandoffAvailabilityRequestV1 = Readonly<{
   operation: 'exportBundle' | 'importBundle';
   sessionId?: string;
   metadata?: HandoffExportSessionMetadataV1;
+  /** Host-owned transcript custody supplied as an availability fact. */
+  transcriptStorage?: 'direct' | 'persisted';
 }>;
 
 export type HandoffRuntimeLocalExternalSessionSourceV1 = Readonly<{

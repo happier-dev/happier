@@ -31,7 +31,6 @@ export type {
     AgentLocalControlTopology,
     AgentResumeConfig,
     ExperimentalVendorResumePolicy,
-    AgentSessionAuthSwitchTransition,
     AgentSessionCapabilitySupportLevel,
     AgentSessionCapabilities,
     AgentSessionStorage,
@@ -89,12 +88,6 @@ export {
 export {
   isConnectedServiceUsageProviderCompatible,
 } from './connectedServices/usageProviderOwnership.js';
-export {
-  isConnectedServiceAccountGroupConfigurationSupported,
-  isConnectedServiceRuntimeFallbackSupported,
-  resolveConnectedServiceRuntimeFallbackCapability,
-  supportsAgentConnectedServiceSessionAuthSwitchTransition,
-} from './connectedServices/runtimeFallbackCapability.js';
 export {
   buildConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId,
@@ -211,14 +204,6 @@ export {
 export {
   isAgentCliAuthBackgroundCheckSafe,
 } from './auth.js';
-export {
-  BUILT_IN_ACP_CONFIG,
-  getBuiltInAcpConfig,
-  hasBuiltInAcpConfig,
-  type BuiltInAcpConfig,
-  type BuiltInAcpTransportProfile,
-  type BuiltInAcpYesNoAuto,
-} from './acp.js';
 export {
   ACP_AGENT_CLI_TRANSPORT_TIMEOUTS,
   ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES,
@@ -378,9 +363,6 @@ export {
   type AgentSessionCapabilityKey,
 } from './session/controls/sessionCapabilities.js';
 export {
-  readNormalizedRuntimeDescriptor,
-} from './runtime/identity/runtimeDescriptor.js';
-export {
   catchUpTranscriptSourceWindow,
   readInitialTranscriptSourceWindow,
   type TranscriptSourceFollowLease,
@@ -413,11 +395,6 @@ export {
   readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
 } from './runtime/identity/readAgentSurfaceRuntimeDescriptorV1.js';
 export {
-  applyAgentRuntimeKindOverrideToAccountSettings,
-  normalizeAgentRuntimeKindOverride,
-  resolveAgentConfiguredRuntimeKind,
-} from './session/controls/runtimeKindOverride.js';
-export {
   resolveAgentRuntimeControlSurfaceForSession,
 } from './session/controls/runtimeControlSurface.js';
 export {
@@ -425,13 +402,6 @@ export {
   resolveRuntimeCheckpointToolProtocol,
   type RuntimeCheckpointToolProtocolV1,
 } from './session/controls/checkpoints.js';
-export {
-  resolvePersistedProviderSessionBackendMode,
-  resolveProviderSessionBackendMode,
-} from './session/controls/providerBackendModes.js';
-export {
-  resolveSessionArtifactPathFromMetadata,
-} from './runtime/controlSurface/sessionControlAdapterRegistry.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
   LEGACY_ACP_SESSION_MODELS_STATE_KEY,
@@ -647,11 +617,6 @@ export {
   parseRestoreCheckpointRequestV1,
   projectSessionMetadataForAgentHandoff,
 } from './runtime/surfaces/index.js';
-export type { RuntimeDescriptor } from './runtime/identity/runtimeDescriptor.js';
-export {
-  publishRuntimeIdentity,
-  type RuntimeIdentityPublication,
-} from './runtime/identity/runtimeIdentityPublication.js';
 export type { RuntimeDiscovery } from './runtime/discovery/runtimeDiscovery.js';
 export type {
   RuntimeCapabilities,

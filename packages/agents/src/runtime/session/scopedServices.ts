@@ -34,8 +34,6 @@ export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   targetId?: string | null;
   selection?: AgentSessionAuthRefreshSelectionV1;
   planType?: string | null;
-  env?: Readonly<Record<string, string>> | null;
-  materializedEnv?: Readonly<Record<string, string>> | null;
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
   classification?: AgentSessionAuthRefreshClassificationV1;
   failingAccessTokenFingerprint?: string | null;
