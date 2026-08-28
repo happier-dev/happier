@@ -263,6 +263,35 @@ function normalizeMachineServerId(serverId: string | null | undefined): string {
     return String(serverId ?? '').trim();
 }
 
+type MachinePresence = Readonly<{
+    active: boolean;
+    activeAt: number;
+}>;
+
+function preserveNewestMachinePresence<T extends MachinePresence>(
+    incoming: T,
+    currentValues: readonly (MachinePresence | null | undefined)[],
+): T {
+    let newestCurrent: MachinePresence | null = null;
+    for (const current of currentValues) {
+        if (
+            current
+            && Number.isFinite(current.activeAt)
+            && (!newestCurrent || current.activeAt > newestCurrent.activeAt)
+        ) {
+            newestCurrent = current;
+        }
+    }
+    if (!newestCurrent || newestCurrent.activeAt <= incoming.activeAt) {
+        return incoming;
+    }
+    return {
+        ...incoming,
+        active: newestCurrent.active,
+        activeAt: newestCurrent.activeAt,
+    };
+}
+
 export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDependencies>({
     set,
     get,
@@ -316,8 +345,14 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const currentServerMachineList = sourceServerId
                     ? state.machineListByServerId[sourceServerId]
                     : undefined;
+                const normalizedMachines = machines.map((machine) => preserveNewestMachinePresence(machine, [
+                    Array.isArray(currentServerMachineList)
+                        ? currentServerMachineList.find((current) => current.id === machine.id)
+                        : null,
+                    shouldUpdateActiveProjection ? state.machines[machine.id] : null,
+                ]));
                 const nextServerMachineList = sourceServerId
-                    ? mergeMachineListById(currentServerMachineList, machines, { replace })
+                    ? mergeMachineListById(currentServerMachineList, normalizedMachines, { replace })
                     : currentServerMachineList;
                 const machineListByServerId = sourceServerId && nextServerMachineList !== currentServerMachineList
                     ? {
@@ -348,12 +383,12 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 if (replace) {
                     const nextMachines: Record<string, Machine> = {};
                     const nextMachineDisplays: Record<string, MachineDisplayRenderable> = {};
-                    machines.forEach((machine) => {
+                    normalizedMachines.forEach((machine) => {
                         nextMachines[machine.id] = machine;
                         nextMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
-                    const machinesAreUnchanged = countOwnEntries(state.machines) === machines.length
-                        && machines.every((machine) => areMachinesEqual(state.machines[machine.id], machine));
+                    const machinesAreUnchanged = countOwnEntries(state.machines) === normalizedMachines.length
+                        && normalizedMachines.every((machine) => areMachinesEqual(state.machines[machine.id], machine));
                     mergedMachines = machinesAreUnchanged ? state.machines : nextMachines;
                     mergedMachineDisplays = areMachineDisplayRecordsEqual(state.machineDisplayById ?? {}, nextMachineDisplays)
                         ? state.machineDisplayById
@@ -361,7 +396,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 } else {
                     mergedMachines = state.machines;
                     mergedMachineDisplays = state.machineDisplayById;
-                    machines.forEach((machine) => {
+                    normalizedMachines.forEach((machine) => {
                         if (!areMachinesEqual(state.machines[machine.id], machine)) {
                             if (mergedMachines === state.machines) {
                                 mergedMachines = { ...state.machines };
@@ -477,7 +512,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     return state;
                 }
 
-                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
+                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [
+                    machine.id,
+                    preserveNewestMachinePresence(machine, [
+                        state.machineDisplayById[machine.id],
+                        state.machines[machine.id],
+                    ]),
+                ]));
                 if (areMachineDisplayRecordsEqual(state.machineDisplayById ?? {}, nextMachineDisplays)) {
                     return state;
                 }
