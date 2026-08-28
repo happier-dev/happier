@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { delimiter, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, delimiter, dirname, join, relative } from 'node:path';
 
 import type {
   AgentId,
@@ -27,7 +27,11 @@ import {
 } from './managedJavaScriptRuntime.js';
 import { buildManagedPnpmEnvironment, ensureManagedPnpmCommand, readRawPnpmOverride } from './managedPnpm.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
-import { resolveProviderCliCommand, resolveProviderCliManagedCommandPath } from './resolution.js';
+import {
+  resolveProviderCliCommand,
+  resolveProviderCliManagedCommandPath,
+  resolveProviderCliManagedCommandRelativePath,
+} from './resolution.js';
 
 export type ProviderCliInstallCommand = Readonly<{
   cmd: string;
@@ -84,6 +88,14 @@ type InstallProviderCliDeps = Readonly<{
 
 const MANAGED_RETIRED_INSTALL_DIRECTORY_PATTERN =
   /^previous-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MANAGED_VERSIONED_RELEASE_DIRECTORY_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function managedInstallPathExists(path: string): Promise<boolean> {
+  return await stat(path)
+    .then(() => true)
+    .catch(() => false);
+}
 
 async function cleanupRetiredManagedInstallDirectories(params: Readonly<{
   installRoot: string;
@@ -105,20 +117,92 @@ async function cleanupRetiredManagedInstallDirectories(params: Readonly<{
   }
 }
 
+async function cleanupRetiredManagedVersionedReleases(params: Readonly<{
+  releasesDir: string;
+  activeReleaseDir: string;
+  logPath: string;
+  removePath: typeof rm;
+}>): Promise<void> {
+  const entries = await readdir(params.releasesDir, { withFileTypes: true }).catch((error) => {
+    appendInstallLogBestEffort(params.logPath, `# retired managed release cleanup scan deferred: ${String(error)}`);
+    return [];
+  });
+  const activeReleaseName = basename(params.activeReleaseDir);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === activeReleaseName || !MANAGED_VERSIONED_RELEASE_DIRECTORY_PATTERN.test(entry.name)) continue;
+    const retiredPath = join(params.releasesDir, entry.name);
+    try {
+      await params.removePath(retiredPath, { recursive: true, force: true });
+    } catch (error) {
+      appendInstallLogBestEffort(params.logPath, `# retired managed release cleanup deferred: ${String(error)}`);
+    }
+  }
+}
+
+async function promoteVersionedManagedInstallCandidate(params: Readonly<{
+  installRoot: string;
+  candidateDir: string;
+  logPath: string;
+  removePath: typeof rm;
+  renamePath: typeof rename;
+}>): Promise<void> {
+  const releasesDir = join(params.installRoot, '.releases');
+  const activePath = join(params.installRoot, 'active');
+  const releaseName = randomUUID();
+  const activeReleaseDir = join(releasesDir, releaseName);
+  const pendingActivePath = join(params.installRoot, `.active-${releaseName}`);
+
+  await mkdir(releasesDir, { recursive: true });
+  await params.renamePath(params.candidateDir, activeReleaseDir);
+  try {
+    // POSIX can atomically replace this symlink, so every new launch resolves a complete release.
+    await symlink(relative(params.installRoot, activeReleaseDir), pendingActivePath);
+    await params.renamePath(pendingActivePath, activePath);
+  } catch (error) {
+    await params.removePath(pendingActivePath, { force: true });
+    await params.removePath(activeReleaseDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  await cleanupRetiredManagedVersionedReleases({
+    releasesDir,
+    activeReleaseDir,
+    logPath: params.logPath,
+    removePath: params.removePath,
+  });
+}
+
 async function promoteManagedInstallCandidate(params: Readonly<{
   installRoot: string;
   candidateDir: string;
   logPath: string;
   deps: InstallProviderCliDeps;
+  activateVersionedRelease?: boolean;
 }>): Promise<void> {
   const currentDir = join(params.installRoot, 'current');
   const previousDir = join(params.installRoot, `previous-${randomUUID()}`);
+  const activePath = join(params.installRoot, 'active');
   const removePath = params.deps.removeManagedInstallPath ?? rm;
   const renamePath = params.deps.renameManagedInstallPath ?? rename;
 
   await mkdir(params.installRoot, { recursive: true });
   let waitReported = false;
   await withWorkspaceBundleLock(async () => {
+    if (
+      params.activateVersionedRelease
+      && process.platform !== 'win32'
+      && (await managedInstallPathExists(currentDir) || await managedInstallPathExists(activePath))
+    ) {
+      await promoteVersionedManagedInstallCandidate({
+        installRoot: params.installRoot,
+        candidateDir: params.candidateDir,
+        logPath: params.logPath,
+        removePath,
+        renamePath,
+      });
+      return;
+    }
+
     let previousReleaseMoved = false;
     try {
       await renamePath(currentDir, previousDir);
@@ -376,17 +460,7 @@ function resolveManagedProviderCommandPathInInstallDir(
   installDir: string,
   env: NodeJS.ProcessEnv,
 ): string {
-  const installRoot = resolveManagedProviderInstallDir(providerId, env);
-  const currentDir = join(installRoot, 'current');
-  const currentPath = resolveProviderCliManagedCommandPath(providerId, {
-    happyHomeDir: resolveHappyHomeDirFromEnvironment(env),
-    processEnv: env,
-  });
-  const relativeCommandPath = relative(currentDir, currentPath);
-  if (!relativeCommandPath || isAbsolute(relativeCommandPath) || relativeCommandPath.split(/[\\/]/).includes('..')) {
-    throw new Error(`Managed provider path is outside ${currentDir}: ${currentPath}`);
-  }
-  return join(installDir, relativeCommandPath);
+  return join(installDir, resolveProviderCliManagedCommandRelativePath(providerId));
 }
 
 function buildManagedPackageInstallEnvironment(
@@ -926,6 +1000,7 @@ async function installManagedBinaryProviderCli(params: Readonly<{
       candidateDir,
       logPath: params.logPath,
       deps: params.deps,
+      activateVersionedRelease: params.platform !== 'win32',
     });
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
