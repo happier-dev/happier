@@ -255,6 +255,24 @@ function writeServerSharpRuntimeFixture({ repoRoot, platform = 'linux', arch = '
   }
 }
 
+function writeServerPackagedMigrationFixtures({ repoRoot, targetKey = 'linux-x64', schemaEngineName = 'schema-engine-debian-openssl-3.0.x' }) {
+  const serverRoot = join(repoRoot, 'apps', 'server');
+  for (const dir of [
+    join(serverRoot, 'scripts', 'runtime'),
+    join(serverRoot, 'prisma', 'migrations'),
+    join(serverRoot, 'prisma', 'mysql', 'migrations'),
+    join(serverRoot, 'generated', 'runtime-migration-engines', targetKey),
+    join(repoRoot, 'node_modules', 'prisma', 'build'),
+  ]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(serverRoot, 'scripts', 'runtime', 'migrateFullRuntime.ts'), 'export {};\n');
+  writeFileSync(join(serverRoot, 'prisma', 'schema.prisma'), '// postgres\n');
+  writeFileSync(join(serverRoot, 'prisma', 'migrations', 'migration_lock.toml'), 'provider = "postgresql"\n');
+  writeFileSync(join(serverRoot, 'prisma', 'mysql', 'schema.prisma'), '// mysql\n');
+  writeFileSync(join(serverRoot, 'prisma', 'mysql', 'migrations', 'migration_lock.toml'), 'provider = "mysql"\n');
+  writeFileSync(join(serverRoot, 'generated', 'runtime-migration-engines', targetKey, schemaEngineName), 'schema engine\n');
+  writeFileSync(join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm'), 'schema wasm\n');
+}
+
 function writePackagedVoiceRuntimeFixture({ cliDistDir, cliRuntimeDir }) {
   mkdirSync(join(cliDistDir, 'daemon', 'voiceInference', 'runtime'), { recursive: true });
   writeFileSync(
@@ -1225,7 +1243,7 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
       compileBinary: async ({ outfile }) => {
         compileCalls.push(outfile);
         writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
-        if (process.platform !== 'win32') {
+        if (process.platform !== 'win32' && outfile.endsWith('happier-server')) {
           const runtimeAssetsDir = join(payloadDir, 'runtime-assets');
           const runtimeLinksDir = join(payloadDir, 'runtime-links');
           mkdirSync(runtimeAssetsDir, { recursive: true });
@@ -1305,6 +1323,7 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
             runCommand: () => {},
             compileBinary: async ({ outfile }) => {
               writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+              if (!outfile.endsWith('happier-server')) return;
               const runtimeLinksDir = join(payloadDir, 'runtime-links');
               mkdirSync(runtimeLinksDir, { recursive: true });
               symlinkSync(linkTarget, join(runtimeLinksDir, linkName));
@@ -1451,7 +1470,7 @@ test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration c
       uiWebDistPath: join(repoRoot, 'apps', 'ui', 'dist'),
       serverComponent: 'happier-server',
       entrypoint: join(serverRoot, 'sources', 'main.ts'),
-      buildDbProviders: 'postgresql',
+      buildDbProviders: 'postgresql,mysql',
       target: artifacts.resolveCurrentBinaryTarget({ availableTargets: artifacts.SERVER_BINARY_TARGETS, platform: 'linux', arch: 'x64' }),
       commandProbe: () => true,
       runCommand: () => undefined,
@@ -1640,6 +1659,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
     writeFileSync(join(postgresClientDir, 'default.js'), 'module.exports = {};\n', 'utf8');
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
     writeServerSharpRuntimeFixture({ repoRoot });
+    writeServerPackagedMigrationFixtures({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const runCalls = [];
@@ -1667,6 +1687,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
       compileBinary: async ({ outfile }) => {
         writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
       },
+      compilePrismaBinary: async ({ outfile }) => writeFileSync(outfile, 'prisma runner\n', 'utf8'),
     });
 
     assert.deepEqual(runCalls, [
@@ -1677,6 +1698,16 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
       {
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
+      },
+      {
+        cmd: process.execPath,
+        args: [
+          'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
+          '--binary-target',
+          'debian-openssl-3.0.x',
+          '--out-dir',
+          join(repoRoot, 'apps', 'server', 'generated', 'runtime-migration-engines', 'linux-x64'),
+        ],
       },
     ]);
     assert.equal(

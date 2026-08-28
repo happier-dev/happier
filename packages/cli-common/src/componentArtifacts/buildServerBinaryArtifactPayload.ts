@@ -10,6 +10,7 @@ import {
   resolveRequestedServerDbProviders,
   resolveServerBinarySidecarEntries,
   resolveServerRuntimeSupportBuildDbProviders,
+  serverRuntimeSupportNeedsPackagedMigration,
   type ServerComponent,
   type StageEntry,
 } from './serverSidecars.js';
@@ -129,21 +130,24 @@ export async function buildServerRuntimeSupportPayload({
     copyPath,
   });
   void serverComponent;
-  const resolvedRepoRoot = String(repoRoot ?? '').trim();
-  if (!resolvedRepoRoot) {
-    throw new Error('[component-artifacts] server runtime support requires a repository root for Prisma migrate.');
+  await mkdir(join(payloadDir, 'runtime'), { recursive: true });
+  if (serverRuntimeSupportNeedsPackagedMigration(buildDbProviders)) {
+    const resolvedRepoRoot = String(repoRoot ?? '').trim();
+    if (!resolvedRepoRoot) {
+      throw new Error('[component-artifacts] server runtime support requires a repository root for Prisma migrate.');
+    }
+    const bunCommand = resolveBunCommand({ commandProbe, processEnv: env });
+    if (!bunCommand) {
+      throw new Error('[component-artifacts] bun is required to build server Prisma migration support');
+    }
+    await compilePrismaBinary({
+      repoRoot: resolvedRepoRoot,
+      target,
+      outfile: join(payloadDir, 'runtime', resolveExecutableName({ baseName: 'prisma-migrate', target })),
+      bunCommand,
+      runCommand,
+    });
   }
-  const bunCommand = resolveBunCommand({ commandProbe, processEnv: env });
-  if (!bunCommand) {
-    throw new Error('[component-artifacts] bun is required to build server Prisma migration support');
-  }
-  await compilePrismaBinary({
-    repoRoot: resolvedRepoRoot,
-    target,
-    outfile: join(payloadDir, 'runtime', resolveExecutableName({ baseName: 'prisma-migrate', target })),
-    bunCommand,
-    runCommand,
-  });
   await finalizeRuntimeArtifactPayload(payloadDir);
 }
 
@@ -228,19 +232,22 @@ export async function buildServerBinaryArtifactPayload({
     buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
   });
 
-  const migrationSourceEntrypoint = join(repoRoot, 'apps', 'server', 'scripts', 'runtime', 'migrateFullRuntime.ts');
-  await ensureFileExists(migrationSourceEntrypoint);
-  const migrationEntrypoint = resolveExecutableName({ baseName: 'happier-server-migrate', target });
-  await compileBinary({
-    entrypoint: migrationSourceEntrypoint,
-    bunTarget: target.bunTarget,
-    outfile: join(payloadDir, migrationEntrypoint),
-    cwd: repoRoot,
-    externals: [],
-    bunCommand,
-    runCommand,
-  });
-  if (includeRuntimeSupport) {
+  let migrationEntrypoint: string | undefined;
+  if (serverRuntimeSupportNeedsPackagedMigration(effectiveBuildDbProviders)) {
+    const migrationSourceEntrypoint = join(repoRoot, 'apps', 'server', 'scripts', 'runtime', 'migrateFullRuntime.ts');
+    await ensureFileExists(migrationSourceEntrypoint);
+    migrationEntrypoint = resolveExecutableName({ baseName: 'happier-server-migrate', target });
+    await compileBinary({
+      entrypoint: migrationSourceEntrypoint,
+      bunTarget: target.bunTarget,
+      outfile: join(payloadDir, migrationEntrypoint),
+      cwd: repoRoot,
+      externals: [],
+      bunCommand,
+      runCommand,
+    });
+  }
+  if (includeRuntimeSupport && migrationEntrypoint) {
     await mkdir(join(payloadDir, 'runtime'), { recursive: true });
     await compilePrismaBinary({
       repoRoot,
@@ -265,7 +272,7 @@ export async function buildServerBinaryArtifactPayload({
   return {
     executableName,
     entrypoint: executableName,
-    migrationEntrypoint,
+    ...(migrationEntrypoint ? { migrationEntrypoint } : {}),
   };
 }
 

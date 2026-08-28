@@ -82,6 +82,18 @@ export function resolveRequestedServerDbProviders(buildDbProviders: string): Ser
   return [...requestedProviders];
 }
 
+export function serverRuntimeSupportNeedsPackagedMigration(buildDbProviders: string): boolean {
+  const tokens = String(buildDbProviders ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/[|,]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return tokens.length === 0
+    || tokens.includes('all')
+    || tokens.some((token) => ['postgres', 'postgresql', 'pglite', 'mysql'].includes(token));
+}
+
 export function resolvePrismaSchemaEngineTarget(target: BinaryTarget): { binaryTarget: string; fileName: string } {
   const targetKey = `${target.os}-${target.arch}`;
   switch (targetKey) {
@@ -288,26 +300,29 @@ export async function resolveServerRuntimeSupportEntries({
     },
   );
 
-  if (!target) {
-    throw new Error('[component-artifacts] a binary target is required for server migration artifacts');
+  const needsPackagedMigration = serverRuntimeSupportNeedsPackagedMigration(effectiveBuildDbProviders);
+  if (needsPackagedMigration) {
+    if (!target) {
+      throw new Error('[component-artifacts] a binary target is required for server migration artifacts');
+    }
+    const schemaEngine = resolvePrismaSchemaEngineTarget(target);
+    await runCommand(
+      process.execPath,
+      [
+        'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
+        '--binary-target', schemaEngine.binaryTarget,
+        '--out-dir', join(
+          repoRoot,
+          'apps',
+          'server',
+          'generated',
+          'runtime-migration-engines',
+          `${target.os}-${target.arch}`,
+        ),
+      ],
+      { cwd: repoRoot, env },
+    );
   }
-  const schemaEngine = resolvePrismaSchemaEngineTarget(target);
-  await runCommand(
-    process.execPath,
-    [
-      'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
-      '--binary-target', schemaEngine.binaryTarget,
-      '--out-dir', join(
-        repoRoot,
-        'apps',
-        'server',
-        'generated',
-        'runtime-migration-engines',
-        `${target.os}-${target.arch}`,
-      ),
-    ],
-    { cwd: repoRoot, env },
-  );
 
   const dedupedProviders = resolveRequestedServerDbProviders(effectiveBuildDbProviders);
 
@@ -337,11 +352,19 @@ export async function resolveServerRuntimeSupportEntries({
     });
   }
 
+  const providerTokens = String(effectiveBuildDbProviders).toLowerCase().split(/[|,]/).map((value) => value.trim());
+  const includesAllProviders = providerTokens.length === 0 || providerTokens.includes('all');
+  const includesPostgres = includesAllProviders || providerTokens.some((token) => ['postgres', 'postgresql', 'pglite'].includes(token));
+  const includesMysql = includesAllProviders || providerTokens.includes('mysql');
   const requiredMigrationEntries: StageEntry[] = [
-    { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), targetPath: join('prisma', 'schema.prisma') },
-    { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'migrations'), targetPath: join('prisma', 'migrations') },
-    { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), targetPath: join('prisma', 'mysql', 'schema.prisma') },
-    { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'), targetPath: join('prisma', 'mysql', 'migrations') },
+    ...(includesPostgres ? [
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), targetPath: join('prisma', 'schema.prisma') },
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'migrations'), targetPath: join('prisma', 'migrations') },
+    ] : []),
+    ...(includesMysql ? [
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), targetPath: join('prisma', 'mysql', 'schema.prisma') },
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'), targetPath: join('prisma', 'mysql', 'migrations') },
+    ] : []),
   ];
   for (const entry of requiredMigrationEntries) {
     const info = await stat(entry.sourcePath).catch(() => null);
@@ -350,34 +373,36 @@ export async function resolveServerRuntimeSupportEntries({
     }
     entries.push(entry);
   }
-  const targetKey = `${target.os}-${target.arch}`;
-  const schemaEngineFileName = resolvePrismaSchemaEngineTarget(target).fileName;
-  const schemaEnginePath = join(
-    repoRoot,
-    'apps',
-    'server',
-    'generated',
-    'runtime-migration-engines',
-    targetKey,
-    schemaEngineFileName,
-  );
-  const schemaEngineInfo = await stat(schemaEnginePath).catch(() => null);
-  if (!schemaEngineInfo?.isFile()) {
-    throw new Error(`[component-artifacts] missing server Prisma schema engine for ${targetKey}: ${schemaEnginePath}`);
+  if (needsPackagedMigration && target) {
+    const targetKey = `${target.os}-${target.arch}`;
+    const schemaEngineFileName = resolvePrismaSchemaEngineTarget(target).fileName;
+    const schemaEnginePath = join(
+      repoRoot,
+      'apps',
+      'server',
+      'generated',
+      'runtime-migration-engines',
+      targetKey,
+      schemaEngineFileName,
+    );
+    const schemaEngineInfo = await stat(schemaEnginePath).catch(() => null);
+    if (!schemaEngineInfo?.isFile()) {
+      throw new Error(`[component-artifacts] missing server Prisma schema engine for ${targetKey}: ${schemaEnginePath}`);
+    }
+    entries.push({
+      sourcePath: schemaEnginePath,
+      targetPath: join('runtime', target.os === 'windows' ? 'schema-engine.exe' : 'schema-engine'),
+    });
+    const schemaWasmPath = join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm');
+    const schemaWasmInfo = await stat(schemaWasmPath).catch(() => null);
+    if (!schemaWasmInfo?.isFile()) {
+      throw new Error(`[component-artifacts] missing server Prisma schema WASM: ${schemaWasmPath}`);
+    }
+    entries.push({
+      sourcePath: schemaWasmPath,
+      targetPath: join('runtime', 'prisma_schema_build_bg.wasm'),
+    });
   }
-  entries.push({
-    sourcePath: schemaEnginePath,
-    targetPath: join('runtime', target.os === 'windows' ? 'schema-engine.exe' : 'schema-engine'),
-  });
-  const schemaWasmPath = join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm');
-  const schemaWasmInfo = await stat(schemaWasmPath).catch(() => null);
-  if (!schemaWasmInfo?.isFile()) {
-    throw new Error(`[component-artifacts] missing server Prisma schema WASM: ${schemaWasmPath}`);
-  }
-  entries.push({
-    sourcePath: schemaWasmPath,
-    targetPath: join('runtime', 'prisma_schema_build_bg.wasm'),
-  });
 
   const postgresClientInfo = await stat(postgresClientPath).catch(() => null);
   if (!postgresClientInfo?.isDirectory()) {
@@ -430,11 +455,14 @@ export async function resolveServerRuntimeSupportEntries({
 export async function resolveServerRuntimeSupportToolIdentityEntries({
   repoRoot,
   serverComponent,
+  buildDbProviders = 'all',
 }: {
   repoRoot: string;
   serverComponent: ServerComponent;
+  buildDbProviders?: string;
 }): Promise<StageEntry[]> {
   void serverComponent;
+  if (!serverRuntimeSupportNeedsPackagedMigration(buildDbProviders)) return [];
   const entries: StageEntry[] = [
     {
       sourcePath: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildPrismaMigrateBinary.mjs'),
@@ -522,9 +550,9 @@ export async function readServerRuntimeSupportIdentity({
   buildDbProviders: string;
 }): Promise<ServerRuntimeSupportIdentity> {
   const hash = createHash('sha256');
-  hash.update('happier:server-runtime-support:v1\0');
+  hash.update('happier:server-runtime-support:v2\0');
   hash.update(`target\0${target.os}\0${target.arch}\0${target.bunTarget}\0${target.exeExt}\0`);
-  hash.update(`component\0${serverComponent}\0`);
+  void serverComponent;
   hash.update(`db-providers\0${String(buildDbProviders ?? '').trim()}\0`);
   const orderedEntries = [...entries].sort((left, right) =>
     left.targetPath.replaceAll('\\', '/').localeCompare(right.targetPath.replaceAll('\\', '/')),

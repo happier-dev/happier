@@ -4,7 +4,22 @@ import { join } from 'node:path';
 
 import { expect, test } from 'vitest';
 
-import { readServerRuntimeSupportIdentity } from './serverSidecars.js';
+import {
+  readServerRuntimeSupportIdentity,
+  resolveServerRuntimeSupportBuildDbProviders,
+  serverRuntimeSupportNeedsPackagedMigration,
+} from './serverSidecars.js';
+
+test('server provider capability is independent of the behavior preset', () => {
+  for (const serverComponent of ['happier-server', 'happier-server-light'] as const) {
+    expect(resolveServerRuntimeSupportBuildDbProviders({ serverComponent, buildDbProviders: 'postgresql' }))
+      .toBe('postgresql');
+  }
+  expect(serverRuntimeSupportNeedsPackagedMigration('sqlite')).toBe(false);
+  expect(serverRuntimeSupportNeedsPackagedMigration('postgresql')).toBe(true);
+  expect(serverRuntimeSupportNeedsPackagedMigration('mysql')).toBe(true);
+  expect(serverRuntimeSupportNeedsPackagedMigration('all')).toBe(true);
+});
 
 test('server runtime support identity changes for Prisma/native contents and target inputs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'server-runtime-support-identity-'));
@@ -47,6 +62,12 @@ test('server runtime support identity changes for Prisma/native contents and tar
       serverComponent: 'happier-server-light',
       buildDbProviders: 'mysql',
     });
+    const sameSupportForOtherPreset = await readServerRuntimeSupportIdentity({
+      entries,
+      target: { os: 'linux', arch: 'x64', bunTarget: 'bun-linux-x64-baseline', exeExt: '' },
+      serverComponent: 'happier-server',
+      buildDbProviders: 'sqlite',
+    });
     const firstToolIdentity = await readServerRuntimeSupportIdentity({
       entries,
       toolIdentityEntries: [{
@@ -74,6 +95,7 @@ test('server runtime support identity changes for Prisma/native contents and tar
     expect(changedNativeInput.fingerprint).not.toBe(first.fingerprint);
     expect(changedTarget.fingerprint).not.toBe(changedNativeInput.fingerprint);
     expect(changedProviderSelection.fingerprint).not.toBe(changedNativeInput.fingerprint);
+    expect(sameSupportForOtherPreset.fingerprint).toBe(changedNativeInput.fingerprint);
     expect(changedToolIdentity.fingerprint).not.toBe(firstToolIdentity.fingerprint);
   } finally {
     await rm(root, { recursive: true, force: true });

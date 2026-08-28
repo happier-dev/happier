@@ -11,6 +11,7 @@ import {
   resolveBunCommand,
   resolveServerRuntimeSupportBuildDbProviders,
   resolveServerRuntimeSupportEntries,
+  serverRuntimeSupportNeedsPackagedMigration,
   resolveServerRuntimeSupportToolIdentityEntries,
   SERVER_BINARY_DEFAULT_EXTERNALS,
   SERVER_BINARY_TARGETS,
@@ -34,8 +35,9 @@ function requireArtifactFingerprint(value, label) {
   return fingerprint;
 }
 
-async function readServerRuntimeSupportToolInputs({ serverComponent, env }) {
+async function readServerRuntimeSupportToolInputs({ serverComponent, buildDbProviders, env }) {
   void serverComponent;
+  if (!serverRuntimeSupportNeedsPackagedMigration(buildDbProviders)) return [];
   const bunCommand = resolveBunCommand({ processEnv: env });
   if (!bunCommand) {
     throw new Error('[build] Bun is required to collect server Prisma migration support identity.');
@@ -82,8 +84,9 @@ export async function resolveServerRuntimeSupportInputs({
     resolveServerRuntimeSupportToolIdentityEntries({
       repoRoot: sourceMetadata.repoDir,
       serverComponent,
+      buildDbProviders,
     }),
-    readServerRuntimeSupportToolInputs({ serverComponent, env }),
+    readServerRuntimeSupportToolInputs({ serverComponent, buildDbProviders, env }),
   ]);
   const identity = await readServerRuntimeSupportIdentity({
     entries,

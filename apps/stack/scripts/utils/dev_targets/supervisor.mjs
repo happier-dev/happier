@@ -502,6 +502,7 @@ export async function startStackDevTargets(
         }
         const remoteStackOptions = {
           services,
+          attended: env.HAPPIER_STACK_TUI === '1',
           deferDaemonStartUntilCredentials: deferCompanionPreparation && services.daemon,
           serverUrl: `http://127.0.0.1:${remoteServerPort}`,
           publicServerUrl,

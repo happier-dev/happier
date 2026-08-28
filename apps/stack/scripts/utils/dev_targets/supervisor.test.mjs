@@ -662,6 +662,7 @@ test('remote server placement is not reported running until its stable tunneled 
     resolveServerReady = resolve;
   });
   let observedReadiness = null;
+  const spawned = [];
   let notifyRunning;
   const running = new Promise((resolve) => {
     notifyRunning = resolve;
@@ -695,18 +696,16 @@ test('remote server placement is not reported running until its stable tunneled 
           targetStates.push(state);
           if (state.status === 'running') notifyRunning();
         },
-        env: {},
+        env: { HAPPIER_STACK_TUI: '1' },
       },
       {
         runDependencyBootstrap: successfulDependencyBootstrap,
         runProcess: async () => ({ code: 0 }),
-        spawnProcess: ({ label, command, args, env }) => ({
-          label,
-          command,
-          args,
-          env,
-          exitCode: null,
-        }),
+        spawnProcess: ({ label, command, args, env }) => {
+          const child = { label, command, args, env, exitCode: null };
+          spawned.push(child);
+          return child;
+        },
         stopProcess: async (child) => {
           child.exitCode = 0;
         },
@@ -719,6 +718,8 @@ test('remote server placement is not reported running until its stable tunneled 
 
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(observedReadiness?.url, 'http://127.0.0.1:3005');
+    const worker = spawned.find((child) => child.command === 'ssh' && child.args.at(-1)?.includes('stack dev'));
+    assert.match(worker?.args.at(-1) ?? '', /export HAPPIER_STACK_TUI=1/);
     assert.equal(
       targetStates.some((state) => state.status === 'running'),
       false,

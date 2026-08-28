@@ -571,6 +571,7 @@ function resolveRemoteStackInvocation(target, {
   resolveExpoPublicUrlOnTarget = false,
   remoteServerRuntimeConfig = null,
   deferDaemonStartUntilCredentials = false,
+  attended = false,
 }) {
   const normalizedServices = {
     server: services?.server === true,
@@ -628,6 +629,7 @@ function resolveRemoteStackInvocation(target, {
   });
   return {
     activeServerId,
+    attended: attended === true,
     devArgs,
     stackBaseDir,
     stackEnvLines,
@@ -650,6 +652,7 @@ function buildWindowsRemoteStackPrelude(target, invocation) {
     `$env:HAPPIER_STACK_STACK = ${powershellQuote(invocation.stackName)}`,
     `$env:HAPPIER_ACTIVE_SERVER_ID = ${powershellQuote(invocation.activeServerId)}`,
     `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
+    ...(invocation.attended ? ["$env:HAPPIER_STACK_TUI = '1'"] : []),
     `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
   ];
 }
@@ -665,6 +668,7 @@ function buildPosixRemoteStackPrelude(target, invocation) {
     `export HAPPIER_STACK_STACK=${posixQuote(invocation.stackName)}`,
     `export HAPPIER_ACTIVE_SERVER_ID=${posixQuote(invocation.activeServerId)}`,
     `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
+    ...(invocation.attended ? ['export HAPPIER_STACK_TUI=1'] : []),
     `cd -- ${posixQuote(target.repoDir)}`,
   ];
 }

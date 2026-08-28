@@ -508,6 +508,29 @@ test('co-located remote server waits for deferred daemon credentials without cre
   assert.match(decodedWindowsCommand, /HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1/);
 });
 
+test('attended dev-target Stack preserves attended server readiness on the target', () => {
+  const command = buildRemoteStackCommand(posix, {
+    services: { server: false, daemon: true },
+    serverUrl: 'http://127.0.0.1:43005',
+    publicServerUrl: 'http://127.0.0.1:3005',
+    activeServerId: 'stack_repo__id_default',
+    stackName: 'repo-local-dev',
+    attended: true,
+  });
+
+  assert.match(command, /export HAPPIER_STACK_TUI=1/);
+  const windowsCommand = buildRemoteStackCommand(windows, {
+    services: { server: false, daemon: true },
+    serverUrl: 'http://127.0.0.1:43005',
+    publicServerUrl: 'http://127.0.0.1:3005',
+    activeServerId: 'stack_repo__id_default',
+    stackName: 'repo-local-dev',
+    attended: true,
+  });
+  const decodedWindowsCommand = Buffer.from(windowsCommand.split(' ').at(-1), 'base64').toString('utf16le');
+  assert.match(decodedWindowsCommand, /\$env:HAPPIER_STACK_TUI = '1'/);
+});
+
 test('remote Stack server uses the stable outer public URL and projects only supported light/SQLite semantics', () => {
   const command = buildRemoteStackCommand(posix, {
     services: { server: true, expo: true, daemon: false },

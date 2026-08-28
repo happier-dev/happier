@@ -126,6 +126,38 @@ test('local self-host runtime promotion exposes the server-embedded UI to the po
   assert.equal(observedEmbeddedUi, '<!doctype html><title>embedded</title>');
 });
 
+test('local self-host runtime promotion keeps the complete migration closure beside the installed server', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-migration-closure-test-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const binaryName = 'happier-server';
+  const payloadRoot = join(tmp, 'payload');
+  const sourceBinaryPath = await createLocalSelfHostRuntimePayloadRoot({ rootDir: payloadRoot, binaryName });
+  await mkdir(join(payloadRoot, 'runtime'), { recursive: true });
+  await mkdir(join(payloadRoot, 'prisma', 'migrations'), { recursive: true });
+  await writeFile(join(payloadRoot, 'runtime', 'prisma-migrate'), 'runner\n', 'utf8');
+  await writeFile(join(payloadRoot, 'prisma', 'migrations', 'migration.sql'), '-- migration\n', 'utf8');
+  await writeFile(join(payloadRoot, 'happier-server-migrate'), '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(join(payloadRoot, 'happier-server-migrate'), 0o755);
+
+  const installRoot = join(tmp, 'install');
+  const config = {
+    platform: process.platform,
+    dataDir: join(installRoot, 'data'),
+    versionsDir: join(installRoot, 'versions'),
+    serverBinaryPath: join(installRoot, 'bin', binaryName),
+    serverPreviousBinaryPath: join(installRoot, 'bin', `${binaryName}.previous`),
+  };
+
+  await installSelfHostBinaryFromLocalPath({ sourceBinaryPath, binaryName, config });
+
+  assert.equal(await readFile(join(installRoot, 'bin', 'runtime', 'prisma-migrate'), 'utf8'), 'runner\n');
+  assert.equal(await readFile(join(installRoot, 'bin', 'prisma', 'migrations', 'migration.sql'), 'utf8'), '-- migration\n');
+  assert.match(await readFile(join(installRoot, 'bin', 'happier-server-migrate'), 'utf8'), /exit 0/);
+});
+
 test('managed UI activation fails closed when the server payload has no embedded UI', async () => {
   await assert.rejects(
     installUiWebFromEmbeddedRuntime({
