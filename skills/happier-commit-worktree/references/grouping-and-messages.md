@@ -43,9 +43,12 @@ Optimize for review cost and throughput together:
 
 - Prefer 5-50 files for ordinary multi-file changes.
 - Use 20-100+ files for demonstrably uniform mechanical work, provider/backend fan-out, one icon-system migration, locale/catalog updates, snapshots, or required generated output.
+- In an explicitly approved massive campaign, use 100-500+ paths when they form one complete subsystem vertical, uniform repository migration, provider/locale matrix, test-harness conversion, or canonical generated publication event. This is not a ceiling or a quota; prove the shared outcome and rollback boundary.
 - Keep a one- or two-file commit when that is the entire natural behavior slice.
 - Split a large domain program by canonical owner, behavior boundary, migration phase, provider family, or independently revertible outcome.
 - Never use a file target as a quota. A 200-file coherent migration is better than ten arbitrary directory batches; a 20-file mixed dump is still wrong.
+
+When the inventory exceeds 1,000 paths, follow [massive-campaigns-and-delegation.md](massive-campaigns-and-delegation.md). Ask once for the large-packet posture if no prior answer is recorded. A prior explicit request for much bigger commits remains valid across continuation and delegation, but never authorizes unrelated aggregation. If two plausible boundaries materially change review or rollback, present the alternatives briefly and recommend one; otherwise proceed autonomously.
 
 Accelerate by analyzing several disjoint domains in parallel, preparing manifests and messages in rolling waves, and running independent checks concurrently. Keep enough packets ready that serial HEAD mutation is not waiting on avoidable reconnaissance. Keep HEAD mutation serial unless every writer uses disjoint scope, private indexes, CAS, and stale-parent recovery. See [campaign-throughput.md](campaign-throughput.md) for the required lane accounting and liveness gates.
 
@@ -124,6 +127,8 @@ disconnect, resume, and terminal completion ordering.
 ```
 
 The body must explain why the files belong together, not enumerate filenames. Mention a major deletion or compatibility decision when a reviewer could otherwise misread it as accidental.
+
+For a massive packet, explicitly describe the unifying program and why its breadth is atomic: for example, one provider matrix, one migration phase, or one generated publication closure. Summarize meaningful subroles—contract, owner, adapters, tests, catalogs, generated contracts—without turning the message into a filename inventory. If the body requires several unrelated outcome clauses, split the packet.
 
 For issue-linked packets, use `Refs #N` when the correction is partial, a mitigation, still release-gated, or must remain open for reporter-channel verification. Use `Fixes #N` only when merging the commit into the repository's default branch satisfies the issue's actual closure gate. Do not force one issue per commit: keep one coherent correction per commit, grouping several issues only when that one correction fully explains them and splitting one issue when it contains independently coherent changes.
 

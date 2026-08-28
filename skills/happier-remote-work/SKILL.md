@@ -12,7 +12,7 @@ Remote compute is an execution transport over the repository's canonical Mutagen
 - Require one explicit user request before using remote compute. That authorization remains active for this user session until revoked or narrowed.
 - Continue using the task's normal repository skills; this skill only chooses execution transport.
 - Use only the canonical repository wrappers below. Do not add another selector, use ad hoc SSH, or choose an alternate checkout.
-- The mirror is continuously moving. Ordinary execution checks synchronization health but does not flush; later local edits may arrive while a command runs.
+- The mirror is continuously moving. Ordinary remote execution performs a blocking Mutagen flush before opening the selected target command connection; later source edits may still arrive while a command runs.
 - Route potentially broad read-only repository work (`rg`, `find`, inventories/counts), tests, typechecks, lint/static analysis, and builds that write only ignored dependencies, caches, bundles, coverage, or test artifacts. Keep tiny targeted reads local when transport would dominate. Never edit or generate tracked source, run formatters/autofixers/codemods, mutate Git, touch databases/Stack lifecycle/devices/simulators, or use unowned local secrets remotely.
 - Never weaken host-key checking or put passwords in argv, chat, or environment. Provisioning may prompt in the user's terminal.
 
@@ -82,7 +82,8 @@ only when the user asks with `dev-targets sync-service stop`.
 
 ## Exact-target execution and barriers
 
-Use explicit transport only for required platform evidence, target-specific cwd/env/TTY, or a synchronization barrier:
+Use explicit transport for required platform evidence or target-specific cwd/env/TTY. It uses the
+same mandatory pre-launch synchronization barrier as automatic routing:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs dev-targets exec <target> [--cwd=<repo-relative-path>] [--env=KEY=VALUE]... [--flush] [--tty] -- <command> [args...]
@@ -91,7 +92,7 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets exec <target> [--cwd=<repo-
 - Keep `--cwd` repository-relative and forward environment explicitly.
 - Use `--tty` only when genuinely interactive.
 - Inspect `node ./apps/stack/scripts/repo_local.mjs dev-targets status <target>` before exact-target work; use `doctor` for SSH, Mutagen, Node.js, or Corepack diagnosis.
-- Use `node ./apps/stack/scripts/repo_local.mjs dev-targets sync <target>` or `--flush` only for a point-in-time pre-launch barrier. A flush is not a snapshot and does not prevent later edits.
+- Every exact-target launch flushes once after its healthy-session check. Use `node ./apps/stack/scripts/repo_local.mjs dev-targets sync <target>` when a barrier is needed without launching a command. The legacy `--flush` spelling is accepted but does not add another flush. A flush is not a snapshot and does not prevent later edits.
 - If sync is missing, paused, or unhealthy, do not execute against stale bytes. Automatic routing excludes that target; exact-target execution fails with a diagnostic.
 
 ## Stack service placement

@@ -18,8 +18,10 @@ Apply these invariants throughout:
 - Never run `git reset`, `git restore`, `git clean`, `git checkout`, `git switch`, or an equivalent destructive operation.
 - Never overwrite, delete, or normalize unrelated work merely to make status clean.
 - Never trust or wholesale-commit the shared index. Stage every commit from explicit paths or hunks in a fresh private index.
+- Treat filesystem bytes as authoritative for preservation, but not as automatic proof that a path belongs in source control. Diagnose HEAD, index, and worktree independently; never write index or HEAD bytes back over the filesystem to repair staging.
 - Treat the checkout as live. A path can change before, during, or after a commit.
 - Serialize HEAD mutations even when reconnaissance and validation run in parallel.
+- Never create, stage, or commit transaction state beneath `.project`. Keep temporary manifests and messages outside the repository and place any optional serialization lock beneath the Git common directory.
 - Use Conventional Commit subjects and explanatory bodies.
 - Commit only changes whose intent, ownership, and suitability are understood.
 - Use the checkout's existing current-user `git config user.name` and `git config user.email` for every ordinary commit. Verify both before the first commit; never rewrite them to a bot, PR author, issue author, or other contributor, and stop rather than inventing a missing identity.
@@ -60,7 +62,7 @@ Reconnaissance lanes do not stage or mutate Git unless explicitly assigned commi
 
 Follow the active subagent context policy. Default to no inherited transcript and provide a self-contained brief with exact scope, evidence, paths, checks, output, and stop conditions. Do not let lanes create ad hoc review files or use path "custody" as a substitute for checking current bytes and actual hunk collisions.
 
-Read [campaign-throughput.md](references/campaign-throughput.md) before orchestrating a large or continuing campaign. It defines rolling waves, confidence lanes, packet queues, parallel topology, validation reuse, progress gates, compaction anchors, and valid stopping conditions. Read [grouping-and-messages.md](references/grouping-and-messages.md) for the classification rubric, artifact policy, commit sizing, and message standard.
+Read [campaign-throughput.md](references/campaign-throughput.md) before orchestrating a large or continuing campaign. It defines rolling waves, confidence lanes, packet queues, parallel topology, validation reuse, progress gates, compaction anchors, and valid stopping conditions. Read [grouping-and-messages.md](references/grouping-and-messages.md) for the classification rubric, artifact policy, commit sizing, and message standard. Read [massive-campaigns-and-delegation.md](references/massive-campaigns-and-delegation.md) when more than 1,000 paths exist, the user requests much larger commits, generated publishers overlap the campaign, branch handoff is requested, or another session will resume the work.
 
 ## 4. Operate a rolling commit campaign
 
@@ -87,6 +89,8 @@ Group by one reviewable intent, invariant, migration, or user outcome, not by ar
 - tracked generated output only when the repository contract requires it.
 
 Prefer useful batches, commonly 5-50 files and sometimes larger for uniform mechanical migrations, provider matrices, icon replacements, snapshots, or generated-contract updates. File count is a throughput heuristic, never permission to mix unrelated work. Avoid one-file commits when nearby changes complete the same idea, but keep a truly self-contained one-file correction separate.
+
+When more than 1,000 paths exist and no prior campaign-level sizing preference is recorded, ask once whether the user wants large coherent packets, including 100+ paths where one vertical, matrix, migration, or publication closure supports it. Continue safe read-only reconnaissance while waiting. A clear request for bigger commits persists through continuations and delegation; do not repeatedly reconfirm it. Even with that approval, split unrelated product outcomes and ask only when two materially different, defensible boundaries would change review or rollback semantics.
 
 Split a file by hunk when its changes serve different intents. Do not force an entire mixed file into the first convenient group.
 
@@ -116,6 +120,8 @@ GIT_INDEX_FILE="$idx" git diff --cached
 ```
 
 Run the narrowest deciding tests appropriate to each packet. Batch compatible package-wide typechecks, builds, and broader suites once per wave rather than repeating an identical expensive check after every commit. Record which packets a shared check covers and invalidate that evidence only when later bytes touch its deciding corridor. For pre-existing behavior changes, inspect whether tests and implementation agree rather than automatically changing whichever fails. Classify failures as a real defect, test drift, harness/environment failure, external-contract change, resource saturation, or unrelated concurrent failure.
+
+If the user explicitly requests a WIP commit-only campaign with no tests, builds, formatters, or generators, preserve that validation posture through continuations and delegation. Skip those commands, but still require exact manifest review, `git diff --cached --check`, blob equality, deletion and secret/size audits, hook/signing policy checks, author verification, CAS, and post-commit index/worktree reconciliation. Report the skipped checks plainly and never imply they passed.
 
 `git commit-tree` does not run ordinary `pre-commit`, `prepare-commit-msg`, `commit-msg`, or `post-commit` hooks. Before the campaign's first commit, inspect repository hook policy and run the required hook-equivalent checks explicitly for every applicable packet and message. Preserve required signing policy rather than silently creating unsigned commits.
 

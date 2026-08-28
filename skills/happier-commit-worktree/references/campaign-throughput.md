@@ -12,6 +12,7 @@
 8. Moving-worktree refresh
 9. Progress and liveness gates
 10. Compaction anchor and stopping rules
+11. Massive-campaign sizing and approval
 
 ## 1. Completion contract
 
@@ -139,6 +140,8 @@ Do not serialize checks that can safely run together, and do not repeat identica
 
 Validation batching never permits claiming an unrun check passed or hiding a packet-caused failure.
 
+When the user explicitly selects WIP commit-only mode, do not launch tests, builds, formatters, generators, or mutating aggregate checks. Keep the commit pipeline moving with the mandatory static transaction checks and preserve the waiver in the campaign anchor. A new session does not silently restore expensive validation or start a publisher merely because it would ordinarily be useful.
+
 ## 8. Moving-worktree refresh
 
 At a wave boundary:
@@ -196,3 +199,17 @@ Valid stopping conditions are limited to:
 - all remaining work is genuinely blocked and independent progress is exhausted.
 
 Do not stop because a wave finished, a lane returned, a domain was completed, context is nearing compaction, tests are saturated, or some uncertain paths exist alongside ready work.
+
+## 11. Massive-campaign sizing and approval
+
+Read [massive-campaigns-and-delegation.md](massive-campaigns-and-delegation.md) when the inventory exceeds 1,000 paths or the user requests much larger commits.
+
+- If no sizing preference is recorded, ask once before the first massive packet whether 100+ path coherent packets are desired. Continue read-only classification while waiting.
+- If the user already approved larger commits in this campaign or its durable handoff, continue under that approval without repeatedly asking.
+- Record the approval and validation posture in every compaction/delegation anchor.
+- Scale packet size through complete verticals, uniform migrations, provider/locale matrices, or one generated publication event—not arbitrary directory concatenation.
+- Ask again only for a materially different boundary or authority question, not for ordinary continuation.
+
+For thousands of paths, keep a domain-and-role coverage matrix in memory or an already-approved tracking surface. Prepare fewer, broader green packets when their semantic boundary is proven, while preserving smaller packets for independent fixes. Optimize for resolved paths and coherent rollback units rather than a target number of commits.
+
+Declare one serial commit authority and, where applicable, one exclusive generated-output publisher. Other lanes may perform read-only recon and independent non-publisher work. When either owner changes, update the durable anchor before mutation resumes.

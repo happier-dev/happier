@@ -1,4 +1,4 @@
 interface:
   display_name: "Happier Commit Worktree"
   short_description: "Safely commit a large moving worktree"
-  default_prompt: "Use $happier-commit-worktree to exhaustively analyze and commit this moving worktree in rolling parallel waves until every path is coherently committed or has an evidence-backed exclusion or blocker."
+  default_prompt: "Use $happier-commit-worktree to exhaustively and safely commit this moving worktree in coherent rolling waves, preserving filesystem bytes and inherited staging; when massive-packet authority is already granted, scale to much larger semantic packets until every path is committed or has an evidence-backed exclusion or blocker."

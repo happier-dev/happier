@@ -38,14 +38,19 @@ Then classify:
 
 ## 3. Index anomalies and locks
 
-An unexpected `.git/index.lock` means another process may be mutating the index. Inspect it and its owner:
+An unexpected index lock means another process may be mutating the index. Resolve its actual location and inspect its owner:
 
 ```bash
-ls -l .git/index.lock
-lsof .git/index.lock
+git_dir=$(git rev-parse --git-dir)
+git_common_dir=$(git rev-parse --git-common-dir)
+index_lock="$git_dir/index.lock"
+ls -l "$index_lock"
+lsof "$index_lock"
 ```
 
 Wait when a live owner exists. Remove a lock only after proving no process owns it and it is stale. A zero-byte file alone is not sufficient proof because a process may have just created it.
+
+Linked worktrees and projections may not use a literal `.git` directory. Use the resolved Git common directory for an optional campaign serialization lock, while the shared-index lock belongs to the resolved worktree Git directory. Never place or recover transaction locks beneath `.project`.
 
 If shared-index synchronization failed after HEAD advanced:
 
@@ -54,6 +59,10 @@ If shared-index synchronization failed after HEAD advanced:
 3. synchronize only those paths from the latest verified HEAD using the protocol;
 4. handle deletions with `git update-index --remove`;
 5. verify staged state is empty for those paths.
+
+Synchronization may have succeeded for only a prefix of a large packet before an index-lock collision. Treat that as a committed transaction with incomplete bookkeeping, not as a failed commit. Compare the packet manifest with the current shared staged paths, repair each exact selected entry from the latest verified HEAD, and use `git update-index --remove` for selected paths absent from that HEAD. Do not recreate the commit and do not clear unrelated inherited staging.
+
+If a staged deletion remains for a path that exists on disk, compare HEAD, index, and filesystem bytes before acting. The safe repair normally updates that selected index entry from verified HEAD while leaving the filesystem untouched; it never deletes the filesystem path to agree with the index.
 
 Never rebuild the entire shared index merely to repair a few known entries unless the user explicitly requested index reconstruction and all staged intent has been inventoried.
 
@@ -66,6 +75,7 @@ Never rebuild the entire shared index merely to repair a few known entries unles
 - excluded or later hunks appear in `git diff`;
 - the shared index does not conceal or duplicate those hunks;
 - deleted paths were intentional and are represented correctly;
+- no tracked or staged path beneath `.project` entered the transaction;
 - recent reflog entries explain every HEAD movement during the campaign.
 
 For a disputed path, compare:

@@ -33,6 +33,10 @@ git diff --cached --name-status
 
 If a selected path is already staged in the shared index, identify those staged bytes before proceeding. Do not overwrite another intent. Unrelated staged paths can remain, but the final audit must report them; a clean shared index is preferred because it makes synchronization failures visible.
 
+The filesystem is authoritative for preserving the user's current bytes. The shared index is separately owned staging state and may be stale, partial, or wrong. Never make the worktree match the index as a recovery shortcut. In particular, treat a staged deletion for a path that still exists on disk as an anomaly until its exact bytes and owner are understood.
+
+Do not create private indexes, locks, message files, patch files, manifests, or recovery state beneath `.project`. Before the first transaction, verify that forbidden local-state paths are neither tracked nor staged. Put temporary files outside the repository. If serialization beyond compare-and-swap is useful, place the lock beneath `git rev-parse --git-common-dir`; CAS remains mandatory.
+
 Expand candidate directories to an exact file list before staging. The synchronization loop operates on files, symlinks, gitlinks, and deletions; passing a directory tree entry to `update-index` is not equivalent to synchronizing its children. Check that the packet is non-empty and that every path belongs to the repository.
 
 Inspect `git config --get core.hooksPath` and relevant `.git/hooks` or repository hook wrappers before using `commit-tree`. It bypasses normal commit hooks. Run required staged-diff and commit-message checks explicitly, and use the repository's signing mechanism when signed commits are required.
@@ -63,7 +67,11 @@ GIT_INDEX_FILE="$idx" git diff --cached --name-status
 GIT_INDEX_FILE="$idx" git diff --cached
 ```
 
-Confirm the diff contains exactly the intended paths and bytes. Then create the commit without touching the worktree or shared index:
+Confirm the diff contains exactly the intended paths and bytes. Compare the private staged path list with the explicit packet manifest in a stable, NUL-safe form. For every whole-path addition or modification, verify the staged blob id equals `git hash-object -- <filesystem-path>` immediately before creating the tree. For a deletion, verify the path is absent on disk and the deletion was explicitly selected. For a partial-hunk path, compare the staged patch rather than requiring whole-file blob equality.
+
+If any selected filesystem path changes after verification, rebuild or re-verify that path. Never silently commit the older private-index bytes while claiming the current filesystem version was captured.
+
+Then create the commit without touching the worktree or shared index:
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
@@ -135,6 +143,7 @@ Private indexes isolate staging, not HEAD history. Use these rules:
 - A losing agent rebuilds from the new parent and current worktree; it never force-updates HEAD.
 - Do not create commits in separate checkouts and cherry-pick them blindly when the source checkout is moving. A cherry-pick replays a historical patch and cannot prove which current bytes should remain dirty.
 - A custom lock can reduce retries but does not replace CAS. A private index prepared before acquiring a lock can still have a stale parent.
+- Store an optional custom lock beneath the Git common directory, never in `.project` or another worktree path. Record enough ownership information to distinguish a live owner from a stale lock, and use bounded waits with periodic user-visible progress rather than an unbounded loop.
 - Prefer parallel reconnaissance, manifest preparation, and independent validation with one serial commit authority. Parallel writers are justified only for genuinely disjoint packets and must still tolerate CAS retries.
 
 ## 6. Post-commit verification
