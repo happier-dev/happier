@@ -35,7 +35,6 @@ import {
   AutomationRunResultV1Schema,
   isAutomationConversationResultDeliveryOwnedByCallerV1,
   MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES,
-  MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
   PluginEventAutomationHistoryGapResetActionInputV1Schema,
@@ -54,6 +53,9 @@ import * as AutomationResultDeliveryV1 from './automationResultDeliveryV1.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 
 const sourceSelectorId = '9d5af559-2c82-4c22-b6a0-ecabce38a631';
+const triggerId = 'trigger-1';
+const triggerRevision = 3;
+const immutableGenerationId = 'github-immutable-generation-a';
 const eventDeclarationRelease = {
   release: { pluginId: 'com.acme.github', version: '1.0.0' },
   archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
@@ -70,6 +72,15 @@ describe('Automation event V1 contracts', () => {
     expect(AutomationConversationAdmitResultV1Schema).toBe(
       AutomationResultDeliveryV1.AutomationConversationAdmitResultV1Schema,
     );
+    expect(AutomationConversationAdmitResultV1Schema.parse({
+      kind: 'blocked',
+      reason: 'resultDeliveryUnsupported',
+      checkpointSafe: false,
+    })).toEqual({
+      kind: 'blocked',
+      reason: 'resultDeliveryUnsupported',
+      checkpointSafe: false,
+    });
     expect(AutomationConversationResultDeliveryV1Schema).toBe(
       AutomationResultDeliveryV1.AutomationConversationResultDeliveryV1Schema,
     );
@@ -98,9 +109,6 @@ describe('Automation event V1 contracts', () => {
     expect(AutomationRunResultV1JsonSchema).toBe(
       AutomationResultDeliveryV1.AutomationRunResultV1JsonSchema,
     );
-    expect(MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES).toBe(
-      AutomationResultDeliveryV1.MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
-    );
     expect(MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES).toBe(
       AutomationResultDeliveryV1.MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
     );
@@ -117,7 +125,6 @@ describe('Automation event V1 contracts', () => {
       expect(AutomationIdV1Schema.safeParse(invalid).success, invalid).toBe(false);
       expect(AutomationConversationTargetVerifyInputV1Schema.safeParse({
         automationId: invalid,
-        expectedTemplateVersion: 1,
       }).success, invalid).toBe(false);
     }
   });
@@ -156,6 +163,10 @@ describe('Automation event V1 contracts', () => {
         sourceContractVersion: 1,
         supportedObservationTransports: ['checkpointedPull'],
         sourceConfigSchema: { type: 'object', additionalProperties: false },
+        setupActionRef: {
+          pluginId: 'com.acme.github',
+          localId: 'choose-repository',
+        },
         historyGapResetActionRef: {
           pluginId: 'com.acme.github',
           localId: 'baseline-history-gap',
@@ -192,6 +203,58 @@ describe('Automation event V1 contracts', () => {
     }).success).toBe(false);
   });
 
+  it('admits an optional closed renderer chain only as setup Action input presentation', () => {
+    const declaration = {
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['checkpointedPull'],
+        sourceConfigSchema: { type: 'object', additionalProperties: false },
+        setupActionRef: {
+          pluginId: 'com.acme.github',
+          localId: 'choose-repository',
+        },
+        setupSurface: {
+          renderer: 'repository-picker',
+          fallbackRenderers: ['repository-picker-hosted'],
+        },
+      },
+    } as const;
+
+    expect(PluginEventAutomationDeclarationV1Schema.parse(declaration).source.setupSurface)
+      .toEqual(declaration.source.setupSurface);
+    expect(PluginEventAutomationDeclarationV1Schema.safeParse({
+      ...declaration,
+      source: {
+        ...declaration.source,
+        setupSurface: {
+          ...declaration.source.setupSurface,
+          targetedContribution: { pointId: 'forged' },
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginEventAutomationDeclarationV1Schema.safeParse({
+      ...declaration,
+      source: {
+        ...declaration.source,
+        setupActionRef: undefined,
+      },
+    }).success).toBe(false);
+  });
+
+  it('requires every Automation-eligible Event to bind one setup Action', () => {
+    expect(PluginEventAutomationDeclarationV1Schema.safeParse({
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['checkpointedPull'],
+        sourceConfigSchema: { type: 'object', additionalProperties: false },
+      },
+    }).success).toBe(false);
+  });
+
   it('declares a history-gap recovery Account binding only through one exact source-config ref', () => {
     const qualifiedConnectedAccountRef = {
       type: 'object',
@@ -218,6 +281,10 @@ describe('Automation event V1 contracts', () => {
         additionalProperties: false,
         properties: { credentialRef: qualifiedConnectedAccountRef },
         required: ['credentialRef'],
+      },
+      setupActionRef: {
+        pluginId: 'com.acme.github',
+        localId: 'choose-repository',
       },
       historyGapResetActionRef: {
         pluginId: 'com.acme.github',
@@ -259,7 +326,8 @@ describe('Automation event V1 contracts', () => {
   it('keeps history-gap reset inputs and typed no-effect outcomes closed', () => {
     const input = {
       automationId: 'automation-1',
-      templateVersion: 3,
+      triggerId,
+      triggerRevision,
       sourceSelectorId,
     };
 
@@ -458,14 +526,15 @@ describe('Automation event V1 contracts', () => {
 
   it('bounds plugin admission input and keeps source-list cursors host-shaped', () => {
     expect(AutomationEventAdmitInputV1Schema.safeParse({
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       occurrenceId: 'event-1',
       occurredAt: 1,
       observationReceivedAt: 2,
       payload: 'x'.repeat(MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES + 1),
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 0,
+        triggerId,
+        triggerRevision,
         sourceSelectorId,
       }],
     }).success).toBe(false);
@@ -508,7 +577,9 @@ describe('Automation event V1 contracts', () => {
   it('permits checkpoint retirement classification only as one bounded revision-confirming pull read', () => {
     const candidate = {
       automationId: 'automation-1',
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      triggerId,
+      triggerRevision,
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       sourceSelectorId,
       sourceContractVersion: 1,
     } as const;
@@ -555,8 +626,9 @@ describe('Automation event V1 contracts', () => {
   it('keeps the exact-machine stored-definition hop strict and envelope-only', () => {
     const storedDefinition = {
       automationId: 'automation-1',
-      templateVersion: 3,
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      triggerId,
+      triggerRevision,
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       sourceSelectorId,
       sourceContractVersion: 1,
       observationTransport: {
@@ -578,7 +650,6 @@ describe('Automation event V1 contracts', () => {
           maximumObservationAgeMs: null,
         },
       },
-      executionRecipe: '{"v":1}',
       payloadSchema: { type: 'object', additionalProperties: false },
     } as const;
 
@@ -621,13 +692,14 @@ describe('Automation event V1 contracts', () => {
       ...page,
       definitions: [{
         ...storedDefinition,
-        eventRef: { pluginId: 'com.acme.other', localId: 'repository-event' },
+        eventRef: { pluginId: 'com.acme.other', localId: 'pull-request-opened' },
       }],
     }).success).toBe(false);
     expect(AutomationEventStoredDefinitionsReadResultV1Schema.safeParse({
       ...page,
       caller: {
         pluginId: 'com.acme.github',
+        immutableGenerationId,
         materialization: storedDefinition.observationTransport.watcherMaterializationRef,
       },
     }).success).toBe(false);
@@ -665,6 +737,11 @@ describe('Automation event V1 contracts', () => {
       ...request,
       caller: { ...request.caller, accountId: 'caller-controlled-account' },
     }).success).toBe(false);
+    const { immutableGenerationId: _generation, ...unstampedCaller } = request.caller;
+    expect(AutomationEventActionHttpRequestSchemasV1['automation.event.sources.list'].safeParse({
+      ...request,
+      caller: unstampedCaller,
+    }).success).toBe(false);
     expect(AutomationEventActionHttpRequestSchemasV1['automation.event.sources.list'].safeParse({
       ...request,
       caller: {
@@ -679,12 +756,12 @@ describe('Automation event V1 contracts', () => {
       v: 1,
       caller: request.caller,
       input: {
-        eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+        eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
         occurrenceId: 'delivery-1',
         occurredAt: 1,
         observationReceivedAt: 2,
         payload: { action: 'opened' },
-        definitions: [{ automationId: 'automation-1', templateVersion: 3, sourceSelectorId }],
+        definitions: [{ automationId: 'automation-1', triggerId, triggerRevision, sourceSelectorId }],
         webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
       },
     }).success).toBe(false);
@@ -715,6 +792,7 @@ describe('Automation event V1 contracts', () => {
       v: 1,
       caller: {
         pluginId: 'com.acme.github',
+        immutableGenerationId,
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -758,15 +836,16 @@ describe('Automation event V1 contracts', () => {
 
   it('uses a stripped strict E2EE Event-admission body while retaining the semantic plain body', () => {
     const input = {
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       occurrenceId: 'delivery-1',
       occurredAt: 1,
       observationReceivedAt: 2,
       payload: { action: 'opened' },
-      definitions: [{ automationId: 'automation-1', templateVersion: 3, sourceSelectorId }],
+      definitions: [{ automationId: 'automation-1', triggerId, triggerRevision, sourceSelectorId }],
     } as const;
     const caller = {
       pluginId: 'com.acme.github',
+      immutableGenerationId,
       materialization: {
         machineId: 'machine-1',
         materializationId: 'materialization-1',
@@ -801,23 +880,25 @@ describe('Automation event V1 contracts', () => {
       eventDeclarationRelease,
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         sourceSelectorId,
         sourceContractVersion: 1,
         observationTransport: 'checkpointedPull',
-        occurrenceKey: deriveAutomationOccurrenceKeyV1(
-          buildAutomationPluginEventOccurrenceEvidenceV1({
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+          triggerId,
+          evidence: buildAutomationPluginEventOccurrenceEvidenceV1({
             eventRef: input.eventRef,
             sourceSelectorId,
             occurrenceId: input.occurrenceId,
             occurredAt: input.occurredAt,
             payload: input.payload,
           }),
-        ),
+        }),
         occurredAt: input.occurredAt,
         triggerEvidenceEnvelope: { t: 'encrypted', c: encryptedTriggerEvidenceCiphertext },
         occurrenceEvidenceEqualityTag: 'A'.repeat(43),
-        outcome: { kind: 'matched', executionRecipe: '{"v":1}' },
+        outcome: { kind: 'matched' },
       }],
     } as const;
 
@@ -907,7 +988,7 @@ describe('Automation event V1 contracts', () => {
       randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
     });
     expect(readAccountScopedCiphertextKindByte(ciphertext)).toBe(19);
-    const eventRef = { pluginId: 'com.acme.github', localId: 'repository-event' } as const;
+    const eventRef = { pluginId: 'com.acme.github', localId: 'pull-request-opened' } as const;
     const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({
       eventRef,
       sourceSelectorId,
@@ -928,11 +1009,12 @@ describe('Automation event V1 contracts', () => {
       eventDeclarationRelease,
       definitions: [{
         automationId: 'automation-1',
-        templateVersion: 3,
+        triggerId,
+        triggerRevision,
         sourceSelectorId,
         sourceContractVersion: 1,
         observationTransport: 'checkpointedPull',
-        occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }),
         occurredAt: 1,
         triggerEvidenceEnvelope: { t: 'encrypted', c: ciphertext },
         occurrenceEvidenceEqualityTag: 'A'.repeat(43),
@@ -986,6 +1068,7 @@ describe('Automation event V1 contracts', () => {
     const caller = {
       pluginId: 'com.acme.github',
       contributionLocalId: 'repository-events',
+      immutableGenerationId,
       materialization: {
         machineId: 'machine-1',
         materializationId: 'materialization-1',
@@ -1019,12 +1102,12 @@ describe('Automation event V1 contracts', () => {
       v: 1,
       caller,
       input: {
-        eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+        eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
         occurrenceId: 'delivery-1',
         occurredAt: 1,
         observationReceivedAt: 2,
         payload: { action: 'opened' },
-        definitions: [{ automationId: 'automation-1', templateVersion: 3, sourceSelectorId }],
+        definitions: [{ automationId: 'automation-1', triggerId, triggerRevision, sourceSelectorId }],
       },
       hostEvidence: {
         v: 1,
@@ -1042,8 +1125,9 @@ describe('Automation event V1 contracts', () => {
     const source = {
       kind: 'source',
       automationId: 'automation-1',
-      templateVersion: 3,
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      triggerId,
+      triggerRevision,
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       sourceSelectorId,
       state: 'observing',
       code: 'none',
@@ -1108,8 +1192,9 @@ describe('Automation event V1 contracts', () => {
     const sourceReport = {
       kind: 'source',
       automationId: 'automation-1',
-      templateVersion: 3,
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      triggerId,
+      triggerRevision,
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       sourceSelectorId,
       state: 'attention',
       code: 'historyGap',
@@ -1122,9 +1207,10 @@ describe('Automation event V1 contracts', () => {
     } as const;
     const projectedStatus = {
       automationId: sourceReport.automationId,
+      triggerId: sourceReport.triggerId,
+      triggerRevision: sourceReport.triggerRevision,
       eventRef: sourceReport.eventRef,
       sourceSelectorId,
-      templateVersion: sourceReport.templateVersion,
       reporterMaterializationRef: {
         machineId: 'machine-1',
         materializationId: 'materialization-1',
@@ -1158,6 +1244,7 @@ describe('Automation event V1 contracts', () => {
         materializationId: 'materialization-1',
         pluginId: 'com.acme.github',
       },
+      reporterImmutableGenerationId: 'github-immutable-generation-a',
       scopeKey: 'durablePush:wh_ep_AAAAAAAAAAAAAAAAAAAAAB',
       observedRevision: '1',
       adoptedRevision: '1',

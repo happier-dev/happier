@@ -1,7 +1,7 @@
 /**
  * Every client- or plugin-supplied Automation integer persists as a 32-bit
- * signed column on all three supported datasources: `Automation.everyMs` and
- * `Automation.triggerSourceContractVersion` are declared `Int?` in
+ * signed column on all three supported datasources: `AutomationTrigger.everyMs`
+ * and `AutomationTrigger.sourceContractVersion` are declared `Int?` in
  * `apps/server/prisma/schema.prisma`, `prisma/mysql/schema.prisma` and
  * `prisma/sqlite/schema.prisma`. A wider value cannot be written on
  * Postgres/MySQL and cannot be read back on SQLite, so admission rejects it

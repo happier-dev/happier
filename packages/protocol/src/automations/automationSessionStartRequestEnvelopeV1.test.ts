@@ -24,7 +24,7 @@ const input = {
     kind: 'agent' as const,
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
   },
-  initialMessage: 'Start the Automation Session.',
+  initialInput: { text: 'Start the Automation Session.' },
 };
 
 const material = createAccountScopedCryptoMaterialSnapshotV1({

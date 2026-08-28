@@ -15,11 +15,12 @@ import {
   hasValidPluginConnectedAccountPurposeBindingsV2,
   PluginActionConnectedAccountPurposeBindingV2Schema,
 } from '../plugins/actions/v2.js';
+import { PluginUiRendererChainBindingV1Schema } from '../plugins/contributions/ui/rendererChainBinding.js';
 
 /**
  * Shared positive counter/version primitive for Automation Event contracts.
  * Its one current use, the Event source contract version, persists as the
- * 32-bit `Automation.triggerSourceContractVersion` column, so admission caps it
+ * 32-bit `AutomationTrigger.sourceContractVersion` column, so admission caps it
  * at that column's ceiling rather than at the JavaScript safe-integer range.
  */
 export const AutomationEventPositiveSafeIntegerV1Schema = z.number().int().positive()
@@ -71,7 +72,13 @@ export const PluginEventAutomationDeclarationV1Schema = z.object({
       }),
     webhookContributionRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema).optional(),
     sourceConfigSchema: PluginJsonSchemaV2Schema,
-    setupActionRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema).optional(),
+    setupActionRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
+    /**
+     * Optional same-plugin renderer chain for collecting strict setup Action
+     * input. The host still owns Action validation, invocation and setup-result
+     * handling; this is presentation only and never targeted membership.
+     */
+    setupSurface: PluginUiRendererChainBindingV1Schema.optional(),
     historyGapResetActionRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema).optional(),
     /**
      * A history-gap reset may bind the exact Account persisted in the current

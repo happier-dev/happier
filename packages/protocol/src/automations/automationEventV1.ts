@@ -4,6 +4,7 @@ import {
   AutomationReplyHandoffStateV1Schema,
   type AutomationReplyHandoffStateV1,
 } from './automationReplyHandoffStateV1.js';
+import { AutomationRunCauseSchema } from './automationRunCause.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import {
@@ -75,6 +76,10 @@ import {
   type AutomationOccurrenceEvidenceV1,
 } from './automationOccurrenceV1.js';
 import {
+  AutomationTriggerIdSchema,
+  AutomationTriggerRevisionSchema,
+} from './automationTriggerIdentity.js';
+import {
   AutomationHostIdentifierV1Schema as HostIdentifierV1Schema,
   AutomationIdV1Schema,
   type AutomationIdV1,
@@ -96,7 +101,7 @@ import {
   AutomationEventSourceDisplayLabelV1Schema,
   AutomationEventSourceInstanceIdV1Schema,
 } from './automationEventJsonBoundsV1.js';
-import { AutomationOriginOccurredAtV1Schema } from './automationOriginOccurredAtV1.js';
+import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import {
   addAutomationStoredEnvelopeUtf8LimitIssue,
   AutomationStoredContentEnvelopeV1Schema,
@@ -129,7 +134,6 @@ import {
   AutomationRunResultV1Schema,
   isAutomationConversationResultDeliveryOwnedByCallerV1,
   MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
-  MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
   type AutomationConversationAdmitInputV1,
@@ -281,7 +285,6 @@ export {
   AutomationRunResultV1Schema,
   isAutomationConversationResultDeliveryOwnedByCallerV1,
   MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES,
-  MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
 };
@@ -304,7 +307,7 @@ export const MAX_AUTOMATION_OBSERVATIONS_PER_POLL = 100;
  * aggregate before E2 signs and sends each complete private request.
  */
 export const MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES = 16 * 1024 * 1024;
-export const MAX_NON_TERMINAL_AUTOMATIC_RUNS_PER_ACCOUNT = 10_000;
+export const MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT = 10_000;
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -744,18 +747,6 @@ export type AutomationEventTriggerObservationTransportV1 = z.infer<
 
 
 /**
- * A bounded, canonical strict Run recipe serialized by the Protocol recipe
- * owner. The Event transport deliberately bounds only its opaque framing;
- * callers that consume it must use the recipe owner's parser rather than
- * introducing a second JSON reader here.
- */
-export const AutomationEventStoredExecutionRecipeV1Schema = z.string().min(1).superRefine((value, context) => {
-  if (UTF8_ENCODER.encode(value).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Event execution recipe exceeds its UTF-8 byte limit' });
-  }
-});
-
-/**
  * Existing immutable release evidence for the Event declaration from which E3
  * compiled its payload validator. This is an opaque release witness, never a
  * schema or semantic Event payload projection.
@@ -784,13 +775,13 @@ export function isSameAutomationEventDeclarationReleaseV1(
  */
 export const AutomationEventStoredDefinitionProjectionV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
   observationTransport: AutomationEventSourceObservationTransportV1Schema,
   storedDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
-  executionRecipe: AutomationEventStoredExecutionRecipeV1Schema,
   payloadSchema: PluginJsonSchemaV2Schema,
 }).strict();
 export type AutomationEventStoredDefinitionProjectionV1 = z.infer<
@@ -841,7 +832,7 @@ export type AutomationEventStoredDefinitionsReadResultV1 = z.infer<
 
 /**
  * The one admission-wire shape for an Account-sealed occurrence-evidence
- * envelope. Both origin arms — Event and Conversation — carry their opaque
+ * envelope. Both cause arms — Event and Conversation — carry their opaque
  * evidence through this schema so the ciphertext-blind server applies one
  * cipher-domain and framing rule.
  */
@@ -866,10 +857,7 @@ const AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema = ENCRYPTED_STORED
 );
 
 export const AutomationEventAdmitEncryptedDefinitionOutcomeV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('matched'),
-    executionRecipe: AutomationEventStoredExecutionRecipeV1Schema,
-  }).strict(),
+  z.object({ kind: z.literal('matched') }).strict(),
   z.object({
     kind: z.literal('skipped'),
     reason: z.enum([
@@ -884,12 +872,13 @@ export const AutomationEventAdmitEncryptedDefinitionOutcomeV1Schema = z.discrimi
 
 export const AutomationEventAdmitEncryptedDefinitionEvidenceV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
   observationTransport: AutomationObservationTransportKindV1Schema,
   occurrenceKey: AutomationOccurrenceKeyV1Schema,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   // The server can classify this fixed envelope kind but never opens the
   // Account-scoped contents.  It is common to both outcome arms so a replay
   // can rejoin before a later filter/currentness decision is considered.
@@ -1016,25 +1005,28 @@ export type AutomationRunResultStoredPayloadV1 = z.infer<
 export const AutomationConversationReplyContextStoredPayloadV1Schema = z.object({
   v: z.literal(1),
   correspondence: AutomationConversationReplyContextCorrespondenceV1Schema,
-  // The admitted template version is frozen before the Run exists. The
-  // receiving daemon adds the server-owned Run/handoff ids only after it has
-  // verified this occurrence correspondence against its claim.
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  // The receiving daemon adds the server-owned Run/handoff ids only after it
+  // has verified this occurrence correspondence against its claim.
   opaqueContext: asProtocolZod(AutomationEventReplyContextV1Schema),
 }).strict();
 export type AutomationConversationReplyContextStoredPayloadV1 = z.infer<
   typeof AutomationConversationReplyContextStoredPayloadV1Schema
 >;
 
-export const AutomationRunResultStoredV1Schema = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('legacySummaryCiphertext'), c: z.string() }).strict(),
-  z.object({ t: z.literal('plain'), v: AutomationRunResultStoredPayloadV1Schema }).strict(),
-  ENCRYPTED_STORED_CONTENT_SCHEMA,
-]).superRefine((value, context) => {
+const AutomationLegacyRunResultEnvelopeV1Schema = z.object({
+  t: z.literal('legacySummaryCiphertext'),
+  c: z.string(),
+}).strict().superRefine((value, context) => {
   if (UTF8_ENCODER.encode(createCanonicalJsonSigningInput(value)).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Stored Automation result exceeds its UTF-8 byte limit' });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Legacy Automation summary exceeds its UTF-8 byte limit' });
   }
 });
+
+export const AutomationRunResultStoredV1Schema = z.discriminatedUnion('t', [
+  AutomationLegacyRunResultEnvelopeV1Schema,
+  z.object({ t: z.literal('plain'), v: AutomationRunResultStoredPayloadV1Schema }).strict(),
+  ENCRYPTED_STORED_CONTENT_SCHEMA,
+]);
 export type AutomationRunResultStoredV1 = z.infer<typeof AutomationRunResultStoredV1Schema>;
 
 export const AutomationConversationReplyContextStoredV1Schema = z.discriminatedUnion('t', [
@@ -1184,25 +1176,12 @@ export type AutomationReplyHandoffTargetV1 = z.infer<
   typeof AutomationReplyHandoffTargetV1Schema
 >;
 
-const AutomationLegacyRunResultEnvelopeV1Schema = z.object({
-  t: z.literal('legacySummaryCiphertext'),
-  c: z.string(),
-}).strict();
-
 /**
- * A transport envelope intentionally admits only a bounded outer tagged shape.
- * It keeps the server from becoming a plaintext reader while letting the daemon
- * classify historical result content as terminally ineligible for reply
- * delivery.
+ * Reply dispatch carries the canonical stored result directly. The historical
+ * summary arm retains its released bound; current plain/E2EE result content
+ * does not acquire a second transport-specific ceiling.
  */
-export const AutomationReplyHandoffResultEnvelopeTransportV1Schema = z.union([
-  AutomationLegacyRunResultEnvelopeV1Schema,
-  AutomationStoredContentEnvelopeV1Schema,
-]).superRefine((value, context) => {
-  if (UTF8_ENCODER.encode(createCanonicalJsonSigningInput(value)).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Automation reply-handoff result envelope exceeds its UTF-8 byte limit' });
-  }
-});
+export const AutomationReplyHandoffResultEnvelopeTransportV1Schema = AutomationRunResultStoredV1Schema;
 export type AutomationReplyHandoffResultEnvelopeTransportV1 = z.infer<
   typeof AutomationReplyHandoffResultEnvelopeTransportV1Schema
 >;
@@ -1217,10 +1196,25 @@ export const AutomationReplyHandoffClaimV1Schema = z.object({
   runId: asProtocolZod(HostIdentifierV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   occurrenceKey: AutomationOccurrenceKeyV1Schema,
+  cause: AutomationRunCauseSchema,
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   resultEnvelope: AutomationReplyHandoffResultEnvelopeTransportV1Schema,
   replyContextEnvelope: AutomationStoredContentEnvelopeV1Schema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.cause.kind !== 'conversation') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cause', 'kind'],
+      message: 'Automation reply handoff requires a Conversation Run cause',
+    });
+  } else if (value.cause.occurrenceKey !== value.occurrenceKey) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cause', 'occurrenceKey'],
+      message: 'Automation reply handoff cause must match its Run occurrence',
+    });
+  }
+});
 export type AutomationReplyHandoffClaimV1 = z.infer<
   typeof AutomationReplyHandoffClaimV1Schema
 >;
@@ -1294,6 +1288,7 @@ export const AutomationReplyHandoffDispatchResultV1Schema = z.discriminatedUnion
       'targetMismatch',
       'targetUnavailable',
       'actionUnavailable',
+      'actionExecutionFailed',
       'cancelled',
       'contractInvalid',
     ]),
@@ -1321,13 +1316,12 @@ const AutomationEventSourceCatalogScopeKeyV1Schema = z.string().superRefine((val
 
 export const AutomationEventSourceStatusV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   reporterMaterializationRef: PluginMachineMaterializationRefV1Schema,
-  // The host stamps the exact admitted plugin generation. Legacy persisted
-  // rows omit it and therefore cannot prove recovery authority.
-  reporterImmutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema).optional(),
+  reporterImmutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema),
   state: AutomationEventSourceStatusStateV1Schema,
   code: AutomationEventSourceStatusCodeV1Schema.exclude(['none']).nullable(),
   lastObservedAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable(),
@@ -1344,6 +1338,7 @@ export const AutomationEventSourceCatalogStatusV1Schema = z.object({
   accountId: asProtocolZod(HostIdentifierV1Schema),
   eventPluginId: z.string().min(1).max(256),
   reporterMaterializationRef: PluginMachineMaterializationRefV1Schema,
+  reporterImmutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema),
   scopeKey: AutomationEventSourceCatalogScopeKeyV1Schema,
   observedRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA,
   adoptedRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA.nullable(),
@@ -1356,7 +1351,7 @@ export const AutomationEventSourceCatalogStatusV1Schema = z.object({
 export type AutomationEventSourceCatalogStatusV1 = z.infer<typeof AutomationEventSourceCatalogStatusV1Schema>;
 
 /**
- * Server-owned admission endpoint for a Conversation-origin Run. The signed
+ * Server-owned admission endpoint for a Conversation-cause Run. The signed
  * caller frame is separate from immutable Action input so a plugin
  * cannot select a machine or materialization through its payload.
  */
@@ -1370,6 +1365,7 @@ export const AutomationConversationActionHttpCallerV1Schema = z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   materialization: PluginMachineMaterializationRefV1Schema,
+  immutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema),
 }).strict().superRefine((caller, context) => {
   if (caller.pluginId !== caller.materialization.pluginId) {
     context.addIssue({
@@ -1399,11 +1395,10 @@ export const AutomationConversationAdmitEncryptedHostEvidenceV1Schema = z.object
   t: z.literal('encrypted'),
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   // Host-derived from the same occurrence evidence the envelopes seal. The
   // server retains and compares it but cannot derive or interpret it.
   occurrenceKey: AutomationOccurrenceKeyV1Schema,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   /** Sealed `AutomationConversationOccurrenceEvidenceV1` retained on the Run. */
   triggerEvidenceEnvelope: AutomationAdmitEncryptedTriggerEvidenceEnvelopeV1Schema,
   /** Sealed `AutomationRunConversationTriggerEvidenceV1` frozen into the recipe. */
@@ -1553,7 +1548,7 @@ export const AutomationEventActionHttpCallerV1Schema = z.object({
   materialization: PluginMachineMaterializationRefV1Schema,
   // The host derives this from the admitted immutable contribution generation;
   // plugin Action input never supplies caller provenance.
-  immutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema).optional(),
+  immutableGenerationId: asProtocolZod(PluginUiImmutableGenerationIdV1Schema),
 }).strict().superRefine((caller, context) => {
   if (caller.pluginId !== caller.materialization.pluginId) {
     context.addIssue({

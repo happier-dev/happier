@@ -20,9 +20,10 @@ const material: AccountScopedCryptoMaterial = {
 const binding = {
   v: 1,
   automationId: 'automation-trigger-definition-1',
-  templateVersion: 3,
+  triggerId: 'trigger-1',
+  triggerRevision: 3,
   triggerKind: 'pluginEvent',
-  eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+  eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
   sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
 } as const;
 
@@ -40,7 +41,8 @@ describe('Automation trigger-definition stored content', () => {
     const conversationBinding = {
       v: 1,
       automationId: 'automation-trigger-definition-2',
-      templateVersion: 1,
+      triggerId: 'trigger-2',
+      triggerRevision: 1,
       triggerKind: 'conversation',
       eventRef: null,
       sourceSelectorId: null,
@@ -70,7 +72,7 @@ describe('Automation trigger-definition stored content', () => {
     })).toEqual({ kind: 'available', definition });
 
     expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
-      binding: { ...binding, templateVersion: 4 },
+      binding: { ...binding, triggerRevision: 4 },
       envelope: encrypted,
       mode: 'e2ee',
       material,
@@ -88,7 +90,7 @@ describe('Automation trigger-definition stored content', () => {
       mode: 'plain',
     });
     expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
-      binding: { ...binding, templateVersion: 4 },
+      binding: { ...binding, triggerRevision: 4 },
       envelope: plain,
       mode: 'plain',
     })).toEqual({ kind: 'bindingMismatch' });

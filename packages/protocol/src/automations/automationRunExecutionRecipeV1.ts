@@ -34,6 +34,7 @@ import {
   type MentionRefV1,
 } from '../runtime/input/mentionRefV1.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
+import { PluginMachineMaterializationMachineIdV1Schema } from '../plugins/availability/materializationRefV1.js';
 // Imported from the draft owner rather than the session-start module: the
 // latter reaches Account-scoped crypto, which the browser-realm Action catalog
 // closure must not pull in through this recipe.
@@ -151,7 +152,7 @@ function renderPluginEventInput(
 ): string {
   return [
     '<automation_input v="1">',
-    'origin_kind="pluginEvent"',
+    'cause_kind="pluginEvent"',
     `event_plugin_id=${encodeAutomationInputData(JSON.stringify(evidence.eventRef.pluginId))}`,
     `event_local_id=${encodeAutomationInputData(JSON.stringify(evidence.eventRef.localId))}`,
     `source_selector_id=${encodeAutomationInputData(JSON.stringify(evidence.sourceSelectorId))}`,
@@ -172,7 +173,7 @@ function renderConversationInput(
 ): string {
   return [
     '<automation_input v="1">',
-    'origin_kind="conversation"',
+    'cause_kind="conversation"',
     `binding_id=${encodeAutomationInputData(JSON.stringify(evidence.bindingId))}`,
     `occurrence_id=${encodeAutomationInputData(JSON.stringify(evidence.occurrenceId))}`,
     `occurred_at=${evidence.occurredAt}`,
@@ -321,19 +322,53 @@ export function automationRunExecutionTargetDeliversComposerReferencesV1(
   return kind === 'existingSession';
 }
 
+export type AutomationRunTemplateTargetAdmissionV1Result =
+  | Readonly<{
+    kind: 'available';
+    template: AutomationRunTemplateV1;
+    target: AutomationRunExecutionTargetV1;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The one plaintext semantic admission for an Automation template/target pair.
+ * Identity-bearing references are useful only when the target has the
+ * canonical structured-input transport that can deliver them. Keeping this
+ * check beside the target and template schemas lets encrypted authoring call
+ * it before sealing, while materialization repeats it after opening private
+ * bytes. Ciphertext-blind persistence schemas cannot infer private content.
+ */
+export function validateAutomationRunTemplateForExecutionTargetV1(params: Readonly<{
+  template: unknown;
+  target: unknown;
+}>): AutomationRunTemplateTargetAdmissionV1Result {
+  const template = AutomationRunTemplateV1Schema.safeParse(params.template);
+  const target = AutomationRunExecutionTargetV1Schema.safeParse(params.target);
+  if (!template.success || !target.success) return { kind: 'contentInvalid' };
+  if (
+    (template.data.mentions?.length ?? 0) > 0
+    && !automationRunExecutionTargetDeliversComposerReferencesV1(target.data.kind)
+  ) {
+    return { kind: 'contentInvalid' };
+  }
+  return { kind: 'available', template: template.data, target: target.data };
+}
+
 /**
  * The sole current durable execution-input shape. Account currentness stays
  * beside this recipe because claim/start publication advances Account.seq;
  * the pair of private envelopes remains mode-checked against that witness at
  * every owner boundary.
  */
-export const AutomationRunExecutionRecipeV1Schema = z.object({
+const AutomationExecutionRecipeBaseShapeV1 = {
   v: z.literal(1),
   templateVersion: z.number().int().nonnegative().safe(),
   template: AutomationStoredContentEnvelopeV1Schema,
   triggerEvidence: AutomationStoredContentEnvelopeV1Schema.nullable(),
   target: AutomationRunExecutionTargetV1Schema,
-}).strict().superRefine((value, context) => {
+} as const;
+
+function addAutomationExecutionRecipeFramingIssueV1(value: unknown, context: z.RefinementCtx): void {
   addUtf8LimitIssue({
     value: createCanonicalJsonSigningInput(value),
     // The recipe retains independently bounded opaque envelopes. Its framing
@@ -343,6 +378,43 @@ export const AutomationRunExecutionRecipeV1Schema = z.object({
     context,
     message: 'Automation Run execution recipe exceeds its UTF-8 byte limit',
   });
+}
+
+function addAutomationExecutionRecipePlainTemplateTargetIssueV1(
+  value: Readonly<{
+    template: z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
+    target: AutomationRunExecutionTargetV1;
+  }>,
+  context: z.RefinementCtx,
+): void {
+  if (
+    value.template.t === 'plain'
+    && validateAutomationRunTemplateForExecutionTargetV1({
+      template: value.template.v,
+      target: value.target,
+    }).kind !== 'available'
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['template'],
+      message: 'Automation template is incompatible with its execution target',
+    });
+  }
+}
+
+export const AutomationRunExecutionRecipeV1Schema = z.object({
+  ...AutomationExecutionRecipeBaseShapeV1,
+  assignmentMachineIds: z.array(PluginMachineMaterializationMachineIdV1Schema),
+}).strict().superRefine((value, context) => {
+  addAutomationExecutionRecipeFramingIssueV1(value, context);
+  addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context);
+  if (new Set(value.assignmentMachineIds).size !== value.assignmentMachineIds.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['assignmentMachineIds'],
+      message: 'Automation Run assignment machine ids must be unique',
+    });
+  }
 });
 export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecutionRecipeV1Schema>;
 
@@ -352,8 +424,11 @@ export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecuti
  * definition authoring surface — the account-owner V3 route and the plugin
  * Conversation target Action — parses through this single owner.
  */
-export const AutomationStoredDefinitionExecutionRecipeV1Schema =
-  AutomationRunExecutionRecipeV1Schema.superRefine((value, context) => {
+export const AutomationStoredDefinitionExecutionRecipeV1Schema = z.object({
+  ...AutomationExecutionRecipeBaseShapeV1,
+}).strict().superRefine((value, context) => {
+    addAutomationExecutionRecipeFramingIssueV1(value, context);
+    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context);
     if (value.triggerEvidence !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -365,6 +440,44 @@ export const AutomationStoredDefinitionExecutionRecipeV1Schema =
 export type AutomationStoredDefinitionExecutionRecipeV1 = z.infer<
   typeof AutomationStoredDefinitionExecutionRecipeV1Schema
 >;
+
+export type AutomationStoredDefinitionExecutionRecipeSerializedV1Result =
+  | Readonly<{
+    kind: 'available';
+    recipe: AutomationStoredDefinitionExecutionRecipeV1;
+    serialized: string;
+  }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+export function parseAutomationStoredDefinitionExecutionRecipeV1(
+  serialized: unknown,
+): AutomationStoredDefinitionExecutionRecipeSerializedV1Result {
+  if (
+    typeof serialized !== 'string'
+    || UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+  ) return { kind: 'contentInvalid' };
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return { kind: 'contentInvalid' };
+  }
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(value);
+  return recipe.success
+    ? { kind: 'available', recipe: recipe.data, serialized }
+    : { kind: 'contentInvalid' };
+}
+
+export function serializeAutomationStoredDefinitionExecutionRecipeV1(
+  recipe: unknown,
+): AutomationStoredDefinitionExecutionRecipeSerializedV1Result {
+  const parsed = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(recipe);
+  if (!parsed.success) return { kind: 'contentInvalid' };
+  const serialized = createCanonicalJsonSigningInput(parsed.data);
+  return UTF8_ENCODER.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
+    ? { kind: 'contentInvalid' }
+    : { kind: 'available', recipe: parsed.data, serialized };
+}
 
 export type AutomationRunExecutionRecipeSerializedV1Result =
   | Readonly<{
@@ -429,8 +542,9 @@ export function freezeAutomationRunPluginEventExecutionRecipeV1(params: Readonly
   definitionRecipe: unknown;
   templateVersion: number;
   triggerEvidence: unknown;
+  assignmentMachineIds: readonly string[];
 }>): FreezeAutomationRunPluginEventExecutionRecipeV1Result {
-  const definition = parseAutomationRunExecutionRecipeV1(params.definitionRecipe);
+  const definition = parseAutomationStoredDefinitionExecutionRecipeV1(params.definitionRecipe);
   if (
     definition.kind !== 'available'
     || definition.recipe.triggerEvidence !== null
@@ -449,10 +563,49 @@ export function freezeAutomationRunPluginEventExecutionRecipeV1(params: Readonly
   const frozen = serializeAutomationRunExecutionRecipeV1({
     ...definition.recipe,
     triggerEvidence: triggerEvidence.data,
+    assignmentMachineIds: params.assignmentMachineIds,
   });
   return frozen.kind === 'available'
     ? frozen
     : { kind: 'contentInvalid' };
+}
+
+export type AutomationStoredDefinitionExecutionRecipeOuterInspectionResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationStoredDefinitionExecutionRecipeV1 }>
+  | Readonly<{ kind: 'modeMismatch' }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+export type AutomationStoredDefinitionExecutionRecipeOuterValidationResultV1 =
+  | Readonly<{ kind: 'available'; recipe: AutomationStoredDefinitionExecutionRecipeV1 }>
+  | Readonly<{ kind: 'contentInvalid' }>;
+
+/**
+ * The canonical ciphertext-blind Definition inspection. Definitions contain
+ * neither occurrence evidence nor an admitted assignment snapshot; this owner
+ * additionally proves the template envelope matches current Account custody.
+ */
+export function inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationStoredDefinitionExecutionRecipeOuterInspectionResultV1 {
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(params.recipe);
+  const accountCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(
+    params.accountCurrentness,
+  );
+  if (!recipe.success || !accountCurrentness.success) return { kind: 'contentInvalid' };
+  if (!envelopeMatchesCurrentness(recipe.data.template, accountCurrentness.data)) {
+    return { kind: 'modeMismatch' };
+  }
+  return { kind: 'available', recipe: recipe.data };
+}
+
+/** Definition writers fail closed for either invalid framing or wrong mode. */
+export function validateAutomationStoredDefinitionExecutionRecipeOuterV1(params: Readonly<{
+  recipe: unknown;
+  accountCurrentness: unknown;
+}>): AutomationStoredDefinitionExecutionRecipeOuterValidationResultV1 {
+  const inspected = inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params);
+  return inspected.kind === 'available' ? inspected : { kind: 'contentInvalid' };
 }
 
 export type AutomationRunExecutionRecipeOuterValidationResultV1 =
@@ -575,6 +728,8 @@ function matchesCauseEvidence(
     case 'trigger':
       if (cause.triggerKind !== 'pluginEvent') return triggerEvidence === null;
       return triggerEvidence?.kind === 'pluginEvent'
+        && triggerEvidence.eventRef.pluginId === cause.evidence.eventRef.pluginId
+        && triggerEvidence.eventRef.localId === cause.evidence.eventRef.localId
         && triggerEvidence.sourceSelectorId === cause.evidence.sourceSelectorId
         && triggerEvidence.occurredAt === cause.occurredAt
         && deriveAutomationOccurrenceKeyV1({
@@ -648,18 +803,21 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
     openedContent: params.openedContent,
   });
   if (content.kind !== 'available') return content;
-  const template = AutomationRunTemplateV1Schema.safeParse(content.content.template);
+  const admittedTemplate = validateAutomationRunTemplateForExecutionTargetV1({
+    template: content.content.template,
+    target: outer.recipe.target,
+  });
   const triggerEvidence = content.content.triggerEvidence === null
     ? null
     : AutomationRunTriggerEvidenceV1Schema.safeParse(content.content.triggerEvidence);
-  if (!template.success || (triggerEvidence !== null && !triggerEvidence.success)) {
+  if (admittedTemplate.kind !== 'available' || (triggerEvidence !== null && !triggerEvidence.success)) {
     return { kind: 'contentInvalid' };
   }
   const parsedEvidence = triggerEvidence?.data ?? null;
   if (!matchesCauseEvidence(cause.data, parsedEvidence)) return { kind: 'contentInvalid' };
 
   const prompt = materializeAutomationRunPromptV1({
-    template: template.data,
+    template: admittedTemplate.template,
     triggerEvidence: parsedEvidence,
   });
   if (prompt.kind !== 'available') return { kind: 'contentInvalid' };
@@ -679,7 +837,7 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
       const spawn = SessionSpawnNewInputV2Schema.safeParse({
         ...outer.recipe.target.spawn,
         creationKey: `automation-run:${runId.data}`,
-        initialMessage: prompt.prompt,
+        initialInput: { text: prompt.prompt },
       });
       return spawn.success
         ? { kind: 'available', target: { kind: 'newSession', spawn: spawn.data } }

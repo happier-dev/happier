@@ -7,32 +7,19 @@ import {
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { AutomationRunStateV3Schema } from './automationRunStateV3.js';
+import { AutomationIdV1Schema } from './automationIdV1.js';
 import {
   AutomationAccountCurrentnessWitnessV1Schema,
   AutomationEventPayloadV1Schema,
-  AutomationEventFilterV1Schema,
-  AutomationEventSourceConfigV1Schema,
-  AutomationEventSourceDisplayLabelV1Schema,
-  AutomationEventSourceInstanceIdV1Schema,
   AutomationEventSourceStatusV1Schema,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from './automationEventV1.js';
-import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
-import {
-  PluginWebhookEndpointIdV1Schema,
-  PluginWebhookEndpointSetupV1Schema,
-} from '../plugins/webhooks/endpointV1.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
-import {
-  AutomationOriginOccurredAtV1Schema,
-  AutomationPluginEventOccurrenceEvidenceV1Schema,
-} from './automationOccurrenceV1.js';
 import {
   AutomationEventSourceCatalogStatusStateV1Schema,
   UNSIGNED_DECIMAL_BIGINT_SCHEMA,
 } from './automationActionSpecsV1.js';
 import {
-  AutomationRunExecutionRecipeV1Schema,
   AutomationStoredDefinitionExecutionRecipeV1Schema,
 } from './automationRunExecutionRecipeV1.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/index.js';
@@ -41,7 +28,47 @@ import {
   AutomationTriggerIdSchema,
   AutomationTriggerRevisionSchema,
 } from './automationTriggerIdentity.js';
-import { AutomationRunCauseSchema } from './automationRunCause.js';
+import {
+  AutomationRunCauseSchema,
+  type AutomationRunCause,
+} from './automationRunCause.js';
+import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
+export { AutomationRunCauseSchema, type AutomationRunCause };
+import {
+  AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
+  AutomationScheduleTriggerSchema,
+  AutomationTriggerDefinitionSchema,
+  AutomationTriggerDefinitionInputSchema,
+} from './automationTriggerDefinition.js';
+
+export {
+  AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
+  AutomationPluginEventDefinitionTriggerInputSchema,
+  AutomationPluginEventEncryptedDefinitionTriggerSchema,
+  AutomationPluginEventDefinitionTriggerSchema,
+  AutomationPluginEventObservationTransportInputSchema,
+  AutomationScheduleTriggerInputSchema,
+  AutomationScheduleTriggerSchema,
+  AutomationSessionLifecycleRegistrationErrorCodeSchema,
+  AutomationSessionLifecycleTriggerInputSchema,
+  AutomationSessionLifecycleTriggerSchema,
+  AutomationTriggerDefinitionInputSchema,
+  AutomationTriggerDefinitionSchema,
+} from './automationTriggerDefinition.js';
+export type {
+  AutomationEncryptedTriggerDefinitionEnvelopeV1,
+  AutomationPluginEventDefinitionTrigger,
+  AutomationPluginEventDefinitionTriggerInput,
+  AutomationPluginEventEncryptedDefinitionTrigger,
+  AutomationPluginEventObservationTransportInput,
+  AutomationScheduleTrigger,
+  AutomationScheduleTriggerInput,
+  AutomationSessionLifecycleRegistrationErrorCode,
+  AutomationSessionLifecycleTrigger,
+  AutomationSessionLifecycleTriggerInput,
+  AutomationTriggerDefinition,
+  AutomationTriggerDefinitionInput,
+} from './automationTriggerDefinition.js';
 
 const PREDECESSOR_TIMESTAMP_SCHEMA = z.number().int();
 const TIMESTAMP_SCHEMA = z.number().int().nonnegative().safe();
@@ -128,7 +155,7 @@ export const AutomationApiV2Schema = z.object({
 }).strict();
 export type AutomationApiV2 = z.infer<typeof AutomationApiV2Schema>;
 
-/** Exact released V2 Run wire shape. Do not add origin or private-envelope fields. */
+/** Exact released V2 Run wire shape. Do not add cause or private-envelope fields. */
 export const AutomationRunApiV2Schema = z.object({
   id: z.string(),
   automationId: z.string(),
@@ -178,123 +205,48 @@ export const AutomationAssignmentInputSchema = z.object({
 export type AutomationAssignmentInput = z.infer<typeof AutomationAssignmentInputSchema>;
 
 export const AutomationAssignmentUpdateRequestSchema = z.object({
-  assignments: z.array(AutomationAssignmentInputSchema).max(50),
+  assignments: z.array(AutomationAssignmentInputSchema),
 }).strict();
 export type AutomationAssignmentUpdateRequest = z.infer<typeof AutomationAssignmentUpdateRequestSchema>;
 
-const AutomationScheduleSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('cron'),
-    scheduleExpr: z.string(),
-    everyMs: z.null(),
-    timezone: z.string().nullable(),
-  }).strict(),
-  z.object({
-    kind: z.literal('interval'),
-    scheduleExpr: z.null(),
-    everyMs: z.number().int(),
-    timezone: z.string().nullable(),
-  }).strict(),
-]);
-
-export const AutomationScheduleTriggerSchema = z.object({
-  kind: z.literal('schedule'),
-  schedule: AutomationScheduleSchema,
-}).strict();
-export type AutomationScheduleTrigger = z.infer<typeof AutomationScheduleTriggerSchema>;
-
-export const AutomationScheduleTriggerInputSchema = AutomationScheduleTriggerSchema.extend({
-  enabled: z.boolean(),
-}).strict();
-export type AutomationScheduleTriggerInput = z.infer<typeof AutomationScheduleTriggerInputSchema>;
-
-export const AutomationSessionLifecycleTriggerInputSchema = z.object({
-  kind: z.literal('sessionLifecycle'),
-  enabled: z.boolean(),
-  event: z.literal('parentTurnCompleted'),
-  scope: z.object({
-    kind: z.literal('exactTurn'),
-    sourceSessionId: IDENTIFIER_SCHEMA,
-    sourceTurnId: IDENTIFIER_SCHEMA,
-  }).strict(),
-  consumption: z.literal('once'),
-}).strict();
-export type AutomationSessionLifecycleTriggerInput = z.infer<
-  typeof AutomationSessionLifecycleTriggerInputSchema
->;
-
 /**
- * A schedule definition has no immutable occurrence evidence yet. The same
- * strict Run recipe becomes frozen on each scheduled/manual Run, while Event
- * admission later replaces this null arm with its one
- * authoritative occurrence-evidence envelope. The rule itself belongs to the
- * recipe owner so every definition-authoring surface shares it.
+ * A mutable definition has no immutable occurrence evidence. Canonical
+ * admission freezes the current recipe and enabled assignments onto each Run,
+ * adding kind-owned evidence only when the cause has private input. The rule
+ * belongs to the recipe owner so every authoring surface shares it.
  */
 const AutomationDefinitionExecutionRecipeSchema =
   AutomationStoredDefinitionExecutionRecipeV1Schema;
 
-/**
- * Exactly one selected observation transport per AUTO-19. The pull arm names
- * the watcher materialization; the push arm names the generic
- * `PluginWebhookEndpointIdV1` scalar returned by `WH-ENDPOINT` together with
- * the exact endpoint materialization, the endpoint-routing source instance,
- * and the setup identity the endpoint was ensured with. The declared webhook
- * contribution and the delivery-time observation boundary are server-owned and
- * are never accepted from an authoring client.
- */
-export const AutomationPluginEventObservationTransportInputSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('checkpointedPull'),
-    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
-  }).strict(),
-  z.object({
-    kind: z.literal('durablePush'),
-    webhookEndpointId: PluginWebhookEndpointIdV1Schema,
-    endpointMaterializationRef: PluginMachineMaterializationRefV1Schema,
-    webhookRoutingSourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
-    setup: PluginWebhookEndpointSetupV1Schema,
-  }).strict(),
-]);
-export type AutomationPluginEventObservationTransportInput = z.infer<
-  typeof AutomationPluginEventObservationTransportInputSchema
->;
-
-export const AutomationPluginEventDefinitionTriggerInputSchema = z.object({
-  kind: z.literal('pluginEvent'),
-  enabled: z.boolean(),
-  eventRef: z.object({
-    pluginId: IDENTIFIER_SCHEMA,
-    localId: IDENTIFIER_SCHEMA,
-  }).strict(),
-  sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
-  sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
-  sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),
-  displayLabel: AutomationEventSourceDisplayLabelV1Schema,
-  observationTransport: AutomationPluginEventObservationTransportInputSchema,
-  filter: AutomationEventFilterV1Schema.nullable(),
-  maximumObservationAgeMs: z.number().int().nonnegative().safe().nullable(),
+export const AutomationTriggerCreateRequestSchema = z.object({
+  triggerId: AutomationTriggerIdSchema,
+  trigger: AutomationTriggerDefinitionInputSchema,
 }).strict();
-export type AutomationPluginEventDefinitionTriggerInput = z.infer<
-  typeof AutomationPluginEventDefinitionTriggerInputSchema
->;
-
-export const AutomationTriggerDefinitionInputSchema = z.discriminatedUnion('kind', [
-  AutomationScheduleTriggerInputSchema,
-  AutomationPluginEventDefinitionTriggerInputSchema,
-  AutomationSessionLifecycleTriggerInputSchema,
-]);
-export type AutomationTriggerDefinitionInput = z.infer<
-  typeof AutomationTriggerDefinitionInputSchema
+export type AutomationTriggerCreateRequest = z.infer<
+  typeof AutomationTriggerCreateRequestSchema
 >;
 
 export const AutomationDefinitionCreateRequestSchema = z.object({
+  automationId: asProtocolZod(AutomationIdV1Schema),
   name: z.string().trim().min(1).max(128),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean(),
   executionRecipe: AutomationDefinitionExecutionRecipeSchema,
-  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
-  triggers: z.array(AutomationTriggerDefinitionInputSchema).max(50),
-}).strict();
+  assignments: z.array(AutomationAssignmentInputSchema).optional(),
+  triggers: z.array(AutomationTriggerCreateRequestSchema),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.triggers.forEach((item, index) => {
+    if (seen.has(item.triggerId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['triggers', index, 'triggerId'],
+        message: 'Automation trigger identities must be unique',
+      });
+    }
+    seen.add(item.triggerId);
+  });
+});
 export type AutomationDefinitionCreateRequest = z.infer<
   typeof AutomationDefinitionCreateRequestSchema
 >;
@@ -305,27 +257,114 @@ export const AutomationDefinitionPatchRequestSchema = z.object({
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean().optional(),
   executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),
-  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
+  assignments: z.array(AutomationAssignmentInputSchema).optional(),
 }).strict();
 export type AutomationDefinitionPatchRequest = z.infer<
   typeof AutomationDefinitionPatchRequestSchema
 >;
 
-export const AutomationTriggerCreateRequestSchema = z.object({
+/**
+ * One retained row in a full-editor save. Omitting both mutation fields keeps
+ * the row byte-for-byte unchanged while still supplying its exact CAS witness.
+ */
+export const AutomationTriggerReconcileExistingItemSchema = z.object({
+  kind: z.literal('existing'),
+  triggerId: AutomationTriggerIdSchema,
+  expectedRevision: AutomationTriggerRevisionSchema,
+  enabled: z.boolean().optional(),
+  trigger: AutomationTriggerDefinitionSchema.optional(),
+  triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.optional(),
+}).strict().superRefine((value, context) => {
+  if (
+    value.triggerDefinitionEnvelope !== undefined
+    && (value.enabled === undefined || value.trigger !== undefined)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['triggerDefinitionEnvelope'],
+      message: 'A resealed trigger definition accompanies only an enable-only patch',
+    });
+  }
+});
+export type AutomationTriggerReconcileExistingItem = z.infer<
+  typeof AutomationTriggerReconcileExistingItemSchema
+>;
+
+export const AutomationTriggerReconcileNewItemSchema = z.object({
+  kind: z.literal('new'),
+  triggerId: AutomationTriggerIdSchema,
   trigger: AutomationTriggerDefinitionInputSchema,
 }).strict();
-export type AutomationTriggerCreateRequest = z.infer<
-  typeof AutomationTriggerCreateRequestSchema
+export type AutomationTriggerReconcileNewItem = z.infer<
+  typeof AutomationTriggerReconcileNewItemSchema
+>;
+
+/**
+ * The one whole-editor mutation contract. The complete retained/new/removed
+ * trigger census lets the server reject stale membership and commit the
+ * definition, recipe, assignments, and trigger set in one transaction.
+ */
+export const AutomationDefinitionReconcileRequestSchema = z.object({
+  expectedTemplateVersion: z.number().int().nonnegative().safe(),
+  name: z.string().trim().min(1).max(128),
+  description: z.string().max(2_000).nullable(),
+  enabled: z.boolean(),
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),
+  assignments: z.array(AutomationAssignmentInputSchema),
+  triggers: z.array(z.union([
+    AutomationTriggerReconcileExistingItemSchema,
+    AutomationTriggerReconcileNewItemSchema,
+  ])),
+  removedTriggers: z.array(z.object({
+    triggerId: AutomationTriggerIdSchema,
+    expectedRevision: AutomationTriggerRevisionSchema,
+  }).strict()),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  const visit = (triggerId: string, path: ReadonlyArray<string | number>) => {
+    if (seen.has(triggerId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...path],
+        message: 'Automation trigger identities must be unique across the editor census',
+      });
+    }
+    seen.add(triggerId);
+  };
+  value.triggers.forEach((item, index) => visit(item.triggerId, ['triggers', index, 'triggerId']));
+  value.removedTriggers.forEach((item, index) => visit(
+    item.triggerId,
+    ['removedTriggers', index, 'triggerId'],
+  ));
+});
+export type AutomationDefinitionReconcileRequest = z.infer<
+  typeof AutomationDefinitionReconcileRequestSchema
 >;
 
 export const AutomationTriggerPatchRequestSchema = z.object({
   triggerId: AutomationTriggerIdSchema,
   expectedRevision: AutomationTriggerRevisionSchema,
   enabled: z.boolean().optional(),
-  trigger: AutomationTriggerDefinitionInputSchema.optional(),
+  trigger: AutomationTriggerDefinitionSchema.optional(),
+  /**
+   * Exact next-revision reseal for an enable-only encrypted Event patch. The
+   * server validates it against the unchanged public row binding and current
+   * Account mode; semantic edits carry their envelope in `trigger` instead.
+   */
+  triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.optional(),
 }).strict().superRefine((value, context) => {
   if (value.enabled === undefined && value.trigger === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'A trigger patch must change enablement or definition' });
+  }
+  if (
+    value.triggerDefinitionEnvelope !== undefined
+    && (value.enabled === undefined || value.trigger !== undefined)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['triggerDefinitionEnvelope'],
+      message: 'A resealed trigger definition accompanies only an enable-only patch',
+    });
   }
 });
 export type AutomationTriggerPatchRequest = z.infer<
@@ -362,6 +401,8 @@ export type AutomationCheckpointedPullObservation = z.infer<
 export const AutomationDurablePushObservationSchema = z.object({
   kind: z.literal('durablePush'),
   webhookEndpointId: IDENTIFIER_SCHEMA,
+  /** Safe current endpoint target; null when that exact endpoint is no longer available. */
+  endpointMaterializationRef: PluginMachineMaterializationRefV1Schema.nullable(),
   observationStartsAt: TIMESTAMP_SCHEMA,
 }).strict();
 export type AutomationDurablePushObservation = z.infer<
@@ -395,9 +436,27 @@ export const AutomationScheduleTriggerProjectionSchema = AutomationTriggerProjec
 
 export const AutomationPluginEventTriggerProjectionSchema = AutomationTriggerProjectionBaseSchema.extend({
   ...AutomationPluginEventTriggerSchema.shape,
-  sourceStatus: AutomationEventSourceStatusV1Schema.nullable().optional(),
-  sourceCatalogStatus: AutomationEventSourceCatalogStatusSchema.nullable().optional(),
+  sourceStatus: AutomationEventSourceStatusV1Schema.nullable(),
+  sourceCatalogStatus: AutomationEventSourceCatalogStatusSchema.nullable(),
 }).strict();
+
+export const AutomationSessionLifecycleTriggerStatusSchema = z.discriminatedUnion('state', [
+  z.object({
+    state: z.enum(['waiting', 'paused', 'sourceFailed', 'sourceCancelled', 'sourceUnavailable']),
+    runId: z.null(),
+  }).strict(),
+  z.object({
+    state: z.enum(['triggered', 'running']),
+    runId: IDENTIFIER_SCHEMA,
+  }).strict(),
+  z.object({
+    state: z.literal('finished'),
+    runId: IDENTIFIER_SCHEMA.nullable(),
+  }).strict(),
+]);
+export type AutomationSessionLifecycleTriggerStatus = z.infer<
+  typeof AutomationSessionLifecycleTriggerStatusSchema
+>;
 
 export const AutomationSessionLifecycleTriggerProjectionSchema = AutomationTriggerProjectionBaseSchema.extend({
   kind: z.literal('sessionLifecycle'),
@@ -408,6 +467,7 @@ export const AutomationSessionLifecycleTriggerProjectionSchema = AutomationTrigg
     sourceTurnId: IDENTIFIER_SCHEMA,
   }).strict(),
   consumption: z.literal('once'),
+  status: AutomationSessionLifecycleTriggerStatusSchema,
 }).strict();
 
 export const AutomationTriggerListItemSchema = z.discriminatedUnion('kind', [
@@ -428,6 +488,21 @@ export const AutomationTriggerDetailSchema = z.discriminatedUnion('kind', [
 ]);
 export type AutomationTriggerDetail = z.infer<typeof AutomationTriggerDetailSchema>;
 
+/**
+ * Read-only tombstone facts for an automatic trigger removed from the mutable
+ * definition. Retired rows never re-enter `triggers[]`; immutable Runs remain
+ * the owner of historical cause details.
+ */
+export const AutomationRetiredTriggerProjectionSchema = z.object({
+  id: AutomationTriggerIdSchema,
+  kind: z.enum(['schedule', 'pluginEvent', 'sessionLifecycle']),
+  revision: AutomationTriggerRevisionSchema,
+  retiredAt: TIMESTAMP_SCHEMA,
+}).strict();
+export type AutomationRetiredTriggerProjection = z.infer<
+  typeof AutomationRetiredTriggerProjectionSchema
+>;
+
 const AutomationDefinitionBaseSchema = z.object({
   id: IDENTIFIER_SCHEMA,
   name: z.string(),
@@ -446,6 +521,7 @@ const AutomationDefinitionBaseSchema = z.object({
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
   assignments: z.array(AutomationAssignmentSchema),
+  retiredTriggers: z.array(AutomationRetiredTriggerProjectionSchema),
 }).strict();
 
 function requireExactlyOneDefinitionContent(
@@ -464,12 +540,12 @@ const AutomationDefinitionDetailContentShape = {
   /** Direct-reader-only predecessor bytes. Current writers never send this field. */
   templateCiphertext: z.string().min(1).optional(),
   /** Direct-reader-only current recipe; definition lists never disclose it. */
-  executionRecipe: AutomationRunExecutionRecipeV1Schema.optional(),
+  executionRecipe: AutomationStoredDefinitionExecutionRecipeV1Schema.optional(),
 };
 
 /** Bounded definition list item; no private source/configuration envelope. */
 export const AutomationDefinitionListItemSchema = AutomationDefinitionBaseSchema.extend({
-  triggers: z.array(AutomationTriggerListItemSchema).max(50),
+  triggers: z.array(AutomationTriggerListItemSchema),
 }).strict();
 export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 
@@ -478,7 +554,7 @@ export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionLi
  * never returned from list/status/source projections.
  */
 export const AutomationDefinitionDetailSchema = AutomationDefinitionBaseSchema.extend({
-  triggers: z.array(AutomationTriggerDetailSchema).max(50),
+  triggers: z.array(AutomationTriggerDetailSchema),
   ...AutomationDefinitionDetailContentShape,
 }).strict().superRefine(requireExactlyOneDefinitionContent);
 export type AutomationDefinitionDetail = z.infer<typeof AutomationDefinitionDetailSchema>;
@@ -572,18 +648,30 @@ const AutomationRunExecutionInputEnvelopeSchema = z.string().min(1)
     }
   });
 
+/** Exact physical provenance shape retained only inside the released V2 frozen-input adapter. */
+const AutomationRunExecutionInputV1OriginSchema = z.union([
+  z.object({
+    kind: z.literal('scheduled'),
+    scheduledFor: TIMESTAMP_SCHEMA,
+  }).strict(),
+  z.object({
+    kind: z.literal('manual'),
+    invokedAt: TIMESTAMP_SCHEMA,
+  }).strict(),
+]);
+
 /**
- * Immutable execution recipe retained on a Run at admission time. Its nested
- * template envelope remains opaque to the server for encrypted Accounts;
- * target, template revision, and cause are frozen with those exact
- * bytes so later definition edits cannot alter the execution request.
+ * Physical frozen-input adapter for released V2 Definition bytes. Its
+ * predecessor `origin` field is deliberately isolated here and gains no
+ * current cause fields. Current Definitions, Runs, claims, and projections use
+ * the canonical stored/run recipe and AutomationRunCause models instead.
  */
 export const AutomationRunExecutionInputV1Schema = z.object({
   kind: z.literal('happier_automation_run_execution_input_v1'),
   targetType: AutomationTargetTypeV2Schema,
   templateVersion: z.number().int().nonnegative().safe(),
   templateCiphertext: z.string().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS),
-  cause: AutomationRunCauseSchema,
+  origin: AutomationRunExecutionInputV1OriginSchema,
 }).strict().superRefine((value, context) => {
   if (
     UTF8_ENCODER.encode(JSON.stringify(value)).byteLength
@@ -598,9 +686,24 @@ export const AutomationRunExecutionInputV1Schema = z.object({
 export type AutomationRunExecutionInputV1 = z.infer<typeof AutomationRunExecutionInputV1Schema>;
 
 /**
+ * The one current-cause to released-V2 frozen-input adapter. `null` means the
+ * Run cause cannot be represented on the released schedule/manual wire.
+ */
+export function toAutomationRunExecutionInputV1Origin(
+  cause: AutomationRunCause,
+): AutomationRunExecutionInputV1['origin'] | null {
+  if (cause.kind === 'manual') {
+    return { kind: 'manual', invokedAt: cause.invokedAt };
+  }
+  if (cause.kind === 'trigger' && cause.triggerKind === 'schedule') {
+    return { kind: 'scheduled', scheduledFor: cause.evidence.scheduledFor };
+  }
+  return null;
+}
+
+/**
  * Private worker-only correspondence for the one Conversation handoff that
- * awaits a final Session result. It is omitted for ordinary claims so a new
- * worker can continue to consume a released V3 server claim unchanged.
+ * awaits a final Session result. It is omitted for ordinary claims.
  */
 export const AutomationV3WorkerResultDeliverySchema = z.object({
   kind: z.literal('finalResult'),
@@ -611,6 +714,26 @@ export type AutomationV3WorkerResultDelivery = z.infer<
   typeof AutomationV3WorkerResultDeliverySchema
 >;
 
+function addRunTriggerCauseCorrespondenceIssue(
+  value: Readonly<{
+    triggerId: string | null;
+    triggerRetired: boolean;
+    cause: z.infer<typeof AutomationRunCauseSchema>;
+  }>,
+  context: z.RefinementCtx,
+): void {
+  const corresponds = value.cause.kind === 'trigger'
+    ? value.triggerId === value.cause.triggerId
+    : value.triggerId === null && value.triggerRetired === false;
+  if (!corresponds) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['triggerId'],
+      message: 'Run trigger relation must correspond to its immutable cause',
+    });
+  }
+}
+
 /** Private worker payload; public Run reads remain bounded separately. */
 export const AutomationV3WorkerClaimedRunSchema = z.object({
   id: IDENTIFIER_SCHEMA,
@@ -620,11 +743,12 @@ export const AutomationV3WorkerClaimedRunSchema = z.object({
   // closed rather than consulting the mutable Automation definition.
   executionInputEnvelope: AutomationRunExecutionInputEnvelopeSchema.nullable(),
   triggerId: AutomationTriggerIdSchema.nullable(),
+  triggerRetired: z.boolean(),
   /** Immutable Run-owned cause consumed by the strict recipe materializer. */
   cause: AutomationRunCauseSchema,
-  /** Omitted for ordinary claims and released V3 predecessor servers. */
+  /** Omitted for ordinary claims. */
   resultDelivery: AutomationV3WorkerResultDeliverySchema.optional(),
-}).strict();
+}).strict().superRefine(addRunTriggerCauseCorrespondenceIssue);
 export type AutomationV3WorkerClaimedRun = z.infer<typeof AutomationV3WorkerClaimedRunSchema>;
 
 export const AutomationV3WorkerClaimedAutomationSchema = z.object({
@@ -742,10 +866,13 @@ export type AutomationReplyHandoffStateV3 = AutomationReplyHandoffStateV1;
  * error text, legacy summaries, request/result envelopes, reply context, and
  * receipt bytes.
  */
-export const AutomationV3RunListItemSchema = z.object({
+const AutomationV3RunListItemShape = {
   id: IDENTIFIER_SCHEMA,
   automationId: IDENTIFIER_SCHEMA,
+  /** Exact persisted Run revision used by user-authorized lifecycle mutations. */
+  revision: z.number().int().nonnegative().safe(),
   triggerId: AutomationTriggerIdSchema.nullable(),
+  triggerRetired: z.boolean(),
   state: AutomationRunStateV3Schema,
   cause: AutomationRunCauseSchema,
   dueAt: TIMESTAMP_SCHEMA,
@@ -762,11 +889,12 @@ export const AutomationV3RunListItemSchema = z.object({
   replyHandoffState: AutomationReplyHandoffStateV3Schema,
   replyHandoffAttempt: z.number().int().nonnegative().safe(),
   replyHandoffDueAt: TIMESTAMP_SCHEMA.nullable(),
-  /** Server time at which readable Run content was physically compacted. */
-  contentRemovedAt: TIMESTAMP_SCHEMA.nullable(),
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
-}).strict();
+} as const;
+export const AutomationV3RunListItemSchema = z.object(AutomationV3RunListItemShape)
+  .strict()
+  .superRefine(addRunTriggerCauseCorrespondenceIssue);
 export type AutomationV3RunListItem = z.infer<typeof AutomationV3RunListItemSchema>;
 
 /** S: returned atomically with a successful start and required for settlement. */
@@ -811,7 +939,8 @@ export const AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS = 100;
  * private failure-detail envelopes. Opaque reply routing/receipt content
  * remains Channels-owned.
  */
-export const AutomationV3RunDetailSchema = AutomationV3RunListItemSchema.extend({
+export const AutomationV3RunDetailSchema = z.object({
+  ...AutomationV3RunListItemShape,
   triggerEvidenceEnvelope: z.string().min(1).nullable(),
   executionInputEnvelope: z.string().min(1).nullable(),
   resultEnvelope: z.string().min(1).nullable(),
@@ -829,6 +958,7 @@ export const AutomationV3RunDetailSchema = AutomationV3RunListItemSchema.extend(
   /** Exact private Run failure detail; never emitted by list or mutation projections. */
   errorDetailEnvelope: z.string().min(1).max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES).nullable().optional(),
 }).strict().superRefine((value, context) => {
+  addRunTriggerCauseCorrespondenceIssue(value, context);
   if (value.resultEnvelope !== null && value.legacySummaryCiphertext !== null) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -839,8 +969,11 @@ export const AutomationV3RunDetailSchema = AutomationV3RunListItemSchema.extend(
 });
 export type AutomationV3RunDetail = z.infer<typeof AutomationV3RunDetailSchema>;
 
+/** Canonical public Run-list/API page bound. */
+export const AUTOMATION_V3_RUN_LIST_MAX_ITEMS = 100;
+
 export const AutomationV3RunListResponseSchema = z.object({
-  runs: z.array(AutomationV3RunListItemSchema),
+  runs: z.array(AutomationV3RunListItemSchema).max(AUTOMATION_V3_RUN_LIST_MAX_ITEMS),
   nextCursor: z.string().nullable(),
 }).strict();
 export type AutomationV3RunListResponse = z.infer<typeof AutomationV3RunListResponseSchema>;

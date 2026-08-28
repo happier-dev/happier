@@ -15,7 +15,7 @@ import {
   AutomationEventSourceOrOccurrenceIdV1Schema,
   boundedAutomationEventJsonValueV1,
 } from './automationEventJsonBoundsV1.js';
-import { AutomationOriginOccurredAtV1Schema } from './automationOriginOccurredAtV1.js';
+import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export { AutomationIdV1Schema };
@@ -34,7 +34,6 @@ export const MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES = 2 * 1024;
  */
 export const MAX_AUTOMATION_CONVERSATION_ADMIT_TEXT_UTF8_BYTES = 64 * 1024;
 export const MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS = 86_400_000;
-export const MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES = 256 * 1024;
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -44,11 +43,7 @@ export const AutomationNonnegativeSafeIntegerV1Schema = z.number().int().nonnega
 export const AutomationRunResultV1Schema = z.object({
   v: z.literal(1),
   kind: z.literal('text'),
-  text: z.string().superRefine((value, context) => {
-    if (UTF8_ENCODER.encode(value).byteLength > MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Result text exceeds its UTF-8 byte limit' });
-    }
-  }),
+  text: z.string(),
 }).strict();
 export type AutomationRunResultV1 = z.infer<typeof AutomationRunResultV1Schema>;
 
@@ -62,7 +57,6 @@ export const AutomationResultDeliverySourceV1Schema = z.object({
   automationRunId: asProtocolZod(AutomationIdV1Schema),
   resultId: asProtocolZod(AutomationIdV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: AutomationNonnegativeSafeIntegerV1Schema,
   resultDelivery: z.literal('finalResult'),
 }).strict();
 export type AutomationResultDeliverySourceV1 = z.infer<typeof AutomationResultDeliverySourceV1Schema>;
@@ -118,9 +112,8 @@ export function isAutomationConversationResultDeliveryOwnedByCallerV1(params: Re
 export const AutomationConversationAdmitInputV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
   bindingId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: AutomationNonnegativeSafeIntegerV1Schema,
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   sender: asProtocolZod(boundedAutomationEventJsonValueV1(
     MAX_AUTOMATION_SOURCE_RESOLUTION_INPUT_UTF8_BYTES,
   )),
@@ -136,7 +129,16 @@ export type AutomationConversationAdmitInputV1 = z.infer<typeof AutomationConver
 export const AutomationConversationAdmitResultV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('admitted'), runId: asProtocolZod(AutomationIdV1Schema), checkpointSafe: z.literal(true) }).strict(),
   z.object({ kind: z.literal('rejoined'), runId: asProtocolZod(AutomationIdV1Schema), checkpointSafe: z.literal(true) }).strict(),
-  z.object({ kind: z.literal('blocked'), reason: z.enum(['capacity', 'temporarilyUnavailable', 'occurrenceConflict']), checkpointSafe: z.literal(false) }).strict(),
+  z.object({
+    kind: z.literal('blocked'),
+    reason: z.enum([
+      'capacity',
+      'temporarilyUnavailable',
+      'occurrenceConflict',
+      'resultDeliveryUnsupported',
+    ]),
+    checkpointSafe: z.literal(false),
+  }).strict(),
 ]);
 export type AutomationConversationAdmitResultV1 = z.infer<typeof AutomationConversationAdmitResultV1Schema>;
 
@@ -175,8 +177,7 @@ export const AutomationRunResultV1JsonSchema: PluginJsonSchemaV2 = {
   properties: {
     v: { type: 'integer', const: 1 },
     kind: { type: 'string', const: 'text' },
-    // The Zod contract also enforces the exact UTF-8 byte ceiling.
-    text: { type: 'string', maxLength: MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES },
+    text: { type: 'string' },
   },
   required: ['v', 'kind', 'text'],
 } satisfies PluginJsonSchemaV2;
@@ -189,7 +190,6 @@ export const AutomationResultDeliverySourceV1JsonSchema: PluginJsonSchemaV2 = {
     automationRunId: HOST_ID_JSON_SCHEMA,
     resultId: HOST_ID_JSON_SCHEMA,
     automationId: HOST_ID_JSON_SCHEMA,
-    templateVersion: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     resultDelivery: { type: 'string', const: 'finalResult' },
   },
   required: [
@@ -197,7 +197,6 @@ export const AutomationResultDeliverySourceV1JsonSchema: PluginJsonSchemaV2 = {
     'automationRunId',
     'resultId',
     'automationId',
-    'templateVersion',
     'resultDelivery',
   ],
 } satisfies PluginJsonSchemaV2;

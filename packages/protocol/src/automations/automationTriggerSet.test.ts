@@ -28,6 +28,7 @@ const executionRecipe = {
 describe('Automation trigger-set API', () => {
   it('creates one Automation with zero or multiple automatic triggers', () => {
     const base = {
+      automationId: 'automation-operations',
       name: 'Operations',
       enabled: true,
       executionRecipe,
@@ -39,16 +40,22 @@ describe('Automation trigger-set API', () => {
       ...base,
       triggers: [
         {
-          kind: 'schedule',
-          enabled: true,
-          schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null },
+          triggerId: 'trigger-schedule',
+          trigger: {
+            kind: 'schedule',
+            enabled: true,
+            schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null },
+          },
         },
         {
-          kind: 'sessionLifecycle',
-          enabled: true,
-          event: 'parentTurnCompleted',
-          scope: { kind: 'exactTurn', sourceSessionId: 'session-1', sourceTurnId: 'turn-1' },
-          consumption: 'once',
+          triggerId: 'trigger-session-lifecycle',
+          trigger: {
+            kind: 'sessionLifecycle',
+            enabled: true,
+            event: 'parentTurnCompleted',
+            scope: { kind: 'exactTurn', sourceSessionId: 'session-1', sourceTurnId: 'turn-1' },
+            consumption: 'once',
+          },
         },
       ],
     });
@@ -57,6 +64,7 @@ describe('Automation trigger-set API', () => {
 
   it('has no persisted manual trigger and patches triggers by stable identity and revision', () => {
     expect(AutomationTriggerCreateRequestSchema.safeParse({
+      triggerId: 'trigger-manual',
       trigger: { kind: 'manual', enabled: true },
     }).success).toBe(false);
 

@@ -11,7 +11,6 @@ import {
   AutomationConversationReplyContextStoredV1Schema,
   AutomationReplyHandoffReceiptPayloadV1Schema,
   AutomationReplyHandoffReceiptStoredV1Schema,
-  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
   AutomationRunResultStoredPayloadV1Schema,
   AutomationRunResultStoredV1Schema,
   validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
@@ -35,17 +34,14 @@ type AutomationReplyHandoffStoredContentOpenResultV1<TPayload> =
   | Readonly<{ kind: 'available'; payload: TPayload }>
   | AutomationReplyHandoffStoredContentOpenFailureV1;
 
-const utf8Encoder = new TextEncoder();
-
 /**
  * Parses the serialized Run result envelope from its persistence boundary.
- * The same bounded, strict outer envelope is then used by all consumers.
+ * The strict stored-result schema is then used by all consumers. Current
+ * result content has no synthetic transport ceiling; the legacy summary arm
+ * retains its historical bound in that schema.
  */
 export function parseAutomationRunResultStoredEnvelopeV1(serialized: unknown) {
-  if (
-    typeof serialized !== 'string'
-    || utf8Encoder.encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES
-  ) {
+  if (typeof serialized !== 'string') {
     return null;
   }
   try {
@@ -144,13 +140,11 @@ export function openAutomationRunResultStoredEnvelopeV1(params: Readonly<{
 
 export function sealAutomationConversationReplyContextStoredEnvelopeV1(params: Readonly<{
   correspondence: AutomationConversationReplyContextCorrespondenceV1;
-  templateVersion: number;
   opaqueContext: AutomationEventReplyContextV1;
 }> & AutomationReplyHandoffStoredEnvelopeSealModeV1) {
   const payload = AutomationConversationReplyContextStoredPayloadV1Schema.parse({
     v: 1,
     correspondence: params.correspondence,
-    templateVersion: params.templateVersion,
     opaqueContext: params.opaqueContext,
   });
   if (params.mode === 'plain') {
@@ -175,7 +169,6 @@ export function openAutomationConversationReplyContextStoredEnvelopeV1(params: R
   | Readonly<{
       kind: 'available';
       correspondence: AutomationConversationReplyContextCorrespondenceV1;
-      templateVersion: number;
       opaqueContext: AutomationEventReplyContextV1;
     }>
   | AutomationReplyHandoffStoredContentOpenFailureV1
@@ -189,7 +182,6 @@ export function openAutomationConversationReplyContextStoredEnvelopeV1(params: R
   return {
     kind: 'available',
     correspondence: opened.payload.correspondence,
-    templateVersion: opened.payload.templateVersion,
     opaqueContext: opened.payload.opaqueContext,
   };
 }

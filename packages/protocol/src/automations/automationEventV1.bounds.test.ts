@@ -37,7 +37,6 @@ import {
   MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES,
   MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE,
   MAX_AUTOMATION_REPLY_CONTEXT_UTF8_BYTES,
-  MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_CONFIG_UTF8_BYTES,
   MAX_AUTOMATION_SOURCE_DISPLAY_LABEL_CODE_POINTS,
   MAX_AUTOMATION_SOURCE_OR_OCCURRENCE_ID_UTF8_BYTES,
@@ -65,8 +64,9 @@ function jsonStringAtCanonicalByteLimit(
 function sourceDefinition(index: number) {
   return {
     automationId: `automation-${index}`,
-    templateVersion: 1,
-    eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+    triggerId: `trigger-${index}`,
+    triggerRevision: 1,
+    eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
     sourceInstanceId: `repository-${index}`,
     sourceSelectorId,
     sourceContractVersion: 1,
@@ -86,12 +86,17 @@ function sourceDefinition(index: number) {
 
 function admitInput(payload: unknown, occurrenceId = 'occurrence-1') {
   return {
-    eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+    eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
     occurrenceId,
     occurredAt: 1,
     observationReceivedAt: 2,
     payload,
-    definitions: [{ automationId: 'automation-1', templateVersion: 1, sourceSelectorId }],
+    definitions: [{
+      automationId: 'automation-1',
+      triggerId: 'trigger-1',
+      triggerRevision: 1,
+      sourceSelectorId,
+    }],
   };
 }
 
@@ -118,13 +123,13 @@ describe('Automation event V1 exact bounds', () => {
   });
 
   it('accepts the portable source-time maximum and rejects later Event and Conversation facts', () => {
-    const maxPortableOriginOccurredAt = 253_402_300_799_999;
+    const maxPortableOccurredAt = 253_402_300_799_999;
     const conversation = {
       automationId: 'automation-1',
       bindingId: 'binding-1',
       templateVersion: 1,
       occurrenceId: 'occurrence-1',
-      occurredAt: maxPortableOriginOccurredAt,
+      occurredAt: maxPortableOccurredAt,
       sender: {},
       text: '',
       resultDelivery: {
@@ -136,16 +141,16 @@ describe('Automation event V1 exact bounds', () => {
 
     expect(AutomationEventAdmitInputV1Schema.safeParse({
       ...admitInput({}),
-      occurredAt: maxPortableOriginOccurredAt,
+      occurredAt: maxPortableOccurredAt,
     }).success).toBe(true);
     expect(AutomationEventAdmitInputV1Schema.safeParse({
       ...admitInput({}),
-      occurredAt: maxPortableOriginOccurredAt + 1,
+      occurredAt: maxPortableOccurredAt + 1,
     }).success).toBe(false);
     expect(AutomationConversationAdmitInputV1Schema.safeParse(conversation).success).toBe(true);
     expect(AutomationConversationAdmitInputV1Schema.safeParse({
       ...conversation,
-      occurredAt: maxPortableOriginOccurredAt + 1,
+      occurredAt: maxPortableOccurredAt + 1,
     }).success).toBe(false);
   });
 
@@ -353,7 +358,12 @@ describe('Automation event V1 exact bounds', () => {
     // would reject a valid snapshot before that canonical partitioner runs.
     const definitionsBeyondFormerUnapprovedAggregateLimit = Array.from(
       { length: 10_001 },
-      (_, index) => ({ automationId: `automation-${index}`, templateVersion: 1, sourceSelectorId }),
+      (_, index) => ({
+        automationId: `automation-${index}`,
+        triggerId: `trigger-${index}`,
+        triggerRevision: 1,
+        sourceSelectorId,
+      }),
     );
     expect(AutomationEventAdmitInputV1Schema.safeParse({
       ...admitInput({}),
@@ -420,10 +430,13 @@ describe('Automation event V1 exact bounds', () => {
     }).success).toBe(false);
   }, 30_000);
 
-  it('accepts exact result/reply/stored-envelope/retry maxima and rejects max-plus-one', () => {
-    const resultTextAtMax = 'x'.repeat(MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES);
-    expect(AutomationRunResultV1Schema.safeParse({ v: 1, kind: 'text', text: resultTextAtMax }).success).toBe(true);
-    expect(AutomationRunResultV1Schema.safeParse({ v: 1, kind: 'text', text: `${resultTextAtMax}x` }).success).toBe(false);
+  it('does not invent a result-content ceiling while preserving real reply/legacy/retry bounds', () => {
+    const resultTextBeyondFormerCeiling = 'x'.repeat((512 * 1024) + 1);
+    expect(AutomationRunResultV1Schema.safeParse({
+      v: 1,
+      kind: 'text',
+      text: resultTextBeyondFormerCeiling,
+    }).success).toBe(true);
     expect(AutomationRunResultV1Schema.safeParse({
       v: 1,
       kind: 'sessionInputAccepted',
@@ -487,6 +500,19 @@ describe('Automation event V1 exact bounds', () => {
       t: 'legacySummaryCiphertext',
       c: `${legacyStoredAtMax}x`,
     }).success).toBe(false);
+    expect(AutomationRunResultStoredV1Schema.safeParse({
+      t: 'plain',
+      v: {
+        v: 1,
+        correspondence: {
+          accountId: 'account-1',
+          automationId: 'automation-1',
+          runId: 'run-1',
+          handoffId: 'handoff-1',
+        },
+        result: { v: 1, kind: 'text', text: resultTextBeyondFormerCeiling },
+      },
+    }).success).toBe(true);
 
     expect(AutomationResultDeliveryResultV1Schema.safeParse({
       kind: 'retry',
@@ -517,12 +543,15 @@ describe('Automation event V1 exact bounds', () => {
       automationRunId: 'run-1',
       resultId: 'handoff-1',
       automationId: 'automation-1',
-      templateVersion: 3,
       resultDelivery: 'finalResult',
     } as const;
 
     expect(AutomationResultDeliveryInputV1Schema.safeParse(delivery).success).toBe(false);
     expect(AutomationResultDeliveryInputV1Schema.safeParse({ ...delivery, source }).success).toBe(true);
+    expect(AutomationResultDeliveryInputV1Schema.safeParse({
+      ...delivery,
+      source: { ...source, templateVersion: 3 },
+    }).success).toBe(false);
     expect(AutomationResultDeliveryInputV1Schema.safeParse({
       ...delivery,
       source: { ...source, resultId: 'other-handoff', extra: true },
@@ -559,110 +588,11 @@ describe('Automation event V1 exact bounds', () => {
     }
   });
 
-    it('measures an encrypted Event admit body exactly at its canonical transport ceiling and one byte over', () => {
-    const eventRef = { pluginId: 'com.acme.github', localId: 'repository-event' } as const;
-    const caller = {
-      pluginId: eventRef.pluginId,
-      materialization: {
-        pluginId: eventRef.pluginId,
-        machineId: 'machine-1',
-        materializationId: 'materialization-1',
-      },
-    } as const;
-    const triggerEvidenceEnvelope = {
-      t: 'encrypted',
-      c: sealAccountScopedBlobCiphertext({
-        kind: 'automation_trigger_evidence',
-        material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
-        payload: { v: 1 },
-        randomBytes: (length) => new Uint8Array(length),
-      }),
-    } as const;
-    const occurrenceKey = deriveAutomationOccurrenceKeyV1(
-      buildAutomationPluginEventOccurrenceEvidenceV1({
-        eventRef,
-        sourceSelectorId,
-        occurrenceId: 'delivery-1',
-        occurredAt: 1,
-        payload: { action: 'opened' },
-      }),
-    );
-    const recipeAtLimit = 'x'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES);
-    const definition = (recipe: string) => ({
-      automationId: 'automation-1',
-      templateVersion: 1,
-      sourceSelectorId,
-      sourceContractVersion: 1,
-      observationTransport: 'checkpointedPull' as const,
-      occurrenceKey,
-      occurredAt: 1,
-      triggerEvidenceEnvelope,
-      occurrenceEvidenceEqualityTag: 'A'.repeat(43),
-      outcome: { kind: 'matched' as const, executionRecipe: recipe },
-    });
-    const request = (definitions: readonly ReturnType<typeof definition>[], adoptedRevision: string) => ({
-      v: 1 as const,
-      caller,
-      hostEvidence: {
-        v: 1 as const,
-        t: 'encrypted' as const,
-        accountCurrentness: {
-          mode: 'e2ee' as const,
-          version: 8,
-          contentKeyFingerprint: 'aemk1_content_key',
-        },
-        adoptedRevision,
-        eventRef,
-        eventDeclarationRelease: {
-          release: { pluginId: eventRef.pluginId, version: '1.0.0' },
-          archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
-        },
-        definitions,
-      },
-    });
-    const emptyRequest = request([], '9');
-    const oneDefinitionBytes = readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(request([definition(recipeAtLimit)], '9'))
-      - readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(emptyRequest);
-    const fullyFittingDefinitionCount = Math.floor(
-      (MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES
-        - readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(emptyRequest) + 1)
-      / (oneDefinitionBytes + 1),
-    );
-    expect(fullyFittingDefinitionCount).toBeGreaterThan(1);
-    const oversizeDefinitions = Array.from(
-      { length: fullyFittingDefinitionCount + 1 },
-      () => definition(recipeAtLimit),
-    );
-    let bytesToRemove = readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(request(oversizeDefinitions, '9'))
-      - MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES;
-    expect(bytesToRemove).toBeGreaterThan(0);
-    const atLimitDefinitions = oversizeDefinitions.map((candidate) => {
-      const availableReduction = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES - 1;
-      const reduction = Math.min(bytesToRemove, availableReduction);
-      bytesToRemove -= reduction;
-      return reduction === 0
-        ? candidate
-        : { ...candidate, outcome: { kind: 'matched' as const, executionRecipe: 'x'.repeat(recipeAtLimit.length - reduction) } };
-    });
-    expect(bytesToRemove).toBe(0);
-    const atLimit = request(atLimitDefinitions, '9');
-    const oneByteOver = request(atLimitDefinitions, '99');
-    expect(readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(atLimit))
-      .toBe(MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES);
-    expect(readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1(oneByteOver))
-      .toBe(MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES + 1);
-    expect(new TextEncoder().encode(JSON.stringify(atLimit)).byteLength)
-      .toBe(MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES);
-    expect(new TextEncoder().encode(JSON.stringify(oneByteOver)).byteLength)
-      .toBe(MAX_AUTOMATION_EVENT_ADMIT_HTTP_REQUEST_UTF8_BYTES + 1);
-    // This is a transport-size measurement only. E3 must partition the
-    // complete logical aggregate before the private E2 schema boundary.
-  }, 30_000);
-
   it('retains the approved 500-definition encrypted Event batch as a logical request when every definition is individually within its stored-content bound', () => {
-    const eventRef = { pluginId: 'com.acme.github', localId: 'repository-event' } as const;
+    const eventRef = { pluginId: 'com.acme.github', localId: 'pull-request-opened' } as const;
     const caller = {
       pluginId: eventRef.pluginId,
+      immutableGenerationId: 'generation-1',
       materialization: {
         pluginId: eventRef.pluginId,
         machineId: 'machine-1',
@@ -674,7 +604,7 @@ describe('Automation event V1 exact bounds', () => {
       c: sealAccountScopedBlobCiphertext({
         kind: 'automation_trigger_evidence',
         material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
-        payload: { v: 1 },
+        payload: { v: 1, padding: 'x'.repeat(34 * 1024) },
         randomBytes: (length) => new Uint8Array(length),
       }),
     } as const;
@@ -693,7 +623,6 @@ describe('Automation event V1 exact bounds', () => {
     // cardinality. One private admission call remains capped at 15
     // (MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL), while E3 may
     // partition a complete adopted Action snapshot without an aggregate cap.
-    const executionRecipe = 'x'.repeat(34 * 1024);
     const request = {
       v: 1 as const,
       caller,
@@ -713,7 +642,8 @@ describe('Automation event V1 exact bounds', () => {
         },
         definitions: Array.from({ length: MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE }, (_, index) => ({
           automationId: `automation-${index}`,
-          templateVersion: 1,
+          triggerId: `trigger-${index}`,
+          triggerRevision: 1,
           sourceSelectorId,
           sourceContractVersion: 1,
           observationTransport: 'checkpointedPull' as const,
@@ -721,7 +651,7 @@ describe('Automation event V1 exact bounds', () => {
           occurredAt: 1,
           triggerEvidenceEnvelope,
           occurrenceEvidenceEqualityTag: 'A'.repeat(43),
-          outcome: { kind: 'matched' as const, executionRecipe },
+          outcome: { kind: 'matched' as const },
         })),
       },
     };
@@ -748,12 +678,17 @@ describe('automation integer column bounds', () => {
   it('admits the Event source contract version through the one bounded owner', () => {
     const trigger = {
       kind: 'pluginEvent' as const,
-      eventRef: { pluginId: 'com.acme.event-writer', localId: 'repository-event' },
+      eventRef: { pluginId: 'com.acme.event-writer', localId: 'pull-request-opened' },
       sourceSelectorId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
       sourceContractVersion: AUTOMATION_INT_COLUMN_MAX + 1,
       observation: {
         kind: 'durablePush' as const,
         webhookEndpointId: 'endpoint-1',
+        endpointMaterializationRef: {
+          machineId: 'machine-1',
+          materializationId: 'materialization-1',
+          pluginId: 'com.acme.event-writer',
+        },
         observationStartsAt: 0,
       },
     };

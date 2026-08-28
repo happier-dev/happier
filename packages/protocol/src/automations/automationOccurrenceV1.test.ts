@@ -7,6 +7,7 @@ import {
 import { MAX_AUTOMATION_EVENT_PAYLOAD_UTF8_BYTES } from './automationEventJsonBoundsV1.js';
 import {
   AutomationOccurrenceEvidenceEqualityTagV1Schema,
+  AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
   AutomationManualIdempotencyKeyV1Schema,
   AutomationSourceSelectorIdV1JsonSchema,
   AutomationSourceSelectorIdV1Schema,
@@ -20,7 +21,7 @@ import {
 const eventOccurrence = {
   v: 1,
   kind: 'pluginEvent',
-  eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+  eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
   sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
   occurrenceId: 'github-event-42',
   occurredAt: 1_714_000_000_000,
@@ -49,6 +50,40 @@ describe('Automation occurrence V1', () => {
     const first = deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence });
     expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence })).toBe(first);
     expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-2', evidence })).not.toBe(first);
+  });
+
+  it('derives schedule replay and fan-out identity from trigger plus due instant', () => {
+    const evidence = { v: 1 as const, kind: 'schedule' as const, scheduledFor: 1_714_000_000_000 };
+    const first = deriveAutomationOccurrenceKeyV1({ triggerId: 'schedule-a', evidence });
+    expect(first).toHaveLength(43);
+    expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'schedule-a', evidence })).toBe(first);
+    expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'schedule-b', evidence })).not.toBe(first);
+    expect(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'schedule-a',
+      evidence: { ...evidence, scheduledFor: evidence.scheduledFor + 60_000 },
+    })).not.toBe(first);
+  });
+
+  it('derives exact-turn occurrence identity from the stable trigger and source turn', () => {
+    const evidence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse({
+      v: 1,
+      kind: 'sessionLifecycle',
+      event: 'parentTurnCompleted',
+      sourceSessionId: 'session-source-1',
+      sourceTurnId: 'turn-7',
+      occurredAt: 1_714_000_000_000,
+    });
+    const key = deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence });
+
+    expect(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: { ...evidence, occurredAt: evidence.occurredAt + 1 },
+    })).toBe(key);
+    expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-2', evidence })).not.toBe(key);
+    expect(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: { ...evidence, sourceTurnId: 'turn-8' },
+    })).not.toBe(key);
   });
   it('normalizes and bounds the shared manual idempotency contract by UTF-8 bytes', () => {
     expect(AutomationManualIdempotencyKeyV1Schema.parse('  ci-build-42  '))
@@ -105,9 +140,9 @@ describe('Automation occurrence V1', () => {
     expect(AutomationSourceSelectorIdV1Schema).toBe(DeclaredAutomationSourceSelectorIdV1Schema);
     expect(AutomationSourceSelectorIdV1JsonSchema)
       .toBe(DeclaredAutomationSourceSelectorIdV1JsonSchema);
-    expect(DeclaredAutomationSourceSelectorIdV1Schema.safeParse(
+    expect(DeclaredAutomationSourceSelectorIdV1Schema.parse(
       eventOccurrence.sourceSelectorId,
-    ).success).toBe(true);
+    )).toBe(eventOccurrence.sourceSelectorId);
   });
 
   it('builds the one canonical Plugin Event evidence shape from Event admission semantics', () => {
@@ -137,8 +172,13 @@ describe('Automation occurrence V1', () => {
     });
 
     expect(spaced.occurrenceId).toBe(' provider-occurrence-1 ');
-    expect(deriveAutomationOccurrenceKeyV1(spaced))
-      .not.toBe(deriveAutomationOccurrenceKeyV1(plain));
+    expect(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: spaced,
+    })).not.toBe(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: plain,
+    }));
   });
 
   it('uses one length-delimited, domain-separated occurrence identity while preserving payload equality evidence', () => {
@@ -147,27 +187,44 @@ describe('Automation occurrence V1', () => {
       payload: { issue: { number: 43 }, action: 'opened' },
     } as const;
 
-    expect(deriveAutomationOccurrenceKeyV1(eventOccurrence))
-      .toBe(deriveAutomationOccurrenceKeyV1(sameIdentityDifferentPayload));
+    expect(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: eventOccurrence,
+    })).toBe(deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: sameIdentityDifferentPayload,
+    }));
     expect(serializeAutomationOccurrenceEvidenceEqualityV1({
       accountId: 'account-1',
       automationId: 'automation-1',
-      occurrenceKey: deriveAutomationOccurrenceKeyV1(eventOccurrence),
+      triggerId: 'trigger-1',
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({
+        triggerId: 'trigger-1',
+        evidence: eventOccurrence,
+      }),
       evidence: eventOccurrence,
     })).not.toBe(serializeAutomationOccurrenceEvidenceEqualityV1({
       accountId: 'account-1',
       automationId: 'automation-1',
-      occurrenceKey: deriveAutomationOccurrenceKeyV1(sameIdentityDifferentPayload),
+      triggerId: 'trigger-1',
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({
+        triggerId: 'trigger-1',
+        evidence: sameIdentityDifferentPayload,
+      }),
       evidence: sameIdentityDifferentPayload,
     }));
   });
 
   it('binds E2EE equality tags to the Account, Automation, and exact occurrence key', () => {
-    const occurrenceKey = deriveAutomationOccurrenceKeyV1(eventOccurrence);
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: eventOccurrence,
+    });
     const tag = deriveAutomationOccurrenceEvidenceEqualityTagV1({
       purposeSeparatedAccountKey: new Uint8Array(32).fill(7),
       accountId: 'account-1',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       occurrenceKey,
       evidence: eventOccurrence,
     });
@@ -178,6 +235,7 @@ describe('Automation occurrence V1', () => {
       purposeSeparatedAccountKey: new Uint8Array(32).fill(7),
       accountId: 'account-2',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       occurrenceKey,
       evidence: eventOccurrence,
     }));
@@ -185,6 +243,7 @@ describe('Automation occurrence V1', () => {
       purposeSeparatedAccountKey: new Uint8Array(32).fill(7),
       accountId: 'account-1',
       automationId: 'automation-2',
+      triggerId: 'trigger-1',
       occurrenceKey,
       evidence: eventOccurrence,
     }));
@@ -192,13 +251,17 @@ describe('Automation occurrence V1', () => {
 
   it('refuses an equality proof whose supplied occurrence key does not belong to its immutable evidence', () => {
     const otherOccurrenceKey = deriveAutomationOccurrenceKeyV1({
-      ...eventOccurrence,
-      occurrenceId: 'github-event-43',
+      triggerId: 'trigger-1',
+      evidence: {
+        ...eventOccurrence,
+        occurrenceId: 'github-event-43',
+      },
     });
 
     expect(() => serializeAutomationOccurrenceEvidenceEqualityV1({
       accountId: 'account-1',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       occurrenceKey: otherOccurrenceKey,
       evidence: eventOccurrence,
     })).toThrow('occurrence key');
@@ -206,17 +269,22 @@ describe('Automation occurrence V1', () => {
       purposeSeparatedAccountKey: new Uint8Array(32).fill(7),
       accountId: 'account-1',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       occurrenceKey: otherOccurrenceKey,
       evidence: eventOccurrence,
     })).toThrow('occurrence key');
   });
 
   it('uses the canonical non-normalizing Automation identity in equality inputs', () => {
-    const occurrenceKey = deriveAutomationOccurrenceKeyV1(eventOccurrence);
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: eventOccurrence,
+    });
 
     expect(() => serializeAutomationOccurrenceEvidenceEqualityV1({
       accountId: 'account-1',
       automationId: ' automation-1 ',
+      triggerId: 'trigger-1',
       occurrenceKey,
       evidence: eventOccurrence,
     })).toThrow();
@@ -237,8 +305,8 @@ describe('Automation occurrence V1', () => {
 
   it('rejects noncanonical selectors and malformed E2EE equality tags', () => {
     expect(() => deriveAutomationOccurrenceKeyV1({
-      ...eventOccurrence,
-      sourceSelectorId: 'not-a-selector',
+      triggerId: 'trigger-1',
+      evidence: { ...eventOccurrence, sourceSelectorId: 'not-a-selector' },
     })).toThrow();
     expect(AutomationOccurrenceEvidenceEqualityTagV1Schema.safeParse('A'.repeat(42)).success)
       .toBe(false);

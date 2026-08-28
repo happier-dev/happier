@@ -3,14 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { deriveAutomationOccurrenceKeyV1 } from './automationOccurrenceV1.js';
 import {
   AutomationRunExecutionRecipeV1Schema,
+  AutomationStoredDefinitionExecutionRecipeV1Schema,
   AutomationRunTemplateV1Schema,
   automationRunExecutionTargetDeliversComposerReferencesV1,
+  validateAutomationRunTemplateForExecutionTargetV1,
   freezeAutomationRunPluginEventExecutionRecipeV1,
+  inspectAutomationStoredDefinitionExecutionRecipeOuterV1,
   materializeAutomationRunExecutionRecipeV1,
   materializeAutomationRunPromptV1,
   parseAutomationRunExecutionRecipeV1,
+  parseAutomationStoredDefinitionExecutionRecipeV1,
   serializeAutomationRunExecutionRecipeV1,
+  serializeAutomationStoredDefinitionExecutionRecipeV1,
   validateAutomationRunExecutionRecipeOuterV1,
+  validateAutomationStoredDefinitionExecutionRecipeOuterV1,
 } from './automationRunExecutionRecipeV1.js';
 
 const pluginEventEvidence = {
@@ -41,6 +47,8 @@ describe('materializeAutomationRunPromptV1', () => {
     if (materialized.kind !== 'available') return;
     expect(materialized.prompt).toContain('First <automation_input v="1">');
     expect(materialized.prompt).toContain('Second <automation_input v="1">');
+    expect(materialized.prompt).toContain('cause_kind="pluginEvent"');
+    expect(materialized.prompt).not.toContain('origin_kind=');
     expect(materialized.prompt.match(/payload_json=/g)).toHaveLength(2);
   });
 
@@ -98,6 +106,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
   const plainRecipe = {
     v: 1,
     templateVersion: 4,
+    assignmentMachineIds: [],
     template: {
       t: 'plain',
       v: { v: 1, prompt: 'Summarize this run.' },
@@ -143,13 +152,26 @@ describe('AutomationRunExecutionRecipeV1', () => {
   });
 
   it('freezes Event evidence only through the canonical strict definition recipe', () => {
-    const definition = serializeAutomationRunExecutionRecipeV1(plainRecipe);
+    const { assignmentMachineIds: _frozenAssignments, ...storedRecipe } = plainRecipe;
+    const definition = serializeAutomationStoredDefinitionExecutionRecipeV1(storedRecipe);
     if (definition.kind !== 'available') throw new Error('fixture recipe must serialize');
+
+    expect(AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(storedRecipe).success)
+      .toBe(true);
+    expect(AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(plainRecipe).success)
+      .toBe(false);
+    expect(AutomationRunExecutionRecipeV1Schema.safeParse(storedRecipe).success).toBe(false);
+    expect(parseAutomationStoredDefinitionExecutionRecipeV1(definition.serialized).kind)
+      .toBe('available');
+    expect(parseAutomationRunExecutionRecipeV1(definition.serialized)).toEqual({
+      kind: 'contentInvalid',
+    });
 
     expect(freezeAutomationRunPluginEventExecutionRecipeV1({
       definitionRecipe: definition.serialized,
       templateVersion: plainRecipe.templateVersion,
       triggerEvidence: { t: 'plain', v: { kind: 'pluginEvent' } },
+      assignmentMachineIds: ['machine-a'],
     }).kind).toBe('contentInvalid');
 
     const evidence = {
@@ -169,11 +191,45 @@ describe('AutomationRunExecutionRecipeV1', () => {
       definitionRecipe: definition.serialized,
       templateVersion: plainRecipe.templateVersion,
       triggerEvidence: { t: 'plain', v: evidence },
+      assignmentMachineIds: ['machine-a', 'machine-b'],
     });
     expect(frozen).toMatchObject({
       kind: 'available',
-      recipe: { triggerEvidence: { t: 'plain', v: evidence } },
+      recipe: {
+        triggerEvidence: { t: 'plain', v: evidence },
+        assignmentMachineIds: ['machine-a', 'machine-b'],
+      },
     });
+  });
+
+  it('inspects stored Definition mode without accepting Run-only frozen facts', () => {
+    const { assignmentMachineIds: _frozenAssignments, ...storedRecipe } = plainRecipe;
+    const canonicalStoredRecipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse(storedRecipe);
+    expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
+      recipe: storedRecipe,
+      accountCurrentness: plainCurrentness,
+    })).toEqual({ kind: 'available', recipe: canonicalStoredRecipe });
+    expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
+      recipe: storedRecipe,
+      accountCurrentness: {
+        mode: 'e2ee', version: 8, contentKeyFingerprint: 'content-key',
+      },
+    })).toEqual({ kind: 'modeMismatch' });
+    expect(validateAutomationStoredDefinitionExecutionRecipeOuterV1({
+      recipe: storedRecipe,
+      accountCurrentness: {
+        mode: 'e2ee', version: 8, contentKeyFingerprint: 'content-key',
+      },
+    })).toEqual({ kind: 'contentInvalid' });
+    for (const recipe of [
+      plainRecipe,
+      { ...storedRecipe, triggerEvidence: { t: 'plain', v: pluginEventEvidence } },
+    ]) {
+      expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
+        recipe,
+        accountCurrentness: plainCurrentness,
+      })).toEqual({ kind: 'contentInvalid' });
+    }
   });
 
   it('accepts encrypted recipe envelopes for an E2EE Account witness', () => {
@@ -238,7 +294,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
 
     const materialized = materializeAutomationRunExecutionRecipeV1({
       recipe,
-      origin: { kind: 'manual', invokedAt: 1_700_000_000_000 },
+      cause: { kind: 'manual', invokedAt: 1_700_000_000_000 },
       accountCurrentness: plainCurrentness,
       runId: 'run-42',
     });
@@ -249,7 +305,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
         kind: 'newSession',
         spawn: {
           creationKey: 'automation-run:run-42',
-          initialMessage: 'Summarize this run.',
+          initialInput: { text: 'Summarize this run.' },
         },
       },
     });
@@ -262,7 +318,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
     }).success).toBe(false);
   });
 
-  it('rejects a Plugin Event origin whose occurrence key belongs to an otherwise identical occurrence', () => {
+  it('rejects a Plugin Event cause whose occurrence key belongs to an otherwise identical occurrence', () => {
     const occurrenceEvidence = {
       v: pluginEventEvidence.v,
       kind: pluginEventEvidence.kind,
@@ -276,11 +332,20 @@ describe('AutomationRunExecutionRecipeV1', () => {
       ...plainRecipe,
       triggerEvidence: { t: 'plain' as const, v: pluginEventEvidence },
     };
-    const matchingOrigin = {
-      kind: 'pluginEvent' as const,
-      occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
-      sourceSelectorId: pluginEventEvidence.sourceSelectorId,
+    const matchingCause = {
+      kind: 'trigger' as const,
+      triggerId: 'trigger-plugin-event',
+      triggerRevision: 1,
+      triggerKind: 'pluginEvent' as const,
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({
+        triggerId: 'trigger-plugin-event',
+        evidence: occurrenceEvidence,
+      }),
       occurredAt: pluginEventEvidence.occurredAt,
+      evidence: {
+        eventRef: pluginEventEvidence.eventRef,
+        sourceSelectorId: pluginEventEvidence.sourceSelectorId,
+      },
     };
     const differentOccurrence = {
       ...pluginEventEvidence,
@@ -289,7 +354,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
 
     expect(materializeAutomationRunExecutionRecipeV1({
       recipe,
-      origin: matchingOrigin,
+      cause: matchingCause,
       accountCurrentness: plainCurrentness,
       runId: 'run-plugin-event',
     })).toMatchObject({ kind: 'available' });
@@ -298,13 +363,13 @@ describe('AutomationRunExecutionRecipeV1', () => {
         ...recipe,
         triggerEvidence: { t: 'plain', v: differentOccurrence },
       },
-      origin: matchingOrigin,
+      cause: matchingCause,
       accountCurrentness: plainCurrentness,
       runId: 'run-plugin-event',
     })).toEqual({ kind: 'contentInvalid' });
   });
 
-  it('rejects a Conversation origin whose occurrence key belongs to an otherwise identical occurrence', () => {
+  it('rejects a Conversation cause whose occurrence key belongs to an otherwise identical occurrence', () => {
     const evidence = {
       v: 1,
       kind: 'conversation' as const,
@@ -334,7 +399,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
       input: evidence.input,
       replyContextIdentity: evidence.replyContextIdentity,
     } as const;
-    const matchingOrigin = {
+    const matchingCause = {
       kind: 'conversation' as const,
       occurrenceKey: deriveAutomationOccurrenceKeyV1(occurrenceEvidence),
       occurredAt: evidence.occurredAt,
@@ -346,7 +411,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
 
     expect(materializeAutomationRunExecutionRecipeV1({
       recipe,
-      origin: matchingOrigin,
+      cause: matchingCause,
       accountCurrentness: plainCurrentness,
       runId: 'run-conversation',
     })).toMatchObject({ kind: 'available' });
@@ -355,7 +420,7 @@ describe('AutomationRunExecutionRecipeV1', () => {
         ...recipe,
         triggerEvidence: { t: 'plain', v: differentOccurrence },
       },
-      origin: matchingOrigin,
+      cause: matchingCause,
       accountCurrentness: plainCurrentness,
       runId: 'run-conversation',
     })).toEqual({ kind: 'contentInvalid' });
@@ -375,6 +440,7 @@ describe('Automation Run template composer references', () => {
       recipe: {
         v: 1,
         templateVersion: 2,
+        assignmentMachineIds: [],
         template: {
           t: 'plain',
           v: {
@@ -386,7 +452,7 @@ describe('Automation Run template composer references', () => {
         triggerEvidence: null,
         target: { kind: 'existingSession', sessionId: 'sess-target' },
       },
-      origin: { kind: 'manual', invokedAt: 5 },
+      cause: { kind: 'manual', invokedAt: 5 },
       accountCurrentness: { mode: 'plain', version: 3, contentKeyFingerprint: null },
       runId: 'run-1',
     });
@@ -428,7 +494,7 @@ describe('Automation Run template composer references', () => {
     }).success).toBe(false);
   });
 
-  it('advertises reference delivery for exactly the targets that materialize them', () => {
+  it('rejects identity-bearing references for targets without structured-input delivery', () => {
     const prompt = 'Continue @Nightly%20review now.';
     const targets = [
       { kind: 'existingSession', sessionId: 'sess-target' },
@@ -457,30 +523,58 @@ describe('Automation Run template composer references', () => {
     ] as const;
 
     for (const target of targets) {
-      const materialized = materializeAutomationRunExecutionRecipeV1({
-        recipe: {
+      const recipe = {
           v: 1,
           templateVersion: 2,
+          assignmentMachineIds: [],
           template: { t: 'plain', v: { v: 1, prompt, mentions: [sessionMention] } },
           triggerEvidence: null,
           target,
-        },
-        origin: { kind: 'manual', invokedAt: 5 },
+        } as const;
+      const admitted = validateAutomationRunTemplateForExecutionTargetV1({
+        template: recipe.template.v,
+        target,
+      });
+      const materialized = materializeAutomationRunExecutionRecipeV1({
+        recipe,
+        cause: { kind: 'manual', invokedAt: 5 },
         accountCurrentness: { mode: 'plain', version: 3, contentKeyFingerprint: null },
         runId: 'run-1',
       });
-      if (materialized.kind !== 'available') {
-        throw new Error(`fixture ${target.kind} target must materialize`);
-      }
-      // The predicate an authoring surface reads must agree with what dispatch
-      // is actually handed, so a stored reference can never be silently dropped.
-      expect([
-        target.kind,
-        'mentions' in materialized.target && materialized.target.mentions.length > 0,
-      ]).toEqual([
-        target.kind,
-        automationRunExecutionTargetDeliversComposerReferencesV1(target.kind),
-      ]);
+      const supported = automationRunExecutionTargetDeliversComposerReferencesV1(target.kind);
+      expect(admitted.kind).toBe(supported ? 'available' : 'contentInvalid');
+      expect(AutomationRunExecutionRecipeV1Schema.safeParse(recipe).success).toBe(supported);
+      expect(materialized.kind).toBe(supported ? 'available' : 'contentInvalid');
     }
+  });
+
+  it('rejects unsupported encrypted references after opening private content', () => {
+    expect(materializeAutomationRunExecutionRecipeV1({
+      recipe: {
+        v: 1,
+        templateVersion: 2,
+        assignmentMachineIds: [],
+        template: { t: 'encrypted', c: 'ciphertext' },
+        triggerEvidence: null,
+        target: {
+          kind: 'newSession',
+          spawn: {
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: '/work/project',
+            agentTarget: {
+              kind: 'agent',
+              identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' },
+            },
+          },
+        },
+      },
+      cause: { kind: 'manual', invokedAt: 5 },
+      accountCurrentness: { mode: 'e2ee', version: 3, contentKeyFingerprint: 'fp' },
+      openedContent: {
+        template: { v: 1, prompt: 'Continue @Nightly%20review', mentions: [sessionMention] },
+        triggerEvidence: null,
+      },
+      runId: 'run-1',
+    })).toEqual({ kind: 'contentInvalid' });
   });
 });

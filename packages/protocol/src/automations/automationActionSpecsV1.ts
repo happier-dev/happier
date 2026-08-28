@@ -22,7 +22,11 @@ import {
   AutomationEventSourceInstanceIdV1Schema,
   AutomationEventSourceOrOccurrenceIdV1Schema,
 } from './automationEventJsonBoundsV1.js';
-import { AutomationOriginOccurredAtV1Schema } from './automationOriginOccurredAtV1.js';
+import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
+import {
+  AutomationTriggerIdSchema,
+  AutomationTriggerRevisionSchema,
+} from './automationTriggerIdentity.js';
 import {
   AutomationConversationAdmitInputV1Schema,
   AutomationConversationAdmitResultV1Schema,
@@ -120,7 +124,8 @@ export type AutomationEventSourceObservationTransportV1 = z.infer<
 
 export const AutomationEventSourceDefinitionV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
@@ -155,6 +160,8 @@ export type AutomationEventSourceCatalogScopeV1 = z.infer<
  */
 export const AutomationEventCheckpointRetirementCandidateV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
@@ -259,7 +266,8 @@ export type AutomationEventSourcesListResultV1 = z.infer<typeof AutomationEventS
 
 export const AutomationEventAdmitDefinitionSelectorV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
 }).strict();
 export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
@@ -269,7 +277,7 @@ export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
 const AutomationEventAdmitInputFieldsV1 = {
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   observationReceivedAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   payload: asProtocolZod(AutomationEventPayloadV1Schema),
 } as const;
@@ -344,17 +352,15 @@ export type AutomationEventAdmitHttpResultV1 = z.infer<typeof AutomationEventAdm
 
 /**
  * A conversation binding is an additional invocation source for an Automation
- * the Account already owns, never a replacement for its schedule, manual, or
- * Plugin Event trigger. Verification therefore asks only whether the caller is
+ * the Account already owns, never a replacement for its automatic trigger set
+ * or Run Now operation. Verification therefore asks only whether the caller is
  * naming a current target, and several bindings may name the same one.
  */
 export const AutomationConversationTargetVerifyInputV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  expectedTemplateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   /**
-   * Omitted for ordinary `none` delivery so current callers remain compatible
-   * with the already-published target verifier. A final-result author asks the
-   * Automation owner to validate that capability against the exact target.
+   * A final-result author asks the Automation owner to validate that
+   * capability against the current target; ordinary delivery omits it.
    */
   resultDelivery: z.literal('finalResult').optional(),
 }).strict();
@@ -363,15 +369,11 @@ export type AutomationConversationTargetVerifyInputV1 = z.infer<
 >;
 
 export const AutomationConversationTargetVerifyResultV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('verified'),
-    templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
-  }).strict(),
+  z.object({ kind: z.literal('verified') }).strict(),
   z.object({
     kind: z.literal('notVerified'),
     reason: z.enum([
       'notFound',
-      'templateVersionMismatch',
       'resultDeliveryUnsupported',
     ]),
   }).strict(),
@@ -403,7 +405,6 @@ export type AutomationConversationTargetExecutionV1 = z.infer<
 
 export const AutomationConversationTargetsListItemV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   label: z.string().min(1).max(256),
   execution: AutomationConversationTargetExecutionV1Schema,
 }).strict();
@@ -459,7 +460,8 @@ export const AutomationEventSourceStatusReportV1Schema = z.discriminatedUnion('k
   z.object({
     kind: z.literal('source'),
     automationId: asProtocolZod(AutomationIdV1Schema),
-    templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+    triggerId: AutomationTriggerIdSchema,
+    triggerRevision: AutomationTriggerRevisionSchema,
     eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
     sourceSelectorId: AutomationSourceSelectorIdV1Schema,
     state: AutomationEventSourceStatusStateV1Schema,

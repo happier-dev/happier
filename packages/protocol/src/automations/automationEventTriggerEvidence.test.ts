@@ -48,18 +48,21 @@ describe('Automation Event trigger evidence', () => {
       material,
       accountId: 'account-1',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       evidence,
     });
     expect(deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material,
       accountId: 'account-1',
       automationId: 'automation-1',
+      triggerId: 'trigger-1',
       evidence,
     })).toBe(first);
     expect(deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material,
       accountId: 'account-1',
       automationId: 'automation-2',
+      triggerId: 'trigger-1',
       evidence,
     })).not.toBe(first);
   });

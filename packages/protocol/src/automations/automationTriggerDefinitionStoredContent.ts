@@ -21,39 +21,27 @@ import {
   AutomationStoredContentEnvelopeV1Schema,
   type AutomationStoredContentEnvelopeV1,
 } from './automationEventV1.js';
+import {
+  AutomationTriggerIdSchema,
+  AutomationTriggerRevisionSchema,
+} from './automationTriggerIdentity.js';
 export const AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1 =
   'automation_trigger_definition' as const;
 
-const NONNEGATIVE_SAFE_INTEGER_SCHEMA = z.number().int().nonnegative().safe();
-
 /**
  * Durable definition binding. Event source identity remains public on the
- * Automation row, while this exact tuple prevents its private definition from
+ * AutomationTrigger row, while this exact tuple prevents its private definition from
  * being replayed onto another definition or revision.
  */
 export const AutomationTriggerDefinitionBindingV1Schema = z.object({
   v: z.literal(1),
   automationId: z.string().min(1).max(256),
-  templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   triggerKind: z.literal('pluginEvent'),
-  eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema).nullable(),
-  sourceSelectorId: AutomationSourceSelectorIdV1Schema.nullable(),
-}).strict().superRefine((value, context) => {
-  if (value.eventRef === null) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['eventRef'],
-      message: 'Plugin Event definitions require an Event reference binding',
-    });
-  }
-  if (value.sourceSelectorId === null) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['sourceSelectorId'],
-      message: 'Plugin Event definitions require a source selector binding',
-    });
-  }
-});
+  eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
+  sourceSelectorId: AutomationSourceSelectorIdV1Schema,
+}).strict();
 export type AutomationTriggerDefinitionBindingV1 = z.infer<
   typeof AutomationTriggerDefinitionBindingV1Schema
 >;
@@ -103,10 +91,11 @@ function sameBinding(
 ): boolean {
   return left.v === right.v
     && left.automationId === right.automationId
-    && left.templateVersion === right.templateVersion
+    && left.triggerId === right.triggerId
+    && left.triggerRevision === right.triggerRevision
     && left.triggerKind === right.triggerKind
-    && left.eventRef?.pluginId === right.eventRef?.pluginId
-    && left.eventRef?.localId === right.eventRef?.localId
+    && left.eventRef.pluginId === right.eventRef.pluginId
+    && left.eventRef.localId === right.eventRef.localId
     && left.sourceSelectorId === right.sourceSelectorId;
 }
 

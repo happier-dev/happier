@@ -27,8 +27,8 @@ import {
   AutomationEventSourceOrOccurrenceIdV1Schema,
 } from './automationEventJsonBoundsV1.js';
 import {
-  AutomationOriginOccurredAtV1Schema,
-} from './automationOriginOccurredAtV1.js';
+  AutomationOccurredAtV1Schema,
+} from './automationOccurredAtV1.js';
 // Type-only: the reply-context identity commits to the admitted delivery arm
 // without this occurrence owner depending on the delivery module at runtime.
 import type { AutomationConversationResultDeliveryV1 } from './automationResultDeliveryV1.js';
@@ -48,10 +48,10 @@ export {
   type AutomationSourceSelectorIdV1,
 } from './automationEventDeclarationV1.js';
 export {
-  AutomationOriginOccurredAtV1Schema,
-  MAX_AUTOMATION_ORIGIN_OCCURRED_AT_MS,
-} from './automationOriginOccurredAtV1.js';
-export type { AutomationOriginOccurredAtV1 } from './automationOriginOccurredAtV1.js';
+  AutomationOccurredAtV1Schema,
+  MAX_AUTOMATION_OCCURRED_AT_MS,
+} from './automationOccurredAtV1.js';
+export type { AutomationOccurredAtV1 } from './automationOccurredAtV1.js';
 
 export const AUTOMATION_OCCURRENCE_KEY_DOMAIN_V1 =
   'happier.automation-occurrence.v1' as const;
@@ -148,11 +148,43 @@ export const AutomationPluginEventOccurrenceEvidenceV1Schema = z.object({
   eventRef: asProtocolZod(PluginContributionIdentityV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   occurrenceId: OCCURRENCE_ID_SCHEMA,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   payload: asProtocolZod(AutomationEventPayloadV1Schema),
 }).strict();
 export type AutomationPluginEventOccurrenceEvidenceV1 = z.infer<
   typeof AutomationPluginEventOccurrenceEvidenceV1Schema
+>;
+
+/** Exact due instant for one independently scheduled trigger occurrence. */
+export const AutomationScheduleOccurrenceEvidenceV1Schema = z.object({
+  v: z.literal(1),
+  kind: z.literal('schedule'),
+  scheduledFor: AutomationOccurredAtV1Schema,
+}).strict();
+export type AutomationScheduleOccurrenceEvidenceV1 = z.infer<
+  typeof AutomationScheduleOccurrenceEvidenceV1Schema
+>;
+
+/** Exact canonical source fact for the one approved Session lifecycle trigger. */
+export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = z.object({
+  v: z.literal(1),
+  kind: z.literal('sessionLifecycle'),
+  event: z.literal('parentTurnCompleted'),
+  sourceSessionId: boundedNfcString(256, 'Source Session identifiers'),
+  sourceTurnId: boundedNfcString(256, 'Source turn identifiers'),
+  occurredAt: AutomationOccurredAtV1Schema,
+}).strict();
+export type AutomationSessionLifecycleOccurrenceEvidenceV1 = z.infer<
+  typeof AutomationSessionLifecycleOccurrenceEvidenceV1Schema
+>;
+
+export const AutomationTriggerOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind', [
+  AutomationScheduleOccurrenceEvidenceV1Schema,
+  AutomationPluginEventOccurrenceEvidenceV1Schema,
+  AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
+]);
+export type AutomationTriggerOccurrenceEvidenceV1 = z.infer<
+  typeof AutomationTriggerOccurrenceEvidenceV1Schema
 >;
 
 /**
@@ -164,7 +196,7 @@ export function buildAutomationPluginEventOccurrenceEvidenceV1(params: Readonly<
   eventRef: z.input<typeof PluginContributionIdentityV1Schema>;
   sourceSelectorId: z.input<typeof AutomationSourceSelectorIdV1Schema>;
   occurrenceId: z.input<typeof OCCURRENCE_ID_SCHEMA>;
-  occurredAt: z.input<typeof AutomationOriginOccurredAtV1Schema>;
+  occurredAt: z.input<typeof AutomationOccurredAtV1Schema>;
   payload: z.input<typeof AutomationEventPayloadV1Schema>;
 }>): AutomationPluginEventOccurrenceEvidenceV1 {
   return AutomationPluginEventOccurrenceEvidenceV1Schema.parse({
@@ -179,7 +211,7 @@ export const AutomationConversationOccurrenceEvidenceV1Schema = z.object({
   kind: z.literal('conversation'),
   bindingId: AutomationConversationBindingIdV1Schema,
   occurrenceId: OCCURRENCE_ID_SCHEMA,
-  occurredAt: AutomationOriginOccurredAtV1Schema,
+  occurredAt: AutomationOccurredAtV1Schema,
   caller: AutomationConversationAdmissionCallerIdentityV1Schema,
   input: PluginJsonValueV2Schema,
   replyContextIdentity: boundedNfcString(512, 'Reply-context identities'),
@@ -221,7 +253,7 @@ export function buildAutomationConversationOccurrenceEvidenceV1(params: Readonly
   accountMode: 'plain' | 'e2ee';
   bindingId: z.input<typeof AutomationConversationBindingIdV1Schema>;
   occurrenceId: z.input<typeof OCCURRENCE_ID_SCHEMA>;
-  occurredAt: z.input<typeof AutomationOriginOccurredAtV1Schema>;
+  occurredAt: z.input<typeof AutomationOccurredAtV1Schema>;
   caller: AutomationConversationAdmissionCallerIdentityV1;
   sender: unknown;
   text: string;
@@ -246,7 +278,9 @@ export function buildAutomationConversationOccurrenceEvidenceV1(params: Readonly
 }
 
 export const AutomationOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind', [
+  AutomationScheduleOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
+  AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
   AutomationConversationOccurrenceEvidenceV1Schema,
 ]);
 export type AutomationOccurrenceEvidenceV1 = z.infer<
@@ -259,7 +293,7 @@ const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
     automationId: asProtocolZod(AutomationIdV1Schema),
     triggerId: AutomationTriggerIdSchema,
     occurrenceKey: AutomationOccurrenceKeyV1Schema,
-    evidence: AutomationPluginEventOccurrenceEvidenceV1Schema,
+    evidence: AutomationTriggerOccurrenceEvidenceV1Schema,
   }).strict(),
   z.object({
     accountId: asProtocolZod(AutomationHostIdentifierV1Schema),
@@ -270,19 +304,36 @@ const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
 ]);
 
 function occurrenceKeyParts(input:
-  | Readonly<{ triggerId: AutomationTriggerId; evidence: AutomationPluginEventOccurrenceEvidenceV1 }>
+  | Readonly<{ triggerId: AutomationTriggerId; evidence: AutomationTriggerOccurrenceEvidenceV1 }>
   | AutomationConversationOccurrenceEvidenceV1,
 ): readonly string[] {
-  const evidence = 'evidence' in input ? input.evidence : input;
-  if (evidence.kind === 'pluginEvent') {
+  if ('triggerId' in input) {
+    if (input.evidence.kind === 'schedule') {
+      return [
+        '1',
+        input.evidence.kind,
+        input.triggerId,
+        String(input.evidence.scheduledFor),
+      ];
+    }
+    if (input.evidence.kind === 'sessionLifecycle') {
+      return [
+        '1',
+        input.evidence.kind,
+        input.triggerId,
+        input.evidence.event,
+        input.evidence.sourceSessionId,
+        input.evidence.sourceTurnId,
+      ];
+    }
     return [
       '1',
-      evidence.kind,
+      input.evidence.kind,
       input.triggerId,
-      evidence.eventRef.pluginId,
-      evidence.eventRef.localId,
-      evidence.sourceSelectorId,
-      evidence.occurrenceId,
+      input.evidence.eventRef.pluginId,
+      input.evidence.eventRef.localId,
+      input.evidence.sourceSelectorId,
+      input.evidence.occurrenceId,
     ];
   }
   // Mirrors the Plugin Event branch: an occurrence identity is namespaced by
@@ -290,10 +341,10 @@ function occurrenceKeyParts(input:
   // conversation binding and occurrence id never collide on one Run.
   return [
     '1',
-    evidence.kind,
-    evidence.caller.pluginId,
-    evidence.bindingId,
-    evidence.occurrenceId,
+    input.kind,
+    input.caller.pluginId,
+    input.bindingId,
+    input.occurrenceId,
   ];
 }
 
@@ -306,14 +357,14 @@ export function deriveAutomationOccurrenceKeyV1(
   input:
     | Readonly<{
       triggerId: z.input<typeof AutomationTriggerIdSchema>;
-      evidence: z.input<typeof AutomationPluginEventOccurrenceEvidenceV1Schema>;
+      evidence: z.input<typeof AutomationTriggerOccurrenceEvidenceV1Schema>;
     }>
     | z.input<typeof AutomationConversationOccurrenceEvidenceV1Schema>,
 ): AutomationOccurrenceKeyV1 {
   const parsed = 'triggerId' in input
     ? {
       triggerId: AutomationTriggerIdSchema.parse(input.triggerId),
-      evidence: AutomationPluginEventOccurrenceEvidenceV1Schema.parse(input.evidence),
+      evidence: AutomationTriggerOccurrenceEvidenceV1Schema.parse(input.evidence),
     }
     : AutomationConversationOccurrenceEvidenceV1Schema.parse(input);
   return AutomationOccurrenceKeyV1Schema.parse(
@@ -328,7 +379,7 @@ function encodeAutomationOccurrenceEvidenceEqualityInputV1(
   input: z.input<typeof AutomationOccurrenceEvidenceEqualityInputV1Schema>,
 ): Uint8Array {
   const parsed = AutomationOccurrenceEvidenceEqualityInputV1Schema.parse(input);
-  const derivedOccurrenceKey = parsed.evidence.kind === 'pluginEvent'
+  const derivedOccurrenceKey = 'triggerId' in parsed
     ? deriveAutomationOccurrenceKeyV1({ triggerId: parsed.triggerId, evidence: parsed.evidence })
     : deriveAutomationOccurrenceKeyV1(parsed.evidence);
   if (parsed.occurrenceKey !== derivedOccurrenceKey) {
@@ -339,7 +390,7 @@ function encodeAutomationOccurrenceEvidenceEqualityInputV1(
     '1',
     parsed.accountId,
     parsed.automationId,
-    parsed.evidence.kind === 'pluginEvent' ? parsed.triggerId : '',
+    'triggerId' in parsed ? parsed.triggerId : '',
     parsed.occurrenceKey,
     createCanonicalJsonSigningInput(parsed.evidence),
   ]);
@@ -364,27 +415,46 @@ export function serializeAutomationOccurrenceEvidenceEqualityV1(
  * not derive it from plugin input or decrypt it as an occurrence identity.
  */
 export function deriveAutomationOccurrenceEvidenceEqualityTagV1(
-  params: Readonly<{
-    purposeSeparatedAccountKey: Uint8Array;
-    accountId: string;
-    automationId: string;
-    occurrenceKey: AutomationOccurrenceKeyV1;
-    evidence: AutomationOccurrenceEvidenceV1;
-  }>,
+  params:
+    | Readonly<{
+      purposeSeparatedAccountKey: Uint8Array;
+      accountId: string;
+      automationId: string;
+      triggerId: z.input<typeof AutomationTriggerIdSchema>;
+      occurrenceKey: AutomationOccurrenceKeyV1;
+      evidence: AutomationTriggerOccurrenceEvidenceV1;
+    }>
+    | Readonly<{
+      purposeSeparatedAccountKey: Uint8Array;
+      accountId: string;
+      automationId: string;
+      occurrenceKey: AutomationOccurrenceKeyV1;
+      evidence: AutomationConversationOccurrenceEvidenceV1;
+    }>,
 ): AutomationOccurrenceEvidenceEqualityTagV1 {
   if (!(params.purposeSeparatedAccountKey instanceof Uint8Array)
     || params.purposeSeparatedAccountKey.byteLength !== 32) {
     throw new TypeError('Automation occurrence equality requires one 32-byte purpose-separated Account key');
   }
-  const {
-    purposeSeparatedAccountKey,
-    ...equalityInput
-  } = params;
+  const equalityInput = 'triggerId' in params
+    ? {
+      accountId: params.accountId,
+      automationId: params.automationId,
+      triggerId: params.triggerId,
+      occurrenceKey: params.occurrenceKey,
+      evidence: params.evidence,
+    }
+    : {
+      accountId: params.accountId,
+      automationId: params.automationId,
+      occurrenceKey: params.occurrenceKey,
+      evidence: params.evidence,
+    };
   return AutomationOccurrenceEvidenceEqualityTagV1Schema.parse(
     encodeBase64(
       hmac(
         sha256,
-        purposeSeparatedAccountKey,
+        params.purposeSeparatedAccountKey,
         encodeAutomationOccurrenceEvidenceEqualityInputV1(equalityInput),
       ),
       'base64url',

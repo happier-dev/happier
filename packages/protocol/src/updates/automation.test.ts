@@ -65,7 +65,11 @@ describe('updates protocol automation payloads', () => {
             t: 'automation-run-state-changed',
             runId: 'run_1',
             automationId: 'auto_1',
-            originKind: 'conversation',
+            runCause: {
+                kind: 'conversation',
+                occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                occurredAt: 1,
+            },
             previousState: 'running',
             currentState: 'succeeded',
             transitionedAt: 1,
@@ -105,7 +109,15 @@ describe('updates protocol automation payloads', () => {
             t: 'automation-run-state-changed',
             runId: 'run_1',
             automationId: 'auto_1',
-            originKind: 'scheduled',
+            runCause: {
+                kind: 'trigger',
+                triggerId: 'trigger-schedule-1',
+                triggerRevision: 1,
+                triggerKind: 'schedule',
+                occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                occurredAt: 1,
+                evidence: { scheduledFor: 1 },
+            },
             previousState: 'running',
             currentState: 'outcome_uncertain',
             transitionedAt: 1,
@@ -116,16 +128,16 @@ describe('updates protocol automation payloads', () => {
         // must transport it rather than reject or drop it.
         expect(UpdateBodySchema.parse({
             ...uncertain,
-            cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
+            transitionCause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
         })).toEqual({
             ...uncertain,
-            cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
+            transitionCause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
         });
         // Ordinary uncertainty stays causeless, and the cause stays bounded.
         expect(UpdateBodySchema.parse(uncertain)).toEqual(uncertain);
         expect(UpdateBodySchema.safeParse({
             ...uncertain,
-            cause: 'x'.repeat(65),
+            transitionCause: 'x'.repeat(65),
         }).success).toBe(false);
     });
 

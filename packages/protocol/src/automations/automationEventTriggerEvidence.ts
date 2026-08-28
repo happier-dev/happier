@@ -51,7 +51,7 @@ export function sealAutomationOccurrenceTriggerEvidenceEnvelopeV1(params: Readon
 
 /**
  * Seals the complete immutable occurrence evidence retained by a frozen Run
- * recipe, for either origin arm. The base occurrence helper remains the
+ * recipe, for either cause arm. The base occurrence helper remains the
  * equality-tag input owner; this keeps source/filter and Conversation
  * correspondence in the same Account-scoped trigger-evidence ciphertext domain.
  */
@@ -104,21 +104,31 @@ export function deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1(params:
     evidence: AutomationConversationOccurrenceEvidenceV1;
   }>
 ): AutomationOccurrenceEvidenceEqualityTagV1 {
-  const evidence = AutomationOccurrenceEvidenceV1Schema.parse(params.evidence);
-  const occurrenceKey = evidence.kind === 'pluginEvent'
-    ? deriveAutomationOccurrenceKeyV1({
-      triggerId: AutomationTriggerIdSchema.parse('triggerId' in params ? params.triggerId : undefined),
-      evidence,
-    })
-    : deriveAutomationOccurrenceKeyV1(evidence);
+  const purposeSeparatedAccountKey = deriveAutomationTriggerEvidenceEqualityKeyV1({
+    material: params.material,
+  });
+  if ('triggerId' in params) {
+    const triggerId = AutomationTriggerIdSchema.parse(params.triggerId);
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+      triggerId,
+      evidence: params.evidence,
+    });
+    return deriveAutomationOccurrenceEvidenceEqualityTagV1({
+      purposeSeparatedAccountKey,
+      accountId: params.accountId,
+      automationId: params.automationId,
+      triggerId,
+      occurrenceKey,
+      evidence: params.evidence,
+    });
+  }
+
+  const occurrenceKey = deriveAutomationOccurrenceKeyV1(params.evidence);
   return deriveAutomationOccurrenceEvidenceEqualityTagV1({
-    purposeSeparatedAccountKey: deriveAutomationTriggerEvidenceEqualityKeyV1({
-      material: params.material,
-    }),
+    purposeSeparatedAccountKey,
     accountId: params.accountId,
     automationId: params.automationId,
-    ...('triggerId' in params ? { triggerId: params.triggerId } : {}),
     occurrenceKey,
-    evidence,
+    evidence: params.evidence,
   });
 }

@@ -30,7 +30,6 @@ const source = {
   automationRunId: correspondence.runId,
   resultId: correspondence.handoffId,
   automationId: correspondence.automationId,
-  templateVersion: 3,
   resultDelivery: 'finalResult',
 } as const;
 
@@ -67,12 +66,15 @@ describe('Automation reply-handoff stored content', () => {
       v: {
         v: 1,
         correspondence: replyContextOccurrenceCorrespondence,
-        templateVersion: 3,
         opaqueContext,
       },
     } as const;
 
     expect(AutomationConversationReplyContextStoredV1Schema.safeParse(precommitReplyContext).success).toBe(true);
+    expect(AutomationConversationReplyContextStoredV1Schema.safeParse({
+      t: 'plain',
+      v: { ...precommitReplyContext.v, templateVersion: 3 },
+    }).success).toBe(false);
     expect(AutomationConversationReplyContextStoredV1Schema.safeParse({
       t: 'plain',
       v: {
@@ -105,7 +107,6 @@ describe('Automation reply-handoff stored content', () => {
     const contextEnvelope = sealAutomationConversationReplyContextStoredEnvelopeV1({
       mode: 'plain',
       correspondence: replyContextOccurrenceCorrespondence,
-      templateVersion: 3,
       opaqueContext,
     });
     const receiptEnvelope = sealAutomationReplyHandoffReceiptStoredEnvelopeV1({
@@ -120,7 +121,7 @@ describe('Automation reply-handoff stored content', () => {
     });
     expect(AutomationConversationReplyContextStoredV1Schema.parse(contextEnvelope)).toEqual({
       t: 'plain',
-      v: { v: 1, correspondence: replyContextOccurrenceCorrespondence, templateVersion: 3, opaqueContext },
+      v: { v: 1, correspondence: replyContextOccurrenceCorrespondence, opaqueContext },
     });
     expect(openAutomationRunResultStoredEnvelopeV1({
       mode: 'plain',
@@ -132,7 +133,6 @@ describe('Automation reply-handoff stored content', () => {
     })).toEqual({
       kind: 'available',
       correspondence: replyContextOccurrenceCorrespondence,
-      templateVersion: 3,
       opaqueContext,
     });
     expect(openAutomationReplyHandoffReceiptStoredEnvelopeV1({
@@ -205,7 +205,6 @@ describe('Automation reply-handoff stored content', () => {
     const contextEnvelope = sealAutomationConversationReplyContextStoredEnvelopeV1({
       mode: 'e2ee',
       correspondence: replyContextOccurrenceCorrespondence,
-      templateVersion: 3,
       opaqueContext,
       material,
       randomBytes: deterministicRandomBytes,
@@ -230,7 +229,6 @@ describe('Automation reply-handoff stored content', () => {
     })).toEqual({
       kind: 'available',
       correspondence: replyContextOccurrenceCorrespondence,
-      templateVersion: 3,
       opaqueContext,
     });
     expect(openAutomationRunResultStoredEnvelopeV1({
@@ -311,7 +309,6 @@ describe('Automation reply-handoff stored content', () => {
     const plainContextEnvelope = sealAutomationConversationReplyContextStoredEnvelopeV1({
       mode: 'plain',
       correspondence: replyContextOccurrenceCorrespondence,
-      templateVersion: 3,
       opaqueContext,
     });
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };

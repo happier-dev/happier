@@ -7,6 +7,10 @@ import {
 } from './automationEventDeclarationV1.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import {
+  AutomationTriggerIdSchema,
+  AutomationTriggerRevisionSchema,
+} from './automationTriggerIdentity.js';
 
 /**
  * Host-filled input for an Event source's exact, current history-gap recovery
@@ -15,7 +19,8 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
  */
 export const PluginEventAutomationHistoryGapResetActionInputV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  templateVersion: z.number().int().nonnegative().safe(),
+  triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema,
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
 }).strict();
 export type PluginEventAutomationHistoryGapResetActionInputV1 = z.infer<
@@ -41,10 +46,11 @@ export const PluginEventAutomationHistoryGapResetActionInputV1JsonSchema: Plugin
   additionalProperties: false,
   properties: {
     automationId: AutomationHostIdentifierV1JsonSchema,
-    templateVersion: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    triggerId: AutomationHostIdentifierV1JsonSchema,
+    triggerRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     sourceSelectorId: AutomationSourceSelectorIdV1JsonSchema,
   },
-  required: ['automationId', 'templateVersion', 'sourceSelectorId'],
+  required: ['automationId', 'triggerId', 'triggerRevision', 'sourceSelectorId'],
 };
 
 export const PluginEventAutomationHistoryGapResetActionResultV1JsonSchema: PluginJsonSchemaV2 = {

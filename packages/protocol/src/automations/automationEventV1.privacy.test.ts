@@ -9,6 +9,9 @@ import {
 import { AutomationEventSourceCatalogStatusSchema } from './automationApiV3.js';
 
 const sourceSelectorId = '9d5af559-2c82-4c22-b6a0-ecabce38a631';
+const triggerId = 'trigger-1';
+const triggerRevision = 3;
+const immutableGenerationId = 'github-generation-1';
 const materializationRef = {
   machineId: 'machine-1',
   materializationId: 'materialization-1',
@@ -20,8 +23,9 @@ describe('Automation event V1 privacy projections', () => {
     const sourceReport = {
       kind: 'source',
       automationId: 'automation-1',
-      templateVersion: 3,
-      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      triggerId,
+      triggerRevision,
+      eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
       sourceSelectorId,
       state: 'observing',
       code: 'none',
@@ -34,10 +38,12 @@ describe('Automation event V1 privacy projections', () => {
     } as const;
     const sourceProjection = {
       automationId: 'automation-1',
+      triggerId,
+      triggerRevision,
       eventRef: sourceReport.eventRef,
       sourceSelectorId,
-      templateVersion: 3,
       reporterMaterializationRef: materializationRef,
+      reporterImmutableGenerationId: immutableGenerationId,
       state: 'observing',
       code: null,
       lastObservedAt: 10,
@@ -52,6 +58,7 @@ describe('Automation event V1 privacy projections', () => {
       accountId: 'account-1',
       eventPluginId: 'com.acme.github',
       reporterMaterializationRef: materializationRef,
+      reporterImmutableGenerationId: immutableGenerationId,
       scopeKey: 'checkpointedPull',
       observedRevision: '7',
       adoptedRevision: '7',
@@ -65,6 +72,13 @@ describe('Automation event V1 privacy projections', () => {
     expect(AutomationEventSourceStatusReportV1Schema.safeParse(sourceReport).success).toBe(true);
     expect(AutomationEventSourceStatusV1Schema.safeParse(sourceProjection).success).toBe(true);
     expect(AutomationEventSourceCatalogStatusV1Schema.safeParse(catalogProjection).success).toBe(true);
+    const {
+      reporterImmutableGenerationId: _catalogGeneration,
+      ...catalogProjectionWithoutGeneration
+    } = catalogProjection;
+    expect(AutomationEventSourceCatalogStatusV1Schema.safeParse(
+      catalogProjectionWithoutGeneration,
+    ).success).toBe(false);
 
     for (const privateField of [
       { sourceInstanceId: 'repository-1' },
@@ -92,18 +106,20 @@ describe('Automation event V1 privacy projections', () => {
       v: 1,
       caller: {
         pluginId: 'com.acme.github',
-        contributionLocalId: 'repository-event',
+        contributionLocalId: 'pull-request-opened',
         materialization: materializationRef,
+        immutableGenerationId,
       },
       input: {
-        eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+        eventRef: { pluginId: 'com.acme.github', localId: 'pull-request-opened' },
         occurrenceId: 'delivery-1',
         occurredAt: 1,
         observationReceivedAt: 2,
         payload: { action: 'opened' },
         definitions: [{
           automationId: 'automation-1',
-          templateVersion: 3,
+          triggerId,
+          triggerRevision,
           sourceSelectorId,
         }],
       },
@@ -143,6 +159,7 @@ describe('Automation event V1 privacy projections', () => {
       { accountId: 'account-1' },
       { eventPluginId: 'com.acme.github' },
       { reporterMaterializationRef: materializationRef },
+      { reporterImmutableGenerationId: immutableGenerationId },
       { scopeKey: 'checkpointedPull' },
       { reportedAt: 12 },
       { revision: 1 },

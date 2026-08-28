@@ -10,7 +10,6 @@ import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.j
 const input = {
   automationId: 'automation-1',
   bindingId: 'binding-1',
-  templateVersion: 3,
   occurrenceId: 'telegram:update:1',
   occurredAt: 1_700_000_000_000,
   sender: { id: 'sender-1' },
@@ -35,7 +34,6 @@ const finalReplyHandoff = {
         automationId: input.automationId,
         occurrenceKey: 'A'.repeat(43),
       },
-      templateVersion: input.templateVersion,
       opaqueContext: input.resultDelivery.opaqueContext,
     },
   },
@@ -49,6 +47,7 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -69,6 +68,11 @@ describe('Automation conversation admission HTTP contract', () => {
 
     expect(paths[actionId]).toBe('/v1/automations/conversation/targets/list');
     expect(requests[actionId]!.parse(request)).toEqual(request);
+    const { immutableGenerationId: _immutableGenerationId, ...unstampedCaller } = request.caller;
+    expect(requests[actionId]!.safeParse({
+      ...request,
+      caller: unstampedCaller,
+    }).success).toBe(false);
     expect(requests[actionId]!.safeParse({
       ...request,
       caller: { ...request.caller, machineId: 'caller-selected-machine' },
@@ -79,7 +83,6 @@ describe('Automation conversation admission HTTP contract', () => {
     // watcher or schedule facts, and remains strict.
     const listedItem = {
       automationId: 'automation-1',
-      templateVersion: 3,
       label: 'Conversation target',
       execution: { targetType: 'execution_run', enabled: true },
     };
@@ -99,7 +102,7 @@ describe('Automation conversation admission HTTP contract', () => {
       nextCursor: null,
     }).success).toBe(false);
     expect(outputs[actionId]!.safeParse({
-      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+      items: [{ automationId: 'automation-1', label: 'Conversation target' }],
       nextCursor: null,
     }).success).toBe(false);
   });
@@ -111,19 +114,24 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'binding/create-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
           pluginId: 'happier.channels',
         },
       },
-      input: { automationId: 'automation-1', expectedTemplateVersion: 3 },
+      input: { automationId: 'automation-1' },
     } as const;
 
     expect(AutomationConversationActionHttpPathsV1[actionId]).toBe(
       '/v1/automations/conversation/target/verify',
     );
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse(request)).toEqual(request);
+    expect(AutomationConversationActionHttpRequestSchemasV1[actionId].safeParse({
+      ...request,
+      input: { ...request.input, expectedTemplateVersion: 3 },
+    }).success).toBe(false);
     expect(AutomationConversationActionHttpRequestSchemasV1[actionId].parse({
       ...request,
       input: { ...request.input, resultDelivery: 'finalResult' },
@@ -133,11 +141,14 @@ describe('Automation conversation admission HTTP contract', () => {
     });
     expect(AutomationConversationActionOutputSchemasV1[actionId].parse({
       kind: 'verified',
+    })).toEqual({ kind: 'verified' });
+    expect(AutomationConversationActionOutputSchemasV1[actionId].safeParse({
+      kind: 'verified',
       templateVersion: 3,
-    })).toEqual({ kind: 'verified', templateVersion: 3 });
+    }).success).toBe(false);
     expect(AutomationConversationActionOutputSchemasV1[actionId].safeParse({
       kind: 'notVerified',
-      reason: 'templateVersionMismatch',
+      reason: 'notFound',
       currentTemplateVersion: 4,
     }).success).toBe(false);
     expect(AutomationConversationActionOutputSchemasV1[actionId].parse({
@@ -177,6 +188,7 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -200,6 +212,15 @@ describe('Automation conversation admission HTTP contract', () => {
       runId: 'run-1',
       checkpointSafe: true,
     });
+    expect(AutomationConversationActionOutputSchemasV1[actionId].parse({
+      kind: 'blocked',
+      reason: 'resultDeliveryUnsupported',
+      checkpointSafe: false,
+    })).toEqual({
+      kind: 'blocked',
+      reason: 'resultDeliveryUnsupported',
+      checkpointSafe: false,
+    });
   });
 
   it('rejects caller-selected target authority and caller claims in the immutable input', () => {
@@ -209,6 +230,7 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -246,6 +268,7 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'happier.channels',
         contributionLocalId: 'provider/observation-ingest-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -321,6 +344,7 @@ describe('Automation conversation admission HTTP contract', () => {
       caller: {
         pluginId: 'acme.slack-bridge',
         contributionLocalId: 'slack/observation-ingest-v1',
+        immutableGenerationId: 'generation-1',
         materialization: {
           machineId: 'machine-1',
           materializationId: 'materialization-1',
@@ -341,7 +365,6 @@ describe('Automation conversation admission HTTP contract', () => {
               automationId: input.automationId,
               occurrenceKey: 'A'.repeat(43),
             },
-            templateVersion: input.templateVersion,
             opaqueContext: input.resultDelivery.opaqueContext,
           },
         },
@@ -357,6 +380,7 @@ describe('Automation conversation admission HTTP contract', () => {
     const thirdPartyCaller = {
       pluginId: 'acme.slack-bridge',
       contributionLocalId: 'slack/observation-ingest-v1',
+      immutableGenerationId: 'generation-1',
       materialization: {
         machineId: 'machine-1',
         materializationId: 'materialization-1',
@@ -398,6 +422,7 @@ describe('Automation conversation admission HTTP contract', () => {
     const caller = {
       pluginId: 'happier.channels',
       contributionLocalId: 'provider/observation-ingest-v1',
+      immutableGenerationId: 'generation-1',
       materialization: {
         machineId: 'machine-1',
         materializationId: 'materialization-1',
@@ -409,7 +434,6 @@ describe('Automation conversation admission HTTP contract', () => {
       t: 'encrypted',
       accountCurrentness: { mode: 'e2ee', version: 4, contentKeyFingerprint: 'aemk1_content' },
       automationId: 'automation-1',
-      templateVersion: 3,
       occurrenceKey: 'A'.repeat(43),
       occurredAt: 1_700_000_000_000,
       triggerEvidenceEnvelope: { t: 'encrypted', c: seal(1) },
@@ -419,13 +443,16 @@ describe('Automation conversation admission HTTP contract', () => {
     const request = { v: 1, caller, hostEvidence } as const;
 
     expect(requests[actionId]!.parse(request)).toEqual(request);
+    expect(requests[actionId]!.safeParse({
+      ...request,
+      hostEvidence: { ...hostEvidence, templateVersion: 3 },
+    }).success).toBe(false);
     // No plaintext member may ride along with the sealed arm.
     expect(requests[actionId]!.safeParse({
       ...request,
       input: {
         automationId: 'automation-1',
         bindingId: 'binding-1',
-        templateVersion: 3,
         occurrenceId: 'telegram:update:1',
         occurredAt: 1_700_000_000_000,
         sender: { id: 'sender-1' },

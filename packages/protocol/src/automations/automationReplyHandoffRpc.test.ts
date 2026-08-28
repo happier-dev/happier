@@ -27,6 +27,11 @@ const request = {
     runId: 'run-1',
     automationId: 'automation-1',
     occurrenceKey: 'A'.repeat(43),
+    cause: {
+      kind: 'conversation',
+      occurrenceKey: 'A'.repeat(43),
+      occurredAt: 1,
+    },
     accountCurrentness: {
       mode: 'plain',
       version: 7,
@@ -53,7 +58,6 @@ const request = {
           automationId: 'automation-1',
           occurrenceKey: 'A'.repeat(43),
         },
-        templateVersion: 1,
         opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
       },
     },
@@ -99,6 +103,10 @@ describe('Automation reply-handoff daemon RPC contract', () => {
         },
       },
     });
+    expect(AutomationReplyHandoffDispatchResultV1Schema.parse({
+      kind: 'unavailable',
+      code: 'actionExecutionFailed',
+    })).toEqual({ kind: 'unavailable', code: 'actionExecutionFailed' });
   });
 
   it('rejects caller spoofing and any target/action substitution before a daemon can invoke a plugin', () => {
