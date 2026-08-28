@@ -129,7 +129,7 @@ test('authoritative remote server retires the prior target owner and becomes run
         states.push(state);
         if (state.status === 'running') resolveRunningState();
       },
-      env: {},
+      env: { HAPPIER_STACK_TUI: '1' },
       instanceId: 100,
     }, {
       runProcess: async ({ label, command, args, env }) => {
@@ -159,6 +159,12 @@ test('authoritative remote server retires the prior target owner and becomes run
     const tunnel = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && call.args.includes('-N'));
     assert.ok(tunnel?.args.includes('-L'));
     assert.equal(tunnel?.args.includes('-R'), false);
+    const worker = calls.find((call) => (
+      call.kind === 'spawn'
+      && call.command === 'ssh'
+      && call.args.at(-1)?.includes('stack dev')
+    ));
+    assert.match(worker?.args.at(-1) ?? '', /export HAPPIER_STACK_TUI=1/);
     assert.deepEqual(calls.find((call) => call.kind === 'server-ready'), {
       kind: 'server-ready',
       url: 'http://127.0.0.1:52753',
