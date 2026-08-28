@@ -61,7 +61,10 @@ export function createApiRateLimitKeyGenerator(
 
     return async (request: any) => {
         const ipKey = resolveIpKey(request);
-        if (strategy === "ip-only") {
+        if (
+            strategy === "ip-only"
+            || request?.routeOptions?.config?.allowApiToken === true
+        ) {
             return ipKey;
         }
 

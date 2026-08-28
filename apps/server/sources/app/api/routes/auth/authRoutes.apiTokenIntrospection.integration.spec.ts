@@ -1,5 +1,5 @@
 import Fastify from "fastify";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1 } from "@happier-dev/protocol";
 
@@ -12,6 +12,25 @@ import { authRoutes } from "./authRoutes";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    enableAuthentication(typed);
+    authRoutes(typed);
+    return typed;
+}
+
+function createParserOrderingTestApp(parse: () => void) {
+    const app = Fastify({ logger: false });
+    app.removeContentTypeParser("application/json");
+    app.addContentTypeParser(
+        "application/json",
+        { parseAs: "string" },
+        (_request, body, done) => {
+            parse();
+            done(null, { token: body });
+        },
+    );
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -204,6 +223,30 @@ describe("authRoutes (API token introspection) (integration)", () => {
 
             expect(response.statusCode).toBe(401);
             expect(response.json()).toEqual({ error: "authentication_failed" });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("rejects the daemon connection in onRequest before parsing the introspected PAT body", async () => {
+        const parse = vi.fn();
+        const app = createParserOrderingTestApp(parse);
+        await app.ready();
+
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+                headers: {
+                    authorization: "Bearer rejected-daemon-connection-token",
+                    "content-type": "application/json",
+                },
+                payload: "{not-json",
+            });
+
+            expect(response.statusCode).toBe(401);
+            expect(response.json()).toEqual({ error: "authentication_failed" });
+            expect(parse).not.toHaveBeenCalled();
         } finally {
             await app.close();
         }

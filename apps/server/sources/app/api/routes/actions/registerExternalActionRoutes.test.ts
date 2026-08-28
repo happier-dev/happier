@@ -387,6 +387,36 @@ describe("registerExternalActionRoutes", () => {
         }
     });
 
+    it("rejects a custom-parser non-finite input before the server relay", async () => {
+        const dispatch = vi.fn();
+        const app = createApp({
+            dispatch,
+            beforeRegister: (instance) => {
+                instance.removeContentTypeParser("application/json");
+                instance.addContentTypeParser(
+                    "application/json",
+                    { parseAs: "string" },
+                    (_request, _body, done) => done(null, { v: 1, input: Number.NaN }),
+                );
+            },
+        });
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/actions/session.spawn_new",
+                headers: patHeaders,
+                payload: "{}",
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(response.json()).toEqual({ error: "invalid_request", code: "invalid_envelope" });
+            expect(dispatch).not.toHaveBeenCalled();
+        } finally {
+            await app.close();
+        }
+    });
+
     it("keeps an admitted Action's invalid_action domain failure in the canonical response envelope", async () => {
         const dispatch = vi.fn(async (request) => dispatchedResponse({
             v: 1 as const,

@@ -23,7 +23,7 @@ export function registerApiTokenIntrospectionRoute(app: Fastify): void {
     app.post(
         ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
         {
-            preHandler: app.authenticate,
+            onRequest: app.authenticate,
             config: { connectionAuthFailureError: "authentication_failed" },
             schema: {
                 body: AccountApiTokenIntrospectionRequestV1Schema,

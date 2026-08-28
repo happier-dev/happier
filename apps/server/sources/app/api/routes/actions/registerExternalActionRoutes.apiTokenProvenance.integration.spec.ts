@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import fastifyRateLimit from "@fastify/rate-limit";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { prepareExternalActionResponseEnvelopeV1 } from "@happier-dev/protocol/actions";
@@ -6,6 +7,7 @@ import { prepareExternalActionResponseEnvelopeV1 } from "@happier-dev/protocol/a
 import { auth } from "@/app/auth/auth";
 import type { Fastify as AppFastify } from "@/app/api/types";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
+import { resolveApiRateLimitPluginOptions } from "@/app/api/utils/apiRateLimitPolicy";
 import type { ExternalActionDaemonDispatcher } from "@/app/api/socket/externalActionDispatcher";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -111,6 +113,51 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             if (!relayed) throw new Error("Expected the authenticated request to reach the daemon relay");
             expect(relayed.principal).not.toHaveProperty("expiresAt");
             expect(JSON.stringify(relayed)).not.toContain(pat.token);
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("verifies an admitted PAT once when the global limiter is configured for user-or-ip keys", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "external-action-global-rate-limit" },
+            select: { id: true },
+        });
+        const pat = await auth.createApiToken({
+            accountId: account.id,
+            label: "External Action global rate limiter",
+        });
+        const dispatch = vi.fn(async (request) => dispatchedResponse({
+            v: 1 as const,
+            actionId: request.actionId,
+            execution: { ok: true as const, result: { accepted: true } },
+        }));
+        const rawApp = Fastify({ logger: false });
+        await rawApp.register(fastifyRateLimit, resolveApiRateLimitPluginOptions({
+            HAPPIER_API_RATE_LIMITS_ENABLED: "1",
+            HAPPIER_API_RATE_LIMITS_GLOBAL_MAX: "100",
+            HAPPIER_API_RATE_LIMITS_GLOBAL_KEY_STRATEGY: "user-or-ip",
+        }));
+        rawApp.setValidatorCompiler(validatorCompiler);
+        rawApp.setSerializerCompiler(serializerCompiler);
+        const app = rawApp.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
+        enableAuthentication(app);
+        registerExternalActionRoutes(app, { dispatch });
+        await app.ready();
+        const verifyToken = vi.spyOn(auth, "verifyToken");
+
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/actions/session.spawn_new",
+                headers: { authorization: `Bearer ${pat.token}` },
+                payload: { v: 1, input: {} },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(response.headers["x-ratelimit-limit"]).toBe("100");
+            expect(verifyToken).toHaveBeenCalledTimes(1);
+            expect(dispatch).toHaveBeenCalledOnce();
         } finally {
             await app.close();
         }

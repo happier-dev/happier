@@ -72,6 +72,21 @@ describe("apiRateLimitPolicy", () => {
         expect(fallback).toBe("ip:203.0.113.9");
     });
 
+    it("uses the route IP key without pre-verifying a bearer on PAT-admitting routes", async () => {
+        const verifySpy = vi.spyOn(auth, "verifyToken");
+        verifySpy.mockClear();
+        const keyGen = createApiRateLimitKeyGenerator({}, { strategy: "user-or-ip", scope: "global" });
+
+        const key = await keyGen({
+            headers: { authorization: "Bearer valid-token" },
+            ip: "203.0.113.9",
+            routeOptions: { config: { allowApiToken: true } },
+        });
+
+        expect(key).toBe("ip:203.0.113.9");
+        expect(verifySpy).not.toHaveBeenCalled();
+    });
+
     it("fails closed to the ip key without verifying absurdly large bearer tokens", async () => {
         const verifySpy = vi.spyOn(auth, "verifyToken");
         verifySpy.mockClear();
