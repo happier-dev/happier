@@ -2,6 +2,7 @@ import type {
     AgentExternalSessionTakeoverLaunchPlan,
     AgentExternalSessionsResolvedIdentity,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol';
 
 import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
@@ -9,7 +10,7 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 
 type ExternalTakeoverTargetAgent = Pick<
     ResolvedAgentContribution,
-    'id' | 'provenance' | 'source' | 'hostAccess'
+    'id' | 'identity' | 'hostAccess'
 >;
 
 function readDeclaredProcessEnvironmentKeys(
@@ -22,27 +23,6 @@ function readDeclaredProcessEnvironmentKeys(
                 : []
         )),
     );
-}
-
-function resolveTargetBackend(
-    targetAgent: ExternalTakeoverTargetAgent,
-): NonNullable<SpawnSessionOptions['backendTarget']> {
-    if (
-        targetAgent.provenance === 'first_party'
-        && targetAgent.source.kind === 'bundled'
-    ) {
-        return {
-            kind: 'backend',
-            backendId: targetAgent.id,
-            sourceKind: 'built_in',
-        };
-    }
-    return {
-        kind: 'backend',
-        backendId: targetAgent.id,
-        configuredBackendId: targetAgent.id,
-        sourceKind: 'configured',
-    };
 }
 
 export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
@@ -70,9 +50,15 @@ export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
         }
     }
 
+    const agentTarget = AgentExecutionTargetV1Schema.safeParse({
+        kind: 'agent',
+        identity: params.targetAgent.identity,
+    });
+    if (!agentTarget.success) return null;
+
     return {
         directory: params.targetDirectory,
-        backendTarget: resolveTargetBackend(params.targetAgent),
+        agentTarget: agentTarget.data,
         existingSessionId: params.linkedSessionId,
         resume: params.resolvedIdentity.remoteSessionId,
         approvedNewDirectoryCreation: true,

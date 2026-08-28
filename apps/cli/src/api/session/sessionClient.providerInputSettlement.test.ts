@@ -289,6 +289,47 @@ describe('ApiSessionClient provider-input settlement', () => {
     await client.close();
   });
 
+  it('returns accepted without waiting for staged-media release settlement', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const localId = 'composer-accepted-independent-of-settlement';
+    let releaseSettlement: (() => void) | undefined;
+    const settlementBlocked = new Promise<void>((resolve) => {
+      releaseSettlement = resolve;
+    });
+    const onAccepted = vi.fn(async () => await settlementBlocked);
+    sendSessionMessageMock.mockResolvedValueOnce({
+      admissionResult: { status: 'accepted', localId, code: 'accepted' },
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        credentials: { token: 'tok', encryption: null },
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: payload,
+          settlement: {
+            onAccepted,
+            onDefinitiveAdmissionFailure: vi.fn(async () => undefined),
+          },
+        }),
+      },
+    );
+
+    const enqueue = client.enqueueSessionUserMessage({
+      text: 'Message with staged media',
+      localId,
+    });
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledOnce());
+    await expect(Promise.race([
+      enqueue.then(() => 'accepted' as const),
+      new Promise<'timedOut'>((resolve) => setTimeout(() => resolve('timedOut'), 100)),
+    ])).resolves.toBe('accepted');
+
+    releaseSettlement?.();
+    await client.close();
+  });
+
   it('does not notify a Composer attachment target when durable admission is unknown', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -491,6 +532,33 @@ describe('ApiSessionClient provider-input settlement', () => {
       },
     })).rejects.toThrow('Session user input admission rejected: session_input_cancelled');
 
+    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onDefinitiveAdmissionFailure).toHaveBeenCalledOnce();
+    await client.close();
+  });
+
+  it('settles staged-media custody when missing owner credentials make admission definitively impossible', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const onAccepted = vi.fn(async () => undefined);
+    const onDefinitiveAdmissionFailure = vi.fn(async () => undefined);
+    const client = new ApiSessionClient(
+      'missing-credentials-token-never-stored',
+      createPlainSessionFixture({ id: 's1' }),
+      {
+        transformSessionInputBeforeCommit: async (payload) => ({
+          transformed: payload,
+          settlement: { onAccepted, onDefinitiveAdmissionFailure },
+        }),
+      },
+    );
+
+    await expect(client.enqueueSessionUserMessage({
+      text: 'Message with staged media',
+      localId: 'staged-media-missing-credentials',
+    })).rejects.toThrow('Current Account credentials are required to admit Session user input');
+
+    expect(sendSessionMessageMock).not.toHaveBeenCalled();
     expect(onAccepted).not.toHaveBeenCalled();
     expect(onDefinitiveAdmissionFailure).toHaveBeenCalledOnce();
     await client.close();

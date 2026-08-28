@@ -440,12 +440,15 @@ export class RpcHandlerManager {
      * caller owns when a replay is justified; this manager preserves the
      * receipt/current-socket boundary and never replays acknowledged handlers.
      */
-    replayUnacknowledgedHandlerRegistrations(methods: readonly string[]): readonly string[] {
+    replayUnacknowledgedHandlerRegistrations(methods?: readonly string[]): readonly string[] {
         const socket = this.socket;
         if (!socket) return [];
 
         const replayedMethods: string[] = [];
-        for (const method of new Set(methods.map((candidate) => candidate.trim()).filter(Boolean))) {
+        const candidates = methods === undefined
+            ? Array.from(this.handlers.keys(), (method) => this.readUnprefixedMethod(method))
+            : methods;
+        for (const method of new Set(candidates.map((candidate) => candidate.trim()).filter(Boolean))) {
             const prefixedMethod = this.getPrefixedMethod(method);
             if (
                 !this.handlers.has(prefixedMethod)

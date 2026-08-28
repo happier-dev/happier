@@ -751,6 +751,40 @@ describe('loadLinkedExternalSession', () => {
     });
   });
 
+  it('rejects an unadmitted persisted OpenCode source before Agent canonicalization I/O', async () => {
+    fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_unadmitted_opencode' });
+    tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
+      path: '/repo',
+      externalSessionV1: {
+        v: 1,
+        agentId: 'opencode',
+        machineId: 'machine_1',
+        remoteSessionId: 'native-1',
+        source: {
+          kind: 'opencodeServer',
+          baseUrl: 'https://unadmitted.example',
+          directory: '/repo',
+        },
+        linkedAtMs: 1,
+      },
+    });
+    const admitPersistedSourceBeforeCanonicalization = vi.fn(async () => null);
+
+    const result = await loadLinkedExternalSession({
+      credentials: { token: 'token', encryption: null },
+      sessionId: 'sess_unadmitted_opencode',
+      machineId: 'machine_1',
+    }, { admitPersistedSourceBeforeCanonicalization });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_source_not_current',
+    });
+    expect(admitPersistedSourceBeforeCanonicalization).toHaveBeenCalledOnce();
+    expect(canonicalizeLinkedExternalSessionSourceMock).not.toHaveBeenCalled();
+  });
+
   it('preserves the stored OpenCode directory and marks the canonical managed endpoint when the runtime descriptor has no base URL', async () => {
     fetchSessionByIdMock.mockResolvedValueOnce({ id: 'sess_open_code_partial_source' });
     tryDecryptSessionOwnerMetadataViewMock.mockReturnValueOnce({
@@ -801,7 +835,6 @@ describe('loadLinkedExternalSession', () => {
       path: '/repo',
       flavor: 'codex',
       codexSessionId: 'legacy-thread',
-      codexBackendMode: 'appServer',
       externalSessionV1: {
         v: 1,
         agentId: 'codex',
@@ -866,7 +899,6 @@ describe('loadLinkedExternalSession', () => {
       path: '/repo',
       flavor: 'codex',
       codexSessionId: 'legacy-thread',
-      codexBackendMode: 'appServer',
       externalSessionV1: {
         v: 1,
         agentId: 'codex',

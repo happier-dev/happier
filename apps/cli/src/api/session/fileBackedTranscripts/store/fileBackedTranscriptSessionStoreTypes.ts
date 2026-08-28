@@ -1,16 +1,8 @@
-import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
-
 export type FileBackedTranscriptSessionStoreLifecycleState =
     | 'hot_attached'
     | 'warm_detached'
     | 'cold_idle'
     | 'disposed';
-
-export type FileBackedTranscriptSessionStoreKey = Readonly<{
-    agentId: ExternalSessionsAgentId;
-    source: ExternalSessionsSource;
-    remoteSessionId: string;
-}>;
 
 export type FileBackedTranscriptPageResult<TItem = unknown> = Readonly<{
     items: readonly TItem[];
@@ -46,13 +38,3 @@ export interface FileBackedTranscriptSessionStore<TItem = unknown, TActivity = u
     getActivity(): Promise<TActivity | null>;
     getPreview(): Promise<TPreview>;
 }
-
-export type FileBackedTranscriptSessionStoreFactory<TStore extends FileBackedTranscriptSessionStore = FileBackedTranscriptSessionStore> = (
-    key: FileBackedTranscriptSessionStoreKey,
-) => Promise<TStore>;
-
-export type FileBackedTranscriptSessionLease<TStore extends FileBackedTranscriptSessionStore = FileBackedTranscriptSessionStore> = Readonly<{
-    key: FileBackedTranscriptSessionStoreKey;
-    store: TStore;
-    release: () => Promise<void>;
-}>;

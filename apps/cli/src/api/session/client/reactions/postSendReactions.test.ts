@@ -36,17 +36,12 @@ function createReactionPort(overrides?: Partial<Metadata>) {
     };
 }
 
-function readOutboundSharedSource(): string {
-    return readFileSync(new URL('../../outbound/shared.ts', import.meta.url), 'utf8');
-}
-
 describe('postSendReactions', () => {
-    it('keeps usage backend-mode compatibility behind the generic runtime descriptor seam', () => {
-        const source = readOutboundSharedSource();
+    it('does not infer usage runtime mode from opaque Session metadata', () => {
+        const source = readFileSync(new URL('./providers/applyAcpPostSendReactions.ts', import.meta.url), 'utf8');
 
-        expect(source).toMatch(/isSupportedRuntimeDescriptorProviderId/);
-        expect(source).toMatch(/readSessionMetadataRuntimeDescriptor/);
-        expect(source).toMatch(/readSessionMetadataRuntimeDescriptor\(params\.metadata,\s*params\.provider\)/);
+        expect(source).toContain('backendMode: null');
+        expect(source).not.toMatch(/readSessionMetadataRuntimeDescriptor/);
         expect(source).not.toMatch(/@happier-dev\/plugins-opencode/);
         expect(source).not.toMatch(/provider\s*={2,3}\s*['"]opencode['"]/);
         expect(source).not.toMatch(/switch\s*\(\s*params\.provider\s*\)/);
@@ -140,7 +135,7 @@ describe('postSendReactions', () => {
         expect(getMetadata()).toEqual(createTestMetadata());
     });
 
-    it('publishes ACP token_count usage with backend mode and derived external key', async () => {
+    it('publishes token_count usage without guessing a runtime mode', async () => {
         const { port, publish } = createReactionPort({ opencodeBackendMode: 'server' });
 
         applyAcpPostSendReactions(port, {
@@ -159,7 +154,7 @@ describe('postSendReactions', () => {
             expect(publish).toHaveBeenCalledWith(
                 expect.objectContaining({
                     sessionId: 'session-1',
-                    backendMode: 'server',
+                    backendMode: null,
                     externalKey: 'opencode-message:1',
                     observation: expect.objectContaining({
                         provider: 'opencode',

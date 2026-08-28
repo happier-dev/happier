@@ -15,14 +15,16 @@ type TargetAgent = Parameters<
 
 function targetAgent(params: Readonly<{
     id?: string;
-    provenance?: TargetAgent['provenance'];
-    sourceKind?: TargetAgent['source']['kind'];
+    pluginId?: string;
+    localId?: string;
     declaredEnvironmentKeys?: readonly string[];
 }> = {}): TargetAgent {
     return {
         id: params.id ?? 'fixture-agent',
-        provenance: params.provenance ?? 'first_party',
-        source: { kind: params.sourceKind ?? 'bundled' },
+        identity: {
+            pluginId: params.pluginId ?? 'happier.agent.fixture',
+            localId: params.localId ?? params.id ?? 'fixture-agent',
+        },
         hostAccess: {
             required: [{
                 id: 'fixture-process',
@@ -105,10 +107,12 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
             }),
         })).toEqual({
             directory: '/workspace/fresh',
-            backendTarget: {
-                kind: 'backend',
-                backendId: 'fixture-agent',
-                sourceKind: 'built_in',
+            agentTarget: {
+                kind: 'agent',
+                identity: {
+                    pluginId: 'happier.agent.fixture',
+                    localId: 'fixture-agent',
+                },
             },
             existingSessionId: 'session-linked',
             resume: 'remote-fresh',
@@ -128,7 +132,47 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
         });
     });
 
-    it('maps an arbitrary external Agent to the configured backend target without an Agent-id branch', () => {
+    it('preserves Pi\'s exact native resume carrier when duplicate provider ids exist', () => {
+        const providerSessionId = 'pi-duplicate';
+        const selectedSessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-duplicate.jsonl';
+        const siblingSessionFile = '/home/lee/.pi/agent/sessions/workspace-b/pi-duplicate.jsonl';
+        const runtimeDescriptorV1 = {
+            v: 1 as const,
+            agentId: 'pi',
+            agent: {
+                resumeStrategy: 'sessionFileAbsolutePreferred',
+                providerSessionId,
+                sessionFile: selectedSessionFile,
+            },
+        };
+
+        const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
+            plan: {
+                directory: '/workspace/pi',
+                runtimeDescriptorV1,
+            },
+            targetDirectory: '/workspace/pi',
+            resolvedIdentity: resolvedIdentity({
+                remoteSessionId: providerSessionId,
+            }),
+            linkedSessionId: 'session-linked-pi',
+            targetAgent: targetAgent({
+                id: 'pi',
+                pluginId: 'happier.agent.pi',
+                localId: 'pi',
+            }),
+        });
+
+        expect(options).toMatchObject({
+            resume: providerSessionId,
+            runtimeDescriptorV1,
+        });
+        expect(options?.runtimeDescriptorV1).not.toMatchObject({
+            agent: { sessionFile: siblingSessionFile },
+        });
+    });
+
+    it('keeps an arbitrary external Agent as a qualified Agent target', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: { directory: '/workspace/custom' },
             targetDirectory: '/workspace/custom',
@@ -137,17 +181,18 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
             }),
             linkedSessionId: 'session-custom',
             targetAgent: targetAgent({
-                id: 'acme.custom-agent',
-                provenance: 'external',
-                sourceKind: 'package',
+                id: 'custom-agent',
+                pluginId: 'acme.agent.fixture',
+                localId: 'custom-agent',
             }),
         })).toEqual({
             directory: '/workspace/custom',
-            backendTarget: {
-                kind: 'backend',
-                backendId: 'acme.custom-agent',
-                configuredBackendId: 'acme.custom-agent',
-                sourceKind: 'configured',
+            agentTarget: {
+                kind: 'agent',
+                identity: {
+                    pluginId: 'acme.agent.fixture',
+                    localId: 'custom-agent',
+                },
             },
             existingSessionId: 'session-custom',
             resume: 'remote-custom',

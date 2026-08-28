@@ -21,6 +21,3 @@ export type {
     JsonlFollowPollState,
     JsonlFollowPollStateV1,
 } from './followPolicy';
-export { readJsonlFileBackwardPage } from './pageJsonlBackward';
-export { readJsonlFileForward } from './readJsonlForward';
-export type { JsonlParsedLine } from './pageJsonlBackward';

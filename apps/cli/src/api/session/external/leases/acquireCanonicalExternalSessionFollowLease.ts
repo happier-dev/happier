@@ -51,6 +51,8 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
     initialCursor?: string | null;
     maxBytes: number;
     maxItems: number;
+    deadlineAtMs?: number;
+    signal?: AbortSignal;
     observationProjection: Readonly<{
         reconcileTranscriptDemand(input: Readonly<{
             resolved: ExternalSessionObservationLinkInput;
@@ -178,6 +180,10 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
                 direction: 'older',
                 maxBytes: params.maxBytes,
                 maxItems: 1,
+                ...(params.deadlineAtMs === undefined
+                    ? {}
+                    : { deadlineAtMs: params.deadlineAtMs }),
+                ...(params.signal === undefined ? {} : { signal: params.signal }),
             });
             cursor = baseline.tailCursor;
         } catch (error) {
@@ -309,7 +315,14 @@ export async function acquireCanonicalExternalSessionFollowLease(params: Readonl
                 result.outcome === 'gap_or_cursor_expired'
                 || (
                     result.outcome === 'advanced'
-                    && result.nextCursor === requestedCursor
+                    && (
+                        result.nextCursor === requestedCursor
+                        || result.hasMore === true
+                        || result.diagnostics?.some(
+                            (diagnostic) =>
+                                diagnostic.severity === 'required',
+                        )
+                    )
                 )
             ) {
                 return createGapRecovery();

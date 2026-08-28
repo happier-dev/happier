@@ -9,7 +9,6 @@ import {
     updateAgentStateBestEffort,
 } from '../../../sessionWritesBestEffort';
 import {
-    resolveUsageObservationBackendMode,
     resolveUsageObservationExternalKey,
 } from '../../../outbound/shared';
 import {
@@ -67,10 +66,10 @@ export function applyAcpPostSendReactions(
         publisher: port.usageObservationPublisher,
         provider: params.provider,
         body: params.normalizedBody,
-        backendMode: resolveUsageObservationBackendMode({
-            metadata: port.getMetadataSnapshot(),
-            provider: params.provider,
-        }),
+        // The normalized token-count shape is shared by several native
+        // transports. Its provider/source fields preserve the useful usage
+        // observation without guessing at an Agent-owned runtime mode.
+        backendMode: null,
         externalKey: resolveUsageObservationExternalKey({
             body: params.normalizedBody,
             fallbackLocalId: params.localId,

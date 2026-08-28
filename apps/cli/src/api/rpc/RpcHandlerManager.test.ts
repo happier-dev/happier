@@ -33,6 +33,7 @@ function createSocketEventBoundary() {
   return {
     // Socket.IO is the system boundary under test; only its event surface is needed here.
     socket: socket as unknown as Socket,
+    emit: socket.emit,
     trigger(event: string, payload: unknown) {
       for (const handler of handlers.get(event) ?? []) {
         handler(payload);
@@ -162,6 +163,27 @@ describe('RpcHandlerManager registration receipts', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('replays every current unacknowledged handler when no subset is supplied', () => {
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionMode: 'plain',
+      logger: () => {},
+    });
+    rpc.registerHandler('core.spawn', async () => ({ ok: true }));
+    rpc.registerHandler('optional.status', async () => ({ ok: true }));
+    const boundary = createSocketEventBoundary();
+
+    rpc.onSocketConnect(boundary.socket);
+    boundary.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: 'machine-1:core.spawn' });
+    boundary.emit.mockClear();
+
+    expect(rpc.replayUnacknowledgedHandlerRegistrations()).toEqual(['optional.status']);
+    expect(boundary.emit).toHaveBeenCalledTimes(1);
+    expect(boundary.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, {
+      method: 'machine-1:optional.status',
+    });
   });
 });
 
@@ -323,7 +345,7 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
         runId: 'run-1',
         attempt: 3,
         claimedByMachineId: 'machine-source',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         requestEnvelope: { t: 'plain', v: { opaque: true } },
       },

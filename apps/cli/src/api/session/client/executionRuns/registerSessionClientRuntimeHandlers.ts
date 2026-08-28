@@ -49,6 +49,8 @@ import type { EphemeralSendResult } from '@/api/session/client/transcript/epheme
 import type { VoiceAgentTranscriptTurnCommitParams } from '@/api/session/client/transcript/sessionClientTranscriptApi';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createExecutionRunTranscriptCustodyError } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
 
 export function resolveSessionClientParentProvider(metadata: unknown): ACPProvider {
     const configuredAcpBackendId = typeof readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId === 'string'
@@ -94,6 +96,7 @@ export function registerSessionClientRuntimeHandlers(
         metadataPath: string;
         metadata: unknown;
         sessionId: string;
+        session?: ApiSessionClient;
         getSessionMetadata: () => Metadata | null;
         sessionRuntimeControls?: SessionRuntimeControls | null;
         enqueueSessionUserMessage: (request: Readonly<{
@@ -149,6 +152,20 @@ export function registerSessionClientRuntimeHandlers(
 ): void {
     const parentProvider = resolveSessionClientParentProvider(params.metadata);
     const workingDirectory = params.metadataPath ?? process.cwd();
+    const sessionMachineId = typeof (params.metadata as { machineId?: unknown })?.machineId === 'string'
+        ? (params.metadata as { machineId: string }).machineId.trim()
+        : '';
+    const sessionInteractionHost = params.session
+        ? {
+            session: params.session,
+            machineId: sessionMachineId,
+            permissionHandler: createProviderEnforcedPermissionHandler({
+                session: params.session,
+                logPrefix: '[Voice Agent Session]',
+                getAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
+            }),
+        }
+        : null;
     const executionBudgetRegistry = createExecutionBudgetRegistry();
     const transcriptQueryContext = params.getTranscriptQueryContext();
     const transcriptTransportContext: SessionStoredContentCryptoContext =
@@ -268,10 +285,10 @@ export function registerSessionClientRuntimeHandlers(
     registerExecutionRunHandlers(params.rpcHandlerManager, {
         sessionId: params.sessionId,
         cwd: workingDirectory,
-        ...(typeof (params.metadata as { machineId?: unknown })?.machineId === 'string'
-            && (params.metadata as { machineId: string }).machineId.trim().length > 0
-            ? { machineId: (params.metadata as { machineId: string }).machineId.trim() }
+        ...(sessionMachineId.length > 0
+            ? { machineId: sessionMachineId }
             : {}),
+        ...(sessionInteractionHost ? { sessionInteractionHost } : {}),
         serverUrl: configuration.serverUrl,
         parentProvider,
         browserControl: params.getBrowserDaemonControlRoutes?.() ?? null,

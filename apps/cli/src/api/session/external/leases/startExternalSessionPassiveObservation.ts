@@ -21,10 +21,7 @@ import {
     loadLinkedExternalSessionFromRaw,
     loadPersistedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import {
-    resolveDefaultMaxBytes,
-    resolveDefaultMaxItems,
-} from '@/session/actions/externalSessions/actionConfiguration';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 import { resolveGenerationBoundExternalSessionFollowSurface } from '@/session/actions/externalSessions/providerOpsResolution';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import {
@@ -372,8 +369,8 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                             observation,
                             providerOps,
                             initialCursor: reacquisitionCursor,
-                            maxBytes: resolveDefaultMaxBytes(),
-                            maxItems: Math.min(200, resolveDefaultMaxItems()),
+                            maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                            maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
                             observationProjection: {
                                 reconcileTranscriptDemand:
                                     params.projection.reconcileTranscriptDemand!,

@@ -92,6 +92,52 @@ describe('createServerBackedSessionTranscriptStore', () => {
     });
   });
 
+  it('uses cursor zero to retain rows written before spawn-follow admission and advances past them exactly once', async () => {
+    fetchEncryptedTranscriptMessagesPageMock.mockImplementation(async ({ afterSeq }: { afterSeq?: number }) => {
+      if (afterSeq === undefined || afterSeq === 0) {
+        return {
+          messages: [{
+            seq: 1,
+            createdAt: 1,
+            content: { t: 'plain', v: { type: 'agent_message', text: 'written before follow attached' } },
+          }],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: 1,
+        };
+      }
+      return {
+        messages: [],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: afterSeq,
+      };
+    });
+    const store = createServerBackedSessionTranscriptStore({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+    });
+
+    await expect(store.readAfter({ cursor: 'tail', maxItems: 100, maxBytes: 64 * 1024 })).resolves.toEqual({
+      items: [],
+      nextCursor: '1',
+      truncated: false,
+    });
+
+    const admitted = await store.readAfter({ cursor: '0', maxItems: 100, maxBytes: 64 * 1024 });
+    expect(admitted).toMatchObject({
+      items: [expect.objectContaining({ seq: 1 })],
+      nextCursor: '1',
+      truncated: false,
+    });
+    await expect(store.readAfter({ cursor: admitted.nextCursor, maxItems: 100, maxBytes: 64 * 1024 })).resolves.toMatchObject({
+      items: [],
+      nextCursor: '1',
+      truncated: false,
+    });
+  });
+
   it('continues from the last emitted sequence when byte limiting a forward server page', async () => {
     const oversizedText = 'x'.repeat(64 * 1024);
     fetchEncryptedTranscriptMessagesPageMock.mockImplementation(async ({ afterSeq }: { afterSeq?: number }) => {

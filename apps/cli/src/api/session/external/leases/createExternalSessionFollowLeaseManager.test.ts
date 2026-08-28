@@ -757,6 +757,28 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(secondRefresh).toHaveBeenCalledOnce();
     });
 
+    it('captures the canonical lease cursor when scoped live demand precedes replay', async () => {
+        const release = vi.fn(async () => undefined);
+        const manager = createExternalSessionFollowLeaseManager();
+        const attached = await manager.attachScoped({
+            sessionId: 'session-scoped-baseline',
+            acceptedTailCursor: null,
+            resource: {
+                linkGeneration: 'link-scoped-baseline',
+                pluginGeneration: 'plugin-scoped-baseline',
+            },
+            acquireFollowLease: async () => ({
+                release,
+                readAcceptedCursor: () => 'captured-tail',
+            }),
+            requestTranscriptRefresh: async () => ({ outcome: 'already_current' }),
+        });
+
+        expect(attached.acceptedTailCursor).toBe('captured-tail');
+        await attached.release();
+        expect(release).toHaveBeenCalledOnce();
+    });
+
     it('reacquires background-only follow from its last accepted cursor without rebasing past suspended changes', async () => {
         let providerTailCursor = 'cursor-before-suspension';
         const baselineTail = vi.fn(async () => providerTailCursor);

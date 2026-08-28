@@ -1041,6 +1041,11 @@ export class ApiSessionClient extends EventEmitter {
                 };
                 const credentials = await this.readCurrentOwnerCredentials();
                 if (!credentials) {
+                    // No admission request can be made without the current
+                    // Account authority. This is definitive (unlike an
+                    // acknowledgement timeout), so release any staged-media
+                    // custody before surfacing the failure.
+                    await settle('onDefinitiveAdmissionFailure');
                     throw new Error('Current Account credentials are required to admit Session user input');
                 }
                 const result = await sendSessionMessage({
@@ -1076,7 +1081,11 @@ export class ApiSessionClient extends EventEmitter {
                         localId,
                         attachments: composerAttachments,
                     });
-                    await settle('onAccepted');
+                    // Releasing the transfer stage is cleanup after the
+                    // canonical persisted fact. Start it best-effort, but do
+                    // not make an already accepted Message wait for the daemon
+                    // cleanup round trip before its caller can observe success.
+                    void settle('onAccepted');
                     return;
                 }
                 if (admissionResult.status === 'outcomeUnknown') {
@@ -1123,6 +1132,7 @@ export class ApiSessionClient extends EventEmitter {
             metadataPath: this.metadata?.path ?? process.cwd(),
             metadata: this.metadata,
             sessionId: this.sessionId,
+            session: this,
             getSessionMetadata: () => this.getMetadataSnapshot(),
             sessionRuntimeControls: this.sessionRuntimeControls,
             enqueueSessionUserMessage: (request) => this.enqueueSessionUserMessage(request),

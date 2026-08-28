@@ -829,10 +829,12 @@ export function createExternalSessionObservationReconciler(
                 // `requestShutdown('exception')`, so one plugin observer whose
                 // disposal failed must not take the daemon down. The failure is not
                 // discarded — a rejected deactivation leaves this resource in
-                // `resourcesByKey` with its observer unreleased, so `dispose()` and
-                // the next reconcile retry the exact same cleanup and surface the
+                // `resourcesByKey` with its observer unreleased, so the reconciler's
+                // owned `dispose()` retries the exact same cleanup and surfaces the
                 // failure to that caller.
-                void deactivateResource(resource).catch(() => undefined);
+                void deactivateResource(resource, {
+                    releaseLogicalLinksBeforeCleanup: true,
+                }).catch(() => undefined);
             };
             resource.retirementListener = retire;
             retirementSignal.addEventListener('abort', retire, { once: true });
@@ -860,7 +862,20 @@ export function createExternalSessionObservationReconciler(
         }
     };
 
-    const deactivateResource = async (resource: ResourceRecord): Promise<void> => {
+    const releaseResourceLogicalLinks = (resource: ResourceRecord): void => {
+        for (const link of resource.links) {
+            if (linksBySessionId.get(link.identity.sessionId) === link) {
+                linksBySessionId.delete(link.identity.sessionId);
+            }
+        }
+        resource.links.clear();
+        resource.linksByLinkKey.clear();
+    };
+
+    const deactivateResource = async (
+        resource: ResourceRecord,
+        options?: Readonly<{ releaseLogicalLinksBeforeCleanup?: boolean }>,
+    ): Promise<void> => {
         resource.active = false;
         resource.reconciliationAbortController?.abort();
         resource.redescriptionAbortController?.abort();
@@ -873,18 +888,21 @@ export function createExternalSessionObservationReconciler(
             );
             resource.retirementListener = null;
         }
+        // Generation retirement ends logical authority immediately. Physical
+        // observer disposal remains owned by this retained resource and stays
+        // bounded by the generation-bound observation lease, but it must not
+        // block a replacement generation from claiming the same Happier
+        // Session. Ordinary demand detachment keeps its previous sequencing so
+        // the same active generation cannot overlap two physical observers.
+        if (options?.releaseLogicalLinksBeforeCleanup) {
+            releaseResourceLogicalLinks(resource);
+        }
         await stopObserver(resource);
         await resource.reconciliationPromise?.catch(() => undefined);
         if (resourcesByKey.get(resource.key) === resource) {
             resourcesByKey.delete(resource.key);
         }
-        for (const link of resource.links) {
-            if (linksBySessionId.get(link.identity.sessionId) === link) {
-                linksBySessionId.delete(link.identity.sessionId);
-            }
-        }
-        resource.links.clear();
-        resource.linksByLinkKey.clear();
+        releaseResourceLogicalLinks(resource);
         if (!resource.redescriptionPromise) {
             resource.pendingResourceRedescriptionReasons = 0;
         }

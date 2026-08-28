@@ -38,7 +38,6 @@ function createLinkedSession(workingDirectory: string): LoadedLinkedExternalSess
     remoteSessionId: 'provider-session-1',
     linkGeneration: '1',
     source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: workingDirectory },
-    codexBackendMode: null,
   };
 }
 

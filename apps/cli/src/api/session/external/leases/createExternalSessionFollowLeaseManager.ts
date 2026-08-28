@@ -1231,7 +1231,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
 
         async attachScoped(input: Readonly<{
             sessionId: string;
-            acceptedTailCursor: string;
+            acceptedTailCursor: string | null;
             resource: ExternalSessionFollowResource;
             acquireFollowLease: FollowLeaseAcquirer;
             requestTranscriptRefresh: CursorRefreshRequester;
@@ -1265,8 +1265,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     refreshDelivery: 'scoped_listener',
                     expiryTimer: null,
                 });
+                let reconciliation: Awaited<ReturnType<typeof reconcile>>;
                 try {
-                    await reconcile(input.sessionId, {
+                    reconciliation = await reconcile(input.sessionId, {
                         activeReason: 'viewer_attached',
                         propagateAcquisitionError: true,
                     });
@@ -1274,11 +1275,36 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     forgetViewerLease(recordKey);
                     throw error;
                 }
-                return viewer;
+                const state = stateFor(input.sessionId);
+                const acceptedTailCursor = input.acceptedTailCursor?.trim()
+                    || reconciliation.followLease?.readAcceptedCursor?.()?.trim()
+                    || state.actual?.readAcceptedCursor?.()?.trim()
+                    || null;
+                if (!acceptedTailCursor) {
+                    forgetViewerLease(recordKey);
+                    await reconcile(input.sessionId, {
+                        activeReason: 'background_follow',
+                        propagateAcquisitionError: false,
+                    });
+                    throw new ExternalSessionFollowFailureError(
+                        'follow_unavailable',
+                        'External Session follow did not establish an accepted cursor',
+                    );
+                }
+                const record = viewerLeasesById.get(recordKey);
+                if (!record) {
+                    throw new ExternalSessionFollowFailureError(
+                        'follow_unavailable',
+                        'External Session scoped follow retired during admission',
+                    );
+                }
+                record.acceptedTailCursor = acceptedTailCursor;
+                return { ...viewer, acceptedTailCursor };
             });
             let released = false;
             return Object.freeze({
                 leaseId: attached.leaseId,
+                acceptedTailCursor: attached.acceptedTailCursor,
                 release: async () => {
                     if (released) return;
                     released = true;

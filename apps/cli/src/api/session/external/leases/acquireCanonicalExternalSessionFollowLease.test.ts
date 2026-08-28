@@ -414,6 +414,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 items: [transcriptItem('advanced-item', 30)],
                 nextCursor: 'cursor-advanced',
                 boundary: 'boundary-advanced',
+                hasMore: false,
             };
         });
         updateSessionMetadataWithRetryMock
@@ -457,6 +458,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                     items: [transcriptItem('advanced-during-release', 31)],
                     nextCursor: 'cursor-must-not-commit',
                     boundary: 'boundary-during-release',
+                    hasMore: false,
                 }),
             },
             initialCursor: 'cursor-accepted',
@@ -535,6 +537,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                     items: [transcriptItem('advanced-before-final-validation', 32)],
                     nextCursor: 'cursor-must-not-commit',
                     boundary: 'boundary-before-final-validation',
+                    hasMore: false,
                 }),
             },
             initialCursor: 'cursor-accepted',

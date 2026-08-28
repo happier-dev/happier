@@ -3,7 +3,7 @@ import { hostname } from 'node:os';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateVendorResumeEligibility } from '@happier-dev/agents';
-import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
+import { buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptorV1 } from '@/testkit/runtimeDescriptorFixtures';
 import {
   readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   updateLinkedExternalSessionFollowMetadataV1,
@@ -328,7 +328,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       agentId: 'codex',
       remoteSessionId: 'thread_runtime',
-      codexBackendMode: 'mcp',
+      linkData: { codexBackendMode: 'mcp' },
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
         providerSessionId: 'thread_runtime',
@@ -349,7 +349,6 @@ describe('ensureExternalSessionLink', () => {
     }));
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_runtime',
-      codexBackendMode: 'appServer',
       summary: {
         text: 'Codex linked session',
         updatedAt: expect.any(Number),
@@ -368,6 +367,7 @@ describe('ensureExternalSessionLink', () => {
       },
       externalSessionV1: {
         remoteSessionId: 'thread_runtime',
+        linkData: { codexBackendMode: 'appServer' },
         source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
         qualifiedIdentity: {
           v: 1,
@@ -391,6 +391,8 @@ describe('ensureExternalSessionLink', () => {
     expect(createdMetadata).not.toHaveProperty('directSessionV1');
     expect(createdMetadata).not.toHaveProperty('name');
     expect(createdMetadata).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(createdMetadata).not.toHaveProperty('codexBackendMode');
+    expect(createdMetadata?.externalSessionV1).not.toHaveProperty('codexBackendMode');
     expect(createdMetadata?.externalSessionV1).not.toHaveProperty('agentRuntimeDescriptorV1');
   });
 
@@ -438,7 +440,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       agentId: 'codex',
       remoteSessionId: 'thread_group',
-      codexBackendMode: 'appServer',
+      linkData: { codexBackendMode: 'appServer' },
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
         providerSessionId: 'thread_group',
@@ -1075,7 +1077,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       agentId: 'codex' as const,
       remoteSessionId: 'thread_runtime',
-      codexBackendMode: 'mcp',
+      linkData: { codexBackendMode: 'mcp' },
       runtimeDescriptor,
       source: { kind: 'codexHome' as const, home: 'connectedService' as const, connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
       titleHint: 'Codex linked session',
@@ -1150,7 +1152,6 @@ describe('ensureExternalSessionLink', () => {
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     expect(refreshedMetadata).toMatchObject({
       codexSessionId: 'thread_runtime',
-      codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'codex',
@@ -1184,6 +1185,7 @@ describe('ensureExternalSessionLink', () => {
           },
         },
         linkData: {
+          codexBackendMode: 'appServer',
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'codex',
@@ -1201,6 +1203,8 @@ describe('ensureExternalSessionLink', () => {
     });
     expect(refreshedMetadata).not.toHaveProperty('directSessionV1');
     expect(refreshedMetadata).not.toHaveProperty('externalAgentObservationV1');
+    expect(refreshedMetadata).not.toHaveProperty('codexBackendMode');
+    expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).not.toHaveProperty('codexBackendMode');
     expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).not.toHaveProperty('followStatusV1');
     expect(Reflect.get(refreshedMetadata ?? {}, 'externalSessionV1')).not.toHaveProperty('lastFollowIssueV1');
   });
@@ -1509,7 +1513,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       agentId: 'codex',
       remoteSessionId: 'thread_runtime',
-      codexBackendMode: 'mcp',
+      linkData: { codexBackendMode: 'mcp' },
       runtimeDescriptor: {
         v: 1,
         agentId: 'codex',
@@ -1539,7 +1543,6 @@ describe('ensureExternalSessionLink', () => {
     const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_runtime',
-      codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
         agent: {
           backendMode: 'appServer',
@@ -1549,6 +1552,7 @@ describe('ensureExternalSessionLink', () => {
         },
       },
       externalSessionV1: {
+        linkData: { codexBackendMode: 'appServer' },
         source: {
           kind: 'codexHome',
           home: 'connectedService',
@@ -1598,7 +1602,7 @@ describe('ensureExternalSessionLink', () => {
     });
   });
 
-  it('normalizes legacy codex backend aliases when linking direct sessions without a runtime descriptor', async () => {
+  it('normalizes legacy Codex backend aliases from plugin-owned link data', async () => {
     getOrCreateSessionByTagMock.mockResolvedValueOnce({
       session: {
         id: 'sess_direct_alias',
@@ -1611,7 +1615,7 @@ describe('ensureExternalSessionLink', () => {
       machineId: 'machine_1',
       agentId: 'codex',
       remoteSessionId: 'thread_alias',
-      codexBackendMode: legacyCodexBackendMode,
+      linkData: { codexBackendMode: legacyCodexBackendMode },
       source: { kind: 'codexHome', home: 'user' },
       titleHint: 'Codex linked session',
       directoryHint: '/repo',
@@ -1621,7 +1625,6 @@ describe('ensureExternalSessionLink', () => {
     const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
     expect(createdMetadata).toMatchObject({
       codexSessionId: 'thread_alias',
-      codexBackendMode: 'acp',
       runtimeDescriptorV1: {
         agentId: 'codex',
         agent: {
@@ -1629,7 +1632,12 @@ describe('ensureExternalSessionLink', () => {
           providerSessionId: 'thread_alias',
         },
       },
+      externalSessionV1: {
+        linkData: { codexBackendMode: 'acp' },
+      },
     });
+    expect(createdMetadata).not.toHaveProperty('codexBackendMode');
+    expect(createdMetadata?.externalSessionV1).not.toHaveProperty('codexBackendMode');
   });
 
   it('stores the canonical OpenCode runtime descriptor for linked direct sessions', async () => {

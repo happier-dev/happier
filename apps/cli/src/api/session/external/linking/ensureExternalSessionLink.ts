@@ -18,8 +18,6 @@ import {
   readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
   normalizeLinkedExternalSessionMetadataV1,
-  normalizeCodexBackendMode,
-  type CodexBackendMode,
   type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type LinkedExternalSessionV1,
@@ -140,7 +138,6 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1;
-  codexBackendMode?: CodexBackendMode | null;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   sessionStateUpdates?: readonly SessionStateMetadataUpdateV1[];
   vendorMetadata?: Record<string, unknown>;
@@ -227,7 +224,6 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     qualifiedIdentity: params.qualifiedIdentity,
-    codexBackendMode: params.codexBackendMode,
     runtimeDescriptor: params.runtimeDescriptor,
     sessionStateUpdates: params.sessionStateUpdates,
     vendorMetadata: params.vendorMetadata,
@@ -341,7 +337,6 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1;
-  codexBackendMode?: CodexBackendMode | null;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   sessionStateUpdates?: readonly SessionStateMetadataUpdateV1[];
   vendorMetadata?: Record<string, unknown>;
@@ -357,7 +352,6 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   const hasDisplayRefresh = Boolean(normalizeNullableString(params.titleHint) || normalizeNullableString(params.directoryHint));
   const hasIdentityRefresh = Boolean(
     params.qualifiedIdentity
-    || params.codexBackendMode
     || params.runtimeDescriptor
     || params.sessionStateUpdates?.length
     || hasOwnRecordValues(params.vendorMetadata)
@@ -390,7 +384,6 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     qualifiedIdentity: params.qualifiedIdentity,
-    codexBackendMode: params.codexBackendMode,
     runtimeDescriptor: params.runtimeDescriptor,
     sessionStateUpdates: params.sessionStateUpdates,
     vendorMetadata: params.vendorMetadata,
@@ -421,7 +414,6 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
         remoteSessionId: params.remoteSessionId,
         source: params.source,
         qualifiedIdentity: params.qualifiedIdentity,
-        codexBackendMode: params.codexBackendMode,
         runtimeDescriptor: params.runtimeDescriptor,
         sessionStateUpdates: params.sessionStateUpdates,
         vendorMetadata: params.vendorMetadata,
@@ -812,7 +804,6 @@ export function buildExternalSessionMetadata(params: Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1;
-  codexBackendMode?: CodexBackendMode | null;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   sessionStateUpdates?: readonly SessionStateMetadataUpdateV1[];
   vendorMetadata?: Record<string, unknown>;
@@ -851,7 +842,6 @@ export function buildExternalSessionMetadata(params: Readonly<{
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     linkedAtMs: params.nowMs,
-    ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
     qualifiedIdentity: params.qualifiedIdentity,
   };
   const baseWithoutLink: Record<string, unknown> = {
@@ -906,7 +896,6 @@ export async function ensureExternalSessionLink(params: Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
   linkData?: PluginAgentExternalSessionLinkData;
-  codexBackendMode?: unknown;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   titleHint?: string | null;
   directoryHint?: string | null;
@@ -947,15 +936,12 @@ export async function ensureExternalSessionLink(params: Readonly<{
       remoteSessionId: params.remoteSessionId,
       source: params.source,
       runtimeDescriptor: params.runtimeDescriptor,
-      metadata: params.linkData || params.runtimeDescriptor || params.codexBackendMode
+      metadata: params.linkData || params.runtimeDescriptor
         ? {
             linkData: {
               ...(params.linkData ?? {}),
               ...(params.runtimeDescriptor
                 ? { runtimeDescriptorV1: params.runtimeDescriptor }
-                : {}),
-              ...(params.codexBackendMode
-                ? { codexBackendMode: params.codexBackendMode }
                 : {}),
             },
           }
@@ -965,9 +951,6 @@ export async function ensureExternalSessionLink(params: Readonly<{
   );
   const remoteSessionId = linkIdentity.remoteSessionId;
   const source = linkIdentity.source;
-  const codexBackendMode =
-    normalizeCodexBackendMode(linkIdentity.vendorMetadata?.codexBackendMode)
-    ?? normalizeCodexBackendMode(params.codexBackendMode);
   const runtimeDescriptor = linkIdentity.runtimeDescriptor ?? params.runtimeDescriptor ?? null;
   const qualifiedIdentityResolution = await resolveLinkedExternalSessionQualifiedIdentity({
     v: 1,
@@ -1231,7 +1214,6 @@ export async function ensureExternalSessionLink(params: Readonly<{
     remoteSessionId,
     source,
     qualifiedIdentity,
-    codexBackendMode,
     runtimeDescriptor,
     sessionStateUpdates: linkIdentity.sessionStateUpdates,
     vendorMetadata: linkIdentity.vendorMetadata,
@@ -1262,7 +1244,6 @@ export async function ensureExternalSessionLink(params: Readonly<{
       remoteSessionId,
       source,
       qualifiedIdentity,
-      codexBackendMode,
       runtimeDescriptor,
       sessionStateUpdates: linkIdentity.sessionStateUpdates,
       vendorMetadata: linkIdentity.vendorMetadata,

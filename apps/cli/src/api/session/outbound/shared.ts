@@ -1,13 +1,6 @@
-import {
-    isSupportedRuntimeDescriptorProviderId,
-    readSessionMetadataRuntimeDescriptor,
-} from '@happier-dev/agents';
-
 import type {
     MessageContent,
-    Metadata,
 } from '../../types';
-import type { ACPProvider } from '../sessionMessageTypes';
 
 type CliMessageMeta = Readonly<Record<string, unknown> & {
     sentFrom: 'cli';
@@ -45,18 +38,6 @@ export function resolveUsageObservationExternalKey(params: Readonly<{
     }
     const fallbackLocalId = typeof params.fallbackLocalId === 'string' ? params.fallbackLocalId.trim() : '';
     return fallbackLocalId.length > 0 ? fallbackLocalId : null;
-}
-
-export function resolveUsageObservationBackendMode(params: Readonly<{
-    metadata: Metadata | null;
-    provider: ACPProvider | 'codex';
-}>): string | null {
-    if (!isSupportedRuntimeDescriptorProviderId(params.provider)) return null;
-    const descriptor = readSessionMetadataRuntimeDescriptor(params.metadata, params.provider);
-    if (!descriptor || !('backendMode' in descriptor)) return null;
-    return typeof descriptor.backendMode === 'string' && descriptor.backendMode.trim().length > 0
-        ? descriptor.backendMode
-        : null;
 }
 
 export function buildUserTextMessageContent(text: string, meta?: Record<string, unknown>): MessageContent {

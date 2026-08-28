@@ -1,20 +1,16 @@
 import {
   buildLinkedExternalSessionMetadataV1,
   normalizeLinkedExternalSessionMetadataV1,
-  normalizeCodexBackendMode,
   resolveExternalHistoryImportV1FromMetadata,
   readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
   readRuntimeDescriptorV1FromMetadata,
   type RuntimeDescriptorV1,
-  type CodexBackendMode,
   type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type PluginAgentExternalSessionLinkData,
+  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
 } from '@happier-dev/protocol';
-import {
-  getRuntimeDescriptorReader,
-} from '@happier-dev/agents';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { StoredCredentials } from '@/persistence';
@@ -26,8 +22,8 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   canonicalizeLinkedExternalSessionSource,
+  readExternalAgentSurfaceRuntimeDescriptorV1,
 } from '@/agent/runtime/bridges/session/externalSessionSourceCanonicalization';
-import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 import {
   metadataProvesHostedExternalSessionIdentity,
 } from '@/api/session/external/linking/hostedExternalSessionIdentity';
@@ -45,6 +41,16 @@ type LoadLinkedExternalSessionDeps = Readonly<{
     agentId: ExternalSessionsAgentId,
     source: ExternalSessionsSource,
   ) => Promise<ExternalSessionSourceKeyOwner | null>;
+  admitPersistedSourceBeforeCanonicalization?: (input: Readonly<{
+    agentId: ExternalSessionsAgentId;
+    machineId: string;
+    remoteSessionId: string;
+    source: ExternalSessionsSource;
+  }>) => Promise<Readonly<{
+    source: ExternalSessionsSource;
+    externalLinkedTakeoverWriterSafety:
+      PluginAgentExternalLinkedTakeoverWriterSafetyV1;
+  }> | null>;
 }>;
 
 function applyRuntimeDescriptorSessionStateBinding(
@@ -57,13 +63,6 @@ function applyRuntimeDescriptorSessionStateBinding(
   );
 }
 
-function resolvePersistedRuntimeKind(
-  agentId: string,
-  metadata: Readonly<Record<string, unknown>>,
-): string | null {
-  return getRuntimeDescriptorReader(agentId)?.(metadata)?.runtimeKind ?? null;
-}
-
 function canonicalizeExternalSessionRuntimeDescriptorIngress(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
@@ -71,8 +70,7 @@ function canonicalizeExternalSessionRuntimeDescriptorIngress(value: unknown): un
 
   const metadata = normalizeLinkedExternalSessionMetadataV1(value) ?? value as Record<string, unknown>;
   const externalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
-  const runtimeDescriptor = resolveSessionRuntimeIdentityFallback({ metadata })
-    .runtimeDescriptorV1;
+  const runtimeDescriptor = readExternalAgentSurfaceRuntimeDescriptorV1(metadata);
   const canonicalMetadata = applyRuntimeDescriptorSessionStateBinding(
     metadata,
     runtimeDescriptor,
@@ -104,7 +102,8 @@ export type LoadedLinkedExternalSession = Readonly<{
   source: ExternalSessionsSource;
   canonicalResolvedSourceKey?: string;
   linkData?: PluginAgentExternalSessionLinkData;
-  codexBackendMode: CodexBackendMode | null;
+  externalLinkedTakeoverWriterSafety?:
+    PluginAgentExternalLinkedTakeoverWriterSafetyV1;
 }>;
 
 export type ExpectedCurrentExternalSessionLinkIdentity = Readonly<{
@@ -467,11 +466,26 @@ export async function loadLinkedExternalSessionFromRaw(params: Readonly<{
           : {}),
       },
     );
+    const admitted = deps.admitPersistedSourceBeforeCanonicalization
+      ? await deps.admitPersistedSourceBeforeCanonicalization({
+          agentId: hostedIdentity.agentId,
+          machineId: hostedIdentity.machineId,
+          remoteSessionId: hostedIdentity.remoteSessionId,
+          source: hostedIdentity.source,
+        })
+      : null;
+    if (deps.admitPersistedSourceBeforeCanonicalization && !admitted) {
+      return {
+        ok: false,
+        errorCode: 'invalid_request',
+        error: 'linked_session_source_not_current',
+      };
+    }
     const canonicalized = await canonicalizeLinkedExternalSessionSource({
       agentId: hostedIdentity.agentId,
       metadata: hostedMetadata,
       remoteSessionId: hostedIdentity.remoteSessionId,
-      source: hostedIdentity.source,
+      source: admitted?.source ?? hostedIdentity.source,
     }, deps.resolveExternalSessionProviderOps
       ? { resolveExternalSessionProviderOps: deps.resolveExternalSessionProviderOps }
       : {});
@@ -489,9 +503,12 @@ export async function loadLinkedExternalSessionFromRaw(params: Readonly<{
       remoteSessionId: canonicalized.remoteSessionId,
       linkGeneration: rawSession.id,
       source: canonicalized.source,
-      codexBackendMode: normalizeCodexBackendMode(
-        resolvePersistedRuntimeKind(hostedIdentity.agentId, hostedMetadata),
-      ),
+      ...(admitted
+        ? {
+            externalLinkedTakeoverWriterSafety:
+              admitted.externalLinkedTakeoverWriterSafety,
+          }
+        : {}),
     };
     const canonicalResolvedSourceKey = await resolveExpectedCurrentLinkSourceKey({
       session: loadedSession,
@@ -517,17 +534,29 @@ export async function loadLinkedExternalSessionFromRaw(params: Readonly<{
   const sessionPath = typeof parsedMetadata.path === 'string' && parsedMetadata.path.trim().length > 0
     ? parsedMetadata.path.trim()
     : null;
+  const admitted = deps.admitPersistedSourceBeforeCanonicalization
+    ? await deps.admitPersistedSourceBeforeCanonicalization({
+        agentId: direct.agentId,
+        machineId: direct.machineId,
+        remoteSessionId: direct.remoteSessionId,
+        source: direct.source,
+      })
+    : null;
+  if (deps.admitPersistedSourceBeforeCanonicalization && !admitted) {
+    return {
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_source_not_current',
+    };
+  }
   const canonicalized = await canonicalizeLinkedExternalSessionSource({
     agentId: direct.agentId,
     metadata: normalizedMetadata,
     remoteSessionId: direct.remoteSessionId,
-    source: direct.source,
+    source: admitted?.source ?? direct.source,
   }, deps.resolveExternalSessionProviderOps
     ? { resolveExternalSessionProviderOps: deps.resolveExternalSessionProviderOps }
     : {});
-  const persistedCodexBackendMode = normalizeCodexBackendMode(
-    resolvePersistedRuntimeKind(direct.agentId, normalizedMetadata),
-  );
   const loadedSession: LoadedLinkedExternalSession = {
     rawSession,
     metadata: normalizedMetadata,
@@ -537,12 +566,15 @@ export async function loadLinkedExternalSessionFromRaw(params: Readonly<{
     remoteSessionId: canonicalized.remoteSessionId,
     linkGeneration: String(direct.linkedAtMs),
     source: canonicalized.source,
+    ...(admitted
+      ? {
+          externalLinkedTakeoverWriterSafety:
+            admitted.externalLinkedTakeoverWriterSafety,
+        }
+      : {}),
     ...(direct.linkData === undefined
       ? {}
       : { linkData: direct.linkData }),
-    codexBackendMode:
-      persistedCodexBackendMode
-      ?? normalizeCodexBackendMode(direct.codexBackendMode),
   };
   const canonicalResolvedSourceKey = params.expectedIdentity
     ? await resolveExpectedCurrentLinkSourceKey({

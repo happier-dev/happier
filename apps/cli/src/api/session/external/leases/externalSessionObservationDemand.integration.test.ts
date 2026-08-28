@@ -777,7 +777,6 @@ describe('composed External Session observation demand', () => {
                 linkGeneration,
                 source,
                 linkData: {},
-                codexBackendMode: null,
             };
             seams.rawSessionsBySessionId.set(sessionId, linked.rawSession);
             seams.ownerMetadataByRawSession.set(linked.rawSession, {

@@ -77,7 +77,6 @@ function linked(): LoadedLinkedExternalSession {
     linkData: {
       revision: 'persisted',
     },
-    codexBackendMode: null,
   };
 }
 
@@ -245,10 +244,12 @@ describe('External Session takeover launch consumption', () => {
       value: {
         options: {
           directory: TARGET_DIRECTORY,
-          backendTarget: {
-            kind: 'backend',
-            backendId: AGENT_ID,
-            sourceKind: 'built_in',
+          agentTarget: {
+            kind: 'agent',
+            identity: {
+              pluginId: PLUGIN_ID,
+              localId: AGENT_ID,
+            },
           },
           existingSessionId: 'linked-session-1',
           resume: 'fresh-remote',
