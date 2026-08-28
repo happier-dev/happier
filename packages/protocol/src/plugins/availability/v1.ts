@@ -653,15 +653,6 @@ export function reconcilePluginMachineMaterializationSnapshotV1(input: Readonly<
   return Object.freeze({ kind: 'conflict', currentRevision });
 }
 
-export function isExactPluginMachineMaterializationRefV1(
-  materialization: PluginMachineMaterializationV1,
-  ref: PluginMachineMaterializationRefV1,
-): boolean {
-  return materialization.machineId === ref.machineId
-    && materialization.materializationId === ref.materializationId
-    && materialization.pluginId === ref.pluginId;
-}
-
 export function isPluginMachineMaterializationOnServerIdentityV1(
   materialization: PluginMachineMaterializationV1,
   serverIdentityId: string,

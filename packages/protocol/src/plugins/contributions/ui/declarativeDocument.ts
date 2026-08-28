@@ -77,7 +77,11 @@ export {
   type PluginDeclarativeDocumentV1,
   PluginDeclarativeDocumentV1Schema,
 } from './declarativeDocumentAuthoringV1.js';
-export { MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 } from './declarativeDocumentPreflightV1.js';
+export {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_PLAIN_VALUES_V1,
+} from './declarativeDocumentPreflightV1.js';
 export { parsePluginDeclarativeDocumentResourceBytesV1 } from './declarativeDocumentPreflightV1.js';
 
 const MAX_PLUGIN_DECLARATIVE_DOCUMENT_GENERATION_LENGTH_V1 = 256;
@@ -88,6 +92,8 @@ export type PluginDeclarativeDocumentNormalizationErrorCodeV1 =
   | 'plugin_declarative_invalid_plain_data'
   | 'plugin_declarative_document_invalid'
   | 'plugin_declarative_document_bytes_exceeded'
+  | 'plugin_declarative_document_depth_exceeded'
+  | 'plugin_declarative_document_values_exceeded'
   | 'plugin_declarative_document_content_type_invalid'
   | 'plugin_declarative_action_inventory_invalid'
   | 'plugin_declarative_action_missing'

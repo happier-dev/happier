@@ -1,24 +1,13 @@
 import { z } from 'zod';
 
 import {
-  getAccountScopedBlobCiphertextBase64LengthV1,
   isAccountScopedBlobCiphertextForKind,
 } from '../../crypto/accountScopedCipher.js';
 import type { JsonValue } from '../../json/strictJsonValue.js';
 import { PluginSettingFieldIdV2Schema } from '../contributions/settings.js';
+import { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from './accountSettingsLimits.js';
 
-/** Settings owns these limits; Account KV has a distinct data contract. */
-const PLUGIN_ACCOUNT_SETTINGS_MAXIMUM_RECORD_ENCODED_BYTES_V1 = 512 * 1024;
-
-export const PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 = Object.freeze({
-  maximumFields: 256,
-  maximumFieldEncodedBytes: 64 * 1024,
-  maximumRecordEncodedBytes: PLUGIN_ACCOUNT_SETTINGS_MAXIMUM_RECORD_ENCODED_BYTES_V1,
-  maximumEncryptedCiphertextUtf8Bytes: getAccountScopedBlobCiphertextBase64LengthV1(
-    PLUGIN_ACCOUNT_SETTINGS_MAXIMUM_RECORD_ENCODED_BYTES_V1,
-  ),
-  maximumJsonDepth: 12,
-} as const);
+export { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from './accountSettingsLimits.js';
 
 const textEncoder = new TextEncoder();
 

@@ -67,6 +67,7 @@ export type PluginContributionRegistrationRight = Readonly<{
   requiredFields?: readonly (
     | 'factory'
     | 'sessionRunnerFactory'
+    | 'cliAuth'
     | 'externalSessions'
     | ComposerAttachmentRuntimeRegistrationFieldV1
   )[];
@@ -494,13 +495,14 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
       : null;
     if (!source) return [];
     return [
-      ...(source.setupActionRef === undefined ? [] : [{
+      {
         targetFamily: 'actions',
         allowQualifiedCrossPlugin: false,
         allowQualifiedSamePlugin: true,
         reference: source.setupActionRef,
         path: ['automation', 'source', 'setupActionRef'],
-      }]),
+      },
+      ...rendererChainReferences(source.setupSurface, ['automation', 'source', 'setupSurface']),
       ...(source.historyGapResetActionRef === undefined ? [] : [{
         targetFamily: 'actions',
         allowQualifiedCrossPlugin: false,
@@ -639,6 +641,16 @@ function declaresAgentSessions(value: Readonly<Record<string, unknown>>): boolea
     && !Array.isArray(capabilities.sessions);
 }
 
+function declaresAgentCliAuth(value: Readonly<Record<string, unknown>>): boolean {
+  const cli = value.cli;
+  if (!cli || typeof cli !== 'object' || Array.isArray(cli)) return false;
+  const auth = (cli as Readonly<Record<string, unknown>>).auth;
+  return auth !== null
+    && typeof auth === 'object'
+    && !Array.isArray(auth)
+    && (auth as Readonly<Record<string, unknown>>).nonInteractiveStatusProbe === true;
+}
+
 function requiresFamilyRegistration(family: string, value: Readonly<Record<string, unknown>>, demand: PluginContributionCatalogEntryV2['activationDemand']): boolean {
   const availability = value.availability;
   const disabledWhen = availability && typeof availability === 'object' && !Array.isArray(availability)
@@ -653,7 +665,7 @@ function requiresFamilyRegistration(family: string, value: Readonly<Record<strin
   if (demand !== 'conditional') return false;
   if (family === 'agents') {
     const runtimeIsCustom = (value.runtime as Readonly<{ kind?: unknown }> | undefined)?.kind === 'custom';
-    return runtimeIsCustom || declaresAgentExternalSessions(value);
+    return runtimeIsCustom || declaresAgentExternalSessions(value) || declaresAgentCliAuth(value);
   }
   if (family === 'events') return value.kind === 'subscription';
   // §3.6.1: only the dynamic arm of the discriminated resource family has a
@@ -1015,11 +1027,12 @@ function derivePluginContributionRegistrationRightsForHost(
         }];
       }
       if (entry.manifestKey !== 'agents') return [{ family, localId, target }];
-      const fields: ('factory' | 'sessionRunnerFactory' | 'externalSessions')[] = [];
+      const fields: ('factory' | 'sessionRunnerFactory' | 'cliAuth' | 'externalSessions')[] = [];
       if ((record.runtime as Readonly<{ kind?: unknown }> | undefined)?.kind === 'custom') {
         fields.push('factory');
         if (declaresAgentSessions(record)) fields.push('sessionRunnerFactory');
       }
+      if (declaresAgentCliAuth(record)) fields.push('cliAuth');
       if (declaresAgentExternalSessions(record)) fields.push('externalSessions');
       return [{ family, localId, target, requiredFields: Object.freeze(fields) }];
     })

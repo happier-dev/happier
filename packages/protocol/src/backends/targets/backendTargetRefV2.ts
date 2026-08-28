@@ -80,7 +80,13 @@ export const BackendTargetKeyV2Schema = z
   .refine(isBackendTargetKeyV2, 'Invalid V2 backend target key');
 export type BackendTargetKeyV2 = z.infer<typeof BackendTargetKeyV2Schema>;
 
-export function buildBackendTargetKeyV2(target: BackendTargetRefV2): BackendTargetKeyV2 {
+export function buildBackendTargetKeyV2(target: BackendTargetRefV2 | AgentExecutionTargetV1): BackendTargetKeyV2 {
+  const parsedAgentTarget = AgentExecutionTargetV1Schema.safeParse(target);
+  if (parsedAgentTarget.success) {
+    return BackendTargetKeyV2Schema.parse(
+      `agent:${buildQualifiedPluginContributionKey(parsedAgentTarget.data.identity)}`,
+    );
+  }
   const parsedTarget = BackendTargetRefV2Schema.parse(target);
   if (!parsedTarget.configuredBackendId && parsedTarget.sourceKind !== 'configured') {
     const identity = resolvePersistedContributionIdentityV1FromAgentId(parsedTarget.backendId);

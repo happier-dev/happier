@@ -107,6 +107,8 @@ export type PluginActionInvocationResult = Readonly<
     status: 'invalid';
     code: string;
     message: string;
+    /** Exact bounded issues from the executable Protocol parser, when present. */
+    issues?: readonly PluginActionInputParserIssue[];
   }
   | {
     status: 'failed';
@@ -123,6 +125,22 @@ export type PluginActionInvocationResult = Readonly<
     data?: StrictJsonValue;
   }
 >;
+
+export type PluginActionInputParserIssue = Readonly<{
+  path: readonly (string | number)[];
+  code: string;
+  message: string;
+}>;
+
+export type PluginActionInputParserResult = Readonly<
+  | { success: true; data: unknown }
+  | { success: false; issues: readonly PluginActionInputParserIssue[] }
+>;
+
+/** Exact-generation executable semantics captured from a composable Action declaration. */
+export type PluginActionInputParser = (
+  input: StrictJsonValue,
+) => PluginActionInputParserResult;
 
 /** Canonical terminal code when cancellation races an already-started Action. */
 export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
@@ -177,6 +195,28 @@ const invalidInput = Object.freeze({
   status: 'invalid' as const,
   code: 'plugin_action_input_schema_invalid',
   message: 'Plugin action input does not match its manifest inputSchema',
+});
+
+function invalidInputFromParserIssues(
+  issues: readonly PluginActionInputParserIssue[],
+): PluginActionInvocationResult {
+  const capturedIssues = Object.freeze(issues.map((issue) => Object.freeze({
+    path: Object.freeze([...issue.path]),
+    code: issue.code,
+    message: issue.message,
+  })));
+  return Object.freeze({
+    status: 'invalid' as const,
+    code: 'plugin_action_input_schema_invalid',
+    message: capturedIssues[0]?.message ?? invalidInput.message,
+    issues: capturedIssues,
+  });
+}
+
+const schemaProjectionMismatch = Object.freeze({
+  status: 'failed' as const,
+  code: 'plugin_action_schema_projection_mismatch',
+  message: 'Plugin action executable input semantics disagree with the manifest inputSchema',
 });
 
 function invalidResult(message: string): PluginActionInvocationResult {
@@ -761,6 +801,7 @@ export function createPluginActionInvocation(params: Readonly<{
   pluginId: string;
   localId: string;
   inputSchema?: object;
+  inputParser?: PluginActionInputParser;
   resultSchema?: object;
   generationSignal: AbortSignal;
   isCurrent(): boolean;
@@ -794,12 +835,30 @@ export function createPluginActionInvocation(params: Readonly<{
         return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
       }
       const parsedInput = AgentRuntimeJsonValueV1Schema.safeParse(input);
-      if (!parsedInput.success || !validates(inputValidator, parsedInput.data)) return invalidInput;
+      if (!parsedInput.success) return invalidInput;
+      let normalizedInput = parsedInput.data;
+      if (params.inputParser) {
+        let semanticResult: PluginActionInputParserResult;
+        try {
+          semanticResult = params.inputParser(parsedInput.data);
+        } catch {
+          return schemaProjectionMismatch;
+        }
+        if (!semanticResult.success) {
+          return invalidInputFromParserIssues(semanticResult.issues);
+        }
+        const parsedNormalizedInput = AgentRuntimeJsonValueV1Schema.safeParse(semanticResult.data);
+        if (!parsedNormalizedInput.success) return schemaProjectionMismatch;
+        normalizedInput = parsedNormalizedInput.data;
+      }
+      if (!validates(inputValidator, normalizedInput)) {
+        return params.inputParser ? schemaProjectionMismatch : invalidInput;
+      }
 
       const linked = linkAbortSignals(params.generationSignal, options.signal);
       try {
         const handlerInput = Object.freeze({
-          input: parsedInput.data,
+          input: normalizedInput,
           qualifiedId,
           signal: linked.signal,
         });

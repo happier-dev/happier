@@ -51,9 +51,10 @@ const RequestBase = WireBase.extend({ requestId: z.string().trim().min(1) });
 
 /**
  * A selected contributor operation and its complete settlement are a
- * host-private currentness carrier. They cross only the canonical
- * executeAction wire arm: public Action payloads remain closed
- * `{ action, input }` values.
+ * host-private currentness carrier. They cross only the canonical operation
+ * consumers: `executeAction`, or `openNewSession` when it materializes a
+ * prepared review workspace. Public Action and New Session payloads remain
+ * closed values.
  */
 const PluginUiHostApiWireRequestEnvelopeV1Schema = RequestBase.extend({
   kind: z.literal('request'),
@@ -77,11 +78,12 @@ const PluginUiHostApiWireRequestEnvelopeV1Schema = RequestBase.extend({
       || request.consumeSelectedActionInput !== undefined
     )
     && request.method !== 'executeAction'
+    && request.method !== 'openNewSession'
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['targetedOperation'],
-      message: 'A selected operation may accompany only executeAction.',
+      message: 'A selected operation may accompany only executeAction or openNewSession.',
     });
   }
   if ((request.targetedOperation === undefined) !== (request.selectedActionInput === undefined)) {
@@ -99,6 +101,17 @@ const PluginUiHostApiWireRequestEnvelopeV1Schema = RequestBase.extend({
       code: z.ZodIssueCode.custom,
       path: ['consumeSelectedActionInput'],
       message: 'A terminal selected settlement consumption requires its exact operation and settlement.',
+    });
+  }
+  if (
+    request.method === 'openNewSession'
+    && request.targetedOperation !== undefined
+    && request.consumeSelectedActionInput !== true
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['consumeSelectedActionInput'],
+      message: 'A prepared New Session operation is always terminally consumed.',
     });
   }
   if (

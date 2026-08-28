@@ -4,20 +4,12 @@ import { McpValueRefV1Schema, type McpValueRefV1 } from '../../mcp/servers/setti
 
 const ACP_CATALOG_ID_REGEX = /^[a-z0-9][a-z0-9._-]*$/;
 const ACP_ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
-const ACP_AUTH_PARSER_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const AcpCatalogIdV1Schema = z.string().min(1).regex(ACP_CATALOG_ID_REGEX, 'Invalid ACP catalog id');
 const AcpEnvKeyV1Schema = z.string().regex(ACP_ENV_KEY_REGEX, 'Invalid environment variable name');
-const AcpAuthParserIdV1Schema = z.string().min(1).regex(ACP_AUTH_PARSER_ID_REGEX, 'Invalid ACP auth parser id');
 
 export const AcpCatalogAuthSupportV1Schema = z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']);
 export type AcpCatalogAuthSupportV1 = z.infer<typeof AcpCatalogAuthSupportV1Schema>;
-
-export const AcpCatalogAuthParserV1Schema = AcpAuthParserIdV1Schema;
-export type AcpCatalogAuthParserV1 = z.infer<typeof AcpCatalogAuthParserV1Schema>;
-
-export const AcpCatalogTransportProfileV1Schema = AcpCatalogIdV1Schema;
-export type AcpCatalogTransportProfileV1 = z.infer<typeof AcpCatalogTransportProfileV1Schema>;
 
 export const AcpCatalogSupportHintV1Schema = z.enum(['unknown', 'yes', 'no']);
 export type AcpCatalogSupportHintV1 = z.infer<typeof AcpCatalogSupportHintV1Schema>;
@@ -35,8 +27,6 @@ export const AcpBackendAuthConfigV1Schema = z.object({
   machineLoginKey: z.string().min(1).optional(),
   docsUrl: z.string().url().optional(),
   loginCommand: AcpCatalogCommandV1Schema.optional(),
-  statusCommand: z.array(z.string()).optional(),
-  parser: AcpCatalogAuthParserV1Schema.optional(),
   envVars: z.array(AcpEnvKeyV1Schema).optional(),
 });
 
@@ -61,7 +51,6 @@ export const AcpBackendDefinitionV1Schema = z.object({
   args: z.array(z.string()).default([]),
   env: z.record(AcpEnvKeyV1Schema, McpValueRefV1Schema).default({}),
   auth: AcpBackendAuthConfigV1Schema.optional(),
-  transportProfile: AcpCatalogTransportProfileV1Schema.default('generic'),
   defaultMode: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   capabilities: AcpBackendCapabilitiesV1Schema.default({

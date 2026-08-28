@@ -5,7 +5,11 @@ import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
-import { PluginWebhookEndpointIdV1Schema, PluginWebhookEndpointReadinessV1Schema } from './endpointV1.js';
+import {
+  PluginWebhookEndpointIdV1Schema,
+  PluginWebhookEndpointReadinessV1Schema,
+  PluginWebhookPublicUrlV1Schema,
+} from './endpointV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 const TimestampSchema = z.number().int().nonnegative().safe();
@@ -41,7 +45,7 @@ export const PluginWebhookEndpointStatusV1Schema = z.object({
   routing: z.enum(['accountEndpoint', 'providerInstallation']),
   readiness: PluginWebhookEndpointReadinessV1Schema,
   targetStatus: z.enum(['current', 'unavailable']),
-  publicUrl: z.string().url().max(2_048),
+  publicUrl: PluginWebhookPublicUrlV1Schema,
   createdAt: TimestampSchema,
   revokedAt: TimestampSchema.optional(),
   queue: z.object({

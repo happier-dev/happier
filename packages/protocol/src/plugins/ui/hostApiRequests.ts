@@ -88,6 +88,21 @@ export const PluginUiHostApiErrorCodeV1Schema = z.enum([
   'timeout',
   'internal_error',
 ]);
+
+/**
+ * Generic first-terminal result for a mount whose host placement explicitly
+ * requested ephemeral input. It is never persisted and carries no authority.
+ */
+export const PluginUiEphemeralInputSettlementV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('completed'),
+    input: PluginUiJsonValueV1Schema,
+  }).strict(),
+  z.object({ kind: z.literal('cancelled') }).strict(),
+]);
+export type PluginUiEphemeralInputSettlementV1 = z.infer<
+  typeof PluginUiEphemeralInputSettlementV1Schema
+>;
 export type PluginUiHostApiErrorCodeV1 =
   z.infer<typeof PluginUiHostApiErrorCodeV1Schema>;
 
@@ -451,6 +466,9 @@ export type PluginUiNewSessionSeedAttachmentV1 =
  */
 export const PluginUiSessionCheckoutIntentV1Schema = z.enum([
   'none',
+  // Requires the exact active selected operation carried by the public
+  // `openNewSession` options. The host executes it before any route handoff;
+  // this string alone is never workspace authority.
   'preparedReviewWorkspace',
   'reuseWorkspace',
   'createWorktree',
@@ -490,10 +508,7 @@ export type PluginUiSessionPlacementCandidateV1 =
   z.infer<typeof PluginUiSessionPlacementCandidateV1Schema>;
 
 export const PluginUiNewSessionSeedV1Schema = z.object({
-  prompt: z.object({
-    text: z.string().trim().min(1),
-    mode: z.enum(['replace', 'append']),
-  }).strict().optional(),
+  prompt: z.string().trim().min(1).optional(),
   profileId: z.string().trim().min(1).optional(),
   /**
    * A resolved checkout question, not a concrete checkout draft. The New
@@ -526,18 +541,33 @@ export const PluginUiNewSessionSeedV1Schema = z.object({
 }).strict();
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
 
+/**
+ * Open the incumbent New Session screen with one author-shaped handoff.
+ *
+ * This is deliberately a distinct semantic Host API operation. Input
+ * selection remains no-invoke and never creates, persists, or navigates to a
+ * Session draft as a side effect.
+ */
+export const PluginUiOpenNewSessionRequestV1Schema = PluginUiNewSessionSeedV1Schema;
+export type PluginUiOpenNewSessionRequestV1 = z.infer<typeof PluginUiOpenNewSessionRequestV1Schema>;
+
+/**
+ * The source-neutral fact consumed after an admitted review-workspace
+ * operation succeeds. The operation's feature protocol remains the owner of
+ * every provider-specific result field; New Session reads only this projection.
+ */
+export const PluginUiPreparedReviewWorkspaceResultV1Schema = z.object({
+  kind: z.literal('prepared'),
+  repositoryPath: z.string().trim().min(1),
+}).passthrough();
+export type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<
+  typeof PluginUiPreparedReviewWorkspaceResultV1Schema
+>;
+
 export const PluginUiSelectActionInputHostRequestV1Schema = z.object({
   hostAction: PluginUiSelectActionInputHostActionV1Schema,
   draft: PluginUiJsonObjectV1Schema.optional(),
-  seed: PluginUiNewSessionSeedV1Schema.optional(),
-}).strict().superRefine((value, context) => {
-  if (value.draft !== undefined && value.seed !== undefined) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Session input selection cannot return a draft and seed New Session together.',
-    });
-  }
-});
+}).strict();
 export type PluginUiSelectActionInputHostRequestV1 =
   z.infer<typeof PluginUiSelectActionInputHostRequestV1Schema>;
 
@@ -580,22 +610,10 @@ export const PluginUiSelectActionInputServerStartDraftV1Schema = z.object({
 export type PluginUiSelectActionInputServerStartDraftV1 =
   z.infer<typeof PluginUiSelectActionInputServerStartDraftV1Schema>;
 
-/**
- * The seeded settlement carries no draft on purpose: the New Session screen now
- * holds the seed, and handing a copy back to the caller would create exactly
- * the second competing draft this projection exists to avoid.
- */
-export const PluginUiSelectActionInputNewSessionSeededV1Schema = z.object({
-  kind: z.literal('newSessionSeeded'),
-}).strict();
-export type PluginUiSelectActionInputNewSessionSeededV1 =
-  z.infer<typeof PluginUiSelectActionInputNewSessionSeededV1Schema>;
-
-/** The only successful settlements: targeted submission, Session draft, seeded New Session, or cancellation. */
+/** The only successful settlements: targeted submission, Session draft, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = z.discriminatedUnion('kind', [
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
-  PluginUiSelectActionInputNewSessionSeededV1Schema,
   z.object({ kind: z.literal('cancelled') }).strict(),
 ]);
 export type PluginUiSelectActionInputResultV1 =

@@ -80,6 +80,8 @@ describe('native Agent CLI/auth metadata', () => {
     if (!staticCredential) throw new Error('Expected CLI metadata');
 
     expect(isPluginAgentCliAuthBackgroundCheckSafe(staticCredential)).toBe(true);
+    expect(isPluginAgentCliAuthBackgroundCheckSafe({ auth: { environmentVariables: [] } })).toBe(false);
+    expect(isPluginAgentCliAuthBackgroundCheckSafe({ auth: { credentialPaths: [] } })).toBe(false);
 
     const noninteractiveProbe = PluginAgentContributionV2Schema.parse(nativeAgent({
       ...cli,

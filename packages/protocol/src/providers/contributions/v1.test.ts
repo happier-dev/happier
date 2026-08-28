@@ -289,7 +289,11 @@ describe('ProviderContributionV1Schema', () => {
       service: `account-${index}`,
       materializationKinds: ['httpHeaders'] as const,
     }));
-    const value = { ...validContribution(), managedRuntime: {
+    const base = validContribution();
+    const value = { ...base, catalog: {
+      ...base.catalog,
+      sourceRegistryVersion: 'gateway-model-registry/v1',
+    }, managedRuntime: {
       kind: 'managed',
       endpointTemplateIds: ['responses'],
       connectedAccounts,
@@ -337,7 +341,15 @@ describe('ProviderContributionV1Schema', () => {
         },
       }],
     } as const;
-    const value = { ...validContribution(), managedRuntime };
+    const base = validContribution();
+    const value = {
+      ...base,
+      catalog: {
+        ...base.catalog,
+        sourceRegistryVersion: 'gateway-model-registry/v1',
+      },
+      managedRuntime,
+    };
 
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({
@@ -383,7 +395,15 @@ describe('ProviderContributionV1Schema', () => {
       connectedAccounts,
       requestAuthUses,
     };
-    const value = { ...validContribution(), managedRuntime };
+    const base = validContribution();
+    const value = {
+      ...base,
+      catalog: {
+        ...base.catalog,
+        sourceRegistryVersion: 'gateway-model-registry/v1',
+      },
+      managedRuntime,
+    };
 
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({

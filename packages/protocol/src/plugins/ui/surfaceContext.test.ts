@@ -109,6 +109,7 @@ describe('plugin UI surface context', () => {
       'rightSidebarSurface',
       'servicesSurface',
       'composerSurface',
+      'ephemeralSurface',
       'unknown',
     ]);
 
@@ -120,6 +121,7 @@ describe('plugin UI surface context', () => {
       'servicesSurface',
       'sessionPane',
       'composerSurface',
+      'ephemeralSurface',
     ] as const) {
       expect(PluginUiSurfaceContextV1Schema.parse({
         pluginId: 'acme.preview',

@@ -68,6 +68,24 @@ const SUPPORTED_DECLARATION = {
       normalize: 'trimLowercase',
     }],
   },
+  session: {
+    providerBehavior: {
+      kind: 'session.providerBehavior.v1',
+      participants: {
+        sidechainIds: {
+          kind: 'toolCallInputString',
+          toolNames: ['AcmeWorker'],
+          inputKey: 'workerId',
+        },
+      },
+    },
+    visibleMessages: {
+      kind: 'session.visibleMessages.v1',
+      subagentKinds: ['acme_worker'],
+      fallbackToolNames: ['AcmeWorker'],
+      excludeJsonEventTypes: ['acme_internal'],
+    },
+  },
   components: {
     slots: [{
       id: 'acme-allow-indexing',
@@ -208,6 +226,12 @@ describe('public Agent UI authoring grammar', () => {
     expect(parse({
       behavior: { payload: { spawnSessionExtras: { kind: 'static', value: { acmeMode: 'fast' } } } },
     }).success).toBe(true);
+    expect(parse({
+      behavior: { payload: { spawnSessionExtras: { kind: 'static', value: { acmeMode: { nested: true } } } } },
+    }).success).toBe(false);
+    expect(parse({
+      behavior: { payload: { spawnSessionExtras: { kind: 'static', value: { acmeMode: ['fast'] } } } },
+    }).success).toBe(false);
 
     expect(parse({ message: { metaDescriptorIds: ['claude.thinking'] } }).success).toBe(false);
     expect(parse({
@@ -234,7 +258,6 @@ describe('public Agent UI authoring grammar', () => {
       behavior: {
         payload: {
           backendTransport: {
-            legacyModeOutputKey: 'acmeBackendMode',
             backendMode: { values: ['acp', 'appServer'], aliases: { mcp: 'appServer' } },
             runtimeHandleFields: ['backendMode', 'providerSessionId'],
             agentExtra: { owner: 'acme', schemaId: 'acme.agentRuntimeDescriptorExtra', v: 1 },
@@ -243,6 +266,35 @@ describe('public Agent UI authoring grammar', () => {
       },
     });
     expect(result.success ? null : result.error.issues).toBeNull();
+  });
+
+  it('keeps current runtime transport output canonical instead of authoring legacy output keys', () => {
+    expect(parse({
+      behavior: {
+        payload: {
+          backendTransport: {
+            legacyModeOutputKey: 'acmeBackendMode',
+            backendMode: { values: ['acp'] },
+            runtimeHandleFields: ['backendMode'],
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(parse({
+      behavior: {
+        externalSessions: {
+          browse: {
+            linkEnsureRequestExtras: {
+              runtimeDescriptorFromCandidate: {
+                runtimeDescriptorOutputKey: 'customDescriptor',
+                backendMode: { values: ['acp'] },
+                sourceFields: [],
+              },
+            },
+          },
+        },
+      },
+    }).success).toBe(false);
   });
 
   /**
@@ -275,6 +327,25 @@ describe('public Agent UI authoring grammar', () => {
     expect(parse({ behavior: { session: {} } }).success).toBe(false);
   });
 
+  it('refuses compiled Session adapter ids while admitting the data-only public descriptors', () => {
+    expect(parse({
+      session: { providerBehaviorDescriptorId: 'acme.privateBehavior.v1' },
+    }).success).toBe(false);
+    expect(parse({
+      session: { visibleMessageFilterDescriptorId: 'acme.privateMessages.v1' },
+    }).success).toBe(false);
+    expect(parse({
+      session: {
+        providerBehavior: {
+          kind: 'session.providerBehavior.v1',
+          participants: {
+            sidechainIds: { kind: 'providerCallback', callbackId: 'acme.callback' },
+          },
+        },
+      },
+    }).success).toBe(false);
+  });
+
   /**
    * The grammar is the AUTHORING gate; the projection is transport. Tightening
    * the carrier would turn one unreadable field — a newer plugin's declaration
@@ -285,6 +356,7 @@ describe('public Agent UI authoring grammar', () => {
   it('still carries a declaration the authoring grammar refuses, so one bad field cannot remove the Agent', () => {
     const declarationFromANewerGrammar = {
       behavior: { newSession: { agentOptions: [{ key: 'allowIndexing', kind: 'tristate' }] } },
+      session: { newerSessionDescriptor: { kind: 'session.future.v2' } },
     };
     expect(parse(declarationFromANewerGrammar).success).toBe(false);
     expect(AgentUiProjectedDeclarationV1Schema.safeParse(declarationFromANewerGrammar).success).toBe(true);

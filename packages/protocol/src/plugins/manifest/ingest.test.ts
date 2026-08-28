@@ -22,6 +22,7 @@ import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '../../automations/automationEventV1.js';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -86,21 +87,8 @@ const AUTOMATION_SOURCE_CONFIG_SCHEMA = {
   required: ['repository'],
 } as const;
 
-function automationSetupResultSchema(
-  sourceConfigSchema: Record<string, unknown> = AUTOMATION_SOURCE_CONFIG_SCHEMA,
-): Record<string, unknown> {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      v: { type: 'integer', const: 1 },
-      sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-      sourceContractVersion: { type: 'integer', const: 1 },
-      sourceConfig: sourceConfigSchema,
-      displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-    },
-    required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-  };
+function automationSetupResultSchema(): Record<string, unknown> {
+  return createPluginEventAutomationSetupResultV1JsonSchema(1, AUTOMATION_SOURCE_CONFIG_SCHEMA);
 }
 
 function automationSetupAction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -182,6 +170,33 @@ describe('canonical plugin manifest ingestion', () => {
     expect(parsed).toMatchObject({ ok: true });
     if (!parsed.ok) return;
     expect(resolvePluginManifestSetReferencesV2([parsed.manifest])).toEqual({ ok: true });
+  });
+
+  it('rejects an Automation-eligible Event without its setup Action binding', () => {
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        actions: [automationSetupAction()],
+        events: [automationEvent({
+          automation: {
+            v: 1,
+            eligible: true,
+            source: {
+              sourceContractVersion: 1,
+              supportedObservationTransports: ['checkpointedPull'],
+              sourceConfigSchema: AUTOMATION_SOURCE_CONFIG_SCHEMA,
+            },
+          },
+        })],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          path: expect.arrayContaining(['automation', 'source', 'setupActionRef']),
+        }),
+      ]),
+    });
   });
 
   it('rejects dangling, cross-plugin, wrong-family, non-plugin, and noncanonical Event Automation setup bindings', () => {
@@ -1512,6 +1527,27 @@ describe('canonical plugin manifest ingestion', () => {
     expect(ingestPluginManifestV2(manifest({
       contributes: {
         ui: { renderers: [renderer], views: [{ ...view, instancePolicy: 'multiple' }] },
+        openableContentViewers: [viewer],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'openableContentViewers', 0, 'destination'],
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        ui: {
+          renderers: [renderer],
+          views: [{
+            id: 'viewer-view',
+            container: 'sessionSubagentLaunch',
+            target: { kind: 'session' },
+            renderer: 'viewer-renderer',
+          }],
+        },
         openableContentViewers: [viewer],
       },
     }))).toEqual({

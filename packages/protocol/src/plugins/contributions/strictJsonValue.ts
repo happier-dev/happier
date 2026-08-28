@@ -68,6 +68,7 @@ type StrictJsonWalkTask =
   | Readonly<{
     kind: 'visit';
     input: unknown;
+    depth: number;
     assign?: (value: unknown) => void;
   }>
   | Readonly<{
@@ -88,22 +89,43 @@ type StrictJsonObjectDescriptors = Readonly<{
   keys: readonly string[];
 }>;
 
+export type StrictPluginJsonTraversalLimits = Readonly<{
+  maxDepth: number;
+  maxValues: number;
+}>;
+
+export class StrictPluginJsonTraversalLimitError extends Error {
+  readonly limit: 'depth' | 'values';
+
+  constructor(limit: 'depth' | 'values') {
+    super(`Strict JSON ${limit} limit exceeded`);
+    this.name = 'StrictPluginJsonTraversalLimitError';
+    this.limit = limit;
+  }
+}
+
 function strictJsonObjectDescriptors(input: object, path: string): StrictJsonObjectDescriptors {
   const prototype = Object.getPrototypeOf(input);
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error(`${path} must contain only plain objects`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(input);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) => typeof key === 'symbol')) {
-    throw new Error(`${path} must not contain symbol keys`);
-  }
-  const keys = ownKeys as readonly string[];
-  for (const key of keys) {
-    const descriptor = descriptors[key];
-    if (!descriptor || !('value' in descriptor) || descriptor.enumerable !== true) {
+  const keys: string[] = [];
+  for (const key of Reflect.ownKeys(input)) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, key);
+    if (!descriptor) throw new Error(`${path} must contain stable own properties`);
+    if (typeof key === 'symbol') {
+      // Host-only brands are deliberately non-enumerable because they are
+      // process-local sidecars, not JSON members. Drop those exactly as
+      // JSON.stringify does; an enumerable symbol would silently lose an
+      // author-visible member and is therefore rejected.
+      if (descriptor.enumerable) throw new Error(`${path} must not contain enumerable symbol keys`);
+      continue;
+    }
+    if (!('value' in descriptor) || descriptor.enumerable !== true) {
       throw new Error(`${path}.${key} must be an enumerable data property`);
     }
+    keys.push(key);
   }
   return { descriptors, keys };
 }
@@ -128,9 +150,17 @@ function strictJsonArrayDescriptors(input: object, path: string): Readonly<{
       throw new Error(`${path} must not contain holes or accessors`);
     }
   }
-  if (ownKeys.some((key) => typeof key === 'symbol'
-    || (key !== 'length' && (!/^\d+$/u.test(key) || String(Number(key)) !== key || Number(key) >= length)))) {
-    throw new Error(`${path} must not contain extra array properties`);
+  for (const key of ownKeys) {
+    if (key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(input, key);
+    if (!descriptor) throw new Error(`${path} must contain stable own properties`);
+    if (typeof key === 'symbol') {
+      if (descriptor.enumerable) throw new Error(`${path} must not contain enumerable symbol keys`);
+      continue;
+    }
+    if (!/^\d+$/u.test(key) || String(Number(key)) !== key || Number(key) >= length) {
+      throw new Error(`${path} must not contain extra array properties`);
+    }
   }
   return {
     descriptors,
@@ -142,8 +172,21 @@ function walkStrictPluginJsonValue(
   value: unknown,
   path: string,
   copiesValue: boolean,
+  limits?: StrictPluginJsonTraversalLimits,
 ): unknown {
+  if (limits && (
+    !Number.isSafeInteger(limits.maxDepth)
+    || limits.maxDepth < 1
+    || !Number.isSafeInteger(limits.maxValues)
+    || limits.maxValues < 1
+  )) {
+    throw new TypeError('Strict JSON traversal limits must be positive safe integers');
+  }
   let root: unknown;
+  let scheduledValues = 1;
+  if (limits && scheduledValues > limits.maxValues) {
+    throw new StrictPluginJsonTraversalLimitError('values');
+  }
   const ancestors = new WeakSet<object>();
   const rootAssign = copiesValue
     ? (cloned: unknown) => {
@@ -153,6 +196,7 @@ function walkStrictPluginJsonValue(
   const tasks: StrictJsonWalkTask[] = [{
     kind: 'visit',
     input: value,
+    depth: 1,
     ...(rootAssign === undefined ? {} : { assign: rootAssign }),
   }];
 
@@ -176,6 +220,9 @@ function walkStrictPluginJsonValue(
     }
 
     const input = task.input;
+    if (limits && task.depth > limits.maxDepth) {
+      throw new StrictPluginJsonTraversalLimitError('depth');
+    }
     if (input === null || typeof input === 'boolean') {
       task.assign?.(input);
       continue;
@@ -195,6 +242,10 @@ function walkStrictPluginJsonValue(
 
     if (Array.isArray(input)) {
       const { descriptors, length } = strictJsonArrayDescriptors(input, path);
+      if (limits && scheduledValues + length > limits.maxValues) {
+        throw new StrictPluginJsonTraversalLimitError('values');
+      }
+      scheduledValues += length;
       const output = task.assign === undefined ? undefined : new Array<unknown>(length);
       tasks.push({
         kind: 'finish-array',
@@ -209,6 +260,7 @@ function walkStrictPluginJsonValue(
         tasks.push({
           kind: 'visit',
           input: descriptor.value,
+          depth: task.depth + 1,
           ...(output === undefined ? {} : { assign: (cloned: unknown) => {
             output[index] = cloned;
           } }),
@@ -218,6 +270,10 @@ function walkStrictPluginJsonValue(
     }
 
     const { descriptors, keys } = strictJsonObjectDescriptors(input, path);
+    if (limits && scheduledValues + keys.length > limits.maxValues) {
+      throw new StrictPluginJsonTraversalLimitError('values');
+    }
+    scheduledValues += keys.length;
     const output = task.assign === undefined
       ? undefined
       : Object.create(null) as Record<string, unknown>;
@@ -235,6 +291,7 @@ function walkStrictPluginJsonValue(
       tasks.push({
         kind: 'visit',
         input: descriptor.value,
+        depth: task.depth + 1,
         ...(output === undefined ? {} : { assign: (cloned: unknown) => {
           Object.defineProperty(output, key, {
             value: cloned,
@@ -255,6 +312,15 @@ export function cloneStrictPluginJsonValue(
   path: string,
 ): unknown {
   return walkStrictPluginJsonValue(value, path, true);
+}
+
+/** @internal Feature-owned bounded cloning through the one strict JSON walker. */
+export function cloneStrictPluginJsonValueWithTraversalLimits(
+  value: unknown,
+  path: string,
+  limits: StrictPluginJsonTraversalLimits,
+): unknown {
+  return walkStrictPluginJsonValue(value, path, true, limits);
 }
 
 /** @internal Protocol-only non-copying validation for an already admitted input. */

@@ -32,12 +32,12 @@ if (false) {
     target: { kind: 'session' },
     instancePolicy: 'multiple',
   };
-  // @ts-expect-error right-sidebar tabs have no bounded instance-key launcher.
   const rejectedMultipleRightSidebar: PluginUiViewV2Input = {
     id: 'rejected-multiple-right-sidebar',
     renderer: 'compare-renderer',
     container: 'rightSidebarTab',
     target: { kind: 'session' },
+    // @ts-expect-error right-sidebar tabs have no bounded instance-key launcher.
     instancePolicy: 'multiple',
   };
 
@@ -53,12 +53,12 @@ if (false) {
     target: { kind: 'app' },
     headerActions: pageHeaderActions,
   };
-  // @ts-expect-error page header actions are an appPage container capability.
   const rejectedPaneHeaderActions: PluginUiViewV2Input = {
     id: 'rejected-pane-header-actions',
     renderer: 'compare-renderer',
     container: 'rightPane',
     target: { kind: 'session' },
+    // @ts-expect-error page header actions are an appPage container capability.
     headerActions: pageHeaderActions,
   };
   const acceptedEmptyPaneHeaderActions: PluginUiViewV2Input = {

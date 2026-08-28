@@ -70,6 +70,46 @@ const hostOperation = Object.freeze({
 });
 
 describe('canonical Voice provider declarations', () => {
+  it('requires materialized header requirements to be a subset of the allowed contract', () => {
+    const base = {
+      kind: 'materializedHttpHeaders' as const,
+      operation: 'catalog',
+      phase: 'prepare' as const,
+      request: {
+        kind: 'httpHeaders' as const,
+        origin: 'https://speech.googleapis.com',
+        headerNames: ['authorization', 'x-optional-account'],
+      },
+      allowedHeaderNames: ['authorization', 'x-optional-account'],
+    };
+    const contribution = (requiredHeaderNames: readonly string[]) => ({
+      id: 'header-contract',
+      title: 'Header contract',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+      client: { artifactId: 'voice-runtime-web', modulePath: './voice', exportName: 'activate' },
+      credentials: {
+        slot: credential.slot,
+        requirement: credential.requirement,
+        sources: [{
+          kind: 'connectedAccount',
+          service: { pluginId: 'acme.accounts', localId: 'speech' },
+          operationProjections: [{ ...base, requiredHeaderNames }],
+        }],
+        hostMediated: { operations: [hostOperation] },
+      },
+    });
+
+    expect(VoiceProviderContributionSchema.safeParse(
+      contribution(['authorization']),
+    ).success).toBe(true);
+    expect(VoiceProviderContributionSchema.safeParse(
+      contribution(['x-undeclared']),
+    ).success).toBe(false);
+  });
+
   it('authorizes a host-mediated operation only for its exact selected source and host phase', () => {
     const contribution = VoiceProviderContributionSchema.parse({
       id: 'phase-separated',
@@ -109,6 +149,7 @@ describe('canonical Voice provider declarations', () => {
               origin: 'https://speech.googleapis.com',
               headerNames: ['authorization'],
             },
+            requiredHeaderNames: ['authorization'],
             allowedHeaderNames: ['authorization'],
           }],
         }],
@@ -176,6 +217,7 @@ describe('canonical Voice provider declarations', () => {
           origin: 'https://speech.googleapis.com',
           headerNames: ['authorization'],
         },
+        requiredHeaderNames: ['authorization'],
         allowedHeaderNames: ['authorization'],
       }],
     });

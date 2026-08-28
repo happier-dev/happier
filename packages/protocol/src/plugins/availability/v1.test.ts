@@ -11,7 +11,6 @@ import {
   PluginReleaseFactsV1Schema,
   PluginUiReleaseSlotV1Schema,
   isExactPluginMachineMaterializationReleaseCorrespondenceV1,
-  isExactPluginMachineMaterializationRefV1,
   isPluginUiReleaseSlotCompatibleWithArtifactLinkV1,
   normalizePluginReleaseFactsV1,
   pluginReleaseFactsEqualV1,
@@ -433,11 +432,6 @@ describe('Plugin Account availability v1', () => {
       pluginId: materialization.pluginId,
     });
 
-    expect(isExactPluginMachineMaterializationRefV1(materialization, ref)).toBe(true);
-    expect(isExactPluginMachineMaterializationRefV1(materialization, {
-      ...ref,
-      materializationId: 'install-epoch-2',
-    })).toBe(false);
     expect(PluginMachineMaterializationRefV1Schema.safeParse({
       ...ref,
       serverIdentityId: 'server-local-alias',

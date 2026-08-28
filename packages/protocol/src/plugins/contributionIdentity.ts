@@ -94,6 +94,27 @@ export function buildQualifiedPluginContributionKey(identity: PluginContribution
 }
 
 /**
+ * Parses one canonical qualified contribution key back to the exact identity
+ * that owns it. Keys are routing/authority material, so non-canonical strings
+ * and bare local ids fail closed rather than acquiring contribution meaning.
+ */
+export function parseQualifiedPluginContributionKey(
+  value: unknown,
+): PluginContributionIdentityV1 | null {
+  if (typeof value !== 'string') return null;
+  const separatorIndex = value.indexOf('/');
+  if (separatorIndex <= 0) return null;
+  const parsed = PluginContributionIdentityV1Schema.safeParse({
+    pluginId: value.slice(0, separatorIndex),
+    localId: value.slice(separatorIndex + 1),
+  });
+  if (!parsed.success) return null;
+  return buildQualifiedPluginContributionKey(parsed.data) === value
+    ? parsed.data
+    : null;
+}
+
+/**
  * Whether one host Agent routing id can address this durable
  * `{pluginId, localId}` identity.
  *

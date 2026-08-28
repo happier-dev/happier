@@ -118,9 +118,19 @@ describe('plugin UI host API wire envelope', () => {
         operation: targetedOperation,
       },
     }).success).toBe(true);
+    expect(PluginUiHostApiWireEnvelopeV1Schema.safeParse({
+      wireVersion: 1,
+      kind: 'request',
+      identity,
+      requestId: 'open-replayable-prepared-workspace',
+      method: 'openNewSession',
+      payload: { checkoutIntent: 'preparedReviewWorkspace' },
+      targetedOperation,
+      selectedActionInput,
+    }).success).toBe(false);
   });
 
-  it('carries one exact selected-operation settlement only on the private executeAction wire arm', () => {
+  it('carries one exact selected-operation settlement only on terminal operation consumers', () => {
     expect(PluginUiHostApiWireEnvelopeV1Schema.safeParse({
       wireVersion: 1,
       kind: 'request',
@@ -136,6 +146,18 @@ describe('plugin UI host API wire envelope', () => {
       // This is a host-private terminal-dispatch fact. Absence retains the
       // selected settlement for a nonterminal relay; true consumes it before
       // the mounted host dispatches the outer Action.
+      consumeSelectedActionInput: true,
+    }).success).toBe(true);
+
+    expect(PluginUiHostApiWireEnvelopeV1Schema.safeParse({
+      wireVersion: 1,
+      kind: 'request',
+      identity,
+      requestId: 'open-prepared-workspace',
+      method: 'openNewSession',
+      payload: { checkoutIntent: 'preparedReviewWorkspace' },
+      targetedOperation,
+      selectedActionInput,
       consumeSelectedActionInput: true,
     }).success).toBe(true);
 

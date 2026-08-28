@@ -1,6 +1,7 @@
 import {
   PluginContributionIdentityV1Schema,
   buildQualifiedPluginContributionKey,
+  parseQualifiedPluginContributionKey,
   type PluginContributionIdentityV1,
 } from '../plugins/contributionIdentity.js';
 import { ProviderContributionKeySchema } from './ids.js';
@@ -20,16 +21,9 @@ export function parseProviderContributionIdentityV1(
   const parsedContributionKey = ProviderContributionKeySchema.safeParse(contributionKeyInput);
   if (!parsedContributionKey.success) return null;
   const contributionKey = parsedContributionKey.data;
-  const canonicalSeparatorIndex = contributionKey.indexOf('/');
-  if (canonicalSeparatorIndex <= 0) return null;
-  const identity = PluginContributionIdentityV1Schema.safeParse({
-    pluginId: contributionKey.slice(0, canonicalSeparatorIndex),
-    localId: contributionKey.slice(canonicalSeparatorIndex + 1),
-  });
-  if (!identity.success) return null;
-  const canonicalKey = buildQualifiedPluginContributionKey(identity.data);
-  if (canonicalKey !== contributionKey) return null;
-  return { identity: identity.data, canonicalKey };
+  const identity = parseQualifiedPluginContributionKey(contributionKey);
+  if (!identity) return null;
+  return { identity, canonicalKey: buildQualifiedPluginContributionKey(identity) };
 }
 
 export function normalizeProviderContributionKeyV1(contributionKeyInput: unknown): string | null {

@@ -29,10 +29,6 @@ export type PluginHostedWebOriginV1 = z.infer<typeof PluginHostedWebOriginV1Sche
 
 function createDefaultPluginHostedWebCspPolicyV1() {
   return {
-  scriptSrc: 'selfOnly' as const,
-  styleSrc: 'selfOnly' as const,
-  imgSrc: 'selfOnly' as const,
-  fontSrc: 'selfOnly' as const,
   connectSrc: 'selfOnly' as const,
   allowDataUrls: false,
   allowBlobUrls: false,
@@ -42,10 +38,6 @@ function createDefaultPluginHostedWebCspPolicyV1() {
 }
 
 export const PluginHostedWebCspPolicyV1Schema = z.object({
-  scriptSrc: z.literal('selfOnly').default('selfOnly'),
-  styleSrc: z.literal('selfOnly').default('selfOnly'),
-  imgSrc: z.literal('selfOnly').default('selfOnly'),
-  fontSrc: z.literal('selfOnly').default('selfOnly'),
   connectSrc: z.enum(['selfOnly', 'declaredOrigins']).default('selfOnly'),
   allowDataUrls: z.boolean().default(false),
   allowBlobUrls: z.boolean().default(false),

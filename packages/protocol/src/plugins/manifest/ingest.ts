@@ -19,6 +19,8 @@ import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '../../automations/automationEventHistoryGapResetActionV1.js';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
+import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 
 export type PluginManifestIngestionDiagnostic = Readonly<{
   code:
@@ -72,67 +74,6 @@ type DecodeResult =
   | Readonly<{ ok: true; value: unknown }>
   | Readonly<{ ok: false; result: PluginManifestIngestionResult }>;
 
-function hasReachableToJsonProperty(value: object): boolean {
-  let current: object | null = value;
-  while (current !== null) {
-    if (Object.getOwnPropertyDescriptor(current, 'toJSON') !== undefined) return true;
-    current = Object.getPrototypeOf(current);
-  }
-  return false;
-}
-
-function isPlainJsonValue(root: unknown): boolean {
-  const activeAncestors = new WeakSet<object>();
-  const stack: Array<{ value: unknown; exit: boolean }> = [{ value: root, exit: false }];
-  while (stack.length > 0) {
-    const frame = stack.pop()!;
-    const value = frame.value;
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') continue;
-    if (typeof value === 'number') {
-      if (!Number.isFinite(value)) return false;
-      continue;
-    }
-    if (typeof value !== 'object') return false;
-    if (frame.exit) {
-      activeAncestors.delete(value);
-      continue;
-    }
-    if (hasReachableToJsonProperty(value)) return false;
-    if (activeAncestors.has(value)) return false;
-    activeAncestors.add(value);
-    stack.push({ value, exit: true });
-    if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index += 1) {
-        const property = Object.getOwnPropertyDescriptor(value, String(index));
-        if (!property || !('value' in property)) return false;
-        stack.push({ value: property.value, exit: false });
-      }
-      for (const key of Reflect.ownKeys(value)) {
-        if (key === 'length') continue;
-        const property = Object.getOwnPropertyDescriptor(value, key);
-        if (!property) return false;
-        // A non-enumerable own property cannot reach JSON output, whatever its
-        // key type, so it cannot make the value non-serializable.
-        if (!property.enumerable) continue;
-        if (typeof key !== 'string') return false;
-        if (!('value' in property)) return false;
-      }
-      continue;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    for (const key of Reflect.ownKeys(value)) {
-      const property = Object.getOwnPropertyDescriptor(value, key);
-      if (!property) return false;
-      if (!property.enumerable) continue;
-      if (typeof key !== 'string') return false;
-      if (!('value' in property)) return false;
-      stack.push({ value: property.value, exit: false });
-    }
-  }
-  return true;
-}
-
 function readJsonInput(input: unknown): DecodeResult {
   let bytes: Uint8Array;
   if (typeof input === 'string') {
@@ -141,8 +82,11 @@ function readJsonInput(input: unknown): DecodeResult {
     bytes = input;
   } else {
     try {
-      if (!isPlainJsonValue(input)) throw new TypeError('Value is not plain JSON.');
-      const serialized = JSON.stringify(input);
+      // The runtime strict-JSON normalizer is the one semantic owner for
+      // object/prototype/accessor/cycle admission. It deliberately removes
+      // non-enumerable symbol brands while rejecting data JSON would silently
+      // reinterpret or discard.
+      const serialized = JSON.stringify(normalizeStrictJsonValue(input));
       if (serialized === undefined) throw new TypeError('Value is not JSON serializable.');
       bytes = new TextEncoder().encode(serialized);
     } catch {
@@ -399,8 +343,8 @@ function readEventAutomationSetupActionDiagnostics(
   manifest.contributes.events.forEach((event, eventIndex) => {
     if (event.kind !== 'event') return;
     const source = event.automation?.source;
-    const setupActionRef = source?.setupActionRef;
-    if (!source || !setupActionRef || setupActionRef.pluginId !== manifest.id) return;
+    if (!source || source.setupActionRef.pluginId !== manifest.id) return;
+    const setupActionRef = source.setupActionRef;
     const path = ['contributes', 'events', eventIndex, 'automation', 'source', 'setupActionRef'] as const;
     const action = actionsById.get(setupActionRef.localId);
     // Generic nested-reference diagnostics own missing and wrong-family refs.
@@ -413,18 +357,10 @@ function readEventAutomationSetupActionDiagnostics(
       });
       return;
     }
-    const expectedResultSchema = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        v: { type: 'integer', const: 1 },
-        sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-        sourceContractVersion: { type: 'integer', const: source.sourceContractVersion },
-        sourceConfig: source.sourceConfigSchema,
-        displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-      },
-      required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-    };
+    const expectedResultSchema = createPluginEventAutomationSetupResultV1JsonSchema(
+      source.sourceContractVersion,
+      source.sourceConfigSchema,
+    );
     if (hasExactCanonicalJsonSchema(action.resultSchema, expectedResultSchema)) {
       return;
     }
@@ -531,7 +467,10 @@ function readOpenableContentViewerDestinationDiagnostics(
   manifest.contributes.openableContentViewers.forEach((viewer, viewerIndex) => {
     const destination = viewsById.get(viewer.destination);
     // Generic reference diagnostics own absent and wrong-family destinations.
-    if (!destination || destination.instancePolicy === 'singleton') return;
+    if (!destination) return;
+    // `instancePolicy` is the canonical parsed-union discriminant: inline
+    // views deliberately omit all destination-only metadata.
+    if ('instancePolicy' in destination && destination.instancePolicy === 'singleton') return;
     diagnostics.push({
       code: 'plugin_manifest_invalid',
       path: ['contributes', 'openableContentViewers', viewerIndex, 'destination'],

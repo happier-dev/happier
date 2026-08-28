@@ -132,7 +132,21 @@ describe('Host Events V1 catalog', () => {
     const payload = {
       runId: 'run-1',
       automationId: 'automation-1',
-      originKind: 'pluginEvent',
+      runCause: {
+        kind: 'trigger',
+        triggerId: 'trigger-plugin-event-1',
+        triggerRevision: 2,
+        triggerKind: 'pluginEvent',
+        occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        occurredAt: 1,
+        evidence: {
+          eventRef: {
+            pluginId: 'com.example.automation-events',
+            localId: 'issue-opened-v1',
+          },
+          sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
+        },
+      },
       previousState: 'queued',
       currentState: 'claimed',
       transitionedAt: 1,
@@ -149,7 +163,7 @@ describe('Host Events V1 catalog', () => {
     )).toThrow();
     expect(() => parseHostEventPayloadV1(
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
-      { ...payload, originKind: 'unknown' },
+      { ...payload, runCause: { kind: 'unknown' } },
     )).toThrow();
     expect(parseHostEventPayloadV1(
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,

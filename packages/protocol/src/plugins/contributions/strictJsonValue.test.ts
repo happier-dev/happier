@@ -110,8 +110,17 @@ describe('cloneStrictPluginJsonValue', () => {
     expect(Object.isFrozen(cloned.nested)).toBe(true);
   });
 
-  it('rejects symbol and non-enumerable own properties instead of silently dropping them', () => {
-    const withSymbol = Object.defineProperty({}, Symbol('hidden'), {
+  it('drops host-only non-enumerable symbol brands and rejects author-visible hidden properties', () => {
+    const hostBrand = Symbol('host-brand');
+    const withHostBrand = Object.defineProperty({ visible: 'value' }, hostBrand, {
+      enumerable: false,
+      value: true,
+    });
+    const brandedArray = Object.defineProperty(['value'], hostBrand, {
+      enumerable: false,
+      value: true,
+    });
+    const withEnumerableSymbol = Object.defineProperty({}, Symbol('hidden'), {
       enumerable: true,
       value: 'must-not-be-dropped',
     });
@@ -120,7 +129,14 @@ describe('cloneStrictPluginJsonValue', () => {
       value: 'must-not-be-dropped',
     });
 
-    expect(() => cloneStrictPluginJsonValue(withSymbol, 'value')).toThrow();
+    const clonedObject = cloneStrictPluginJsonValue(withHostBrand, 'value');
+    const clonedArray = cloneStrictPluginJsonValue(brandedArray, 'value');
+
+    expect(clonedObject).toEqual({ visible: 'value' });
+    expect(Object.getOwnPropertySymbols(clonedObject as object)).toEqual([]);
+    expect(clonedArray).toEqual(['value']);
+    expect(Object.getOwnPropertySymbols(clonedArray as object)).toEqual([]);
+    expect(() => cloneStrictPluginJsonValue(withEnumerableSymbol, 'value')).toThrow();
     expect(() => cloneStrictPluginJsonValue(withNonEnumerable, 'value')).toThrow();
   });
 

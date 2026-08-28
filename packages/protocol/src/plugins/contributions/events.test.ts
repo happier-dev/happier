@@ -87,6 +87,7 @@ describe('plugin event contributions', () => {
           sourceContractVersion: 1,
           supportedObservationTransports: ['checkpointedPull'],
           sourceConfigSchema: { type: 'object', additionalProperties: false },
+          setupActionRef: { pluginId: 'com.acme.events', localId: 'setup-repository-event' },
         },
       },
     }).success).toBe(true);
@@ -111,6 +112,7 @@ describe('plugin event contributions', () => {
           sourceContractVersion: 1,
           supportedObservationTransports: ['checkpointedPull'],
           sourceConfigSchema: { type: 'object' },
+          setupActionRef: { pluginId: 'com.acme.events', localId: 'setup-repository-event' },
         },
       },
     }).success).toBe(false);
@@ -128,6 +130,7 @@ describe('plugin event contributions', () => {
           sourceContractVersion: 1,
           supportedObservationTransports: ['checkpointedPull'],
           sourceConfigSchema: { type: 'object', additionalProperties: false },
+          setupActionRef: { pluginId: 'com.acme.events', localId: 'setup-repository-event' },
         },
       },
     });

@@ -6,12 +6,16 @@ import {
 } from './hostedWebSecurity.js';
 
 describe('hostedWebSecurity', () => {
-  it('rejects CSP source alternatives that cannot change the emitted policy', () => {
+  it('rejects dormant CSP source declarations that cannot change the emitted policy', () => {
     for (const csp of [
       { scriptSrc: 'selfAndDeclared' },
       { styleSrc: 'selfAndDeclared' },
       { imgSrc: 'selfDataBlobAndDeclared' },
       { fontSrc: 'selfAndDeclared' },
+      { scriptSrc: 'selfOnly' },
+      { styleSrc: 'selfOnly' },
+      { imgSrc: 'selfOnly' },
+      { fontSrc: 'selfOnly' },
     ]) {
       expect(PluginHostedWebSecurityPolicyV1Schema.safeParse({ csp }).success).toBe(false);
     }

@@ -118,9 +118,24 @@ export const VoiceCredentialOperationProjectionSchema = z.discriminatedUnion('ki
     operation: asProtocolZod(PluginContributionLocalIdSchema),
     phase: VoiceCredentialAccessPhaseSchema,
     request: ConnectedAccountHttpHeadersRequestSchema,
+    /** Headers that must be present in every successful materialization. */
+    requiredHeaderNames: VoiceCredentialHeaderNamesSchema,
+    /** Complete allowlist; providers may omit members not listed as required. */
     allowedHeaderNames: VoiceCredentialHeaderNamesSchema,
   }).strict(),
-]);
+]).superRefine((value, context) => {
+  if (value.kind !== 'materializedHttpHeaders') return;
+  const allowed = new Set(value.allowedHeaderNames);
+  for (const required of value.requiredHeaderNames) {
+    if (!allowed.has(required)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requiredHeaderNames'],
+        message: 'Required Voice credential headers must also be allowed.',
+      });
+    }
+  }
+});
 export type VoiceCredentialOperationProjection = z.infer<
   typeof VoiceCredentialOperationProjectionSchema
 >;

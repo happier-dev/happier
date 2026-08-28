@@ -10,6 +10,7 @@ import {
 } from './v2.js';
 import { PluginUiIconTokenV1Schema } from './tokens.js';
 import {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from './declarativeDocument.js';
@@ -272,6 +273,28 @@ describe('declarative node vocabulary v2', () => {
         text: 'x'.repeat(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1),
       },
     }).success).toBe(false);
+
+    const nestedInput = (depth: number): unknown => {
+      let value: unknown = null;
+      for (let currentDepth = 3; currentDepth < depth; currentDepth += 1) value = { value };
+      return value;
+    };
+    const rendererAtDepth = (depth: number) => ({
+      id: 'depth-panel',
+      kind: 'declarative' as const,
+      root: {
+        kind: 'action' as const,
+        action: { pluginId: 'acme.repos', localId: 'open' },
+        label: 'Open',
+        input: nestedInput(depth),
+      },
+    });
+    expect(PluginUiRendererV2Schema.safeParse(rendererAtDepth(
+      MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
+    )).success).toBe(true);
+    expect(PluginUiRendererV2Schema.safeParse(rendererAtDepth(
+      MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1 + 1,
+    )).success).toBe(false);
   });
 
   it('uses the canonical Collection-member grammar for declarative collection lists', () => {

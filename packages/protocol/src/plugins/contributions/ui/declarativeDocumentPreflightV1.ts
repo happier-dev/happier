@@ -1,11 +1,16 @@
 import {
-  cloneStrictPluginJsonValue,
+  cloneStrictPluginJsonValueWithTraversalLimits,
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+  StrictPluginJsonTraversalLimitError,
 } from '../strictJsonValue.js';
 import { MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1 } from './declarativeDocumentContentTypeV1.js';
 
 /** One document may render at most this many semantic nodes. */
 export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 = 512;
+/** Whole plain-data document depth, counting the document envelope as depth one. */
+export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1 = 48;
+/** Total containers and scalar values in the whole plain-data document. */
+export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_PLAIN_VALUES_V1 = 8_192;
 
 export type PluginDeclarativeDocumentPreflightFailureV1 = Readonly<{
   ok: false;
@@ -13,6 +18,8 @@ export type PluginDeclarativeDocumentPreflightFailureV1 = Readonly<{
     | 'plugin_declarative_invalid_plain_data'
     | 'plugin_declarative_document_invalid'
     | 'plugin_declarative_document_bytes_exceeded'
+    | 'plugin_declarative_document_depth_exceeded'
+    | 'plugin_declarative_document_values_exceeded'
     | 'plugin_declarative_nodes_exceeded';
   message: string;
 }>;
@@ -71,16 +78,32 @@ function hasBoundedSemanticNodeCount(root: unknown): boolean {
 /**
  * The one document-bound preflight shared by static manifest roots and dynamic
  * Resource documents. Its strict clone and serialized-byte measurement are
- * iterative, so the semantic 512-node rejection happens before any recursive
- * author-schema parser can consume a pathological tree.
+ * iterative and apply only this feature's earned document profile, so
+ * pathological structure is rejected before recursive author-schema parsing.
  */
 export function preflightPluginDeclarativeDocumentV1(
   input: unknown,
 ): PluginDeclarativeDocumentPreflightResultV1 {
   let document: unknown;
   try {
-    document = cloneStrictPluginJsonValue(input, 'document');
+    document = cloneStrictPluginJsonValueWithTraversalLimits(input, 'document', {
+      maxDepth: MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
+      maxValues: MAX_PLUGIN_DECLARATIVE_DOCUMENT_PLAIN_VALUES_V1,
+    });
   } catch (error) {
+    if (error instanceof StrictPluginJsonTraversalLimitError) {
+      return error.limit === 'depth'
+        ? {
+            ok: false,
+            code: 'plugin_declarative_document_depth_exceeded',
+            message: 'Declarative document exceeds the plain-data depth limit',
+          }
+        : {
+            ok: false,
+            code: 'plugin_declarative_document_values_exceeded',
+            message: 'Declarative document has too many plain-data values',
+          };
+    }
     return {
       ok: false,
       code: 'plugin_declarative_invalid_plain_data',

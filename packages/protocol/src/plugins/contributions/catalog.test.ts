@@ -202,6 +202,16 @@ describe('plugin contribution catalog', () => {
     expect(entry('agents').requiresRegistration({ runtime: { kind: 'acp' } })).toBe(false);
     expect(entry('agents').requiresRegistration({
       runtime: { kind: 'acp' },
+      cli: {
+        auth: {
+          support: 'login_terminal',
+          nonInteractiveStatusProbe: true,
+          loginLaunches: [{ kind: 'primary', args: ['login'] }],
+        },
+      },
+    })).toBe(true);
+    expect(entry('agents').requiresRegistration({
+      runtime: { kind: 'acp' },
       capabilities: { surfaces: ['externalSessions'] },
       surfaces: { externalSession: { sources: [{}] } },
     })).toBe(true);
@@ -434,6 +444,25 @@ describe('plugin contribution catalog', () => {
       { family: 'agents', localId: 'acp-external', target: { realm: 'daemon' }, requiredFields: ['externalSessions'] },
       { family: 'agents', localId: 'external-only', target: { realm: 'daemon' }, requiredFields: ['externalSessions'] },
     ]);
+
+    expect(derivePluginDaemonContributionRegistrationRights({
+      agents: [{
+        id: 'acp-auth-probe',
+        runtime: { kind: 'acp' },
+        cli: {
+          auth: {
+            support: 'login_terminal',
+            nonInteractiveStatusProbe: true,
+            loginLaunches: [{ kind: 'primary', args: ['login'] }],
+          },
+        },
+      }],
+    })).toEqual([{
+      family: 'agents',
+      localId: 'acp-auth-probe',
+      target: { realm: 'daemon' },
+      requiredFields: ['cliAuth'],
+    }]);
 
     expect(derivePluginDaemonContributionRegistrationRights({
       agents: [{

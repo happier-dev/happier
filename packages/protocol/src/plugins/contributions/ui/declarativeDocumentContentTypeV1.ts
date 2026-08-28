@@ -14,7 +14,8 @@ export type PluginDeclarativeDocumentContentTypeV1 = z.infer<
  * One encoded UTF-8 document boundary for static and dynamic declarative
  * authoring. It protects synchronous browser/Hermes decode, parse and model
  * adoption; it is deliberately distinct from both the generic 16 MiB Resource
- * transport ceiling and the retired aggregate-string/depth quotas.
+ * transport ceiling and the retired aggregate-string quota. Structural
+ * depth/value work stays with the declarative preflight rather than bytes.
  */
 export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1 = 512 * 1024;
 

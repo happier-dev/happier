@@ -175,10 +175,19 @@ export type PluginAgentCliAuthMetadata = z.infer<typeof PluginAgentCliAuthMetada
  * UI scheduling and CLI projection from maintaining separate safety policies.
  */
 export function isPluginAgentCliAuthBackgroundCheckSafe(
-  cli: Pick<PluginAgentCliMetadata, 'auth'>,
+  cli: Readonly<{
+    auth: Readonly<{
+      environmentVariables?: readonly string[];
+      credentialPaths?: readonly string[];
+      nonInteractiveStatusProbe?: boolean;
+    }>;
+  }>,
 ): boolean {
-  return cli.auth.environmentVariables !== undefined
-    || cli.auth.credentialPaths !== undefined
+  const hasNonEmptyString = (value: unknown): boolean => Array.isArray(value)
+    && value.length > 0
+    && value.every((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  return hasNonEmptyString(cli.auth.environmentVariables)
+    || hasNonEmptyString(cli.auth.credentialPaths)
     || cli.auth.nonInteractiveStatusProbe === true;
 }
 

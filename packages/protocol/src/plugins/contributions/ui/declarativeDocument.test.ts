@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { derivePluginUiTargetedSurfaceMountInstanceKeyV1 } from '../../ui/targetedContributions.js';
 import {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1,
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   assertPluginDeclarativeDocumentResourceContentTypesV1,
@@ -859,20 +861,22 @@ describe('declarative document normalizer v1', () => {
   });
 
   it('rejects oversized and deeply nested documents before recursive parsing', () => {
-    const deeplyNestedRoot: Record<string, unknown> = { kind: 'text', text: 'leaf' };
-    let current = deeplyNestedRoot;
-    // The declared semantic-node bound is 512. This deliberately exceeds it
-    // by far enough that the predecessor's recursive Zod parser overflows
-    // before reaching its late post-parse node count check.
-    for (let index = 0; index < 10_000; index += 1) {
-      current = { kind: 'stack', children: [current] };
-    }
+    // Keep this independent semantic-node proof shallow enough that the
+    // document's earned depth profile is not the first boundary to reject it.
+    // The root container plus 512 children exceeds the 512-node ceiling by one.
+    const tooManySemanticNodes = {
+      kind: 'stack',
+      children: Array.from(
+        { length: MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 },
+        (_, index) => ({ kind: 'text', text: `leaf-${index}` }),
+      ),
+    };
 
     expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
       pluginId: 'com.acme.dashboard',
       generation: 'generation-4',
       actions: [],
-      document: { version: 1, root: current },
+      document: { version: 1, root: tooManySemanticNodes },
     }), 'plugin_declarative_nodes_exceeded');
 
     const oversizedDocument = {
@@ -890,5 +894,30 @@ describe('declarative document normalizer v1', () => {
       actions: [],
       document: oversizedDocument,
     }), 'plugin_declarative_document_bytes_exceeded');
+
+    const nestedInput = (depth: number): unknown => {
+      let value: unknown = null;
+      for (let currentDepth = 3; currentDepth < depth; currentDepth += 1) value = { value };
+      return value;
+    };
+    const normalizeAtDepth = (depth: number) => normalizePluginDeclarativeDocumentV1({
+      pluginId: 'com.acme.dashboard',
+      generation: 'generation-4',
+      actions: [action],
+      document: {
+        version: 1,
+        root: {
+          kind: 'action',
+          action,
+          label: 'Refresh',
+          input: nestedInput(depth),
+        },
+      },
+    });
+    expect(normalizeAtDepth(MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1).root).toBeDefined();
+    expectNormalizationFailure(
+      () => normalizeAtDepth(MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1 + 1),
+      'plugin_declarative_document_depth_exceeded',
+    );
   });
 });

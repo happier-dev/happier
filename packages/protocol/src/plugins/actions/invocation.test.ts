@@ -42,6 +42,17 @@ function createInvocation(params: Readonly<{
   generationSignal?: AbortSignal;
   isCurrent?: () => boolean;
   inputSchema?: object;
+  inputParser?: (input: unknown) => Readonly<
+    | { success: true; data: unknown }
+    | {
+      success: false;
+      issues: readonly Readonly<{
+        path: readonly (string | number)[];
+        code: string;
+        message: string;
+      }>[];
+    }
+  >;
 }> = {}) {
   return createPluginActionInvocation({
     pluginId: 'acme.action',
@@ -49,6 +60,7 @@ function createInvocation(params: Readonly<{
     generationSignal: params.generationSignal ?? new AbortController().signal,
     isCurrent: params.isCurrent ?? (() => true),
     ...(params.inputSchema === undefined ? {} : { inputSchema: params.inputSchema }),
+    ...(params.inputParser === undefined ? {} : { inputParser: params.inputParser }),
   });
 }
 
@@ -314,6 +326,89 @@ describe('createPluginActionInvocation', () => {
       });
     }
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes through the executable parser before schema parity and host pre-dispatch', async () => {
+    const inputParser = vi.fn((input: unknown) => {
+      if (typeof input !== 'object' || input === null || !('title' in input)) {
+        return Object.freeze({
+          success: false as const,
+          issues: Object.freeze([Object.freeze({
+            path: Object.freeze(['title']),
+            code: 'invalid_type',
+            message: 'Expected a title string',
+          })]),
+        });
+      }
+      return Object.freeze({
+        success: true as const,
+        data: Object.freeze({ title: String(input.title) }),
+      });
+    });
+    const invocation = createInvocation({
+      inputParser,
+      inputSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: true,
+      },
+    });
+    const preDispatch = vi.fn(() => null);
+    const handler = vi.fn(() => ({ committed: true }));
+
+    await expect(invocation.invoke({ title: 'Release', ignored: true }, {
+      preDispatch,
+      handler,
+    })).resolves.toEqual({ status: 'executed', value: { committed: true } });
+    expect(inputParser).toHaveBeenCalledOnce();
+    expect(preDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      input: { title: 'Release' },
+    }));
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      input: { title: 'Release' },
+    }));
+
+    inputParser.mockClear();
+    preDispatch.mockClear();
+    handler.mockClear();
+    await expect(invocation.invoke({}, { preDispatch, handler })).resolves.toEqual({
+      status: 'invalid',
+      code: 'plugin_action_input_schema_invalid',
+      message: 'Expected a title string',
+      issues: [{ path: ['title'], code: 'invalid_type', message: 'Expected a title string' }],
+    });
+    expect(inputParser).toHaveBeenCalledOnce();
+    expect(preDispatch).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('refuses an executable-parser and emitted-schema disagreement before host pre-dispatch', async () => {
+    const invocation = createInvocation({
+      inputParser: () => Object.freeze({
+        success: true as const,
+        data: Object.freeze({ title: 42 }),
+      }),
+      inputSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    });
+    const preDispatch = vi.fn(() => null);
+    const handler = vi.fn(() => ({ committed: true }));
+
+    await expect(invocation.invoke({ title: 'Release' }, {
+      preDispatch,
+      handler,
+    })).resolves.toEqual({
+      status: 'failed',
+      code: 'plugin_action_schema_projection_mismatch',
+      message: 'Plugin action executable input semantics disagree with the manifest inputSchema',
+    });
+    expect(preDispatch).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('runs host pre-dispatch only after input-schema admission and preserves its unavailable result', async () => {

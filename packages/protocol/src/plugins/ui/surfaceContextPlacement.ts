@@ -19,6 +19,7 @@ export const PluginUiSurfacePlacementV1Schema = z.enum([
   'rightSidebarSurface',
   'servicesSurface',
   'composerSurface',
+  'ephemeralSurface',
   'unknown',
 ]);
 export type PluginUiSurfacePlacementV1 = z.infer<typeof PluginUiSurfacePlacementV1Schema>;

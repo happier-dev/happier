@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOptions.js';
+
 /**
  * The PUBLIC Agent UI authoring grammar (`contributes.agents[].ui`).
  *
@@ -22,6 +24,9 @@ import { z } from 'zod';
  *   `message.metaDescriptorIds` is absent, for the same reason: the interpreter
  *   answers both compiled-adapter forms with a refusal diagnostic, so a loose
  *   grammar that accepts them only teaches authors a shape that cannot work.
+ * - `session` admits the two inline data descriptors the shared client really
+ *   interprets. Compiled descriptor/callback ids are absent; bundled and
+ *   installed Agents author the same portable facts.
  *
  * Host-owned identifiers an Agent may reference — account setting keys,
  * translation keys, icon names — stay strings here. They are validated by the
@@ -186,8 +191,6 @@ const AgentUiEnvironmentVariablesSchema = z.object({
 }).strict();
 
 const AgentUiBackendTransportSchema = z.object({
-  runtimeDescriptorOutputKey: AgentUiIdSchema.optional(),
-  legacyModeOutputKey: AgentUiIdSchema.optional(),
   backendMode: z.object({
     values: AgentUiIdArraySchema.min(1),
     aliases: AgentUiStringRecordSchema.optional(),
@@ -204,7 +207,7 @@ const AgentUiPayloadSchema = z.object({
    */
   spawnSessionExtras: z.object({
     kind: z.literal('static'),
-    value: z.record(z.string(), z.unknown()),
+    value: z.record(z.string(), SpawnConfigOptionValueSchema),
   }).strict().optional(),
   /**
    * A backend-mode fact this Agent contributes to the spawn/resume envelope.
@@ -226,8 +229,6 @@ const AgentUiPayloadSchema = z.object({
 }).strict();
 
 const AgentUiRuntimeDescriptorLinkExtrasSchema = z.object({
-  runtimeDescriptorOutputKey: AgentUiIdSchema.optional(),
-  legacyModeOutputKey: AgentUiIdSchema.optional(),
   backendMode: z.object({ values: AgentUiIdArraySchema.min(1) }).strict(),
   sourceFields: AgentUiIdArraySchema,
   agentExtra: AgentUiRuntimeDescriptorAgentExtraSchema.optional(),
@@ -377,6 +378,70 @@ export const AgentUiMessageDeclarationV1Schema = z.object({
 export type AgentUiMessageDeclarationV1 = z.infer<typeof AgentUiMessageDeclarationV1Schema>;
 
 /* -------------------------------------------------------------------------- */
+/* session                                                                     */
+/* -------------------------------------------------------------------------- */
+
+const AgentUiAgentTeamBehaviorSchema = z.object({
+  kind: z.literal('session.agentTeamBehavior.v1'),
+  snapshotKey: AgentUiIdSchema,
+  providerLabel: AgentUiIdSchema,
+  flavorAliases: AgentUiIdArraySchema.min(1),
+  tools: z.object({
+    teamCreate: AgentUiIdArraySchema.min(1),
+    teamDelete: AgentUiIdArraySchema.min(1),
+    teamSendMessage: AgentUiIdArraySchema.min(1),
+    subagentSpawn: AgentUiIdArraySchema.min(1),
+    activeTeamFallbackSubagentSpawn: AgentUiIdArraySchema.optional(),
+    configMutation: AgentUiIdArraySchema.optional(),
+  }).strict(),
+  configTeamPath: z.object({
+    rootDirectory: AgentUiIdSchema,
+    teamsDirectory: AgentUiIdSchema,
+    filename: AgentUiIdSchema,
+  }).strict().optional(),
+  lifecycleEvents: z.object({
+    ignoreActivityPreview: AgentUiIdArraySchema.optional(),
+    shutdownApproved: AgentUiIdSchema.optional(),
+  }).strict().optional(),
+}).strict();
+
+const AgentUiSessionProviderBehaviorSchema = z.object({
+  kind: z.literal('session.providerBehavior.v1'),
+  agentTeam: AgentUiAgentTeamBehaviorSchema.optional(),
+  participants: z.object({
+    sidechainIds: z.object({
+      kind: z.literal('toolCallInputString'),
+      toolNames: AgentUiIdArraySchema.min(1),
+      inputKey: AgentUiIdSchema,
+    }).strict().optional(),
+  }).strict().optional(),
+  subagents: z.object({
+    ignoreActivityPreviewText: z.object({
+      kind: z.literal('jsonEventType'),
+      recipientKinds: AgentUiIdArraySchema.min(1),
+      eventTypes: AgentUiIdArraySchema.min(1),
+    }).strict().optional(),
+  }).strict().optional(),
+}).strict();
+
+const AgentUiSessionVisibleMessagesSchema = z.object({
+  kind: z.literal('session.visibleMessages.v1'),
+  subagentKinds: AgentUiIdArraySchema.min(1),
+  fallbackToolNames: AgentUiIdArraySchema.optional(),
+  excludeJsonEventTypes: AgentUiIdArraySchema.min(1),
+}).strict();
+
+/** Data-only Session behavior interpreted by the same host owner for every Agent. */
+export const AgentUiSessionDeclarationV1Schema = z.object({
+  providerBehavior: AgentUiSessionProviderBehaviorSchema.optional(),
+  visibleMessages: AgentUiSessionVisibleMessagesSchema.optional(),
+}).strict().refine(
+  (value) => value.providerBehavior !== undefined || value.visibleMessages !== undefined,
+  'At least one Agent Session UI declaration is required.',
+);
+export type AgentUiSessionDeclarationV1 = z.infer<typeof AgentUiSessionDeclarationV1Schema>;
+
+/* -------------------------------------------------------------------------- */
 /* components                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -447,7 +512,7 @@ export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDec
 /* -------------------------------------------------------------------------- */
 
 /**
- * The SAME three declaration slots as they travel in the daemon contribution
+ * The SAME declaration slots as they travel in the daemon contribution
  * registry projection, carried structurally rather than re-validated.
  *
  * The strict grammar above is the AUTHORING contract: it refuses a malformed
@@ -461,6 +526,7 @@ export type AgentUiComponentsDeclarationV1 = z.infer<typeof AgentUiComponentsDec
  */
 export const AgentUiProjectedDeclarationV1Schema = z.object({
   behavior: z.record(z.string(), z.unknown()).optional(),
+  session: z.record(z.string(), z.unknown()).optional(),
   message: z.record(z.string(), z.unknown()).optional(),
   components: z.record(z.string(), z.unknown()).optional(),
 }).strict();

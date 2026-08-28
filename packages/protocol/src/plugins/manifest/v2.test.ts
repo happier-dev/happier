@@ -608,6 +608,33 @@ describe('plugin manifest v2 root contract', () => {
     }]);
   });
 
+  it('does not impose an invented aggregate byte ceiling on targeted protocol schemas', () => {
+    const parsed = PluginManifestV2Schema.safeParse(manifest({
+      contributes: {
+        pluginContributionPoints: [{
+          id: 'providers',
+          protocols: [{
+            id: 'happier.channels/providers',
+            version: 1,
+            operations: {
+              connectionTest: {
+                required: true,
+                input: { kind: 'contributorDefined' },
+                resultSchema: {
+                  type: 'object',
+                  description: 'x'.repeat(70 * 1024),
+                },
+                action: { surface: 'plugin', dangerLevel: 'safe' },
+              },
+            },
+          }],
+        }],
+      },
+    }));
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('admits exactly the Protocol-owned number of target protocol epochs per point', () => {
     const protocol = (version: number) => ({
       id: 'happier.channels/providers',

@@ -31,7 +31,6 @@ const TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN = 16;
 const TARGETED_CONTRIBUTION_MAX_TARGET_PLUGINS_PER_CONTRIBUTOR = 16;
 const TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_PLUGIN = 64;
 const TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_POINT = 16;
-const TARGETED_CONTRIBUTION_MAX_POINT_SCHEMA_BYTES = 64 * 1024;
 const TARGETED_CONTRIBUTION_MAX_DESCRIPTOR_BYTES = 16 * 1024;
 
 function utf8Length(value: string): number {
@@ -252,22 +251,6 @@ export function validateTargetedContributionEnvelopeBoundsV1(
   }>,
   ctx: z.RefinementCtx,
 ): void {
-  const pointSchemaBytes = value.pluginContributionPoints.reduce((total, point) => (
-    total + utf8Length(JSON.stringify(point.protocols.map((protocol) => ({
-      id: protocol.id,
-      version: protocol.version,
-      descriptor: protocol.descriptor,
-      operations: protocol.operations,
-      surfaces: protocol.surfaces,
-    }))))
-  ), 0);
-  if (pointSchemaBytes > TARGETED_CONTRIBUTION_MAX_POINT_SCHEMA_BYTES) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['pluginContributionPoints'],
-      message: `Targeted contribution point schemas exceed the ${TARGETED_CONTRIBUTION_MAX_POINT_SCHEMA_BYTES}-byte limit.`,
-    });
-  }
   if (value.pluginContributionPoints.length > TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

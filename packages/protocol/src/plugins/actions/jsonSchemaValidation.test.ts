@@ -18,6 +18,7 @@ import {
   defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
+  defineProtocolUnion,
   defineProtocolUniqueArray,
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
@@ -427,21 +428,43 @@ describe('protocol composable schema kernel', () => {
         policy: 'additive-open/preserve',
         additionalProperties: defineProtocolString({ minLength: 1 }),
       }),
+      optionalNullable: defineProtocolString({ minLength: 1 }).nullable().optional(),
+      orderedUnion: defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('same') }, { policy: 'additive-open/drop' }),
+        defineProtocolObject({ kind: defineProtocolLiteral('same') }, { policy: 'additive-open/preserve' }),
+      ]),
     }, { policy: 'closed' });
     const rehydrated = rehydrateCanonicalProtocolComposableSchema(authored.jsonSchema);
 
-    expect(rehydrated?.safeParse({
+    const accepted = {
       drop: { label: 'drop', future: 'discarded' },
       preserve: { label: 'preserve', future: 'retained' },
       typed: { label: 'typed', future: 'also-retained' },
-    })).toEqual({
+      optionalNullable: null,
+      orderedUnion: { kind: 'same', future: 'first-arm-drops' },
+    };
+    expect(rehydrated?.safeParse(accepted)).toEqual({
       success: true,
       data: {
         drop: { label: 'drop' },
         preserve: { label: 'preserve', future: 'retained' },
         typed: { label: 'typed', future: 'also-retained' },
+        optionalNullable: null,
+        orderedUnion: { kind: 'same' },
       },
     });
+    for (const value of [
+      accepted,
+      { ...accepted, optionalNullable: undefined },
+      { ...accepted, optionalNullable: 'present' },
+      { ...accepted, typed: { label: 'typed', future: 42 } },
+      { ...accepted, rootUnknown: 'closed' },
+    ]) {
+      expect(rehydrated?.safeParse(value)).toEqual(authored.safeParse(value));
+    }
+    expect(rehydrated?.safeParse({ ...accepted, typed: { label: 'typed', future: 42 } }).success)
+      .toBe(false);
+    expect(rehydrated?.safeParse({ ...accepted, rootUnknown: 'closed' }).success).toBe(false);
     // The emitted DSL omits an empty required list. A hand-authored schema
     // remains valid JSON Schema but is not an exact canonical projection.
     expect(rehydrateCanonicalProtocolComposableSchema({

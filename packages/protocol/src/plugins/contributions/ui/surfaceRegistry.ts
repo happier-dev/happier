@@ -500,9 +500,15 @@ export function isPluginUiSurfaceBindingAdmittedAtRuntimeV1(input: Readonly<{
   platform: PluginUiPlatformV1;
   formFactor: PluginUiDestinationRuntimeFormFactorV1;
 }>): boolean {
-  return input.binding.kind === 'destination'
-    ? isPluginUiDestinationBindingAdmittedAtRuntimeV1(input)
-    : input.binding.platforms.includes(input.platform);
+  const binding = input.binding;
+  if (binding.kind !== 'destination') {
+    return binding.platforms.includes(input.platform);
+  }
+  return isPluginUiDestinationBindingAdmittedAtRuntimeV1({
+    binding,
+    platform: input.platform,
+    formFactor: input.formFactor,
+  });
 }
 
 export function normalizePluginUiRendererChainV1(input: Readonly<{

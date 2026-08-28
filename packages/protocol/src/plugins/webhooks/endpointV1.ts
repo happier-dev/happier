@@ -45,7 +45,18 @@ const PluginWebhookIdempotencyKeyV1Schema = z.string()
   .regex(/^[A-Za-z0-9._:-]{16,128}$/u);
 const PluginWebhookRevisionV1Schema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const PluginWebhookTimestampMsV1Schema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const PluginWebhookPublicUrlV1Schema = z.string().url().max(2_048);
+export const PluginWebhookPublicUrlV1Schema = z.string().url().max(2_048).refine((value) => {
+  const url = new URL(value);
+  if (url.protocol === 'https:') return true;
+  if (url.protocol !== 'http:') return false;
+  const hostname = url.hostname.toLowerCase();
+  return hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+    || hostname === '127.0.0.1'
+    || hostname === '[::1]';
+}, {
+  message: 'Webhook public URLs require HTTPS except for an explicit loopback development URL',
+});
 const PluginWebhookCredentialVersionIdV1Schema = z.string().trim().min(1).max(128);
 
 export const PluginWebhookEndpointReadinessV1Schema = z.enum([

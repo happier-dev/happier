@@ -18,6 +18,7 @@ import {
   AgentUiBehaviorDeclarationV1Schema,
   AgentUiComponentsDeclarationV1Schema,
   AgentUiMessageDeclarationV1Schema,
+  AgentUiSessionDeclarationV1Schema,
 } from './agentUiGrammar.js';
 import {
   PluginNotificationCategoryContributionV2Schema,
@@ -351,6 +352,7 @@ const PluginAgentResumeChecklistV1Schema = z.object({
  */
 export const PluginAgentUiBehaviorContributionV2Schema = z.object({
   behavior: AgentUiBehaviorDeclarationV1Schema.optional(),
+  session: AgentUiSessionDeclarationV1Schema.optional(),
   message: AgentUiMessageDeclarationV1Schema.optional(),
   components: AgentUiComponentsDeclarationV1Schema.optional(),
 }).strict();

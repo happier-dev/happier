@@ -13,6 +13,7 @@ import {
   PluginWebhookEndpointReadResultV1Schema,
   PluginWebhookEndpointRetargetInputV1Schema,
   PluginWebhookEndpointRevokeInputV1Schema,
+  PluginWebhookPublicUrlV1Schema,
 } from './endpointV1.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../actions/jsonSchemaValidation.js';
 
@@ -85,6 +86,25 @@ const targetMaterialization = {
 } as const;
 
 describe('plugin webhook endpoint lifecycle wire contracts', () => {
+  it('admits HTTPS public endpoints and only the explicit HTTP loopback development exception', () => {
+    expect(Protocol.PluginWebhookPublicUrlV1Schema).toBe(PluginWebhookPublicUrlV1Schema);
+    for (const value of [
+      'https://example.test/v1/plugins/webhooks/opaque-route',
+      'http://localhost:3000/v1/plugins/webhooks/opaque-route',
+      'http://127.0.0.1:3000/v1/plugins/webhooks/opaque-route',
+      'http://[::1]:3000/v1/plugins/webhooks/opaque-route',
+    ]) {
+      expect(PluginWebhookPublicUrlV1Schema.safeParse(value).success, value).toBe(true);
+    }
+    for (const value of [
+      'http://example.test/v1/plugins/webhooks/opaque-route',
+      'http://192.168.1.10/v1/plugins/webhooks/opaque-route',
+      'ftp://localhost/v1/plugins/webhooks/opaque-route',
+    ]) {
+      expect(PluginWebhookPublicUrlV1Schema.safeParse(value).success, value).toBe(false);
+    }
+  });
+
   it('accepts one exact present-user ensure contract without Account or server identity', () => {
     const input = {
       webhookContribution,

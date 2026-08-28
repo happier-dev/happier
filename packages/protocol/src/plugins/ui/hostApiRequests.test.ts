@@ -19,6 +19,8 @@ import {
   PluginUiHostApiDiagnosticV1Schema,
   PluginUiLaunchInputV1Schema,
   PluginUiOpenSurfaceRequestV1Schema,
+  PluginUiOpenNewSessionRequestV1Schema,
+  PluginUiPreparedReviewWorkspaceResultV1Schema,
   PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1,
   PluginUiReplacePageLocationRequestV1Schema,
   PluginUiReplacePageLocationResultV1Schema,
@@ -430,27 +432,24 @@ describe('plugin UI open and Action components', () => {
         }).success).toBe(false);
     });
 
-    it('extends the incumbent Session host arm with a New Session seed without adding another projection', () => {
+    it('keeps New Session navigation separate from no-invoke input selection', () => {
         const seed = {
-            prompt: { text: 'Repair the failing check', mode: 'replace' },
+            prompt: 'Repair the failing check',
             profileId: 'profile-review',
             checkoutIntent: 'createWorktree',
             placement: { serverId: 'server-1', machineId: 'machine-1', directory: '/workspace' },
         } as const;
 
-        expect(PluginUiSelectActionInputRequestV1Schema.parse({
+        expect(PluginUiOpenNewSessionRequestV1Schema.parse(seed)).toEqual(seed);
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
             hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
             seed,
-        })).toEqual({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed,
-        });
+        }).success).toBe(false);
 
         // A seed that declares only some members stays valid: an absent member
         // is "not seeded", never "seeded empty".
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { placement: { directory: '/workspace' } },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            placement: { directory: '/workspace' },
         }).success).toBe(true);
 
         // An ambiguous repository join stays a reader choice. The seed carries
@@ -473,64 +472,66 @@ describe('plugin UI open and Action components', () => {
                 }],
             }],
         } as const;
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: candidateSeed,
-        }).success).toBe(true);
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { candidates: [] },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse(candidateSeed).success).toBe(true);
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            candidates: [],
         }).success).toBe(false);
 
         // Attachments are the author-shaped half of the incumbent
         // `attachment.add` request. The mounted New Session composer, rather
         // than this Protocol boundary, resolves their host identity and mints
         // an instance after navigation.
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: {
-                attachments: [{
-                    attachmentLocalId: 'entry',
-                    value: {
-                        key: 'triage:42',
-                        value: { v: 1, entryId: '42' },
-                        presentation: { label: 'Issue #42' },
-                    },
-                }],
-            },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            attachments: [{
+                attachmentLocalId: 'entry',
+                value: {
+                    key: 'triage:42',
+                    value: { v: 1, entryId: '42' },
+                    presentation: { label: 'Issue #42' },
+                },
+            }],
         }).success).toBe(true);
 
         // The one incumbent host arm accepts exactly one authoring mode, and an
         // unknown seed member is refused rather than silently dropped.
         expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            draft: {},
-            seed,
-        }).success).toBe(false);
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
             hostAction: { action: 'session.spawn_new', projection: 'newSessionSeed' },
-            seed,
         }).success).toBe(false);
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { ...seed, arbitrary: true },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            ...seed,
+            arbitrary: true,
         }).success).toBe(false);
         // An empty attachment list declares no attach intent and is refused;
         // valid author-shaped additions above remain mounted-composer work.
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { attachments: [] },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            attachments: [],
         }).success).toBe(false);
-        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
-            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-            seed: { prompt: { text: '   ', mode: 'replace' } },
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            prompt: '   ',
         }).success).toBe(false);
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            prompt: { text: 'old shape', mode: 'replace' },
+        }).success).toBe(false);
+        expect(PluginUiSelectActionInputResultV1Schema.safeParse({ kind: 'newSessionSeeded' }).success)
+            .toBe(false);
+    });
 
-        expect(PluginUiSelectActionInputResultV1Schema.parse({ kind: 'newSessionSeeded' }))
-            .toEqual({ kind: 'newSessionSeeded' });
-        expect(PluginUiSelectActionInputResultV1Schema.safeParse({
-            kind: 'newSessionSeeded',
-            draft: { directory: '/workspace' },
+    it('projects only the source-neutral prepared workspace fact', () => {
+        expect(PluginUiPreparedReviewWorkspaceResultV1Schema.parse({
+            kind: 'prepared',
+            repositoryPath: '/worktrees/review-42',
+            branch: 'review/pr-42',
+            created: true,
+        })).toMatchObject({
+            kind: 'prepared',
+            repositoryPath: '/worktrees/review-42',
+        });
+        expect(PluginUiPreparedReviewWorkspaceResultV1Schema.safeParse({
+            kind: 'prepared',
+            repositoryPath: '   ',
+        }).success).toBe(false);
+        expect(PluginUiPreparedReviewWorkspaceResultV1Schema.safeParse({
+            kind: 'unavailable',
         }).success).toBe(false);
     });
 

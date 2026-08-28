@@ -186,6 +186,13 @@ describe('hosted web bridge protocol', () => {
       ...bootstrap,
       payload: { ...bootstrap.payload, composerRef: { kind: 'session' } },
     }).success).toBe(false);
+    // Opaque in-process values and factories cannot cross an iframe. Keeping
+    // this bootstrap schema strict prevents a JSON/RPC shadow scope from
+    // becoming a second owner beside the host's in-process artifact scope.
+    expect(PluginHostedWebBridgeBootstrapEnvelopeV1Schema.safeParse({
+      ...bootstrap,
+      payload: { ...bootstrap.payload, ephemeralSharedScope: { kind: 'available' } },
+    }).success).toBe(false);
   });
 
   it('accepts only the exact token-scoped iOS frame address as a non-HTTP bridge origin', () => {

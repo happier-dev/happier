@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AcpCatalogSettingsV1Schema } from './settingsV1.js';
 
 describe('AcpCatalogSettingsV1Schema', () => {
-  it('accepts provider-owned auth parser and transport profile ids', () => {
+  it('accepts and strips released provider-auth and transport carriers at persisted ingress', () => {
     const result = AcpCatalogSettingsV1Schema.safeParse({
       v: 2,
       backends: [
@@ -39,6 +39,10 @@ describe('AcpCatalogSettingsV1Schema', () => {
     });
 
     expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.backends[0]).not.toHaveProperty('transportProfile');
+    expect(result.data.backends[0]?.auth).not.toHaveProperty('statusCommand');
+    expect(result.data.backends[0]?.auth).not.toHaveProperty('parser');
   });
 
   it('defaults empty input to an empty v2 catalog', () => {
