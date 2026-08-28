@@ -57,6 +57,16 @@ function response(body: unknown, status = 200): Response {
   });
 }
 
+function responseForRequest(init: RequestInit | undefined, body: Record<string, unknown>, status = 200): Response {
+  const request = init?.body === undefined
+    ? undefined
+    : JSON.parse(String(init.body)) as Readonly<{ requestId?: unknown }>;
+  return response({
+    ...body,
+    ...(typeof request?.requestId === 'string' ? { requestId: request.requestId } : {}),
+  }, status);
+}
+
 function isHappierSessionInitialInputError(
   error: unknown,
 ): error is HappierSessionInitialInputError {
@@ -106,11 +116,11 @@ describe('Happier SDK client', () => {
     undiciAgent.destroy.mockImplementation(async () => {
       order.push('dispatcher.destroy');
     });
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       order.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
       if (actionId === 'transcript.follow') {
         return response({
@@ -119,7 +129,7 @@ describe('Happier SDK client', () => {
           execution: { ok: true, result: { items: [{ role: 'assistant' }], nextCursor: '1', truncated: false } },
         });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -174,8 +184,103 @@ describe('Happier SDK client', () => {
     );
   });
 
+  it('rejects a response whose echoed request id does not match the request', async () => {
+    const fetch = vi.fn(async () => response({
+      v: 1,
+      actionId: 'session.stop',
+      requestId: 'different-request',
+      execution: { ok: true, result: { stopped: true } },
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: 'request-1' },
+    )).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      message: 'The Happier Action API returned an invalid response envelope.',
+    });
+  });
+
+  it('rejects a missing or unsolicited request-id echo', async () => {
+    const responses = [
+      {
+        v: 1,
+        actionId: 'session.stop',
+        execution: { ok: true, result: { stopped: true } },
+      },
+      {
+        v: 1,
+        actionId: 'machines.list',
+        requestId: 'unsolicited-request',
+        execution: { ok: true, result: [] },
+      },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => response(responses.shift())));
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: 'request-1' },
+    )).rejects.toBeInstanceOf(HappierTransportError);
+    await expect(client.actions.execute('machines.list', {})).rejects.toBeInstanceOf(HappierTransportError);
+  });
+
+  it('preserves the effective generated request id on Action errors', async () => {
+    let requestId: string | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      requestId = JSON.parse(String(init?.body)).requestId;
+      return response({
+        v: 1,
+        actionId: 'session.message.send',
+        requestId,
+        execution: { ok: false, errorCode: 'action_failed', error: 'Could not stop Session.' },
+      });
+    }));
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const error = await client.actions.execute('session.message.send', {
+      sessionId: 'session-1',
+      message: 'Continue.',
+      localId: 'input-1',
+    }).catch((cause) => cause);
+
+    expect(requestId).toEqual(expect.any(String));
+    expect(error).toMatchObject({
+      name: 'HappierActionError',
+      code: 'action_failed',
+      requestId,
+    });
+  });
+
+  it('preserves the effective generated request id on transport errors', async () => {
+    let requestId: string | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      requestId = JSON.parse(String(init?.body)).requestId;
+      return response({ error: 'invalid_token' }, 401);
+    }));
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const error = await client.actions.execute('session.message.send', {
+      sessionId: 'session-1',
+      message: 'Continue.',
+      localId: 'input-1',
+    }).catch((cause) => cause);
+
+    expect(requestId).toEqual(expect.any(String));
+    expect(error).toMatchObject({
+      name: 'HappierTransportError',
+      code: 'invalid_token',
+      status: 401,
+      requestId,
+    });
+  });
+
   it('sends and waits through the correlated session Action', async () => {
-    const fetch = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => response({
+    const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
       v: 1,
       actionId: 'session.message.send',
       execution: { ok: true, result: { accepted: true } },
@@ -366,7 +471,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: {
@@ -457,7 +562,7 @@ describe('Happier SDK client', () => {
               kind: 'agent',
               identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
             },
-            initialMessage: 'Inspect the failing tests.',
+            initialInput: { text: 'Inspect the failing tests.' },
             agentModeId: 'review',
             environmentVariables: { CI: 'true' },
             title: 'External agent session',
@@ -475,7 +580,7 @@ describe('Happier SDK client', () => {
       actionId: 'session.spawn_new',
     } as const;
     const actionIds: string[] = [];
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'agents.backends.list') {
@@ -496,7 +601,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: { ok: true, result: approval },
@@ -541,7 +646,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: {
@@ -614,7 +719,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: {
@@ -732,11 +837,11 @@ describe('Happier SDK client', () => {
     'preserves the committed Session when requested initial input is %s',
     async (_label, initialInput) => {
       const actionIds: string[] = [];
-      const fetch = vi.fn(async (url: URL | RequestInfo) => {
+      const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
         const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
         actionIds.push(actionId);
         if (actionId === 'agents.backends.list') {
-          return response({
+          return responseForRequest(init, {
             v: 1,
             actionId,
             execution: {
@@ -754,7 +859,7 @@ describe('Happier SDK client', () => {
           });
         }
         if (actionId === 'session.spawn_new') {
-          return response({
+          return responseForRequest(init, {
             v: 1,
             actionId,
             execution: {
@@ -770,7 +875,7 @@ describe('Happier SDK client', () => {
             },
           });
         }
-        return response({
+        return responseForRequest(init, {
           v: 1,
           actionId,
           execution: { ok: true, result: { accepted: true } },
@@ -822,7 +927,7 @@ describe('Happier SDK client', () => {
       organizationPlacement: { folderId: null, tagIds: [] },
       initialInput: { status: 'rejected', code: 'session_input_target_update_required' },
     } as const;
-    vi.stubGlobal('fetch', vi.fn(async () => response({
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
       v: 1,
       actionId: 'session.spawn_new',
       execution: { ok: true, result: partialResult },
@@ -940,7 +1045,7 @@ describe('Happier SDK client', () => {
   });
 
   it('preserves Action failures as typed SDK errors', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => response({
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
       v: 1,
       actionId: 'account.apiTokens.create',
       execution: {
@@ -968,7 +1073,7 @@ describe('Happier SDK client', () => {
         input: envelope.input,
         ...(typeof envelope.requestId === 'string' ? { requestId: envelope.requestId } : {}),
       });
-      return response({ v: 1, actionId, execution: { ok: true, result: [] } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: [] } });
     }));
 
     const actions = connect({ endpoint: 'http://daemon', token: 'pat' }).actions;
@@ -1020,7 +1125,7 @@ describe('Happier SDK client', () => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       const envelope = JSON.parse(String(init?.body));
       requests.push({ actionId, input: envelope.input });
-      return response({ v: 1, actionId, execution: { ok: true, result: { status: 'executed', value: null } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { status: 'executed', value: null } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1082,7 +1187,7 @@ describe('Happier SDK client', () => {
   it('does not fetch a second transcript page before the consumer asks for it', async () => {
     let followCalls = 0;
     let releaseSecondPage: ((value: Response) => void) | undefined;
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       if (actionId === 'transcript.follow') {
         followCalls += 1;
@@ -1104,7 +1209,7 @@ describe('Happier SDK client', () => {
           releaseSecondPage = resolve;
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: { ok: true, result: { ok: true, released: true } },
@@ -1145,7 +1250,7 @@ describe('Happier SDK client', () => {
 
   it('waits until every buffered transcript item is consumed before fetching another page', async () => {
     let followCalls = 0;
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       if (actionId === 'transcript.follow') {
         followCalls += 1;
@@ -1168,7 +1273,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: { ok: true, result: { ok: true, released: true } },
@@ -1241,7 +1346,7 @@ describe('Happier SDK client', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       requests.push({ actionId, body });
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
       if (actionId === 'execution.run.stream.read') {
         reads += 1;
@@ -1256,7 +1361,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1292,11 +1397,11 @@ describe('Happier SDK client', () => {
 
   it('cancels an execution-run stream as soon as its terminal page is delivered', async () => {
     const actionIds: string[] = [];
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
       if (actionId === 'execution.run.stream.read') {
         return response({
@@ -1313,7 +1418,7 @@ describe('Happier SDK client', () => {
           },
         });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1338,11 +1443,11 @@ describe('Happier SDK client', () => {
   it('delivers a terminal execution-run event before surfacing its cleanup failure', async () => {
     const actionIds: string[] = [];
     const cancellationFailure = new TypeError('connection reset');
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
       if (actionId === 'execution.run.stream.read') {
         return response({
@@ -1386,11 +1491,11 @@ describe('Happier SDK client', () => {
 
   it('cancels an execution-run stream when its iterator returns early', async () => {
     const actionIds: string[] = [];
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
       if (actionId === 'execution.run.stream.read') {
         return response({
@@ -1399,7 +1504,7 @@ describe('Happier SDK client', () => {
           execution: { ok: true, result: { streamId: 'stream-1', events: [{ t: 'delta', textDelta: 'hello' }], nextCursor: 1, done: false } },
         });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1420,13 +1525,13 @@ describe('Happier SDK client', () => {
 
   it('cancels an execution-run stream when its caller aborts', async () => {
     const actionIds: string[] = [];
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1445,13 +1550,13 @@ describe('Happier SDK client', () => {
 
   it('cancels an execution-run stream when its client closes', async () => {
     const actionIds: string[] = [];
-    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
       actionIds.push(actionId);
       if (actionId === 'execution.run.stream.start') {
-        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+        return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
       }
-      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+      return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -1491,7 +1596,7 @@ describe('Happier SDK client', () => {
         });
       }
       if (actionId === 'session.spawn_new') {
-        return response({
+        return responseForRequest(init, {
           v: 1,
           actionId,
           execution: {
@@ -1529,7 +1634,7 @@ describe('Happier SDK client', () => {
           execution: { ok: true, result: { session: { active: false } } },
         });
       }
-      return response({
+      return responseForRequest(init, {
         v: 1,
         actionId,
         execution: { ok: true, result: { ok: true, released: true } },

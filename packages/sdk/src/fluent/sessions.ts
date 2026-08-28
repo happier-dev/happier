@@ -24,8 +24,9 @@ type AgentIdentity = SessionSpawnActionInput['agentTarget']['identity'];
  * Machine inventory resolves the friendly Agent id to the canonical target.
  */
 export type HappierSessionSpawnInput = Readonly<
-  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget'> & Readonly<{
+  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
     agent: string;
+    initialMessage?: string;
   }>
 >;
 
@@ -193,7 +194,7 @@ export function createSessions<TOptions extends ActionExecutionOptions = ActionE
 
   return Object.freeze({
     async spawn(input: HappierSessionSpawnInput, options?: TOptions) {
-      const { agent, ...actionInput } = input;
+      const { agent, initialMessage, ...actionInput } = input;
       const inventory = await params.execute(
         'agents.backends.list',
         { includeDisabled: true },
@@ -206,11 +207,12 @@ export function createSessions<TOptions extends ActionExecutionOptions = ActionE
       );
       const result = await params.spawn({
         ...actionInput,
+        ...(initialMessage === undefined ? {} : { initialInput: { text: initialMessage } }),
         agentTarget: { kind: 'agent', identity: resolveAgentIdentity(inventory.items, agent) },
       }, options);
       if (result.type !== 'success') throw new HappierSessionSpawnError(result);
       const session = get(result.sessionId);
-      if (input.initialMessage !== undefined && hasInitialInputFailure(result)) {
+      if (initialMessage !== undefined && hasInitialInputFailure(result)) {
         throw new HappierSessionInitialInputError<TOptions>(session, result);
       }
       return session;

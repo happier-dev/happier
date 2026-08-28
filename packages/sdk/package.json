@@ -21,6 +21,8 @@
     "examples/basic/README.md",
     "examples/basic/index.ts",
     "examples/basic/tsconfig.json",
+    "examples/comprehensive/README.md",
+    "examples/comprehensive/index.ts",
     "package.json",
     "README.md",
     "API.md",
@@ -54,8 +56,8 @@
     "test:finite": "yarn -s test:local",
     "test:external-consumer": "node ./scripts/validateNodeNextConsumer.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "yarn -s check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
-    "typecheck:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
+    "typecheck:local": "yarn -s check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && yarn -s test:external-consumer",
+    "typecheck:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && yarn -s test:external-consumer"
   },
   "bundledDependencies": [
     "@happier-dev/agents",

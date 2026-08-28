@@ -340,8 +340,9 @@ class HappierSessionSpawnError extends Error {
 Declared by `dist/fluent/sessions.d.ts` as `HappierSessionSpawnInput`.
 
 ```ts
-type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget'> & Readonly<{
+type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
     agent: string;
+    initialMessage?: string;
 }>>;
 ```
 
@@ -784,9 +785,6 @@ type GeneratedActions = Readonly<{
         }>;
         readonly uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.uninstall"]>;
     }>;
-    readonly projects: Readonly<{
-        readonly list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["projects.list"]>;
-    }>;
     readonly promptAsset: Readonly<{
         readonly export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_asset.export"]>;
     }>;
@@ -798,14 +796,6 @@ type GeneratedActions = Readonly<{
     }>;
     readonly promptRegistry: Readonly<{
         readonly install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_registry.install"]>;
-    }>;
-    readonly prompts: Readonly<{
-        readonly invocation: Readonly<{
-            readonly resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocation.resolve"]>;
-        }>;
-        readonly invocations: Readonly<{
-            readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocations.list"]>;
-        }>;
     }>;
     readonly review: Readonly<{
         readonly engines: Readonly<{
@@ -850,9 +840,6 @@ type GeneratedActions = Readonly<{
             readonly init: (input: PublicActionInputById["scm.repository.init"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.init"]>;
             readonly removeIndexLock: (input: PublicActionInputById["scm.repository.removeIndexLock"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.removeIndexLock"]>;
         }>;
-    }>;
-    readonly servers: Readonly<{
-        readonly list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["servers.list"]>;
     }>;
     readonly session: Readonly<{
         readonly activity: Readonly<{
@@ -924,14 +911,6 @@ type GeneratedActions = Readonly<{
             readonly get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.status.get"]>;
         }>;
         readonly stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.stop"]>;
-        readonly target: Readonly<{
-            readonly primary: Readonly<{
-                readonly set: (input: PublicActionInputById["session.target.primary.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.primary.set"]>;
-            }>;
-            readonly tracked: Readonly<{
-                readonly set: (input: PublicActionInputById["session.target.tracked.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.tracked.set"]>;
-            }>;
-        }>;
         readonly terminalComposer: Readonly<{
             readonly clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.terminalComposer.clear"]>;
         }>;
@@ -1003,11 +982,6 @@ type GeneratedActions = Readonly<{
                 readonly list: (input: PublicActionInputById["sessions.spawn.profiles.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.spawn.profiles.list"]>;
             }>;
         }>;
-        readonly subagents: Readonly<{
-            readonly get: (input: PublicActionInputById["sessions.subagents.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.get"]>;
-            readonly list: (input: PublicActionInputById["sessions.subagents.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.list"]>;
-            readonly watch: (input: PublicActionInputById["sessions.subagents.watch"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.watch"]>;
-        }>;
     }>;
     readonly subagents: Readonly<{
         readonly delegate: Readonly<{
@@ -1024,23 +998,6 @@ type GeneratedActions = Readonly<{
         readonly readAfter: (input: PublicActionInputById["transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.readAfter"]>;
         readonly search: (input: PublicActionInputById["transcript.search"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.search"]>;
         readonly unfollow: (input: PublicActionInputById["transcript.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.unfollow"]>;
-    }>;
-    readonly ui: Readonly<{
-        readonly currentContext: Readonly<{
-            readonly command: Readonly<{
-                readonly invoke: (input: PublicActionInputById["ui.current_context.command.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.command.invoke"]>;
-            }>;
-            readonly read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.read"]>;
-        }>;
-        readonly pet: Readonly<{
-            readonly choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.pet.choose"]>;
-        }>;
-        readonly voiceAgent: Readonly<{
-            readonly teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_agent.teleport"]>;
-        }>;
-        readonly voiceGlobal: Readonly<{
-            readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_global.reset"]>;
-        }>;
     }>;
     readonly voiceAgent: Readonly<{
         readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["voice_agent.start"]>;
@@ -5328,7 +5285,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             readonly voice: true;
             readonly agent: true;
             readonly mcp: true;
-            readonly cli: false;
+            readonly cli: true;
             readonly rpc: false;
         };
         readonly inputHints: {
@@ -5563,7 +5520,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             readonly voice: true;
             readonly agent: true;
             readonly mcp: true;
-            readonly cli: false;
+            readonly cli: true;
             readonly rpc: false;
         };
         readonly inputHints: {
@@ -6626,7 +6583,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly surfaces: {
             readonly ui: false;
             readonly voice: false;
-            readonly agent: true;
+            readonly agent: false;
             readonly mcp: false;
             readonly cli: false;
             readonly rpc: true;
@@ -8778,9 +8735,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 }
             ];
         };
-        readonly outputSchema: z.ZodObject<{
+        readonly outputSchema: z.ZodLazy<z.ZodObject<{
             streamId: z.ZodString;
-        }, z.core.$loose>;
+        }, z.core.$loose>>;
         readonly inputSchema: z.ZodObject<{
             sessionId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             runId: z.ZodString;
@@ -8841,7 +8798,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 }
             ];
         };
-        readonly outputSchema: z.ZodObject<{
+        readonly outputSchema: z.ZodLazy<z.ZodObject<{
             streamId: z.ZodString;
             events: z.ZodArray<z.ZodDiscriminatedUnion<[
                 z.ZodObject<{
@@ -8918,7 +8875,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             ], "t">>;
             nextCursor: z.ZodNumber;
             done: z.ZodBoolean;
-        }, z.core.$loose>;
+        }, z.core.$loose>>;
         readonly inputSchema: z.ZodObject<{
             sessionId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             runId: z.ZodString;
@@ -8969,9 +8926,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 }
             ];
         };
-        readonly outputSchema: z.ZodObject<{
+        readonly outputSchema: z.ZodLazy<z.ZodObject<{
             ok: z.ZodLiteral<true>;
-        }, z.core.$loose>;
+        }, z.core.$loose>>;
         readonly inputSchema: z.ZodObject<{
             sessionId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             runId: z.ZodString;
@@ -10597,6 +10554,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly inputSchema: z.ZodObject<{
             sessionId: z.ZodOptional<z.ZodString>;
             targetMachineId: z.ZodOptional<z.ZodString>;
+            targetPath: z.ZodOptional<z.ZodString>;
             targetSessionStorageMode: z.ZodOptional<z.ZodEnum<{
                 direct: "direct";
                 persisted: "persisted";
@@ -10980,6 +10938,22 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 resume: z.ZodObject<{
                     directory: z.ZodString;
                     agent: z.ZodString;
+                    agentTarget: z.ZodOptional<z.ZodObject<{
+                        kind: z.ZodLiteral<"agent">;
+                        identity: z.ZodType<{
+                            pluginId: string;
+                            localId: string;
+                        }, {
+                            pluginId: string;
+                            localId: string;
+                        }, z.core.$ZodTypeInternals<{
+                            pluginId: string;
+                            localId: string;
+                        }, {
+                            pluginId: string;
+                            localId: string;
+                        }>>;
+                    }, z.core.$strict>>;
                     resume: z.ZodString;
                     environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     transcriptStorage: z.ZodEnum<{
@@ -10987,10 +10961,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                         persisted: "persisted";
                     }>;
                     approvedNewDirectoryCreation: z.ZodLiteral<true>;
-                    codexBackendMode: z.ZodOptional<z.ZodEnum<{
-                        acp: "acp";
-                        appServer: "appServer";
-                    }>>;
                 }, z.core.$loose>;
                 workspaceReplicationJobId: z.ZodOptional<z.ZodString>;
             }, z.core.$loose>,
@@ -11497,7 +11467,49 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                         }>>;
                     }, z.core.$strict>>>;
                     title: z.ZodOptional<z.ZodString>;
-                    initialMessage: z.ZodOptional<z.ZodString>;
+                    initialInput: z.ZodOptional<z.ZodObject<{
+                        text: z.ZodOptional<z.ZodString>;
+                        attachments: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                            attachmentLocalId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                            value: z.ZodObject<{
+                                key: z.ZodString;
+                                value: z.ZodType<import("../index.js").PluginJsonValueV2, unknown, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, unknown>>;
+                                presentation: z.ZodObject<{
+                                    label: z.ZodString;
+                                    description: z.ZodOptional<z.ZodString>;
+                                    icon: z.ZodOptional<z.ZodEnum<{
+                                        action: "action";
+                                        add: "add";
+                                        back: "back";
+                                        browser: "browser";
+                                        check: "check";
+                                        close: "close";
+                                        copy: "copy";
+                                        error: "error";
+                                        external: "external";
+                                        file: "file";
+                                        forward: "forward";
+                                        globe: "globe";
+                                        info: "info";
+                                        more: "more";
+                                        preview: "preview";
+                                        refresh: "refresh";
+                                        search: "search";
+                                        settings: "settings";
+                                        terminal: "terminal";
+                                        warning: "warning";
+                                    }>>;
+                                    tone: z.ZodOptional<z.ZodEnum<{
+                                        danger: "danger";
+                                        info: "info";
+                                        neutral: "neutral";
+                                        success: "success";
+                                        warning: "warning";
+                                    }>>;
+                                }, z.core.$strict>;
+                            }, z.core.$strict>;
+                        }, z.core.$strict>>>;
+                    }, z.core.$strict>>;
                     environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
@@ -11719,7 +11731,49 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                         }>>;
                     }, z.core.$strict>>>;
                     title: z.ZodOptional<z.ZodString>;
-                    initialMessage: z.ZodOptional<z.ZodString>;
+                    initialInput: z.ZodOptional<z.ZodObject<{
+                        text: z.ZodOptional<z.ZodString>;
+                        attachments: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                            attachmentLocalId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                            value: z.ZodObject<{
+                                key: z.ZodString;
+                                value: z.ZodType<import("../index.js").PluginJsonValueV2, unknown, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, unknown>>;
+                                presentation: z.ZodObject<{
+                                    label: z.ZodString;
+                                    description: z.ZodOptional<z.ZodString>;
+                                    icon: z.ZodOptional<z.ZodEnum<{
+                                        action: "action";
+                                        add: "add";
+                                        back: "back";
+                                        browser: "browser";
+                                        check: "check";
+                                        close: "close";
+                                        copy: "copy";
+                                        error: "error";
+                                        external: "external";
+                                        file: "file";
+                                        forward: "forward";
+                                        globe: "globe";
+                                        info: "info";
+                                        more: "more";
+                                        preview: "preview";
+                                        refresh: "refresh";
+                                        search: "search";
+                                        settings: "settings";
+                                        terminal: "terminal";
+                                        warning: "warning";
+                                    }>>;
+                                    tone: z.ZodOptional<z.ZodEnum<{
+                                        danger: "danger";
+                                        info: "info";
+                                        neutral: "neutral";
+                                        success: "success";
+                                        warning: "warning";
+                                    }>>;
+                                }, z.core.$strict>;
+                            }, z.core.$strict>;
+                        }, z.core.$strict>>>;
+                    }, z.core.$strict>>;
                     environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
@@ -11826,7 +11880,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         };
         readonly examples: {
             readonly voice: {
-                readonly argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":"/workspace/project","agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialMessage":"Help me inspect this workspace."}';
+                readonly argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":"/workspace/project","agentTarget":{"kind":"agent","identity":{"pluginId":"happier.agent.claude","localId":"claude"}},"initialInput":{"text":"Help me inspect this workspace."}}';
             };
         };
         readonly surfaces: {
@@ -12111,7 +12165,49 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 }>>;
             }, z.core.$strict>>>;
             title: z.ZodOptional<z.ZodString>;
-            initialMessage: z.ZodOptional<z.ZodString>;
+            initialInput: z.ZodOptional<z.ZodObject<{
+                text: z.ZodOptional<z.ZodString>;
+                attachments: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                    attachmentLocalId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                    value: z.ZodObject<{
+                        key: z.ZodString;
+                        value: z.ZodType<import("../index.js").PluginJsonValueV2, unknown, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, unknown>>;
+                        presentation: z.ZodObject<{
+                            label: z.ZodString;
+                            description: z.ZodOptional<z.ZodString>;
+                            icon: z.ZodOptional<z.ZodEnum<{
+                                action: "action";
+                                add: "add";
+                                back: "back";
+                                browser: "browser";
+                                check: "check";
+                                close: "close";
+                                copy: "copy";
+                                error: "error";
+                                external: "external";
+                                file: "file";
+                                forward: "forward";
+                                globe: "globe";
+                                info: "info";
+                                more: "more";
+                                preview: "preview";
+                                refresh: "refresh";
+                                search: "search";
+                                settings: "settings";
+                                terminal: "terminal";
+                                warning: "warning";
+                            }>>;
+                            tone: z.ZodOptional<z.ZodEnum<{
+                                danger: "danger";
+                                info: "info";
+                                neutral: "neutral";
+                                success: "success";
+                                warning: "warning";
+                            }>>;
+                        }, z.core.$strict>;
+                    }, z.core.$strict>;
+                }, z.core.$strict>>>;
+            }, z.core.$strict>>;
             environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
             agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                 v: z.ZodLiteral<1>;
@@ -12318,7 +12414,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             readonly voice: true;
             readonly agent: true;
             readonly mcp: false;
-            readonly cli: false;
+            readonly cli: true;
             readonly rpc: false;
         };
         readonly inputHints: {
@@ -15036,6 +15132,19 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly bindings: {
             readonly rpcMethod: 'session.permission.respond';
         };
+        readonly surfaceBindings: {
+            readonly plugin: {
+                readonly inputSchema: z.ZodObject<{
+                    requestId: z.ZodString;
+                    decision: z.ZodEnum<{
+                        allow: "allow";
+                        deny: "deny";
+                    }>;
+                }, z.core.$strict>;
+                readonly bindInput: typeof bindPluginCurrentSessionInput;
+                readonly projectOutput: typeof projectPluginSessionInteractionResponse;
+            };
+        };
         readonly surfaces: {
             readonly ui: true;
             readonly voice: false;
@@ -16223,12 +16332,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 kind: z.ZodString;
                 label: z.ZodString;
                 summary: z.ZodOptional<z.ZodString>;
-                reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../plugins/ui/index.js").PluginUiJsonValueV1[] | {
-                    readonly [key: string]: import("../plugins/ui/index.js").PluginUiJsonValueV1;
+                reference: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../index.js").JsonValue[] | {
+                    readonly [key: string]: import("../index.js").JsonValue;
                 } | null, unknown>>>;
             }, z.core.$strict>>;
-            detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../plugins/ui/index.js").PluginUiJsonValueV1[] | {
-                readonly [key: string]: import("../plugins/ui/index.js").PluginUiJsonValueV1;
+            detail: z.ZodOptional<z.ZodPipe<z.ZodUnknown, z.ZodTransform<string | number | boolean | readonly import("../index.js").JsonValue[] | {
+                readonly [key: string]: import("../index.js").JsonValue;
             } | null, unknown>>>;
             commands: z.ZodArray<z.ZodObject<{
                 id: z.ZodString;
@@ -18504,7 +18613,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             remoteSessionId: string;
             titleHint?: string | undefined;
             directoryHint?: string | undefined;
-            codexBackendMode?: string | undefined;
             runtimeDescriptorV1?: unknown;
             linkData?: unknown;
             source: unknown;
@@ -18514,7 +18622,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             remoteSessionId: z.ZodString;
             titleHint: z.ZodOptional<z.ZodString>;
             directoryHint: z.ZodOptional<z.ZodString>;
-            codexBackendMode: z.ZodOptional<z.ZodString>;
             runtimeDescriptorV1: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
                 v: z.ZodLiteral<1>;
                 agentId: z.ZodString;
@@ -18623,15 +18730,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 ]>;
                 readonly encodeOutput: typeof identityActionSurfaceValue;
             };
-            readonly plugin: {
-                readonly inputSchema: z.ZodObject<{
-                    sessionId: z.ZodString;
-                    leaseId: z.ZodOptional<z.ZodString>;
-                    ttlMs: z.ZodOptional<z.ZodNumber>;
-                    acceptedTailCursor: z.ZodOptional<z.ZodString>;
-                }, z.core.$strict>;
-                readonly projectOutput: typeof projectExternalSessionViewerFollowResult;
-            };
         };
         readonly surfaces: {
             readonly ui: false;
@@ -18725,13 +18823,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     }, z.core.$loose>
                 ]>;
                 readonly encodeOutput: typeof identityActionSurfaceValue;
-            };
-            readonly plugin: {
-                readonly inputSchema: z.ZodObject<{
-                    sessionId: z.ZodString;
-                    leaseId: z.ZodString;
-                }, z.core.$strict>;
-                readonly projectOutput: typeof projectExternalSessionViewerUnfollowResult;
             };
         };
         readonly surfaces: {
@@ -18907,14 +18998,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     agentId: string;
                     remoteSessionId: string;
                     source: unknown;
-                    takeoverReadiness?: "fresh" | undefined;
                 }>, z.ZodObject<{
                     machineId: z.ZodString;
                     sessionId: z.ZodString;
                     agentId: z.ZodString;
                     remoteSessionId: z.ZodString;
                     source: z.ZodType<import("../index.js").ExternalSessionsSource, unknown, z.core.$ZodTypeInternals<import("../index.js").ExternalSessionsSource, unknown>>;
-                    takeoverReadiness: z.ZodOptional<z.ZodLiteral<"fresh">>;
                 }, z.core.$strict>>;
                 readonly decodeInput: typeof identityActionSurfaceValue;
                 readonly outputSchema: z.ZodUnion<readonly [
@@ -18988,7 +19077,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             readonly plugin: {
                 readonly inputSchema: z.ZodObject<{
                     sessionId: z.ZodString;
-                    takeoverReadiness: z.ZodOptional<z.ZodLiteral<"fresh">>;
                 }, z.core.$strict>;
                 readonly projectOutput: typeof projectExternalSessionStatusResult;
             };
@@ -19031,7 +19119,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         ], "ok">;
         readonly inputSchema: z.ZodObject<{
             sessionId: z.ZodString;
-            takeoverReadiness: z.ZodOptional<z.ZodLiteral<"fresh">>;
         }, z.core.$strict>;
         readonly inputHints: {
             readonly title: 'Get external session status';
@@ -19309,8 +19396,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                         }, z.core.$strict>>;
                         nextCursor: z.ZodString;
                         boundary: z.ZodString;
+                        hasMore: z.ZodBoolean;
                         diagnostics: z.ZodOptional<z.ZodArray<z.ZodObject<{
                             code: z.ZodString;
+                            severity: z.ZodEnum<{
+                                benign: "benign";
+                                required: "required";
+                            }>;
                             count: z.ZodNumber;
                             positions: z.ZodArray<z.ZodNumber>;
                         }, z.core.$strict>>>;
@@ -20532,8 +20624,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
     },
     {
         readonly id: 'scm.reviewWorkspace.materializePrepared';
-        readonly title: 'Materialize prepared review workspace';
-        readonly description: 'Materialize prepared checkout facts in one exact selected workspace.';
+        readonly title: 'Materialize or verify prepared review workspace';
+        readonly description: 'Materialize prepared checkout facts or read the local HEAD of an already-prepared path in one exact selected workspace.';
         readonly safety: 'danger';
         readonly placements: readonly [
         ];
@@ -20555,6 +20647,34 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 targetPath: z.ZodString;
                 branchName: z.ZodString;
                 created: z.ZodBoolean;
+                currentness: z.ZodDiscriminatedUnion<[
+                    z.ZodObject<{
+                        kind: z.ZodLiteral<"currentAtObservedHead">;
+                    }, z.core.$strict>,
+                    z.ZodObject<{
+                        kind: z.ZodLiteral<"movedToObservedHead">;
+                        fromSha: z.ZodString;
+                        observedHeadSha: z.ZodString;
+                        recoveryRef: z.ZodString;
+                    }, z.core.$strict>,
+                    z.ZodObject<{
+                        kind: z.ZodLiteral<"preservedStale">;
+                        resolvedHeadSha: z.ZodString;
+                        observedHeadSha: z.ZodString;
+                        reason: z.ZodEnum<{
+                            dirtyWorktree: "dirtyWorktree";
+                            localCommits: "localCommits";
+                            unresolvedHead: "unresolvedHead";
+                        }>;
+                    }, z.core.$strict>
+                ], "kind">;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                success: z.ZodLiteral<true>;
+                verification: z.ZodObject<{
+                    targetPath: z.ZodString;
+                    sourceHeadSha: z.ZodString;
+                }, z.core.$strict>;
             }, z.core.$strict>,
             z.ZodObject<{
                 success: z.ZodLiteral<false>;
@@ -20584,11 +20704,27 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly inputSchema: z.ZodObject<{
             cwd: z.ZodString;
             displayName: z.ZodString;
-            baseRef: z.ZodNullable<z.ZodString>;
-            branchMode: z.ZodEnum<{
-                existing: "existing";
-                new: "new";
-            }>;
+            sourceTip: z.ZodObject<{
+                repository: z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        "azure-devops": "azure-devops";
+                        bitbucket: "bitbucket";
+                        custom: "custom";
+                        github: "github";
+                        gitlab: "gitlab";
+                        unknown: "unknown";
+                    }>;
+                    deployment: z.ZodString;
+                    repository: z.ZodString;
+                }, z.core.$strict>;
+                cloneUrl: z.ZodString;
+                branch: z.ZodString;
+                sourceHeadSha: z.ZodString;
+                fetchRef: z.ZodString;
+            }, z.core.$strict>;
+            verification: z.ZodOptional<z.ZodObject<{
+                targetPath: z.ZodString;
+            }, z.core.$strict>>;
         }, z.core.$strict>;
         readonly inputHints: {
             readonly title: 'Materialize prepared review workspace';
@@ -20601,30 +20737,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 },
                 {
                     readonly path: 'displayName';
-                    readonly title: 'Branch name';
+                    readonly title: 'Workspace label';
                     readonly widget: 'text';
                     readonly required: true;
                 },
                 {
-                    readonly path: 'baseRef';
-                    readonly title: 'Prepared base ref';
-                    readonly widget: 'text';
+                    readonly path: 'sourceTip';
+                    readonly title: 'Provider-authorized source tip';
+                    readonly widget: 'json';
+                    readonly required: true;
                 },
                 {
-                    readonly path: 'branchMode';
-                    readonly title: 'Branch mode';
-                    readonly widget: 'select';
-                    readonly required: true;
-                    readonly options: readonly [
-                        {
-                            readonly value: 'new';
-                            readonly label: 'New branch';
-                        },
-                        {
-                            readonly value: 'existing';
-                            readonly label: 'Existing branch';
-                        }
-                    ];
+                    readonly path: 'verification';
+                    readonly title: 'Already-prepared path verification';
+                    readonly widget: 'json';
                 }
             ];
         };
@@ -23791,6 +23917,28 @@ type ActionSurfaceBindingTransform = (value: unknown, context: ActionSurfaceBind
 ```
 
 
+### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `CLIENT_EXECUTION_PLACEMENT_ACTION_IDS`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS: readonly [
+    "servers.list",
+    "projects.list",
+    "prompts.invocations.list",
+    "prompts.invocation.resolve",
+    "session.target.primary.set",
+    "session.target.tracked.set",
+    "devices.simulator.input.orientation",
+    "ui.voice_global.reset",
+    "ui.voice_agent.teleport",
+    "ui.current_context.read",
+    "ui.current_context.command.invoke",
+    "ui.pet.choose"
+];
+```
+
+
 ### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `CanonicalActionSchemaDefinition`
 
 Reached from a published signature; not itself a published export.
@@ -23814,6 +23962,15 @@ type CanonicalActionSpecDefinition = NonRuntimeDirectActionSpecDefinition | Runt
 ```
 
 
+### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `ClientExecutionPlacementActionId`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ClientExecutionPlacementActionId = (typeof CLIENT_EXECUTION_PLACEMENT_ACTION_IDS)[number];
+```
+
+
 ### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `DirectActionSpecDefinition`
 
 Reached from a published signature; not itself a published export.
@@ -23834,6 +23991,9 @@ const INTERNAL_ACTION_REASONS: Readonly<{
     readonly 'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.';
     readonly 'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.';
     readonly 'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.';
+    readonly 'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.';
+    readonly 'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.';
+    readonly 'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
@@ -24277,7 +24437,7 @@ type PreNormalizedActionSurfaces = Omit<ActionSurfaces, 'api' | 'plugin'> & Read
 Reached from a published signature; not itself a published export.
 
 ```ts
-type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId>;
+type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId | ClientExecutionPlacementActionId>;
 ```
 
 
@@ -24397,24 +24557,6 @@ function projectExternalSessionStatusResult(value: unknown): unknown;
 ```
 
 
-### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `projectExternalSessionViewerFollowResult`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-function projectExternalSessionViewerFollowResult(value: unknown): unknown;
-```
-
-
-### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `projectExternalSessionViewerUnfollowResult`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-function projectExternalSessionViewerUnfollowResult(value: unknown): unknown;
-```
-
-
 ### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `projectPluginSessionHookStatus`
 
 Reached from a published signature; not itself a published export.
@@ -24472,7 +24614,7 @@ type ActionAutomationRunCaller = Readonly<{
     kind: 'automationRun';
     runId: string;
     automationId: string;
-    origin: 'schedule' | 'manual' | 'event' | 'conversation';
+    cause: AutomationRunCause;
 }>;
 ```
 
@@ -74545,13 +74687,11 @@ const AutomationConversationActionInputSchemasV1: Readonly<{
     }, z.core.$strict>;
     readonly 'automation.conversation.target.verify': z.ZodObject<{
         automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-        expectedTemplateVersion: z.ZodNumber;
         resultDelivery: z.ZodOptional<z.ZodLiteral<"finalResult">>;
     }, z.core.$strict>;
     readonly 'automation.conversation.admit': z.ZodObject<{
         automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
         bindingId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-        templateVersion: z.ZodNumber;
         occurrenceId: z.ZodString;
         occurredAt: z.ZodNumber;
         sender: z.ZodType<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2>>;
@@ -74592,7 +74732,6 @@ const AutomationConversationActionOutputSchemasV1: Readonly<{
     readonly 'automation.conversation.targets.list': z.ZodObject<{
         items: z.ZodArray<z.ZodObject<{
             automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-            templateVersion: z.ZodNumber;
             label: z.ZodString;
             execution: z.ZodObject<{
                 targetType: z.ZodEnum<{
@@ -74608,14 +74747,12 @@ const AutomationConversationActionOutputSchemasV1: Readonly<{
     readonly 'automation.conversation.target.verify': z.ZodDiscriminatedUnion<[
         z.ZodObject<{
             kind: z.ZodLiteral<"verified">;
-            templateVersion: z.ZodNumber;
         }, z.core.$strict>,
         z.ZodObject<{
             kind: z.ZodLiteral<"notVerified">;
             reason: z.ZodEnum<{
                 notFound: "notFound";
                 resultDeliveryUnsupported: "resultDeliveryUnsupported";
-                templateVersionMismatch: "templateVersionMismatch";
             }>;
         }, z.core.$strict>
     ], "kind">;
@@ -74635,6 +74772,7 @@ const AutomationConversationActionOutputSchemasV1: Readonly<{
             reason: z.ZodEnum<{
                 capacity: "capacity";
                 occurrenceConflict: "occurrenceConflict";
+                resultDeliveryUnsupported: "resultDeliveryUnsupported";
                 temporarilyUnavailable: "temporarilyUnavailable";
             }>;
             checkpointSafe: z.ZodLiteral<false>;
@@ -74686,6 +74824,8 @@ const AutomationEventActionInputSchemasV1: Readonly<{
         knownRevision: z.ZodOptional<z.ZodString>;
         checkpointRetirementCandidates: z.ZodOptional<z.ZodArray<z.ZodObject<{
             automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
             eventRef: z.ZodType<{
                 pluginId: string;
                 localId: string;
@@ -74723,7 +74863,8 @@ const AutomationEventActionInputSchemasV1: Readonly<{
         payload: z.ZodType<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2, z.core.$ZodTypeInternals<import("../index.js").PluginJsonValueV2, import("../index.js").PluginJsonValueV2>>;
         definitions: z.ZodArray<z.ZodObject<{
             automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-            templateVersion: z.ZodNumber;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
             sourceSelectorId: z.core.$ZodBranded<z.ZodString, "AutomationSourceSelectorIdV1", "out">;
         }, z.core.$strict>>;
     }, z.core.$strict>;
@@ -74731,7 +74872,8 @@ const AutomationEventActionInputSchemasV1: Readonly<{
         z.ZodObject<{
             kind: z.ZodLiteral<"source">;
             automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-            templateVersion: z.ZodNumber;
+            triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+            triggerRevision: z.ZodNumber;
             eventRef: z.ZodType<{
                 pluginId: string;
                 localId: string;
@@ -74809,7 +74951,8 @@ const AutomationEventActionOutputSchemasV1: Readonly<{
             revision: z.ZodString;
             definitions: z.ZodArray<z.ZodObject<{
                 automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
-                templateVersion: z.ZodNumber;
+                triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+                triggerRevision: z.ZodNumber;
                 eventRef: z.ZodType<{
                     pluginId: string;
                     localId: string;
@@ -74881,6 +75024,8 @@ const AutomationEventActionOutputSchemasV1: Readonly<{
             revision: z.ZodString;
             checkpointRetirements: z.ZodOptional<z.ZodArray<z.ZodObject<{
                 automationId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+                triggerRevision: z.ZodNumber;
                 eventRef: z.ZodType<{
                     pluginId: string;
                     localId: string;
@@ -74947,6 +75092,82 @@ const AutomationEventActionOutputSchemasV1: Readonly<{
     }, z.core.$strict>;
     readonly 'automation.event.source.status.report': z.ZodObject<{}, z.core.$strict>;
 }>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/automations/automationRunCause.d.ts` — `AutomationRunCause`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AutomationRunCause = z.infer<typeof AutomationRunCauseSchema>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/automations/automationRunCause.d.ts` — `AutomationRunCauseSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const AutomationRunCauseSchema: z.ZodUnion<readonly [
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"schedule">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            scheduledFor: z.ZodNumber;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"pluginEvent">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            eventRef: z.ZodType<{
+                pluginId: string;
+                localId: string;
+            }, {
+                pluginId: string;
+                localId: string;
+            }, z.core.$ZodTypeInternals<{
+                pluginId: string;
+                localId: string;
+            }, {
+                pluginId: string;
+                localId: string;
+            }>>;
+            sourceSelectorId: z.core.$ZodBranded<z.ZodString, "AutomationSourceSelectorIdV1", "out">;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"trigger">;
+        triggerId: z.core.$ZodBranded<z.ZodString, "AutomationTriggerId", "out">;
+        triggerRevision: z.ZodNumber;
+        triggerKind: z.ZodLiteral<"sessionLifecycle">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+        evidence: z.ZodObject<{
+            event: z.ZodLiteral<"parentTurnCompleted">;
+            sourceSessionId: z.ZodString;
+            sourceTurnId: z.ZodString;
+        }, z.core.$strict>;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"manual">;
+        invokedAt: z.ZodNumber;
+    }, z.core.$strict>,
+    z.ZodObject<{
+        kind: z.ZodLiteral<"conversation">;
+        occurrenceKey: z.core.$ZodBranded<z.ZodString, "AutomationOccurrenceKeyV1", "out">;
+        occurredAt: z.ZodNumber;
+    }, z.core.$strict>
+]>;
 ```
 
 
@@ -75029,17 +75250,6 @@ Reached from a published signature; not itself a published export.
 ```ts
 type PluginJsonValueV2 = null | boolean | number | string | PluginJsonValueV2[] | {
     [key: string]: PluginJsonValueV2;
-};
-```
-
-
-### `node_modules/@happier-dev/protocol/dist/plugins/contributions/ui/json.d.ts` — `PluginUiJsonValueV1`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiJsonValueV1 = null | boolean | number | string | readonly PluginUiJsonValueV1[] | {
-    readonly [key: string]: PluginUiJsonValueV1;
 };
 ```
 
@@ -76823,18 +77033,25 @@ const ReviewCommentActionInputSchemasV1: Readonly<{
             normalizedMessageHash: z.ZodString;
             engineId: z.ZodOptional<z.ZodString>;
         }, z.core.$strict>>;
-        linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-            kind: z.ZodEnum<{
-                checkpoint: "checkpoint";
-                commit: "commit";
-                executionRun: "executionRun";
-                external: "external";
-                pullRequest: "pullRequest";
-                session: "session";
-            }>;
-            id: z.ZodOptional<z.ZodString>;
-            url: z.ZodOptional<z.ZodString>;
-        }, z.core.$strict>>>;
+        linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+            z.ZodObject<{
+                kind: z.ZodEnum<{
+                    checkpoint: "checkpoint";
+                    commit: "commit";
+                    executionRun: "executionRun";
+                    external: "external";
+                    pullRequest: "pullRequest";
+                    session: "session";
+                }>;
+                id: z.ZodOptional<z.ZodString>;
+                url: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"issue">;
+                id: z.ZodString;
+                url: z.ZodOptional<z.ZodString>;
+            }, z.core.$strict>
+        ]>>>;
         suggestedFix: z.ZodOptional<z.ZodObject<{
             kind: z.ZodEnum<{
                 external: "external";
@@ -77248,7 +77465,6 @@ const ReviewCommentActionInputSchemasV1: Readonly<{
         ], "t">>;
     }, z.core.$strict>;
     'reviews.comments.claimPublicationDispatch': z.ZodObject<{
-        commentId: z.ZodString;
         target: z.ZodObject<{
             providerId: z.ZodString;
             configuredAccountId: z.ZodString;
@@ -77258,7 +77474,176 @@ const ReviewCommentActionInputSchemasV1: Readonly<{
                 collisionScope: z.ZodString;
                 entryId: z.ZodString;
             }, z.core.$strict>;
+            subtarget: z.ZodNullable<z.ZodObject<{
+                kindId: z.ZodEnum<{
+                    "review-comment": "review-comment";
+                    "review-thread": "review-thread";
+                }>;
+                targetId: z.ZodString;
+            }, z.core.$strict>>;
         }, z.core.$strict>;
+        baseRevision: z.ZodNullable<z.ZodString>;
+        headRevision: z.ZodNullable<z.ZodString>;
+        entries: z.ZodArray<z.ZodObject<{
+            happierCommentId: z.ZodString;
+            expectedServerRevision: z.ZodNumber;
+            anchor: z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"line">;
+                    filePath: z.ZodString;
+                    line: z.ZodNumber;
+                    side: z.ZodOptional<z.ZodEnum<{
+                        after: "after";
+                        before: "before";
+                    }>>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"range">;
+                    filePath: z.ZodString;
+                    startLine: z.ZodNumber;
+                    endLine: z.ZodNumber;
+                    side: z.ZodOptional<z.ZodEnum<{
+                        after: "after";
+                        before: "before";
+                    }>>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"hunk">;
+                    filePath: z.ZodString;
+                    hunkId: z.ZodString;
+                    side: z.ZodOptional<z.ZodEnum<{
+                        after: "after";
+                        before: "before";
+                    }>>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"file">;
+                    filePath: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"folder">;
+                    folderPath: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"workspace">;
+                    workspaceId: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"project">;
+                    projectId: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"run">;
+                    runId: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"finding">;
+                    runId: z.ZodString;
+                    findingId: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"binary">;
+                    filePath: z.ZodString;
+                    sizeBytes: z.ZodNumber;
+                    sha256: z.ZodString;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"submodule">;
+                    filePath: z.ZodString;
+                    commitSha: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"symlink">;
+                    filePath: z.ZodString;
+                    targetPath: z.ZodString;
+                }, z.core.$strict>
+            ]>;
+            snapshot: z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"text">;
+                    selectedLines: z.ZodArray<z.ZodString>;
+                    beforeContext: z.ZodArray<z.ZodString>;
+                    afterContext: z.ZodArray<z.ZodString>;
+                    selectedLinesHash: z.ZodString;
+                    contextWindowHash: z.ZodString;
+                    capturedAt: z.ZodNumber;
+                    fileLength: z.ZodNumber;
+                    source: z.ZodEnum<{
+                        agentBuffer: "agentBuffer";
+                        committed: "committed";
+                        diffSide: "diffSide";
+                        untracked: "untracked";
+                        workingTree: "workingTree";
+                    }>;
+                    commitSha: z.ZodOptional<z.ZodString>;
+                    isUncommitted: z.ZodBoolean;
+                    isUntracked: z.ZodBoolean;
+                    truncated: z.ZodBoolean;
+                    truncationReason: z.ZodOptional<z.ZodEnum<{
+                        context_cap: "context_cap";
+                        file_too_large: "file_too_large";
+                        line_too_long: "line_too_long";
+                    }>>;
+                    hasBidiControls: z.ZodBoolean;
+                    likelyMinified: z.ZodBoolean;
+                    diffContext: z.ZodOptional<z.ZodObject<{
+                        side: z.ZodEnum<{
+                            after: "after";
+                            before: "before";
+                        }>;
+                        baseSha: z.ZodOptional<z.ZodString>;
+                        headSha: z.ZodOptional<z.ZodString>;
+                        startSha: z.ZodOptional<z.ZodString>;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"binary">;
+                    sizeBytes: z.ZodNumber;
+                    sha256: z.ZodString;
+                    mimeType: z.ZodOptional<z.ZodString>;
+                    source: z.ZodEnum<{
+                        agentBuffer: "agentBuffer";
+                        committed: "committed";
+                        diffSide: "diffSide";
+                        untracked: "untracked";
+                        workingTree: "workingTree";
+                    }>;
+                    capturedAt: z.ZodNumber;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"submodule">;
+                    filePath: z.ZodString;
+                    commitSha: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                    capturedAt: z.ZodNumber;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"symlink">;
+                    filePath: z.ZodString;
+                    targetPath: z.ZodString;
+                    targetExists: z.ZodOptional<z.ZodBoolean>;
+                    capturedAt: z.ZodNumber;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"too_large">;
+                    filePath: z.ZodString;
+                    sizeBytes: z.ZodNumber;
+                    sha256: z.ZodOptional<z.ZodString>;
+                    capBytes: z.ZodNumber;
+                    capturedAt: z.ZodNumber;
+                }, z.core.$strict>
+            ]>;
+            body: z.ZodString;
+        }, z.core.$strict>>;
+        verdict: z.ZodNullable<z.ZodObject<{
+            kind: z.ZodEnum<{
+                approve: "approve";
+                comment: "comment";
+                requestChanges: "requestChanges";
+            }>;
+            body: z.ZodString;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
 }>;
 ```
@@ -77673,18 +78058,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -78114,18 +78506,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -78555,18 +78954,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -78995,18 +79401,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -79435,18 +79848,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -79875,18 +80295,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -80313,18 +80740,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -80753,18 +81187,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -81193,18 +81634,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -81633,18 +82081,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -82074,18 +82529,25 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
                 normalizedMessageHash: z.ZodString;
                 engineId: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
-            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                kind: z.ZodEnum<{
-                    checkpoint: "checkpoint";
-                    commit: "commit";
-                    executionRun: "executionRun";
-                    external: "external";
-                    pullRequest: "pullRequest";
-                    session: "session";
-                }>;
-                id: z.ZodOptional<z.ZodString>;
-                url: z.ZodOptional<z.ZodString>;
-            }, z.core.$strict>>>;
+            linkedRefs: z.ZodOptional<z.ZodArray<z.ZodUnion<readonly [
+                z.ZodObject<{
+                    kind: z.ZodEnum<{
+                        checkpoint: "checkpoint";
+                        commit: "commit";
+                        executionRun: "executionRun";
+                        external: "external";
+                        pullRequest: "pullRequest";
+                        session: "session";
+                    }>;
+                    id: z.ZodOptional<z.ZodString>;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>,
+                z.ZodObject<{
+                    kind: z.ZodLiteral<"issue">;
+                    id: z.ZodString;
+                    url: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>
+            ]>>>;
             suggestedFix: z.ZodOptional<z.ZodObject<{
                 kind: z.ZodEnum<{
                     external: "external";
@@ -82134,7 +82596,14 @@ const ReviewCommentActionOutputSchemasV1: Readonly<{
             dispatch: "dispatch";
             reconcile: "reconcile";
         }>;
-        publicationCorrelationId: z.ZodString;
+        publicationPlanId: z.ZodString;
+        entries: z.ZodArray<z.ZodObject<{
+            happierCommentId: z.ZodString;
+            publicationCorrelationId: z.ZodString;
+        }, z.core.$strict>>;
+        verdict: z.ZodNullable<z.ZodObject<{
+            publicationCorrelationId: z.ZodString;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
 }>;
 ```

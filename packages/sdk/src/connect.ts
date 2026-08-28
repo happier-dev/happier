@@ -304,10 +304,13 @@ function createClient(
     path: string;
     method: 'GET' | 'POST';
     body?: string;
+    requestId?: string;
     signal?: AbortSignal;
     allowAfterClose?: boolean;
   }>): Promise<unknown> => {
-    if (lifecycle.isClosed() && params.allowAfterClose !== true) throw new HappierClientClosedError();
+    if (lifecycle.isClosed() && params.allowAfterClose !== true) {
+      throw new HappierClientClosedError(params.requestId);
+    }
     const requestSignal = params.allowAfterClose === true
       ? params.signal
       : combinedSignal(params.signal, lifecycle.controller.signal);
@@ -329,10 +332,13 @@ function createClient(
       });
     } catch (error) {
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
-        throw lifecycle.controller.signal.reason;
+        throw new HappierClientClosedError(params.requestId);
       }
       if (params.signal?.aborted) throw params.signal.reason;
-      throw new HappierTransportError('Could not reach the Happier API.', { cause: error });
+      throw new HappierTransportError('Could not reach the Happier API.', {
+        requestId: params.requestId,
+        cause: error,
+      });
     }
 
     let body: unknown;
@@ -340,7 +346,7 @@ function createClient(
       body = await response.body.json();
     } catch (error) {
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
-        throw lifecycle.controller.signal.reason;
+        throw new HappierClientClosedError(params.requestId);
       }
       if (params.signal?.aborted) throw params.signal.reason;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -349,11 +355,12 @@ function createClient(
           code === 'server_unavailable'
             ? 'The Happier API is unavailable.'
             : `The Happier API returned HTTP ${response.statusCode}.`,
-          { code, status: response.statusCode },
+          { code, status: response.statusCode, requestId: params.requestId },
         );
       }
       throw new HappierTransportError('The Happier API returned invalid JSON.', {
         status: response.statusCode,
+        requestId: params.requestId,
         cause: error,
       });
     }
@@ -362,6 +369,7 @@ function createClient(
         code: transportErrorCode(body),
         status: response.statusCode,
         details: body,
+        requestId: params.requestId,
       });
     }
     return body;
@@ -373,11 +381,12 @@ function createClient(
     options: ActionExecutionOptions = {},
     allowAfterClose = false,
   ): Promise<PublicActionResultById[K]> => {
-    const requestId = options.requestId
-      ?? (MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined);
+    const requestId = options.requestId === undefined
+      ? (MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined)
+      : requireNonEmpty(options.requestId, 'requestId');
     const requestBody = {
       v: 1 as const,
-      ...(requestId === undefined ? {} : { requestId: requireNonEmpty(requestId, 'requestId') }),
+      ...(requestId === undefined ? {} : { requestId }),
       ...((options.target ?? defaultTarget) === undefined ? {} : { target: options.target ?? defaultTarget }),
       input,
     };
@@ -386,13 +395,19 @@ function createClient(
       path: `v1/actions/${encodeURIComponent(actionId)}`,
       method: 'POST',
       body: JSON.stringify(requestBody),
+      requestId,
       signal: options.signal,
       allowAfterClose,
     });
     const externalActionResponse = parseExternalActionResponseEnvelopeV1(body);
-    if (!externalActionResponse || externalActionResponse.actionId !== actionId) {
+    if (
+      !externalActionResponse
+      || externalActionResponse.actionId !== actionId
+      || externalActionResponse.requestId !== requestId
+    ) {
       throw new HappierTransportError('The Happier Action API returned an invalid response envelope.', {
         details: body,
+        requestId,
       });
     }
     if (!externalActionResponse.execution.ok) {
@@ -400,6 +415,7 @@ function createClient(
         externalActionResponse.execution.errorCode,
         externalActionResponse.execution.error,
         externalActionResponse.execution.details,
+        requestId,
       );
     }
     if (isDeferredApprovalRequest(externalActionResponse.execution.result, actionId)) {
@@ -407,6 +423,7 @@ function createClient(
         'approval_required',
         `The ${actionId} Action requires user approval before it can execute.`,
         externalActionResponse.execution.result,
+        requestId,
       );
     }
     return externalActionResponse.execution.result as PublicActionResultById[K];
@@ -439,11 +456,14 @@ function createClient(
     },
   });
 
-  const followTranscript = (sessionId: string, options?: FollowTranscriptOptions) => (
+  const createFollowTranscript = (
+    transcriptExecute: ActionExecute,
+    target?: MachineActionTarget,
+  ) => (sessionId: string, options?: FollowTranscriptOptions) => (
     createTranscriptIterable({
-      execute,
+      execute: transcriptExecute,
       release: async (input) => {
-        await executeRequest('transcript.unfollow', input, {}, true);
+        await executeRequest('transcript.unfollow', input, target === undefined ? {} : { target }, true);
       },
       sessionId: requireNonEmpty(sessionId, 'sessionId'),
       closeSignal: lifecycle.controller.signal,
@@ -471,7 +491,7 @@ function createClient(
     };
     const sessions = createMachineSessions({
       execute: machineExecute,
-      followTranscript,
+      followTranscript: createFollowTranscript(machineExecute, defaultTarget),
       requireSessionId: (sessionId) => requireNonEmpty(sessionId, 'sessionId'),
       spawn: (input, options) => machineExecute('session.spawn_new', input, options),
     });
@@ -492,6 +512,7 @@ function createClient(
   }
 
   const actions = createActions(execute);
+  const followTranscript = createFollowTranscript(execute);
   const sessions = createSessions({
     execute,
     spawn: (input, options) => execute('session.spawn_new', input, options),

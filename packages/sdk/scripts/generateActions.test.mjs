@@ -5,11 +5,11 @@ import test from 'node:test';
 
 import { validateSdkMethodRows } from './generateActions.ts';
 
-test('consumes the built exported Action owner instead of Protocol source internals', async () => {
+test('consumes the canonical Protocol Action source owner without a mutable dist build', async () => {
   const generatorPath = fileURLToPath(new URL('./generateActions.ts', import.meta.url));
   const source = await readFile(generatorPath, 'utf8');
-  assert.doesNotMatch(source, /protocol\/src\/actions\/actionSpecs/u);
-  assert.match(source, /protocol\/dist\/actions\/index\.js/u);
+  assert.match(source, /protocol\/src\/actions\/actionSpecs\.js/u);
+  assert.doesNotMatch(source, /protocol\/dist|ensureWorkspacePackagesBuiltByName/u);
 });
 
 test('uses the Action owner public projection rather than re-deriving eligibility', async () => {
@@ -20,14 +20,12 @@ test('uses the Action owner public projection rather than re-deriving eligibilit
   assert.doesNotMatch(source, /isInternalActionId|isPluginProvenanceOnlyActionId/u);
 });
 
-test('force-prepares the Protocol artifact before importing the built Action owner', async () => {
+test('does not mutate shared workspace artifacts while resolving Action rows', async () => {
   const generatorPath = fileURLToPath(new URL('./generateActions.ts', import.meta.url));
   const source = await readFile(generatorPath, 'utf8');
 
-  assert.match(
-    source,
-    /ensureWorkspacePackagesBuiltByName\(repoRoot, \['@happier-dev\/protocol'\], \{[\s\S]*?force: true,[\s\S]*?publicationMode: 'artifact',[\s\S]*?\}\);[\s\S]*?import\('\.\.\/\.\.\/protocol\/dist\/actions\/index\.js'\)/u,
-  );
+  assert.doesNotMatch(source, /ensureWorkspacePackagesBuiltByName|writeFile[^\n]*protocol/u);
+  assert.match(source, /return PUBLIC_ACTION_IDS[\s\S]*getActionSpec[\s\S]*resolveActionSdkMethodName/u);
 });
 
 test('composed typecheck reuses the governance build and checks only the test project afterward', async () => {
@@ -39,10 +37,12 @@ test('composed typecheck reuses the governance build and checks only the test pr
 });
 
 test('rejects reserved generated roots', () => {
-  assert.throws(
-    () => validateSdkMethodRows([{ actionId: 'safe.action', methodPath: 'execute.now' }]),
-    /reserved SDK root/,
-  );
+  for (const reservedRoot of ['execute', 'get', 'search', 'invoke']) {
+    assert.throws(
+      () => validateSdkMethodRows([{ actionId: 'safe.action', methodPath: `${reservedRoot}.now` }]),
+      /reserved SDK root/,
+    );
+  }
 });
 
 test('rejects exact and namespace-prefix collisions', () => {

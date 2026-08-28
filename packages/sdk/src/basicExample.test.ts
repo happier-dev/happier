@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const basicExamplePath = fileURLToPath(new URL('../examples/basic/index.ts', import.meta.url));
+const comprehensiveExamplePath = fileURLToPath(new URL('../examples/comprehensive/index.ts', import.meta.url));
 const sensitivePayload = 'encrypted-transcript-payload'.repeat(1_000);
 const BASIC_EXAMPLE_CHILD_TIMEOUT_MS = 60_000;
 const BASIC_EXAMPLE_TEST_TIMEOUT_MS = BASIC_EXAMPLE_CHILD_TIMEOUT_MS + 5_000;
@@ -172,6 +173,7 @@ async function runBasicExample(
     endpointMode?: 'daemon' | 'server';
     machineId?: string;
     machines?: readonly unknown[];
+    examplePath?: string;
   }> = {},
 ): Promise<Readonly<{
   actionIds: readonly string[];
@@ -207,7 +209,7 @@ async function runBasicExample(
       throw new Error('Expected a TCP mock server address.');
     }
 
-    const spawnedChild = spawn(process.execPath, ['--import', 'tsx', basicExamplePath], {
+    const spawnedChild = spawn(process.execPath, ['--import', 'tsx', options.examplePath ?? comprehensiveExamplePath], {
       cwd: fileURLToPath(new URL('../../..', import.meta.url)),
       env: {
         ...process.env,
@@ -261,7 +263,7 @@ async function runBasicExample(
   }
 }
 
-describe('basic SDK example', () => {
+describe('comprehensive SDK example', () => {
   it('requires an explicit machine when several eligible server machines are available', async () => {
     const result = await runBasicExample(actionResponse, {
       endpointMode: 'server',
@@ -348,6 +350,24 @@ describe('basic SDK example', () => {
       'transcript.follow',
       'transcript.unfollow',
       'session.message.send',
+      'session.transcript.get',
+      'session.stop',
+    ]);
+  }, BASIC_EXAMPLE_TEST_TIMEOUT_MS);
+});
+
+describe('basic SDK example', () => {
+  it('prints the assistant result and exits after releasing follow and stopping the Session', async () => {
+    const result = await runBasicExample(successfulActionResponse, { examplePath: basicExamplePath });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe('The requested task is complete.');
+    expect(result.stdout).not.toContain(sensitivePayload);
+    expect(result.actionIds).toEqual([
+      'agents.backends.list',
+      'session.spawn_new',
+      'session.message.send',
+      'transcript.follow',
+      'transcript.unfollow',
       'session.transcript.get',
       'session.stop',
     ]);

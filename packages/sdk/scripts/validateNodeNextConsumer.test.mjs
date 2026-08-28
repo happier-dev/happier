@@ -8,6 +8,20 @@ import test from 'node:test';
 
 const scriptPath = fileURLToPath(new URL('./validateNodeNextConsumer.mjs', import.meta.url));
 
+test('the SDK consumer validator defaults to current source without npm pack or install', async () => {
+  const emptyBin = await mkdtemp(join(tmpdir(), 'happier-sdk-validator-empty-bin-'));
+  try {
+    const result = spawnSync(process.execPath, [scriptPath], {
+      env: { ...process.env, PATH: emptyBin },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /npm (?:pack|install)/u);
+  } finally {
+    await rm(emptyBin, { recursive: true, force: true });
+  }
+});
+
 test('the SDK consumer validator rejects a missing supplied tarball before it can repack source', async () => {
   const emptyBin = await mkdtemp(join(tmpdir(), 'happier-sdk-validator-empty-bin-'));
   const missingTarball = join(emptyBin, 'candidate.tgz');

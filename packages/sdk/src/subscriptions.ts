@@ -33,6 +33,8 @@ type Deferred<T> = Readonly<{
 type ExecutionRunStreamReadInput = PublicActionInputById['execution.run.stream.read'];
 type ExecutionRunStreamReadResult = PublicActionResultById['execution.run.stream.read'];
 
+const EXECUTION_RUN_EMPTY_PAGE_POLL_INTERVAL_MS = 25;
+
 export async function startExecutionRunStream(params: Readonly<{
   runId: string;
   start: () => Promise<PublicActionResultById['execution.run.stream.start']>;
@@ -80,42 +82,57 @@ export async function startExecutionRunStream(params: Readonly<{
   signal.addEventListener('abort', onAbort, { once: true });
   if (signal.aborted) onAbort();
 
-  const iterator: AsyncIterator<HappierExecutionRunStreamEvent> = {
-    async next(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
+  const pullNext = async (): Promise<IteratorResult<HappierExecutionRunStreamEvent>> => {
+    if (cancelled) {
+      await terminalCleanupPromise;
+      return { done: true, value: undefined };
+    }
+
+    while (true) {
       if (cancelled) {
         await terminalCleanupPromise;
         return { done: true, value: undefined };
       }
 
-      while (true) {
-        const event = events[0];
-        if (event !== undefined) {
-          events = events.slice(1);
-          if (terminal && events.length === 0) {
-            terminalCleanupPromise ??= cancel();
-            void terminalCleanupPromise.catch(() => undefined);
-          }
-          return { done: false, value: event };
+      const event = events[0];
+      if (event !== undefined) {
+        events = events.slice(1);
+        if (terminal && events.length === 0) {
+          terminalCleanupPromise ??= cancel();
+          void terminalCleanupPromise.catch(() => undefined);
         }
-        if (terminal) {
-          await cancel();
-          return { done: true, value: undefined };
-        }
-
-        try {
-          const page = await params.read({
-            runId: params.runId,
-            streamId: started.streamId,
-            cursor,
-          }, signal);
-          cursor = page.nextCursor;
-          events = page.events;
-          terminal = page.done;
-        } catch (error) {
-          await cancel().catch(() => undefined);
-          throw error;
-        }
+        return { done: false, value: event };
       }
+      if (terminal) {
+        await cancel();
+        return { done: true, value: undefined };
+      }
+
+      try {
+        const page = await params.read({
+          runId: params.runId,
+          streamId: started.streamId,
+          cursor,
+        }, signal);
+        cursor = page.nextCursor;
+        events = page.events;
+        terminal = page.done;
+        if (!terminal && events.length === 0) {
+          await waitForPoll(EXECUTION_RUN_EMPTY_PAGE_POLL_INTERVAL_MS, signal);
+        }
+      } catch (error) {
+        await cancel().catch(() => undefined);
+        throw error;
+      }
+    }
+  };
+
+  let nextTail = Promise.resolve();
+  const iterator: AsyncIterator<HappierExecutionRunStreamEvent> = {
+    next(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
+      const result = nextTail.then(pullNext);
+      nextTail = result.then(() => undefined, () => undefined);
+      return result;
     },
     async return(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
       await cancel();

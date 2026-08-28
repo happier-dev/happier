@@ -7,6 +7,25 @@ routes do not enable CORS, so this is not a browser client for arbitrary web
 origins; same-origin browser delivery has not been proven as a supported
 environment. Do not put an API Token in browser code.
 
+## Choose the interface
+
+Happier exposes one Action contract through several clients:
+
+| Interface | Use it for |
+| --- | --- |
+| Human CLI | Interactive terminal work with compact output |
+| CLI JSON/JSONL | Shell and agent automation |
+| Fluent SDK | Node.js Session creation, messaging, history, and stream lifecycles |
+| Raw SDK | Typed or dynamic access to the complete public Action catalog |
+| HTTP | Non-Node.js clients and infrastructure tools |
+
+All five use the same Action registry, schemas, settings and approval system,
+placement rules, and results; Happier still applies the setting for the surface
+that made the call. The daemon-local endpoint uses its current Machine when no
+target is provided. The configured server reaches an exact connected
+Machine—including one behind NAT—after the caller selects it through
+`machines.list()` or `GET /v1/machines`.
+
 ### Daemon-local onboarding
 
 For a daemon-local endpoint, use the root client. Its Action requests omit a
@@ -97,12 +116,18 @@ const session = await serverClient.sessions.spawn({ directory: process.cwd(), ag
 ```
 
 The machine-bound client keeps that target fixed for its inventory lookup and
-Session creation. The checked-in basic example makes this endpoint choice
+Session creation. The checked-in comprehensive example makes this endpoint choice
 explicit: `HAPPIER_ENDPOINT_MODE=daemon` omits a target, while
 `HAPPIER_ENDPOINT_MODE=server` auto-selects only when exactly one eligible
 machine exists and otherwise requires `HAPPIER_MACHINE_ID`.
 Its console output is deliberately a compact summary, not a raw transcript
 dump.
+
+Start with the finite daemon-local [basic example](examples/basic/README.md).
+Use the [comprehensive recipe](examples/comprehensive/README.md) for dual-origin
+routing, explicit machine selection, Session lifecycle, and cleanup.
+Contributed Action discovery requires a known installed plugin and is shown
+separately below rather than making either first-run example depend on one.
 
 `machine(id)` returns a target-bound view that shares the root client's
 lifecycle. Calling `await close()` on either view aborts outstanding work for both.
@@ -164,9 +189,11 @@ an exact daemon target. A daemon-local endpoint uses its root client because
 the daemon supplies its current Machine when the target is omitted.
 
 ```ts
-const discovered = await happier.actions.search({ query: 'connections' });
-const qualifiedId = discovered.actionSpecs[0]?.id;
-if (!qualifiedId) throw new Error('No matching Action is available.');
+const discovered = await happier.actions.search({ query: 'save note' });
+const qualifiedId = discovered.actionSpecs.find(
+  (action) => action.id === 'acme.notes/actions/save-note',
+)?.id;
+if (!qualifiedId) throw new Error('The expected contributed Action is not available.');
 const { actionSpec } = await happier.actions.get({ id: qualifiedId });
 console.log(actionSpec.inputSchema);
 
@@ -184,14 +211,14 @@ locally with `TypeError` before any HTTP request. The generated raw
 `actions.action.spec.search(...)`, `actions.action.spec.get(...)`, and
 `actions.action.invoke(...)` methods retain the Protocol Action input shapes.
 
-The API setting starts Allowed for API-eligible built-in and contributed
-Actions, so Action Settings add no approval prompt by default. A non-safe
-contributed Action still requires the host's live current-intent confirmation;
-Allowed does not suppress that independent safety contract. A present user can
-also change an Action's API setting to require approval or turn it off. That
-setting does not raise an API Token above `account_automation`: token
-management, approval decisions, and other present-user controls reject with
-`present_user_required`.
+The **External API & SDK** setting starts Allowed for API-eligible built-in and
+contributed Actions, so Action Settings add no approval prompt by default. A
+non-safe contributed Action still requires the host's live current-intent
+confirmation; Allowed does not suppress that independent safety contract. A
+present user can also change an Action's **External API & SDK** setting to
+require approval or turn it off. That setting does not raise an API Token above
+`account_automation`: token management, approval decisions, and other
+present-user controls reject with `present_user_required`.
 
 When connected to the Account server, `machines.list()` reads its existing
 authenticated `/v1/machines` bootstrap and returns only target-selection fields.

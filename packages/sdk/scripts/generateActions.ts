@@ -2,12 +2,15 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ensureWorkspacePackagesBuiltByName } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import {
+  PUBLIC_ACTION_IDS,
+  getActionSpec,
+  resolveActionSdkMethodName,
+} from '../../protocol/src/actions/actionSpecs.js';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = resolve(packageRoot, '../..');
 const outputPath = resolve(packageRoot, 'src/actions/generated.ts');
-const reservedRoots = new Set(['execute', 'search', 'invoke']);
+const reservedRoots = new Set(['execute', 'get', 'search', 'invoke']);
 const hazardousSegments = new Set(['__proto__', 'constructor', 'prototype']);
 const identifier = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
@@ -96,19 +99,12 @@ export function renderGeneratedActions(rows: readonly SdkMethodRow[]): string {
     + `  return {\n${renderTree(createMethodTree(rows), '    ', 'implementation')}\n  };\n}\n`;
 }
 
-async function currentRows(): Promise<readonly SdkMethodRow[]> {
-  await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/protocol'], {
-    includeDevDependencies: false,
-    force: true,
-    publicationMode: 'artifact',
-    quiet: true,
-  });
-  const actionOwner = await import('../../protocol/dist/actions/index.js');
-  return actionOwner.PUBLIC_ACTION_IDS
-    .map((actionId) => actionOwner.getActionSpec(actionId))
+function currentRows(): readonly SdkMethodRow[] {
+  return PUBLIC_ACTION_IDS
+    .map((actionId) => getActionSpec(actionId))
     .map((spec) => ({
       actionId: spec.id,
-      methodPath: actionOwner.resolveActionSdkMethodName(spec),
+      methodPath: resolveActionSdkMethodName(spec),
       mutation: spec.sideEffectClass === 'write'
         || spec.sideEffectClass === 'external'
         || spec.sideEffectClass === 'danger',
@@ -120,7 +116,7 @@ async function main(): Promise<void> {
   if (mode !== '--write' && mode !== '--check') {
     throw new Error('Usage: generateActions.ts --write|--check');
   }
-  const output = renderGeneratedActions(await currentRows());
+  const output = renderGeneratedActions(currentRows());
   if (mode === '--write') {
     await writeFile(outputPath, output, 'utf8');
     return;
