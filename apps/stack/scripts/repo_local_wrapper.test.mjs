@@ -86,7 +86,7 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
 });
 
-test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are provided', async () => {
+test('repo-local wrapper defaults `tui` to mobile-capable `tui dev` when no forwarded args are provided', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
   const repoRoot = dirname(dirname(packageRoot)); // repo root
@@ -104,6 +104,7 @@ test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are 
   assert.equal(data.ok, true);
   assert.equal(data.args[1], 'tui');
   assert.equal(data.args[2], 'dev');
+  assert.equal(data.args[3], '--mobile');
 });
 
 test('repo-local execution-host adapter receives the exact original argv before wrapper normalization', { skip: process.platform !== 'darwin' }, async () => {
