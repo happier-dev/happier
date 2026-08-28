@@ -3,7 +3,7 @@ import { z } from 'zod';
 const AccountApiTokenIdV1Schema = z.string().uuid();
 const AccountApiTokenInstantV1Schema = z.string().datetime({ offset: true }).max(64);
 const AccountApiTokenDisplayPrefixV1Schema = z.string().regex(/^hap_[0-9a-f]{8}$/u);
-export const AccountApiTokenBearerV1Schema = z.string().regex(
+const AccountApiTokenBearerV1Schema = z.string().regex(
   /^hap_v1_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/u,
 );
 

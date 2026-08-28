@@ -367,11 +367,11 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(schema).toBe(SessionInputAdmissionResultV1Schema);
   });
 
-  it('excludes runtime action ids without a real canonical executor', () => {
+  it('keeps client-placed Actions discoverable while excluding genuinely internal Actions', () => {
     expectTypeOf<Extract<PluginInvocableActionId, 'devices.simulator.input.orientation'>>()
       .toEqualTypeOf<never>();
     expectTypeOf<Extract<PluginInvocableActionId, 'ui.current_context.read'>>()
-      .toEqualTypeOf<never>();
+      .toEqualTypeOf<'ui.current_context.read'>();
     expectTypeOf<Extract<PluginInvocableActionId, 'voice_agent.start'>>()
       .toEqualTypeOf<'voice_agent.start'>();
   });
@@ -441,17 +441,17 @@ describe('ActionSpec-generated plugin action types', () => {
     expectTypeOf(unavailableSchema).toEqualTypeOf<never>();
   });
 
-  it('excludes client-placed Actions from public runtime and type projections', () => {
-    expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(false);
-    expect(PublicActionIdSchema.safeParse('ui.current_context.command.invoke').success).toBe(false);
+  it('keeps client-placed Actions in public runtime and type projections', () => {
+    expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(true);
+    expect(PublicActionIdSchema.safeParse('ui.current_context.command.invoke').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
-    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.read')).toBe(false);
-    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.command.invoke')).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.read')).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'ui.current_context.command.invoke')).toBe(true);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'voice_agent.start')).toBe(true);
     expectTypeOf<Extract<PublicActionId, 'ui.current_context.read'>>()
-      .toEqualTypeOf<never>();
+      .toEqualTypeOf<'ui.current_context.read'>();
     expectTypeOf<Extract<PublicActionId, 'ui.current_context.command.invoke'>>()
-      .toEqualTypeOf<never>();
+      .toEqualTypeOf<'ui.current_context.command.invoke'>();
     expectTypeOf<Extract<PublicActionId, 'voice_agent.start'>>().toEqualTypeOf<'voice_agent.start'>();
   });
 

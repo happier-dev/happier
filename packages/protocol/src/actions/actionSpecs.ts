@@ -8836,8 +8836,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.automation_conversation,
   ]);
 
-  // These actions require a present client/runtime and are deliberately not
-  // forwarded by the public API, even when their input happens to name a Session.
+  // These actions require the invoking client/runtime. Public and trusted-plugin
+  // discovery remains placement-neutral; a non-client executor returns the
+  // canonical typed placement-unavailable outcome instead of hiding the Action.
   register('client', CLIENT_EXECUTION_PLACEMENT_ACTION_IDS);
 
   // A canonical Session resolves its current machine/daemon owner. Execution
@@ -9097,7 +9098,7 @@ export type CanonicalActionSpecDefinition =
 
 export type PluginInvocableActionId = Exclude<
   ActionId,
-  InternalActionId | PluginSurfaceExcludedActionId | ClientExecutionPlacementActionId
+  InternalActionId | PluginSurfaceExcludedActionId
 >;
 export type PluginInvocableActionSpecDefinition = {
   [TActionId in PluginInvocableActionId]: Extract<

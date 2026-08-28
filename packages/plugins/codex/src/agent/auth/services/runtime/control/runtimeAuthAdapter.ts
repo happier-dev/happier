@@ -91,7 +91,8 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
       const selection = readRecord(input.selection);
       return classifyCodexConnectedServiceAuthFailure({
         providerErrorPath: true,
-        serviceId: 'openai-codex',
+        // Canonical qualified Plugin contribution key.
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: readString(selection?.activeProfileId ?? selection?.profileId),
         groupId: readString(selection?.groupId),
         error: input.error,

@@ -23,6 +23,7 @@ export function registerApiTokenIntrospectionRoute(app: Fastify): void {
     app.post(
         ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
         {
+            attachValidation: true,
             onRequest: app.authenticate,
             config: { connectionAuthFailureError: "authentication_failed" },
             schema: {
@@ -37,6 +38,9 @@ export function registerApiTokenIntrospectionRoute(app: Fastify): void {
             },
         },
         async (request, reply) => {
+            if (request.validationError) {
+                return reply.code(401).send({ error: "invalid_token" });
+            }
             const verified = await auth.verifyPat(request.body.token);
             if (!verified.ok || verified.accountId !== request.userId) {
                 return reply.code(401).send({ error: "invalid_token" });

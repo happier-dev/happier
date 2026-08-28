@@ -96,9 +96,11 @@ The exact shared UI selectors for this Agent are:
 - Cancel: `agent-input-abort`
 - Hard revoke: `settings.plugins.detail.examples.session-agent.action.forgetTrust`
 
-The repository also maintains an automated loaded QA harness that runs this
-exact installed lifecycle and those selectors against current development
-bytes on browser RNW, real Tauri desktop, iOS, and Android. It lives in the
+The repository also maintains loaded QA corridors for this lifecycle and these
+selectors against current development bytes. The browser RNW corridor owns the
+full reversible lifecycle; real Tauri desktop and iOS/Android corridors exercise
+the same qualified Agent's selection, interaction, cancellation, and recovery
+through their loaded clients. They live in the
 current-managed-stack Plugin QA testkit (`packages/tests`,
 `currentManagedStackPluginUiQa.ts`) and is driven by
 `test:ui:e2e:plugin-current-stack:session-agent`,

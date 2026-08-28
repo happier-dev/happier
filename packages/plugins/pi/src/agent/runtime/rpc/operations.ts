@@ -580,7 +580,9 @@ function createRuntimeOperations(params: Readonly<{
       if (agentTurnId) readOrBeginTurn(agentTurnId);
       return;
     }
-    const agentEndBoundary = classifyPiAgentEndBoundary(record);
+    const agentEndBoundary = classifyPiAgentEndBoundary(record, {
+      piRetryableProviderFailure: activeTurnProviderFailure?.piRetryable,
+    });
     if (agentEndBoundary === 'retrying') {
       retryingTurnProviderFailure = activeTurnProviderFailure;
       activeTurnProviderFailure = null;

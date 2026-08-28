@@ -1161,7 +1161,25 @@ export type PluginActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
     };
+    readonly "projects.list": {
+        [x: string]: unknown;
+        machineId?: string | undefined;
+        limit?: number | undefined;
+    };
+    readonly "prompts.invocations.list": {
+        [x: string]: unknown;
+        limit?: number | undefined;
+    };
+    readonly "prompts.invocation.resolve": {
+        [x: string]: unknown;
+        invocationId: string;
+        argsText?: string | undefined;
+    };
     readonly "machines.list": {
+        [x: string]: unknown;
+        limit?: number | undefined;
+    };
+    readonly "servers.list": {
         [x: string]: unknown;
         limit?: number | undefined;
     };
@@ -1174,6 +1192,7 @@ export type PluginActionInputById = {
         [x: string]: unknown;
         includeDisabled?: boolean | undefined;
         limit?: number | undefined;
+        machineId?: string | undefined;
     };
     readonly "agents.models.list": {
         [x: string]: unknown;
@@ -2106,6 +2125,22 @@ export type PluginActionInputById = {
             body: string;
         } | null;
     };
+    readonly "sessions.subagents.list": {
+        [x: string]: unknown;
+        parentSessionId?: string | undefined;
+        groupId?: string | null | undefined;
+        limit?: number | undefined;
+    };
+    readonly "sessions.subagents.get": {
+        [x: string]: unknown;
+        id: string;
+        parentSessionId?: string | undefined;
+    };
+    readonly "sessions.subagents.watch": {
+        [x: string]: unknown;
+        parentSessionId?: string | undefined;
+        id?: string | undefined;
+    };
     readonly "execution.run.start": {
         [x: string]: unknown;
         intent: 'scm_diff_summary' | 'plan' | 'review' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message';
@@ -2358,6 +2393,15 @@ export type PluginActionInputById = {
         timeoutSeconds?: number | undefined;
         pollIntervalMs?: number | undefined;
     };
+    readonly "session.target.primary.set": {
+        [x: string]: unknown;
+        sessionId?: string | null | undefined;
+        sessionTitle?: string | undefined;
+    };
+    readonly "session.target.tracked.set": {
+        [x: string]: unknown;
+        sessionIds: string[];
+    };
     readonly "session.list": {
         [x: string]: unknown;
         limit?: number | undefined;
@@ -2558,6 +2602,16 @@ export type PluginActionInputById = {
         operationId: string;
         revision: number;
     };
+    readonly "ui.voice_global.reset": Record<string, never>;
+    readonly "ui.voice_agent.teleport": {
+        [x: string]: unknown;
+        sessionId?: string | undefined;
+    };
+    readonly "ui.current_context.read": Record<string, never>;
+    readonly "ui.current_context.command.invoke": {
+        commandId: string;
+    };
+    readonly "ui.pet.choose": Record<string, never>;
     readonly "memory.search": {
         [x: string]: unknown;
         machineId: string;
@@ -6755,7 +6809,19 @@ export type PluginActionResultById = {
     readonly "paths.list_recent": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "projects.list": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "prompts.invocations.list": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "prompts.invocation.resolve": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
     readonly "machines.list": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "servers.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
     readonly "review.engines.list": string | number | boolean | readonly JsonValue[] | {
@@ -10257,6 +10323,184 @@ export type PluginActionResultById = {
             publicationCorrelationId: string;
         } | null;
     };
+    readonly "sessions.subagents.list": {
+        [x: string]: unknown;
+        id: string;
+        parentSessionId: string;
+        origin: 'plugin' | 'agent' | 'happier';
+        kind: 'custom' | 'native' | 'execution-run';
+        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
+        createdAt: number;
+        agentRef?: {
+            [x: string]: unknown;
+            agentId: string;
+            agentKind?: string | undefined;
+        } | undefined;
+        lifecycleDetail?: {
+            [x: string]: unknown;
+            agentState?: string | undefined;
+            reason?: string | undefined;
+        } | undefined;
+        completedAt?: number | undefined;
+        transcript?: {
+            [x: string]: unknown;
+            parentSessionId: string;
+            sidechainId: string;
+        } | undefined;
+        spawnRef?: {
+            [x: string]: unknown;
+            toolCallId?: string | undefined;
+        } | undefined;
+        runRef?: {
+            [x: string]: unknown;
+            runId: string;
+        } | undefined;
+        groupRef?: {
+            [x: string]: unknown;
+            groupId: string;
+            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
+            memberId: string;
+            providerGroupKind?: string | undefined;
+            groupLabel?: string | undefined;
+            memberLabel?: string | undefined;
+            memberRole?: string | undefined;
+            supportsBroadcast?: boolean | undefined;
+        } | undefined;
+        vendorRef?: {
+            [x: string]: unknown;
+            agentSessionId: string;
+            vendorSource?: string | undefined;
+            resumeMetadata?: Record<string, unknown> | undefined;
+        } | undefined;
+        label?: string | undefined;
+        display?: {
+            [x: string]: unknown;
+            label?: string | undefined;
+            iconRef?: string | undefined;
+            colorToken?: string | undefined;
+        } | undefined;
+        agentMetadata?: Record<string, unknown> | undefined;
+    }[];
+    readonly "sessions.subagents.get": {
+        [x: string]: unknown;
+        id: string;
+        parentSessionId: string;
+        origin: 'plugin' | 'agent' | 'happier';
+        kind: 'custom' | 'native' | 'execution-run';
+        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
+        createdAt: number;
+        agentRef?: {
+            [x: string]: unknown;
+            agentId: string;
+            agentKind?: string | undefined;
+        } | undefined;
+        lifecycleDetail?: {
+            [x: string]: unknown;
+            agentState?: string | undefined;
+            reason?: string | undefined;
+        } | undefined;
+        completedAt?: number | undefined;
+        transcript?: {
+            [x: string]: unknown;
+            parentSessionId: string;
+            sidechainId: string;
+        } | undefined;
+        spawnRef?: {
+            [x: string]: unknown;
+            toolCallId?: string | undefined;
+        } | undefined;
+        runRef?: {
+            [x: string]: unknown;
+            runId: string;
+        } | undefined;
+        groupRef?: {
+            [x: string]: unknown;
+            groupId: string;
+            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
+            memberId: string;
+            providerGroupKind?: string | undefined;
+            groupLabel?: string | undefined;
+            memberLabel?: string | undefined;
+            memberRole?: string | undefined;
+            supportsBroadcast?: boolean | undefined;
+        } | undefined;
+        vendorRef?: {
+            [x: string]: unknown;
+            agentSessionId: string;
+            vendorSource?: string | undefined;
+            resumeMetadata?: Record<string, unknown> | undefined;
+        } | undefined;
+        label?: string | undefined;
+        display?: {
+            [x: string]: unknown;
+            label?: string | undefined;
+            iconRef?: string | undefined;
+            colorToken?: string | undefined;
+        } | undefined;
+        agentMetadata?: Record<string, unknown> | undefined;
+    } | null;
+    readonly "sessions.subagents.watch": {
+        [x: string]: unknown;
+        kind: 'snapshot';
+        subagents: {
+            [x: string]: unknown;
+            id: string;
+            parentSessionId: string;
+            origin: 'plugin' | 'agent' | 'happier';
+            kind: 'custom' | 'native' | 'execution-run';
+            status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
+            createdAt: number;
+            agentRef?: {
+                [x: string]: unknown;
+                agentId: string;
+                agentKind?: string | undefined;
+            } | undefined;
+            lifecycleDetail?: {
+                [x: string]: unknown;
+                agentState?: string | undefined;
+                reason?: string | undefined;
+            } | undefined;
+            completedAt?: number | undefined;
+            transcript?: {
+                [x: string]: unknown;
+                parentSessionId: string;
+                sidechainId: string;
+            } | undefined;
+            spawnRef?: {
+                [x: string]: unknown;
+                toolCallId?: string | undefined;
+            } | undefined;
+            runRef?: {
+                [x: string]: unknown;
+                runId: string;
+            } | undefined;
+            groupRef?: {
+                [x: string]: unknown;
+                groupId: string;
+                groupKind: 'custom' | 'team' | 'pool' | 'workflow';
+                memberId: string;
+                providerGroupKind?: string | undefined;
+                groupLabel?: string | undefined;
+                memberLabel?: string | undefined;
+                memberRole?: string | undefined;
+                supportsBroadcast?: boolean | undefined;
+            } | undefined;
+            vendorRef?: {
+                [x: string]: unknown;
+                agentSessionId: string;
+                vendorSource?: string | undefined;
+                resumeMetadata?: Record<string, unknown> | undefined;
+            } | undefined;
+            label?: string | undefined;
+            display?: {
+                [x: string]: unknown;
+                label?: string | undefined;
+                iconRef?: string | undefined;
+                colorToken?: string | undefined;
+            } | undefined;
+            agentMetadata?: Record<string, unknown> | undefined;
+        }[];
+    };
     readonly "execution.run.start": {
         [x: string]: unknown;
         runId: string;
@@ -10529,6 +10773,12 @@ export type PluginActionResultById = {
         ok: false;
         code: 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
     };
+    readonly "session.target.primary.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.target.tracked.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
     readonly "session.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
@@ -10924,6 +11174,42 @@ export type PluginActionResultById = {
             message: string;
         };
     };
+    readonly "ui.voice_global.reset": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "ui.voice_agent.teleport": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "ui.current_context.read": {
+        navigation: {
+            area: string;
+            screen: string;
+            title?: string | undefined;
+            presentation?: 'screen' | 'modal' | 'pane' | undefined;
+        };
+        commands: {
+            id: string;
+            title: string;
+            description?: string | undefined;
+        }[];
+        entity?: {
+            kind: string;
+            label: string;
+            summary?: string | undefined;
+            reference?: string | number | boolean | readonly JsonValue[] | {
+                readonly [key: string]: JsonValue;
+            } | null | undefined;
+        } | undefined;
+        detail?: string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null | undefined;
+    };
+    readonly "ui.current_context.command.invoke": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "ui.pet.choose": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
     readonly "memory.search": {
         [x: string]: unknown;
         v: 1;

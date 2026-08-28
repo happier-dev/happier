@@ -132,6 +132,23 @@ export function classifyAzureDevOpsTransportFailure(input: Readonly<{
   });
 }
 
+/**
+ * A write outcome that says nothing about what the provider did.
+ *
+ * These are the classes that leave an effect UNKNOWN rather than decided: the request may have
+ * reached Azure and been applied after our client stopped listening. Every other class — an
+ * argument Azure rejected, a permission it refused, a rate limit it stated — is a decision, and a
+ * decision needs no reconciliation. Entry mutations and review publication reconcile through this
+ * one predicate, because two answers to "may this write have landed" would let a press retry in
+ * one surface while the other still refuses to.
+ */
+export function isAzureDevOpsAmbiguousWriteFailure(failure: AzureDevOpsFailure): boolean {
+  return failure.class === 'timedOut'
+    || failure.class === 'cancelled'
+    || failure.class === 'transport'
+    || failure.class === 'server';
+}
+
 export function createAzureDevOpsFailure(input: Readonly<{
   failureClass: AzureDevOpsFailureClass;
   status?: number | null;

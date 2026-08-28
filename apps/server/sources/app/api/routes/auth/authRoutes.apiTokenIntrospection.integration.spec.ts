@@ -157,8 +157,10 @@ describe("authRoutes (API token introspection) (integration)", () => {
                 }),
             ]);
 
-            expect(extraFieldResponse.statusCode).toBe(400);
-            expect(nonStringResponse.statusCode).toBe(400);
+            expect(extraFieldResponse.statusCode).toBe(401);
+            expect(extraFieldResponse.json()).toEqual({ error: "invalid_token" });
+            expect(nonStringResponse.statusCode).toBe(401);
+            expect(nonStringResponse.json()).toEqual({ error: "invalid_token" });
         } finally {
             await app.close();
         }

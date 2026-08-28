@@ -304,7 +304,9 @@ function readSelectionIds(selection: unknown): Readonly<{
 }> {
   const record = readRecord(selection);
   return {
-    serviceId: readString(record?.serviceId) ?? 'claude-subscription',
+    // Canonical qualified Plugin contribution key; released scalar ingress is
+    // normalized by the host sanitize owner before adapter selection.
+    serviceId: readString(record?.serviceId) ?? 'happier.agent.claude/claude-subscription',
     profileId: readString(record?.activeProfileId ?? record?.profileId),
     groupId: readString(record?.groupId),
     groupGeneration: readNonnegativeInteger(record?.groupGeneration ?? record?.generation),
@@ -320,8 +322,10 @@ function isClaudeSubscriptionGroupOAuthSelection(input: ClaudeRuntimeAuthTargetI
   const record = readRecord(input.selection);
   if (!record) return false;
   const selectionServiceId = readString(record.serviceId);
+  // Current hosts address this service by its canonical qualified Plugin
+  // contribution key; `null` remains tolerated for selections that omit the id.
   return (
-    (selectionServiceId === null || selectionServiceId === 'claude-subscription')
+    (selectionServiceId === null || selectionServiceId === 'happier.agent.claude/claude-subscription')
     && readString(record.groupId) !== null
     && readString(record.activeProfileId) !== null
     && readNonnegativeInteger(record.groupGeneration ?? record.generation) !== null
@@ -369,7 +373,8 @@ function buildSharedGroupVerification(params: Readonly<{
       source: 'shared_group_auth_surface',
       reason: 'claude_shared_group_auth_surface_rewritten',
       generationApplication: {
-        serviceId: 'claude-subscription' as const,
+        // Canonical qualified Plugin contribution key (SDK verification contract).
+        serviceId: 'happier.agent.claude/claude-subscription' as const,
         groupId: params.groupId,
         profileId: params.record.profileId,
         ...params.generationApplication,

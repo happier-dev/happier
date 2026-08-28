@@ -2,6 +2,7 @@ import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
 } from '@happier-dev/plugin-sdk';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
 
 const PI_PROVIDER_TOKEN_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{12,}\b/gu;
 const SAFE_PROVIDER_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
@@ -10,6 +11,7 @@ export type PiProviderFailureDiagnostic = Readonly<{
   classification: 'pi_provider_failure';
   code: string;
   sanitizedPreview: string;
+  piRetryable: boolean;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -42,6 +44,12 @@ function parseProviderError(value: string): Readonly<Record<string, unknown>> | 
   }
 }
 
+function readLeadingHttpStatus(value: string): number | null {
+  const match = /^\s*([1-5]\d{2})\s*:?(?:\s|\{)/u.exec(value);
+  if (!match?.[1]) return null;
+  return Number(match[1]);
+}
+
 export function readPiProviderFailureDiagnostic(
   record: Readonly<Record<string, unknown>>,
 ): PiProviderFailureDiagnostic | null {
@@ -69,10 +77,18 @@ export function readPiProviderFailureDiagnostic(
       ?? parsedError?.errorMessage
       ?? parsed?.message,
   ) ?? 'Pi provider session failed';
+  const httpStatus = raw ? readLeadingHttpStatus(raw) : null;
+  const limitEvidence = classifyProviderLimitEvidence(parsed
+    ? { ...parsed, ...(httpStatus === null ? {} : { status: httpStatus }) }
+    : record);
   return Object.freeze({
     classification: 'pi_provider_failure',
     code,
     sanitizedPreview,
+    piRetryable: limitEvidence.piRetryable === true || (
+      limitEvidence.confidence === 'high'
+      && (limitEvidence.category === 'capacity' || limitEvidence.category === 'rate_limit')
+    ),
   });
 }
 
@@ -94,5 +110,6 @@ export function readPiPromptRejectionDiagnostic(
     sanitizedPreview: message
       ? `Pi provider rejected the prompt before acceptance: ${message}`
       : 'Pi provider rejected the prompt before acceptance without details',
+    piRetryable: false,
   });
 }

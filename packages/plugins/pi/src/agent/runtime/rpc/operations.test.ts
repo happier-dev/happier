@@ -1413,6 +1413,60 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
+  it('keeps a transient rate-limit turn open when Pi resumes after an agent_end without retry intent', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const prompt = sendPrompt(runtime, 'hello');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+
+    await emit(capture, {
+      type: 'message_end',
+      terminalStatus: 'failed',
+      provider: 'openai',
+      message: {
+        role: 'assistant',
+        provider: 'openai',
+        content: [],
+        stopReason: 'error',
+        errorMessage: '429: {"code":"1302","message":"Rate limit reached for requests"}',
+      },
+    });
+    await emit(capture, { type: 'agent_end' });
+    expect(events.some((event) => (
+      event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled'
+    ))).toBe(false);
+
+    await emit(capture, { type: 'turn_start', turnId: 'inner-turn-2' });
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'continued after rate limit' },
+      message: { role: 'assistant', content: [{ type: 'text', text: 'continued after rate limit' }] },
+    });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'message-delta',
+        channel: 'assistant',
+        text: 'continued after rate limit',
+      }),
+      expect.objectContaining({
+        kind: 'turn-complete',
+      }),
+    ]));
+    expect(events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'turn-failed',
+      }),
+    ]));
+    await runtime.dispose();
+  });
+
   it('publishes only the latest Provider diagnostic when a Pi retry also fails', async () => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);

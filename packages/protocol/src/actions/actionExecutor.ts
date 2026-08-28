@@ -1224,6 +1224,7 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const result = await deps.spawnConnectedServicesList({
       ...selectionArgs,
+      ...(typeof input.machineId === 'string' ? { machineId: input.machineId } : {}),
       ...(typeof input.includeUnavailable === 'boolean' ? { includeUnavailable: input.includeUnavailable } : {}),
     });
     return { ok: true, result: normalizeResolvedOptions(result) };
@@ -4102,6 +4103,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.spawnConnectedServicesList({
             ...selectionArgs,
+            ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...(typeof data.includeUnavailable === 'boolean' ? { includeUnavailable: data.includeUnavailable } : {}),
           });
           return completeActionResult(res);

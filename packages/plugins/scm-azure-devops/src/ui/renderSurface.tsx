@@ -181,6 +181,7 @@ function PagedFooter({
   onLoadMore,
   onRefresh,
   refreshLabel,
+  refreshLabelKey,
   summary,
   summaryKey,
   summaryValues,
@@ -190,6 +191,7 @@ function PagedFooter({
   onLoadMore: () => void;
   onRefresh: () => void;
   refreshLabel: string;
+  refreshLabelKey: string;
   summary: string;
   summaryKey: string;
   summaryValues: Readonly<Record<string, string | number>>;
@@ -224,6 +226,7 @@ function PagedFooter({
           disabled={state.pending}
           variant="plain"
           accessibilityLabel={refreshLabel}
+          accessibilityLabelKey={refreshLabelKey}
         />
       </Row>
     </Stack>
@@ -356,6 +359,7 @@ function OverviewPanel({
               || (iterations.kind === 'ready' && iterations.pending)}
             variant="plain"
             accessibilityLabel="Re-read the pull request iterations from Azure DevOps"
+            accessibilityLabelKey="plugins.azureDevops.ui.rereadIterations"
           />
         </Row>
       </Stack>
@@ -517,6 +521,7 @@ function ActivityPanel({
             controller.refresh();
           }}
           refreshLabel="Re-read the commits from Azure DevOps"
+          refreshLabelKey="plugins.azureDevops.ui.rereadCommits"
           summary={`${String(state.rows.length)} commit(s) read.`}
           summaryKey="plugins.azureDevops.ui.commitsRead"
           summaryValues={{ count: state.rows.length }}
@@ -525,10 +530,15 @@ function ActivityPanel({
       renderItem={(event) => {
         if (event.kind === 'iteration') {
           const row = event.row;
+          const iterationLabel = text(
+            'plugins.azureDevops.ui.iterationTitle',
+            'Iteration {id}',
+            { id: String(row.id) },
+          );
           return (
             <Item
-              title={`Iteration ${String(row.id)}${row.author === undefined ? '' : ` · ${row.author}`}`}
-              subtitle={row.reason ?? row.description ?? 'Updated'}
+              title={row.author === undefined ? iterationLabel : `${iterationLabel} · ${row.author}`}
+              subtitle={row.reason ?? row.description ?? text('plugins.azureDevops.ui.iterationUpdated', 'Updated')}
               {...(row.createdAtMs === undefined
                 ? {}
                 : { detail: formatTimestamp(locale, row.createdAtMs, 'relative', nowMs) })}
@@ -647,6 +657,7 @@ function FilesPanel({
             controller.refresh();
           }}
           refreshLabel="Re-read the changed files from Azure DevOps"
+          refreshLabelKey="plugins.azureDevops.ui.rereadFiles"
           summary={`${String(state.rows.length)} file(s) read.`}
           summaryKey="plugins.azureDevops.ui.filesRead"
           summaryValues={{ count: state.rows.length }}

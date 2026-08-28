@@ -62,7 +62,14 @@ function createDeterministicSessionRuntime(
             sessionId: context.session.id,
             emittedAtMs: Date.now(),
         }) as AgentSessionRuntimeEvent;
-        for (const listener of Array.from(listeners)) listener(published);
+        for (const listener of Array.from(listeners)) {
+            try {
+                listener(published);
+            } catch {
+                // One observer must not prevent later host projections from
+                // receiving the same ordered runtime fact.
+            }
+        }
     };
 
     const cancelActiveTurn = (
@@ -99,7 +106,7 @@ function createDeterministicSessionRuntime(
                 kind: 'message-delta',
                 turnId: turn.turnId,
                 channel: 'assistant',
-                text: `Deterministic check ${outcome.status}.`,
+                text: `Deterministic check ${outcome.status}. Prompt: ${prompt}`,
             });
             activeTurn = null;
             emit({ kind: 'turn-complete', turnId: turn.turnId });

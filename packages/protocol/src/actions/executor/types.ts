@@ -850,7 +850,7 @@ export type ActionExecutorDeps = Readonly<{
   agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
   agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
   spawnProfilesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; limit?: number }>) => Promise<unknown>;
-  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; includeUnavailable?: boolean }>) => Promise<unknown>;
+  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; machineId?: string; includeUnavailable?: boolean }>) => Promise<unknown>;
   spawnMcpServersPreview?: (args: Readonly<{
     agentId?: string;
     backendTargetKey?: string;

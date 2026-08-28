@@ -3,6 +3,7 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
 
 import { canonicalBoundedRecordKeySchema } from '../common/canonicalRecordKey.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { ConnectedServiceCredentialKindSchema } from './connectedServiceSchemas.js';
 import {
   PluginContributionReferenceV2Schema,
   PluginLocalizedStringV2Schema,
@@ -120,6 +121,20 @@ export const ConnectedAccountPurposeDeclarationV1Schema = z.object({
   title: PluginLocalizedStringV2Schema.optional(),
   required: z.boolean().optional(),
   materializationKinds: PluginConnectedAccountMaterializationKindsSchema.optional(),
+  /** Credential/profile kinds this consumer can use for this service. */
+  credentialKinds: z.array(ConnectedServiceCredentialKindSchema)
+    .min(1)
+    .max(ConnectedServiceCredentialKindSchema.options.length)
+    .meta({ uniqueItems: true })
+    .superRefine((kinds, context) => {
+      if (new Set(kinds).size !== kinds.length) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Connected Account credential kinds must be unique.',
+        });
+      }
+    })
+    .optional(),
 }).strict();
 export type ConnectedAccountPurposeDeclarationV1 = z.infer<
   typeof ConnectedAccountPurposeDeclarationV1Schema

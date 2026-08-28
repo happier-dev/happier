@@ -149,7 +149,7 @@ function readCodexChatGptRefreshChildSelection(selection: unknown): CodexChatGpt
   if (selection.kind === 'profile' && typeof selection.profileId === 'string') {
     return {
       kind: 'profile',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: selection.profileId,
     };
   }
@@ -163,7 +163,7 @@ function readCodexChatGptRefreshChildSelection(selection: unknown): CodexChatGpt
   ) {
     return {
       kind: 'group',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: selection.groupId,
       activeProfileId: selection.activeProfileId,
       fallbackProfileId: selection.fallbackProfileId,
@@ -182,7 +182,7 @@ export function resolveCodexChatGptRefreshSelectionFromChildSelection(
     return {
       selection: {
         kind: 'profile',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: childSelection.profileId,
       },
       recoveryGroupId: null,
@@ -191,7 +191,7 @@ export function resolveCodexChatGptRefreshSelectionFromChildSelection(
   return {
     selection: {
       kind: 'group',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: childSelection.groupId,
       activeProfileId: childSelection.activeProfileId,
       fallbackProfileId: childSelection.fallbackProfileId,
@@ -207,7 +207,8 @@ export function createCodexChatGptBridgeRefreshFailureClassification(
   const { selection } = resolution;
   return {
     kind: 'refresh_failed',
-    serviceId: 'openai-codex',
+    // Canonical qualified Plugin contribution key.
+    serviceId: 'happier.agent.codex/openai-codex',
     profileId: selection.kind === 'group' ? selection.activeProfileId : selection.profileId,
     groupId: selection.kind === 'group' ? selection.groupId : resolution.recoveryGroupId,
     resetsAtMs: null,

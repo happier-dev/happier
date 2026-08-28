@@ -13,6 +13,7 @@ import {
 
 import { resolveAzureConfiguredOrigin } from './configuration.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
+import { isAzureDevOpsAmbiguousWriteFailure } from './failures.js';
 import { foldAzureIdentityId } from './identity.js';
 import { parseAzureEntryLocalRef } from './localRef.js';
 import {
@@ -252,12 +253,12 @@ async function settleAzureEntryWrite(input: Readonly<{
   const settled = await settleAtMostOnceProviderWrite({
     dispatch: async () => {
       const result = await input.dispatch();
-      if (!result.ok && isAzureAmbiguousWriteFailure(result.failure)) {
+      if (!result.ok && isAzureDevOpsAmbiguousWriteFailure(result.failure)) {
         ambiguousDispatchFailure = result.failure;
       }
       return result;
     },
-    mayHaveChanged: (write) => !write.ok && isAzureAmbiguousWriteFailure(write.failure),
+    mayHaveChanged: (write) => !write.ok && isAzureDevOpsAmbiguousWriteFailure(write.failure),
     confirm: async () => {
       const confirmed = await observeAzureMutation(input.mutation);
       if (confirmed.row === null) {
@@ -703,7 +704,7 @@ export async function requestAzureDevOpsPullRequestReview(
   // the provider itself decided (`4xx`, a refused contract, a rate limit) end the Action here;
   // everything ambiguous falls through to the one authoritative list read below, which is the
   // only thing that can say what actually landed.
-  if (!write.ok && !isAzureAmbiguousWriteFailure(write.failure)) {
+  if (!write.ok && !isAzureDevOpsAmbiguousWriteFailure(write.failure)) {
     return unavailable(projectAzureSourceFailure(write.failure));
   }
 
@@ -740,21 +741,6 @@ export async function requestAzureDevOpsPullRequestReview(
   // That is ordinary provider lag, distinct from an answer-lost write.
   return Object.freeze({ kind: 'pending' as const, observation: settled.observation });
   } finally { admitted.dispose(); }
-}
-
-/**
- * A write outcome that says nothing about what the provider did.
- *
- * These are the classes that leave an effect UNKNOWN rather than decided: the request may have
- * reached Azure and been applied after our client stopped listening. Every other class — an
- * argument Azure rejected, a permission it refused, a rate limit it stated — is a decision, and a
- * decision needs no reconciliation.
- */
-function isAzureAmbiguousWriteFailure(failure: AzureDevOpsFailure): boolean {
-  return failure.class === 'timedOut'
-    || failure.class === 'cancelled'
-    || failure.class === 'transport'
-    || failure.class === 'server';
 }
 
 /* ------------------------------------------------------------- thread status */
@@ -835,12 +821,12 @@ export async function setAzureDevOpsPullRequestThreadStatus(
         status: request.status,
         signal: mutation.signal,
       });
-      if (!result.ok && isAzureAmbiguousWriteFailure(result.failure)) {
+      if (!result.ok && isAzureDevOpsAmbiguousWriteFailure(result.failure)) {
         ambiguousThreadWriteFailure = result.failure;
       }
       return result;
     },
-    mayHaveChanged: (result) => !result.ok && isAzureAmbiguousWriteFailure(result.failure),
+    mayHaveChanged: (result) => !result.ok && isAzureDevOpsAmbiguousWriteFailure(result.failure),
     confirm: async () => {
       const confirmed = await readAzurePullRequestThread({
         client: mutation.client,

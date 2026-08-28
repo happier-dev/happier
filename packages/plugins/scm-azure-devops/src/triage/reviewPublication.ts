@@ -20,6 +20,7 @@ import { AZURE_DEVOPS_PLUGIN_ID } from '../azureDevopsContracts.js';
 import { AZURE_CHANGES_PAGE_SIZE_V1 } from './detail/reads.js';
 import { AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID } from './descriptor.js';
 import { projectAzureSourceFailure } from './failureProjection.js';
+import { isAzureDevOpsAmbiguousWriteFailure } from './failures.js';
 import {
   admitAzureMutation,
   observeAzureMutation,
@@ -69,13 +70,6 @@ function positiveInteger(value: unknown): number | null {
 
 function nonNegativeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function isAmbiguousWriteFailure(failure: AzureDevOpsFailure): boolean {
-  return failure.class === 'server'
-    || failure.class === 'transport'
-    || failure.class === 'timedOut'
-    || failure.class === 'cancelled';
 }
 
 function malformed(detail: string): AzureDevOpsFailure {
@@ -323,14 +317,14 @@ function threadBody(content: string, context: PublicationContext): Readonly<Reco
 
 function normalizeCommentWrite(written: AzureCreatedCommentOutcomeV1): PublicationWrite {
   if (written.ok) return { kind: 'accepted', externalRef: written.externalRef };
-  return isAmbiguousWriteFailure(written.failure)
+  return isAzureDevOpsAmbiguousWriteFailure(written.failure)
     ? { kind: 'ambiguous', failure: written.failure }
     : { kind: 'failed', failure: written.failure };
 }
 
 function normalizeWrite(written: AzureWriteOutcomeV1): PublicationWrite {
   if (written.ok) return { kind: 'accepted' };
-  return isAmbiguousWriteFailure(written.failure)
+  return isAzureDevOpsAmbiguousWriteFailure(written.failure)
     ? { kind: 'ambiguous', failure: written.failure }
     : { kind: 'failed', failure: written.failure };
 }
