@@ -258,7 +258,7 @@ const PI_RPC_STRUCTURED_LIMIT_MARKER_PATTERN =
 const PI_RPC_LIMIT_EXHAUSTION_TEXT_PATTERN =
   /\b(usage\s*limit|rate\s*limit|too many requests|resource[_\s-]*exhausted|limit reached|out of credits|credits exhausted)\b|\bquota(?:[_\s-]*(?:exceeded|exhausted|reached)|[_\s-]*limit[_\s-]*(?:exceeded|exhausted|reached))\b/u;
 const PI_RPC_RATE_LIMIT_STATUS_TEXT_PATTERN =
-  /\b(?:http|status|code|error)["']?\s*[:=]?\s*429\b|\b429\b.*\btoo many requests\b|\btoo many requests\b.*\b429\b/u;
+  /\b(?:http|status|code|error)["']?\s*[:=]?\s*429\b|\b429\b.*\b(?:rate limit|too many requests)\b|\b(?:rate limit|too many requests)\b.*\b429\b/u;
 const PI_RPC_PROVIDER_TOKEN_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{12,}\b/gu;
 
 function redactPiDiagnosticText(value: string): string {
@@ -1763,7 +1763,14 @@ export class PiRpcBackend implements AgentBackend {
 
   private isRecoverablePiAssistantError(event: Record<string, unknown>): boolean {
     const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
-    if (classification) return classification.kind === 'capacity';
+    if (classification) {
+      if (classification.kind === 'capacity') return true;
+      if (classification.kind === 'rate_limit') {
+        const detail = this.readPiAssistantErrorMessage(event);
+        return detail !== null && PI_RPC_RATE_LIMIT_STATUS_TEXT_PATTERN.test(detail.toLowerCase());
+      }
+      return false;
+    }
     const detail = this.readPiAssistantErrorMessage(event);
     return detail !== null && PI_RPC_RECOVERABLE_ASSISTANT_ERROR_PATTERN.test(detail);
   }
@@ -1828,31 +1835,46 @@ export class PiRpcBackend implements AgentBackend {
 
   private handlePiAssistantFailureEvent(event: Record<string, unknown>): void {
     const detail = this.readPiAssistantErrorMessage(event);
-    if (!detail) return;
-    this.tracePiRpcFailureBoundary('assistant_failure_event_detail_present', event);
-    if (this.isAcceptedPromptAwaitingAgentStart()) {
-      // A resumed Pi RPC session can replay a stale assistant error just after accepting the next
-      // prompt. Do not fail that new turn unless Pi has emitted agent_start for it first.
-      return;
+    const isTerminalFailure = isPiFailedAssistantTerminalEvent(event);
+    if (!detail && !isTerminalFailure) return;
+    if (detail) {
+      this.tracePiRpcFailureBoundary('assistant_failure_event_detail_present', event);
     }
     const failure = normalizePiProviderFailure('assistant_message_end', event);
     const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
-    if (this.pendingTurn) {
+    if (this.isAcceptedPromptAwaitingAgentStart()) {
+      // A resumed Pi RPC session can replay a stale assistant error just after accepting the next
+      // prompt. Only retain an explicit terminal marker so agent_end can decide the accepted turn;
+      // a detail-only replay must not fail the new turn.
+      if (isTerminalFailure && this.pendingTurn) {
+        this.pendingTurn.preStartTerminalFailure ??= Object.assign(
+          createPiProviderFailureError(failure),
+          classification ? { runtimeAuthClassification: classification } : {},
+        );
+      }
+      return;
+    }
+    if (this.pendingTurn && detail) {
       this.pendingTurn.providerFailureDiagnostic ??= failure;
     }
-    // Pi's overflow/server-capacity recovery *begins* with an assistant
+    // Pi's overflow/server-capacity/rate-limit recovery *begins* with an assistant
     // `message_end{stopReason:'error'}` and then self-heals via compaction, retry, or resumed tool
     // activity. Terminating the turn here re-creates the original stuck-after-compaction bug:
     // premature completion clears `turnInFlight`, and the next queued prompt collides with a
     // still-busy Pi. Capacity errors such as Codex `server_is_overloaded` are therefore owned by the
     // turn lifecycle (`agent_end`/willRetry, the compaction-resume grace, and the `get_state`
-    // liveness probe) instead of this event. The recoverable error carries no surfaceable assistant
-    // text, so suppressing the status here does not hide anything from the transcript.
-    if (this.isRecoverablePiAssistantError(event)) {
+    // liveness probe) instead of this event. The runtime-auth classification is still reported so
+    // account recovery can proceed, but it must not race Pi's already-running retry by ending the
+    // Happier turn. The recoverable error carries no surfaceable assistant text, so suppressing the
+    // status here does not hide anything from the transcript.
+    if (detail && this.isRecoverablePiAssistantError(event)) {
       if (classification) {
         void this.reportPiRuntimeAuthFailureToDaemon(classification);
       }
       return;
+    }
+    if (isTerminalFailure) {
+      this.tracePiRpcFailureBoundary('failed_assistant_terminal_event_matched', event);
     }
     if (classification) {
       void this.reportPiRuntimeAuthFailureToDaemon(classification);
@@ -1870,26 +1892,6 @@ export class PiRpcBackend implements AgentBackend {
     }
     this.tracePiRpcFailureBoundary('turn_failed_event_matched', event);
     this.surfacePiProviderFailure(failure);
-  }
-
-  private handlePiAssistantMessageEndTerminalFailureEvent(event: Record<string, unknown>): void {
-    if (!this.pendingTurn) return;
-    if (!isPiFailedAssistantTerminalEvent(event)) return;
-    const failure = normalizePiProviderFailure('assistant_message_end', event);
-    const detail = failure.sanitizedPreview;
-    const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
-    if (this.isAcceptedPromptAwaitingAgentStart()) {
-      this.pendingTurn.preStartTerminalFailure ??= Object.assign(
-        createPiProviderFailureError(failure),
-        classification ? { runtimeAuthClassification: classification } : {},
-      );
-      return;
-    }
-    this.tracePiRpcFailureBoundary('failed_assistant_terminal_event_matched', event);
-    if (classification) {
-      void this.reportPiRuntimeAuthFailureToDaemon(classification);
-    }
-    this.surfacePiProviderFailure(failure, classification);
   }
 
   private readCompactionLifecycleId(event: Record<string, unknown>): string | null {
@@ -1942,7 +1944,6 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     this.handlePiAssistantFailureEvent(normalizedEvent);
-    this.handlePiAssistantMessageEndTerminalFailureEvent(normalizedEvent);
 
     // Publish usage/context telemetry the moment an assistant message settles — BEFORE any
     // tool calls it requested start executing — so a slow tool call shows the fresh context

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AgentMessage } from '@/agent/core';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
@@ -827,21 +828,49 @@ describe('PiRpcBackend pending turn lifecycle', () => {
     }
   });
 
-  it('keeps the turn open when a recoverable server overload error is followed by resumed activity', async () => {
-    const workDir = makeTempDir('happier-pi-rpc-server-overload-resumes-');
+  it.each([
+    {
+      name: 'server overload',
+      errorMessage: 'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":3}',
+      terminalStatus: null,
+      env: {} as Record<string, string>,
+    },
+    {
+      name: 'rate limit with a failed terminal marker',
+      errorMessage: '429: {"code":"1302","message":"Rate limit reached for requests"}',
+      terminalStatus: 'failed',
+      env: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'profile',
+          serviceId: 'openai',
+          profileId: 'openai-primary',
+        }]),
+      },
+    },
+  ])('keeps the turn open when a recoverable $name is followed by resumed activity', async ({
+    name,
+    errorMessage,
+    terminalStatus,
+    env,
+  }) => {
+    const workDir = makeTempDir(`happier-pi-rpc-${name.replaceAll(' ', '-')}-resumes-`);
     tempDirs.push(workDir);
-    const overloadError = 'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":3}';
     const fakeScript = writeFakePiRpcScript(
       workDir,
-      'fake-pi-rpc-server-overload-resumes.js',
+      'fake-pi-rpc-recoverable-error-resumes.js',
       `
-      const overloadError = ${JSON.stringify(overloadError)};
+      const recoverableError = ${JSON.stringify(errorMessage)};
       out({ type: 'agent_start' });
-      setTimeout(() => out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: overloadError, content: [] } }), 10);
+      setTimeout(() => out({
+        type: 'message_end',
+        ${terminalStatus ? `terminalStatus: ${JSON.stringify(terminalStatus)},` : ''}
+        provider: 'openai',
+        message: { role: 'assistant', provider: 'openai', stopReason: 'error', errorMessage: recoverableError, content: [] }
+      }), 10);
       setTimeout(() => out({ type: 'agent_end' }), 20);
-      setTimeout(() => out({ type: 'tool_execution_start', toolCallId: 'recovered-after-overload', toolName: 'read', args: { path: 'README.md' } }), 75);
-      setTimeout(() => out({ type: 'tool_execution_end', toolCallId: 'recovered-after-overload', toolName: 'read', result: { ok: true } }), 85);
-      setTimeout(() => out({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'recovered after server overload' }] } }), 95);
+      setTimeout(() => out({ type: 'tool_execution_start', toolCallId: 'recovered-after-capacity-error', toolName: 'read', args: { path: 'README.md' } }), 75);
+      setTimeout(() => out({ type: 'tool_execution_end', toolCallId: 'recovered-after-capacity-error', toolName: 'read', result: { ok: true } }), 85);
+      setTimeout(() => out({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'recovered after capacity error' }] } }), 95);
       setTimeout(() => out({ type: 'agent_end' }), 110);
 `,
       'isStreaming: false, isCompacting: false,',
@@ -850,7 +879,7 @@ describe('PiRpcBackend pending turn lifecycle', () => {
     const backend = createBackend({
       workDir,
       scriptPath: fakeScript,
-      env: { HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '10' },
+      env: { ...env, HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '10' },
     });
     const messages: AgentMessage[] = [];
     backend.onMessage((message) => messages.push(message));
@@ -859,7 +888,7 @@ describe('PiRpcBackend pending turn lifecycle', () => {
       const session = await backend.startSession();
       const idleCountBeforePrompt = messages.filter((message) => message.type === 'status' && message.status === 'idle').length;
       let resolved = false;
-      const promptPromise = backend.sendPrompt(session.sessionId, 'recover after server overload').then(() => {
+      const promptPromise = backend.sendPrompt(session.sessionId, 'recover after capacity error').then(() => {
         resolved = true;
       });
 
@@ -870,24 +899,24 @@ describe('PiRpcBackend pending turn lifecycle', () => {
       expect(messages.some((message) =>
         message.type === 'model-output' &&
         typeof message.fullText === 'string' &&
-        message.fullText.includes('server_is_overloaded')
+        message.fullText.includes(errorMessage)
       )).toBe(false);
 
       await expect(Promise.race([
         promptPromise,
-        rejectAfter(500, 'Pi turn did not resolve after recovered server overload error'),
+        rejectAfter(500, 'Pi turn did not resolve after recovered capacity error'),
       ])).resolves.toBeUndefined();
-      expect(messages.some((message) => message.type === 'tool-call' && message.callId === 'recovered-after-overload')).toBe(true);
+      expect(messages.some((message) => message.type === 'tool-call' && message.callId === 'recovered-after-capacity-error')).toBe(true);
       expect(messages.some((message) =>
         message.type === 'model-output' &&
         typeof message.fullText === 'string' &&
-        message.fullText.includes('recovered after server overload')
+        message.fullText.includes('recovered after capacity error')
       )).toBe(true);
       const idleIndex = findLastAgentMessageIndex(messages, (message) => message.type === 'status' && message.status === 'idle');
       const recoveredOutputIndex = messages.findIndex((message) =>
         message.type === 'model-output' &&
         typeof message.fullText === 'string' &&
-        message.fullText.includes('recovered after server overload')
+        message.fullText.includes('recovered after capacity error')
       );
       expect(idleIndex).toBeGreaterThan(recoveredOutputIndex);
     } finally {
