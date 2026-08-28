@@ -586,15 +586,20 @@ export function useTranscriptViewportAnchorCaptureHost(deps: ViewportAnchorCaptu
             };
         };
         deps.cancelScheduledViewportAnchorCapture();
-        if (
-            Platform.OS === 'web'
-            && deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true
-        ) {
-            // The renderer's held-end transaction is the authoritative web tail intent.
-            // During keyed teardown, browser geometry can transiently reflect a partially
-            // dismantled virtual window; persisting that offset as a user detach poisons the
-            // next open even though no transcript input occurred.
-            return selectPinnedExit();
+        if (Platform.OS === 'web') {
+            if (deps.listRef.current?.hasLiveWebHold?.({ kind: 'end' }) === true) {
+                // The renderer's held-end transaction is the authoritative web tail intent.
+                // During keyed teardown, browser geometry can transiently reflect a partially
+                // dismantled virtual window; persisting that offset as a user detach poisons the
+                // next open even though no transcript input occurred.
+                return selectPinnedExit();
+            }
+            if (deps.listRef.current?.hasLiveWebHold?.({ kind: 'item' }) === true) {
+                // A keyed hold is the detached twin of held-end: it already names the durable
+                // viewport the renderer is preserving. Teardown geometry is not a new reader
+                // decision and must not replace that identity with a partially dismantled window.
+                return null;
+            }
         }
         const metrics = Platform.OS === 'web' ? deps.resolveWebScrollMetrics() : null;
         const nativePhysicalAttempt = Platform.OS !== 'web'

@@ -188,7 +188,11 @@ export type TranscriptRendererEntryPlacementEvent =
 
 export type TranscriptRendererWebHoldTarget =
     | Readonly<{ kind: 'end' }>
-    | Readonly<{ kind: 'item'; itemId: string }>;
+    | Readonly<{
+        kind: 'item';
+        /** Omit to query whether any keyed anchor currently owns the viewport. */
+        itemId?: string;
+    }>;
 
 export type TranscriptRendererAtEndState = Readonly<{
     isAtEnd: boolean;
