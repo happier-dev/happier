@@ -158,6 +158,7 @@ describe("plugin webhook delivery store exact-target admission", () => {
                 endpointSourceInstanceId: "source-1",
                 payload: JSON.parse(new TextDecoder().decode(stored.canonicalEnvelopeBytes)),
                 payloadBytes: BigInt(stored.canonicalEnvelopeBytes.byteLength),
+                metadataDeleteAt: new Date("2026-08-17T00:00:00.000Z"),
             }),
         }));
         expect(mocks.delivery.create.mock.calls[0]?.[0]?.data).not.toHaveProperty("targetServerIdentityId");

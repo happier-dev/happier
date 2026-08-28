@@ -414,5 +414,7 @@ describe("plugin webhook retention and explicit discard", () => {
             targetPluginVersion: "1.0.0",
             automationAdmissionUnresolved: null,
         });
+        expect((await db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: fixture.delivery.id } }))
+            .metadataDeleteAt.toISOString()).toBe("2026-08-17T00:00:00.000Z");
     });
 });

@@ -18,6 +18,8 @@ export const PLUGIN_WEBHOOK_ACCOUNT_PAYLOAD_ROWS_V1 = 50_000;
 export const PLUGIN_WEBHOOK_ENDPOINT_PAYLOAD_BYTES_V1 = 512n * 1_024n * 1_024n;
 export const PLUGIN_WEBHOOK_ACCOUNT_PAYLOAD_BYTES_V1 = 2n * 1_024n * 1_024n * 1_024n;
 export const PLUGIN_WEBHOOK_ACCOUNT_TERMINAL_ROWS_V1 = 100_000;
+/** Maximum queued age of one admitted or explicitly replayed delivery custody epoch. */
+export const PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1 = 7 * 24 * 60 * 60 * 1_000;
 
 export function resolvePluginWebhookDeliveryQuotaRejectionV1(params: Readonly<{
     endpointPayloadRows: number;

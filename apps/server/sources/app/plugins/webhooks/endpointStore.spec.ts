@@ -29,7 +29,10 @@ vi.mock("./accountChange", () => ({
 }));
 
 import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
-import { createPluginWebhookEndpointStoreV1 } from "./endpointStore";
+import {
+    createPluginWebhookEndpointStoreV1,
+    formatPluginWebhookEndpointPublicUrlV1,
+} from "./endpointStore";
 
 const endpointId = "wh_ep_AAECAwQFBgcICQoLDA0ODw";
 const contribution = { pluginId: "acme.github", localId: "issues" } as const;
@@ -38,6 +41,21 @@ const target = {
     materializationId: "materialization-1",
     pluginId: "acme.github",
 } as const;
+
+it("publishes only HTTPS webhook URLs outside the explicit loopback development exception", () => {
+    expect(formatPluginWebhookEndpointPublicUrlV1(
+        "https://server.example.test/base",
+        "opaque-route",
+    )).toBe("https://server.example.test/v1/plugins/webhooks/opaque-route");
+    expect(formatPluginWebhookEndpointPublicUrlV1(
+        "http://127.0.0.1:3000",
+        "opaque-route",
+    )).toBe("http://127.0.0.1:3000/v1/plugins/webhooks/opaque-route");
+    expect(() => formatPluginWebhookEndpointPublicUrlV1(
+        "http://server.example.test",
+        "opaque-route",
+    )).toThrow(/HTTPS/u);
+});
 
 function endpointRow(overrides: Record<string, unknown> = {}) {
     return {

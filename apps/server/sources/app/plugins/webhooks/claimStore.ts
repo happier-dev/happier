@@ -26,6 +26,7 @@ import {
     validatePluginWebhookStoredEnvelopeForAccountCurrentnessV1,
 } from "./storedEnvelope";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
+import { PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1 } from "./policy";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const PLUGIN_WEBHOOK_LEASE_MS_V1 = 120_000;
@@ -34,7 +35,6 @@ export const PLUGIN_WEBHOOK_MAX_ATTEMPTS_V1 = 12;
 const PLUGIN_WEBHOOK_SUCCESS_METADATA_RETENTION_MS_V1 = 7 * DAY_MS;
 const PLUGIN_WEBHOOK_DEAD_PAYLOAD_RETENTION_MS_V1 = 30 * DAY_MS;
 const PLUGIN_WEBHOOK_DEAD_METADATA_RETENTION_MS_V1 = 90 * DAY_MS;
-const PLUGIN_WEBHOOK_OFFLINE_MAX_QUEUED_AGE_MS_V1 = 7 * DAY_MS;
 const DEFAULT_RECOVERY_BATCH_SIZE_V1 = 100;
 const MAX_RECOVERY_BATCH_SIZE_V1 = 500;
 
@@ -166,7 +166,7 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
             }))) {
             const offlineSinceAt = candidate.offlineSinceAt ?? now;
             const expired = now.getTime() - offlineSinceAt.getTime()
-                >= PLUGIN_WEBHOOK_OFFLINE_MAX_QUEUED_AGE_MS_V1;
+                >= PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1;
             const updated = await tx.pluginWebhookDelivery.updateMany({
                 where: {
                     id: candidate.id,
@@ -707,7 +707,11 @@ export async function recoverExpiredPluginWebhookClaimsV1(params: Readonly<{
                         ...clearLeaseFields(),
                         lastErrorCode: candidate.executionStartedAt ? "lease_expired" : null,
                         automationAdmissionUnresolved: getActivePrismaRuntime().DbNull,
-                        nextAttemptAt: now,
+                        nextAttemptAt: candidate.executionStartedAt === null
+                            ? now
+                            : new Date(now.getTime() + resolvePluginWebhookRetryDelayMsV1({
+                                attempt: candidate.attemptCount,
+                            })),
                         revision: { increment: 1 },
                     },
             });
@@ -734,17 +738,28 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_RECOVERY_BATCH_SIZE_V1) {
         throw new TypeError("Plugin webhook queue aging batch size must be an integer from 1 through 500");
     }
-    const offlineDeadline = new Date(now.getTime() - PLUGIN_WEBHOOK_OFFLINE_MAX_QUEUED_AGE_MS_V1);
+    const offlineDeadline = new Date(now.getTime() - PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1);
     const candidates = await db.pluginWebhookDelivery.findMany({
         where: {
             state: "queued",
             payloadBytes: { gt: 0n },
             nextAttemptAt: { lte: now },
-            offlineSinceAt: { lte: offlineDeadline },
+            OR: [
+                { offlineSinceAt: { lte: offlineDeadline } },
+                { metadataDeleteAt: { lte: now } },
+            ],
         },
         orderBy: [{ nextAttemptAt: "asc" }, { id: "asc" }],
         take: batchSize,
-        select: { id: true, accountId: true, targetPluginId: true, revision: true, attemptCount: true, offlineSinceAt: true },
+        select: {
+            id: true,
+            accountId: true,
+            targetPluginId: true,
+            revision: true,
+            attemptCount: true,
+            offlineSinceAt: true,
+            metadataDeleteAt: true,
+        },
     });
     let deadLettered = 0;
     for (const candidate of candidates) {
@@ -756,9 +771,15 @@ export async function ageOverduePluginWebhookDeliveriesV1(params: Readonly<{
                     state: "queued",
                     payloadBytes: { gt: 0n },
                     nextAttemptAt: { lte: now },
-                    offlineSinceAt: candidate.offlineSinceAt,
+                    metadataDeleteAt: candidate.metadataDeleteAt,
                 },
-                data: deadLetterMutation(now, "target_offline"),
+                data: deadLetterMutation(
+                    now,
+                    candidate.offlineSinceAt !== null
+                        && candidate.offlineSinceAt.getTime() <= offlineDeadline.getTime()
+                        ? "target_offline"
+                        : "retention_expired",
+                ),
             });
             if (updated.count !== 1) return false;
             await markPluginWebhookAccountChangedInTxV1(tx, {

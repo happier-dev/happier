@@ -207,7 +207,7 @@ describe("plugin webhook Account-deletion native database contract", () => {
         }
     });
 
-    it("rolls back detachment when a retained Account FK rejects deletion, then permits the same owner retry", async () => {
+    it("deletes retained Machine custody before completing Account-route deletion", async () => {
         const suffix = randomUUID();
         const accountId = `webhook-delete-contract-rollback-${suffix}`;
         const endpointId = randomEndpointId();
@@ -276,30 +276,8 @@ describe("plugin webhook Account-deletion native database contract", () => {
                 data: { id: machineId, accountId, metadata: "fixture" },
             });
 
-            await expect(deleteAccountForErasure({ accountId, now })).rejects.toThrow();
-            await expect(db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: endpointId } }))
-                .resolves.toMatchObject({
-                    accountId,
-                    pluginId: "happier.github",
-                    enabled: true,
-                    releasedAt: null,
-                    tombstoneExpiresAt: null,
-                });
-            await expect(db.pluginWebhookRoute.findUniqueOrThrow({ where: { id: routeId } }))
-                .resolves.toMatchObject({
-                    accountEndpointId: endpointId,
-                    currentCredentialId: currentCredential.id,
-                    previousCredentialId: previousCredential.id,
-                });
-            await expect(Promise.all(routeCredentialIds.map(async (id) => (
-                await db.pluginWebhookCredential.findUnique({ where: { id } })
-            )))).resolves.toEqual([
-                expect.objectContaining({ id: currentCredential.id, routeId, state: "current" }),
-                expect.objectContaining({ id: previousCredential.id, routeId, state: "previous" }),
-            ]);
-
-            await db.machine.delete({ where: { id: machineId } });
             await expect(deleteAccountForErasure({ accountId, now })).resolves.toEqual({ status: "deleted" });
+            expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
             expect(await db.pluginWebhookEndpoint.findUnique({ where: { id: endpointId } })).toBeNull();
             expect(await db.pluginWebhookRoute.findUnique({ where: { id: routeId } })).toBeNull();
             await expect(Promise.all(routeCredentialIds.map(async (id) => (

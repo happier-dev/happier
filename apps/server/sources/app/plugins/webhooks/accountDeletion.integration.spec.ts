@@ -26,6 +26,7 @@ describe("plugin webhook Account-deletion cleanup", () => {
     afterAll(async () => await harness?.close());
 
     afterEach(async () => {
+        await db.$executeRawUnsafe("DROP TRIGGER IF EXISTS prevent_account_erasure");
         await harness?.resetDbTables([
             () => db.pluginWebhookDelivery.deleteMany(),
             () => db.pluginWebhookEndpointOperation.deleteMany(),
@@ -241,7 +242,7 @@ describe("plugin webhook Account-deletion cleanup", () => {
         })).rejects.toThrow();
     });
 
-    it("rolls back webhook cleanup when another Account owner rejects the physical delete, then permits retry", async () => {
+    it("rolls back all cleanup on terminal Account failure, then deletes Machine custody on retry", async () => {
         const suffix = randomUUID();
         const accountId = `webhook-delete-rollback-${suffix}`;
         const sharedEndpointId = randomEndpointId();
@@ -285,9 +286,19 @@ describe("plugin webhook Account-deletion cleanup", () => {
             },
         });
 
-        await expect(deleteAccountForErasure({ accountId, now: NOW })).rejects.toThrow();
-
+        await db.$executeRawUnsafe(`
+            CREATE TRIGGER prevent_account_erasure
+            BEFORE DELETE ON Account
+            WHEN OLD.id = '${accountId}'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected account deletion failure');
+            END
+        `);
+        await expect(deleteAccountForErasure({ accountId, now: NOW })).rejects.toThrow(
+            "injected account deletion failure",
+        );
         await expect(db.account.findUnique({ where: { id: accountId } })).resolves.not.toBeNull();
+        await expect(db.machine.findUnique({ where: { id: `machine-rollback-${suffix}` } })).resolves.not.toBeNull();
         await expect(db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: sharedEndpointId } }))
             .resolves.toMatchObject({
                 accountId,
@@ -297,8 +308,9 @@ describe("plugin webhook Account-deletion cleanup", () => {
                 tombstoneExpiresAt: null,
             });
 
-        await db.machine.delete({ where: { id: `machine-rollback-${suffix}` } });
+        await db.$executeRawUnsafe("DROP TRIGGER prevent_account_erasure");
         await expect(deleteAccountForErasure({ accountId, now: NOW })).resolves.toEqual({ status: "deleted" });
+        await expect(db.machine.findUnique({ where: { id: `machine-rollback-${suffix}` } })).resolves.toBeNull();
         await expect(db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: sharedEndpointId } }))
             .resolves.toMatchObject({
                 accountId: null,

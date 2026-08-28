@@ -5,6 +5,7 @@ import { inTx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
+import { PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1 } from "./policy";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const DISCARDED_METADATA_RETENTION_MS_V1 = 30 * DAY_MS;
@@ -118,6 +119,7 @@ export async function replayPluginWebhookDeliveryV1(params: Readonly<{
                 terminalDisposition: null,
                 deadLetteredAt: null,
                 payloadPurgeAt: null,
+                metadataDeleteAt: new Date(now.getTime() + PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1),
                 revision: { increment: 1 },
             },
         });

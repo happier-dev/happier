@@ -19,14 +19,13 @@ import { afterTx, inTx } from "@/storage/inTx";
 
 import {
     PLUGIN_WEBHOOK_ACCOUNT_TERMINAL_ROWS_V1,
+    PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1,
     resolvePluginWebhookDeliveryQuotaRejectionV1,
 } from "./policy";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 import type { PluginWebhookStoredEnvelopeReadyV1 } from "./storedEnvelope";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
 
-const DAY_MS = 24 * 60 * 60 * 1_000;
-const MAX_DELIVERY_METADATA_LIFETIME_MS_V1 = 97 * DAY_MS;
 const TERMINAL_COMPACTION_BATCH_V1 = 500;
 // Reserve the public response/error path; this never extends ingress custody.
 const WEBHOOK_INGRESS_TRANSACTION_SETTLEMENT_RESERVE_MS_V1 = 1_000;
@@ -439,7 +438,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                 replayCount: 0,
                 nextAttemptAt: now,
                 revision: 0,
-                metadataDeleteAt: new Date(now.getTime() + MAX_DELIVERY_METADATA_LIFETIME_MS_V1),
+                metadataDeleteAt: new Date(now.getTime() + PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1),
                 receivedAt: now,
             },
             select: { id: true },

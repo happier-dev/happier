@@ -83,6 +83,7 @@ describe("plugin webhook durable ingress owner", () => {
 
     it("verifies exact raw bytes before parsing shared-route installation identity or touching Account custody", async () => {
         const deps = dependencies();
+        const reserveResolvedEndpoint = vi.fn();
         await expect(ingestPluginWebhookV1({
             opaqueRouteId: "opaque-1",
             rawBody: BODY,
@@ -93,12 +94,14 @@ describe("plugin webhook durable ingress owner", () => {
                 "content-type": "application/json; charset=utf-8",
             },
             now: new Date("2026-08-10T00:00:00.000Z"),
+            reserveResolvedEndpoint,
             dependencies: deps,
         })).resolves.toEqual({ kind: "rejected", statusCode: 401, code: "unauthorized" });
         expect(deps.parseInstallationId).not.toHaveBeenCalled();
         expect(deps.resolveEndpoint).not.toHaveBeenCalled();
         expect(deps.readAccount).not.toHaveBeenCalled();
         expect(deps.admitDelivery).not.toHaveBeenCalled();
+        expect(reserveResolvedEndpoint).not.toHaveBeenCalled();
     });
 
     it("feeds every raw chunk through the prepared verifier before parsing or durable admission", async () => {
@@ -234,6 +237,23 @@ describe("plugin webhook durable ingress owner", () => {
 
         expect(deps.readAccount).not.toHaveBeenCalled();
         expect(deps.admitDelivery).not.toHaveBeenCalled();
+    });
+
+    it("releases authenticated tenant admission when later Account custody fails", async () => {
+        const deps = accountEndpointDependencies();
+        const release = vi.fn(async () => {});
+        vi.mocked(deps.readAccount).mockResolvedValue(null);
+
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: "opaque-1",
+            rawBody: BODY,
+            headers: { "x-hub-signature-256": signature(), "x-github-delivery": "delivery-guid-1" },
+            reserveResolvedEndpoint: async () => ({ release }),
+            dependencies: deps,
+        })).resolves.toEqual({ kind: "rejected", statusCode: 503, code: "unavailable" });
+
+        expect(deps.admitDelivery).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalledTimes(1);
     });
 
     it("fails closed on malformed identity, missing encryption binding, and queue admission rejection", async () => {

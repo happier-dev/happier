@@ -46,6 +46,7 @@ describe("plugin webhook overdue queue aging", () => {
                 revision: 5,
                 attemptCount: 0,
                 offlineSinceAt: new Date("2026-08-03T00:00:00.000Z"),
+                metadataDeleteAt: new Date("2026-08-11T00:00:00.000Z"),
             },
         ]);
 
@@ -56,7 +57,10 @@ describe("plugin webhook overdue queue aging", () => {
             where: expect.objectContaining({
                 state: "queued",
                 nextAttemptAt: { lte: now },
-                offlineSinceAt: { lte: new Date("2026-08-03T00:00:00.000Z") },
+                OR: [
+                    { offlineSinceAt: { lte: new Date("2026-08-03T00:00:00.000Z") } },
+                    { metadataDeleteAt: { lte: now } },
+                ],
             }),
             take: 100,
         }));
@@ -69,5 +73,41 @@ describe("plugin webhook overdue queue aging", () => {
             }),
         }));
         expect(mocks.markAccountChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("expires never-claimed payload custody at the existing indexed delivery horizon", async () => {
+        const now = new Date("2026-08-10T00:00:00.000Z");
+        mocks.findMany.mockResolvedValue([{
+            id: "delivery-never-claimed",
+            accountId: "account-1",
+            targetPluginId: "acme.github",
+            revision: 2,
+            attemptCount: 0,
+            offlineSinceAt: null,
+            metadataDeleteAt: now,
+        }]);
+
+        await expect(ageOverduePluginWebhookDeliveriesV1({ now, batchSize: 100 })).resolves.toEqual({
+            deadLettered: 1,
+        });
+        expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                state: "queued",
+                nextAttemptAt: { lte: now },
+                OR: expect.arrayContaining([{ metadataDeleteAt: { lte: now } }]),
+            }),
+        }));
+        expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                id: "delivery-never-claimed",
+                metadataDeleteAt: now,
+            }),
+            data: expect.objectContaining({
+                state: "dead_letter",
+                lastErrorCode: "retention_expired",
+                payloadPurgeAt: expect.any(Date),
+                revision: { increment: 1 },
+            }),
+        }));
     });
 });

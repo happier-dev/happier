@@ -260,6 +260,7 @@ describe("plugin webhook durable delivery admission", () => {
             state: "queued",
             attemptCount: 0,
             replayCount: 0,
+            metadataDeleteAt: new Date("2026-08-17T00:00:00.000Z"),
             payload: JSON.parse(new TextDecoder().decode(admission.stored.canonicalEnvelopeBytes)),
             payloadBytes: BigInt(admission.stored.canonicalEnvelopeBytes.byteLength),
         });

@@ -6,6 +6,7 @@ import {
     PluginWebhookEndpointReadResultV1Schema,
     PluginWebhookEndpointRetargetResultV1Schema,
     PluginWebhookEndpointRevokeResultV1Schema,
+    PluginWebhookPublicUrlV1Schema,
     createCanonicalJsonSigningInput,
     formatPluginWebhookEndpointIdV1,
     type PluginWebhookEndpointEnsureInputV1,
@@ -79,7 +80,7 @@ export function formatPluginWebhookEndpointPublicUrlV1(publicBaseUrl: string, op
     base.pathname = `/v1/plugins/webhooks/${opaqueRouteId}`;
     base.search = "";
     base.hash = "";
-    return base.toString();
+    return PluginWebhookPublicUrlV1Schema.parse(base.toString());
 }
 
 const ENSURE_REJOIN_SELECT_V1 = {

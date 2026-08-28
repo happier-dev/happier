@@ -19,6 +19,7 @@ import {
     validateCurrentPluginWebhookInvocationReferenceTxV1,
 } from "./claimStore";
 import { retargetPluginWebhookEndpointV1 } from "./endpointStore";
+import { purgeExpiredPluginWebhookDeliveriesV1 } from "./retention";
 import { readPluginWebhookAccountStatusV1 } from "./statusStore";
 
 const SERVER_IDENTITY_ID = "srv_webhookClaimStore1";
@@ -710,6 +711,26 @@ describe("plugin webhook claim/lease settlement", () => {
                 leaseId: null,
                 automationAdmissionUnresolved: null,
             });
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
+            .resolves.toMatchObject({ nextAttemptAt: NOW });
+
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: {
+                state: "claimed",
+                attemptCount: 1,
+                leaseId: "lease-execution-started",
+                claimedByMachineId: TARGET.materialization.machineId,
+                claimedByMachineInstallationId: TARGET.machineInstallationId,
+                firstClaimAt: new Date(NOW.getTime() - 60_000),
+                executionStartedAt: new Date(NOW.getTime() - 30_000),
+                leaseExpiresAt: NOW,
+            },
+        });
+        await expect(recoverExpiredPluginWebhookClaimsV1({ now: NOW, batchSize: 100 }))
+            .resolves.toEqual({ requeued: 1, deadLettered: 0 });
+        const retried = await db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } });
+        expect(retried.nextAttemptAt.getTime()).toBeGreaterThan(NOW.getTime());
 
         await db.pluginWebhookDelivery.update({
             where: { id: "delivery-claim" },
@@ -770,6 +791,44 @@ describe("plugin webhook claim/lease settlement", () => {
         });
         await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
             .resolves.toMatchObject({ state: "dead_letter", attemptCount: 0, lastErrorCode: "target_offline" });
+    });
+
+    it("expires never-claimed custody through the indexed epoch horizon and releases payload quota", async () => {
+        await seedDelivery();
+        await db.pluginWebhookDelivery.update({
+            where: { id: "delivery-claim" },
+            data: { metadataDeleteAt: NOW },
+        });
+
+        await expect(ageOverduePluginWebhookDeliveriesV1({ now: NOW, batchSize: 100 })).resolves.toEqual({
+            deadLettered: 1,
+        });
+        const deadLetter = await db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } });
+        expect(deadLetter).toMatchObject({
+            state: "dead_letter",
+            attemptCount: 0,
+            lastErrorCode: "retention_expired",
+            payloadBytes: 256n,
+        });
+        expect(deadLetter.payloadPurgeAt?.toISOString()).toBe("2026-09-09T00:00:00.000Z");
+        expect(deadLetter.metadataDeleteAt.toISOString()).toBe("2026-11-08T00:00:00.000Z");
+
+        await expect(purgeExpiredPluginWebhookDeliveriesV1({
+            now: new Date("2026-09-09T00:00:00.000Z"),
+            batchSize: 100,
+        })).resolves.toEqual({ payloadsPurged: 1, metadataDeleted: 0, tombstonesDeleted: 0 });
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
+            .resolves.toMatchObject({ state: "dead_letter", payload: null, payloadBytes: 0n });
+        await expect(db.pluginWebhookDelivery.aggregate({
+            where: { accountId: "account-claim", payloadBytes: { gt: 0n } },
+            _sum: { payloadBytes: true },
+        })).resolves.toMatchObject({ _sum: { payloadBytes: null } });
+
+        await expect(purgeExpiredPluginWebhookDeliveriesV1({
+            now: new Date("2026-11-08T00:00:00.000Z"),
+            batchSize: 100,
+        })).resolves.toEqual({ payloadsPurged: 0, metadataDeleted: 1, tombstonesDeleted: 0 });
+        await expect(db.pluginWebhookDelivery.findUnique({ where: { id: "delivery-claim" } })).resolves.toBeNull();
     });
 
     it("schedules bounded retry under the current lease and rejects a stale fail", async () => {
