@@ -141,6 +141,7 @@ import {
 } from '@/daemon/actionOperations/coreActionOperationProjection';
 import { createSessionHandoffCoordinator } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
 import { bindSessionHandoffTarget } from '@/session/handoff/orchestration/sessionHandoffTargetBinding';
+import { buildTrackedSessionHandoffMachineCall } from '@/session/handoff/trackedSessionHandoffMachineCall';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   normalizeSpawnSessionDirectory,
@@ -1221,12 +1222,12 @@ export function registerMachineRpcHandlers(params: Readonly<{
             && Object.prototype.hasOwnProperty.call(sourceMetadata, 'connectedServices')
             ? sourceMetadata.connectedServices
             : undefined;
-          const targetRpc = async (method: string, payload: unknown): Promise<unknown> => await callMachineRpc({
+          const targetRpc = async (method: string, payload: unknown): Promise<unknown> => await callMachineRpc(buildTrackedSessionHandoffMachineCall({
             credentials,
             machineId: request.targetMachineId,
             method,
             request: payload,
-          });
+          }));
           const coordinator = createSessionHandoffCoordinator({
             transportStrategy: request.negotiatedTransportStrategy
               ?? (request.preferredTransportStrategies.includes('direct_peer') ? 'direct_peer' : 'server_routed_stream'),

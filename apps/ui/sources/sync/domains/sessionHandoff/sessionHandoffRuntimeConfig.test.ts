@@ -36,9 +36,9 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
 
     it('returns the default runtime config when env vars are unset', () => {
         expect(resolveSessionHandoffRuntimeConfig()).toEqual({
-            machineRpcTimeoutMs: 90_000,
-            machineRpcPollTimeoutMs: 10_000,
-            targetPreparePollTimeoutMs: 300_000,
+            machineRpcTimeoutMs: 1_800_000,
+            machineRpcPollTimeoutMs: 120_000,
+            targetPreparePollTimeoutMs: 7_200_000,
             postCommitBindingStabilizationTimeoutMs: 5_000,
             postCommitBindingStabilizationIntervalMs: 250,
             postCommitBindingStablePolls: 2,
@@ -47,7 +47,7 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
     });
 
     it('clamps configured runtime values to their allowed ranges', () => {
-        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = '400000';
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = '99999999';
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = '500';
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_TARGET_PREPARE_POLL_TIMEOUT_MS = '12345';
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = '100';
@@ -56,7 +56,7 @@ describe('resolveSessionHandoffRuntimeConfig', () => {
         process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_SOURCE_REACHABILITY_PROBE_TIMEOUT_MS = '100';
 
         expect(resolveSessionHandoffRuntimeConfig()).toEqual({
-            machineRpcTimeoutMs: 300_000,
+            machineRpcTimeoutMs: 14_400_000,
             machineRpcPollTimeoutMs: 1_000,
             targetPreparePollTimeoutMs: 12_345,
             postCommitBindingStabilizationTimeoutMs: 500,
